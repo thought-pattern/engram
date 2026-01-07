@@ -1,0 +1,179 @@
+"""Tests for data models."""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from engram.models import KeywordEntry, QueryResult, Session, Statement, Tier
+
+
+class TestStatement:
+    """Tests for Statement model."""
+
+    def test_create_dynamic(self) -> None:
+        stmt = Statement.create("Hello world")
+        assert stmt.text == "Hello world"
+        assert stmt.tier == Tier.DYNAMIC
+        assert stmt.id.startswith("stmt_")
+        assert isinstance(stmt.created_at, datetime)
+
+    def test_create_static(self) -> None:
+        stmt = Statement.create("Static statement", tier=Tier.STATIC)
+        assert stmt.tier == Tier.STATIC
+
+    def test_create_with_id(self) -> None:
+        stmt = Statement.create("Test", statement_id="custom_id")
+        assert stmt.id == "custom_id"
+
+    def test_create_with_keywords(self) -> None:
+        stmt = Statement.create("Test", keywords=["hello", "world"])
+        assert stmt.keywords == ["hello", "world"]
+
+    def test_serialization(self) -> None:
+        stmt = Statement.create("Test statement", keywords=["test"])
+        data = stmt.to_dict()
+
+        assert data["text"] == "Test statement"
+        assert data["tier"] == "DYNAMIC"
+        assert "created_at" in data
+
+        restored = Statement.from_dict(data)
+        assert restored.id == stmt.id
+        assert restored.text == stmt.text
+        assert restored.tier == stmt.tier
+
+
+class TestKeywordEntry:
+    """Tests for KeywordEntry model."""
+
+    def test_hit_rate_default(self) -> None:
+        entry = KeywordEntry(keyword="test")
+        assert entry.hit_rate == 0.5  # Default when query_count = 0
+
+    def test_hit_rate_calculation(self) -> None:
+        entry = KeywordEntry(keyword="test", query_count=100, hit_count=80)
+        assert entry.hit_rate == 0.8
+
+    def test_hit_rate_zero_hits(self) -> None:
+        entry = KeywordEntry(keyword="test", query_count=50, hit_count=0)
+        assert entry.hit_rate == 0.0
+
+    def test_add_statement(self) -> None:
+        entry = KeywordEntry(keyword="test")
+        entry.add_statement("stmt_1")
+        entry.add_statement("stmt_2")
+        entry.add_statement("stmt_1")  # Duplicate
+
+        assert entry.statement_ids == ["stmt_1", "stmt_2"]
+
+    def test_remove_statement(self) -> None:
+        entry = KeywordEntry(keyword="test", statement_ids=["stmt_1", "stmt_2"])
+        entry.remove_statement("stmt_1")
+        assert entry.statement_ids == ["stmt_2"]
+
+    def test_remove_nonexistent(self) -> None:
+        entry = KeywordEntry(keyword="test", statement_ids=["stmt_1"])
+        entry.remove_statement("stmt_999")  # Should not raise
+        assert entry.statement_ids == ["stmt_1"]
+
+    def test_increment_query(self) -> None:
+        entry = KeywordEntry(keyword="test")
+        entry.increment_query()
+        entry.increment_query()
+        assert entry.query_count == 2
+
+    def test_increment_hit(self) -> None:
+        entry = KeywordEntry(keyword="test")
+        entry.increment_hit()
+        assert entry.hit_count == 1
+
+    def test_serialization(self) -> None:
+        entry = KeywordEntry(
+            keyword="paris",
+            statement_ids=["stmt_1"],
+            query_count=150,
+            hit_count=142,
+        )
+        data = entry.to_dict()
+
+        restored = KeywordEntry.from_dict("paris", data)
+        assert restored.keyword == "paris"
+        assert restored.statement_ids == ["stmt_1"]
+        assert restored.query_count == 150
+        assert restored.hit_count == 142
+
+
+class TestSession:
+    """Tests for Session model."""
+
+    def test_create(self) -> None:
+        session = Session.create()
+        assert session.session_id.startswith("sess_")
+        assert session.previous_response == ""
+        assert isinstance(session.created_at, datetime)
+        assert session.last_active == session.created_at
+
+    def test_create_with_id(self) -> None:
+        session = Session.create(session_id="user_abc")
+        assert session.session_id == "user_abc"
+
+    def test_create_with_metadata(self) -> None:
+        session = Session.create(metadata={"user_id": "123"})
+        assert session.metadata["user_id"] == "123"
+
+    def test_update_context(self) -> None:
+        session = Session.create()
+        original_active = session.last_active
+
+        # Small delay to ensure timestamp changes
+        import time
+
+        time.sleep(0.01)
+
+        session.update_context("Paris is the capital of France")
+        assert session.previous_response == "Paris is the capital of France"
+        assert session.last_active > original_active
+
+    def test_touch(self) -> None:
+        session = Session.create()
+        original_active = session.last_active
+
+        import time
+
+        time.sleep(0.01)
+
+        session.touch()
+        assert session.last_active > original_active
+
+    def test_serialization(self) -> None:
+        session = Session.create(session_id="test", metadata={"key": "value"})
+        session.update_context("Previous response")
+
+        data = session.to_dict()
+        restored = Session.from_dict(data)
+
+        assert restored.session_id == "test"
+        assert restored.previous_response == "Previous response"
+        assert restored.metadata["key"] == "value"
+
+
+class TestQueryResult:
+    """Tests for QueryResult model."""
+
+    def test_statements_property(self) -> None:
+        stmt1 = Statement.create("First")
+        stmt2 = Statement.create("Second")
+
+        result = QueryResult(matches=[(stmt1, 1.5), (stmt2, 1.0)], keywords=["test"])
+        assert result.statements == [stmt1, stmt2]
+
+    def test_top_match(self) -> None:
+        stmt1 = Statement.create("First")
+        stmt2 = Statement.create("Second")
+
+        result = QueryResult(matches=[(stmt1, 1.5), (stmt2, 1.0)], keywords=["test"])
+        assert result.top_match == stmt1
+
+    def test_top_match_empty(self) -> None:
+        result = QueryResult(matches=[], keywords=["test"])
+        assert result.top_match is None

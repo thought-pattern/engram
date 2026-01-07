@@ -1,0 +1,4 @@
+# ENGRAM dependencies
+
+# Natural Language Processing
+nltk>=3.8.1
