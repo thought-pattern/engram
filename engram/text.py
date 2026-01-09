@@ -222,3 +222,73 @@ def normalize_with_stemming(text: str) -> str:
     """
     normalized = normalize(text)
     return stem_text(normalized)
+
+
+@lru_cache(maxsize=1)
+def _ensure_wordnet() -> None:
+    """Ensure WordNet data is available."""
+    import nltk
+    try:
+        nltk.data.find('corpora/wordnet')
+    except LookupError:
+        nltk.download('wordnet', quiet=True)
+    try:
+        nltk.data.find('corpora/omw-1.4')
+    except LookupError:
+        nltk.download('omw-1.4', quiet=True)
+
+
+@lru_cache(maxsize=4096)
+def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
+    """Get synonyms for a word using WordNet.
+
+    Args:
+        word: Input word.
+        max_synonyms: Maximum number of synonyms to return.
+
+    Returns:
+        Frozenset of synonyms (includes the original word).
+    """
+    from nltk.corpus import wordnet
+
+    _ensure_wordnet()
+
+    synonyms = {word.lower()}
+    try:
+        for syn in wordnet.synsets(word):
+            for lemma in syn.lemmas():
+                name = lemma.name().lower().replace('_', ' ')
+                if name != word.lower():
+                    synonyms.add(name)
+                    if len(synonyms) >= max_synonyms + 1:
+                        return frozenset(synonyms)
+    except Exception:
+        pass
+
+    return frozenset(synonyms)
+
+
+def expand_with_synonyms(
+    keywords: list[str],
+    max_synonyms_per_word: int = 3,
+) -> list[str]:
+    """Expand a list of keywords with their synonyms.
+
+    Args:
+        keywords: List of keywords to expand.
+        max_synonyms_per_word: Maximum synonyms to add per keyword.
+
+    Returns:
+        Expanded list with original keywords first, then synonyms.
+    """
+    expanded = list(keywords)
+    seen = set(keywords)
+
+    for word in keywords:
+        synonyms = get_synonyms(word, max_synonyms=max_synonyms_per_word)
+        for syn in synonyms:
+            if syn not in seen:
+                expanded.append(syn)
+                seen.add(syn)
+
+    return expanded

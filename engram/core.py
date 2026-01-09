@@ -2,16 +2,17 @@
 
 import threading
 
-from engram.config import EngramConfig
+from engram.config import EngramConfig, GraphConfig
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
+from engram.graph import GraphClient, GraphResult, create_graph_client
 from engram.models import KeywordEntry, QueryResult, Session, Statement, Tier
-from engram.nlp import ExtractedFact, extract_fact
+from engram.nlp import ExtractedFact, extract_fact, extract_entities
 from engram.pattern import PatternMatcher
 from engram.scoring import score_statement
 from engram.substitutions import SubstitutionMaps, expand_contractions, split_sentences
 from engram.template import TemplateContext, TemplateProcessor
-from engram.text import expand_query, extract_keywords, normalize
+from engram.text import expand_query, expand_with_synonyms, extract_keywords, normalize
 
 # Re-export for backward compatibility
 from engram.sessions import SessionLimitExceeded, SessionNotFound
@@ -52,6 +53,7 @@ class Engram:
         self.pattern_matcher = PatternMatcher(
             sets=self.sets,
             bot_properties=self.bot_properties,
+            use_stemming=self.config.use_stemming,
         )
         self.substitution_maps = SubstitutionMaps()
         self.default_predicates: dict[str, str] = {}
@@ -72,6 +74,200 @@ class Engram:
         self.query_count = 0
         self.hit_count = 0
         self.eviction_count = 0
+
+        # Graph client (lazy initialization)
+        self._graph_client: GraphClient | None = None
+
+    @property
+    def graph_client(self) -> GraphClient | None:
+        """Get the graph client, initializing if needed."""
+        if self._graph_client is None and self.config.graph:
+            graph_config = self.config.graph
+            if isinstance(graph_config, GraphConfig) and graph_config.enabled:
+                self._graph_client = create_graph_client(
+                    driver=graph_config.driver,
+                    uri=graph_config.uri,
+                    username=graph_config.username,
+                    password=graph_config.password,
+                    database=graph_config.database,
+                )
+        return self._graph_client
+
+    def graph_query(self, cypher: str, params: dict | None = None) -> GraphResult:
+        """Execute a Cypher query against the knowledge graph.
+
+        Args:
+            cypher: Cypher query string.
+            params: Optional query parameters.
+
+        Returns:
+            GraphResult with success status and records.
+        """
+        client = self.graph_client
+        if client is None:
+            return GraphResult(success=False, records=[], error="Graph not configured")
+        return client.execute(cypher, params)
+
+    def graph_lookup(self, text: str) -> str | None:
+        """Look up information in the knowledge graph based on input text.
+
+        Extracts entities from the text and queries the graph for related
+        information. Returns a natural language response if found.
+
+        Args:
+            text: User input text.
+
+        Returns:
+            Response string if graph has relevant info, None otherwise.
+        """
+        client = self.graph_client
+        if client is None:
+            return None
+
+        # Extract entities from the input
+        entities = extract_entities(text)
+        if not entities:
+            # Try keyword-based lookup
+            keywords = extract_keywords(normalize(text), self.config.stopwords)
+            if not keywords:
+                return None
+            # Query for any node matching keywords
+            for kw in keywords[:3]:  # Limit to top 3 keywords
+                result = client.execute(
+                    "MATCH (n) WHERE toLower(n.name) CONTAINS toLower($keyword) "
+                    "RETURN n.name as name, labels(n) as labels, properties(n) as props LIMIT 3",
+                    {"keyword": kw}
+                )
+                if result.success and result.records:
+                    # Format response from graph data in natural language
+                    responses = []
+                    for record in result.records:
+                        name = record.get("name", "")
+                        props = record.get("props", {})
+                        if name and props:
+                            # Build human-readable property descriptions
+                            prop_parts = []
+                            for k, v in props.items():
+                                if k != "name" and v:
+                                    # Convert property names to readable format
+                                    readable_key = k.replace("_", " ")
+                                    prop_parts.append(f"its {readable_key} is {v}")
+                            if prop_parts:
+                                responses.append(f"{name}: {', '.join(prop_parts)}")
+                    if responses:
+                        return " ".join(responses)
+            return None
+
+        # Query graph for each entity
+        facts = []
+        for entity in entities:
+            # Query for relationships involving this entity
+            result = client.execute(
+                "MATCH (n)-[r]->(m) WHERE toLower(n.name) = toLower($name) "
+                "RETURN n.name as subject, type(r) as relation, m.name as object LIMIT 5",
+                {"name": entity.text}
+            )
+            if result.success and result.records:
+                for record in result.records:
+                    subj = record.get("subject", "")
+                    rel = record.get("relation", "").replace("_", " ").lower()
+                    obj = record.get("object", "")
+                    if subj and rel and obj:
+                        facts.append((subj, rel, obj))
+
+            # Also try reverse relationships
+            result = client.execute(
+                "MATCH (n)<-[r]-(m) WHERE toLower(n.name) = toLower($name) "
+                "RETURN m.name as subject, type(r) as relation, n.name as object LIMIT 5",
+                {"name": entity.text}
+            )
+            if result.success and result.records:
+                for record in result.records:
+                    subj = record.get("subject", "")
+                    rel = record.get("relation", "").replace("_", " ").lower()
+                    obj = record.get("object", "")
+                    if subj and rel and obj:
+                        facts.append((subj, rel, obj))
+
+        if facts:
+            # Format facts as natural language
+            return self._format_graph_facts(facts)
+        return None
+
+    def _format_graph_facts(self, facts: list[tuple[str, str, str]]) -> str:
+        """Format graph facts as natural human-readable text.
+
+        Args:
+            facts: List of (subject, relation, object) tuples.
+
+        Returns:
+            Natural language string.
+        """
+        if not facts:
+            return ""
+
+        # Group facts by subject for more natural responses
+        by_subject: dict[str, list[tuple[str, str]]] = {}
+        for subj, rel, obj in facts:
+            if subj not in by_subject:
+                by_subject[subj] = []
+            by_subject[subj].append((rel, obj))
+
+        sentences = []
+        for subj, relations in by_subject.items():
+            if len(relations) == 1:
+                rel, obj = relations[0]
+                sentences.append(f"{subj} {rel} {obj}")
+            else:
+                # Combine multiple facts about same subject
+                parts = [f"{rel} {obj}" for rel, obj in relations]
+                if len(parts) == 2:
+                    sentences.append(f"{subj} {parts[0]} and {parts[1]}")
+                else:
+                    last = parts.pop()
+                    sentences.append(f"{subj} {', '.join(parts)}, and {last}")
+
+        return ". ".join(sentences) + "."
+
+    def learn_from_response(
+        self,
+        query: str,
+        response: str,
+        tier: Tier = Tier.DYNAMIC,
+    ) -> str:
+        """Learn from an LLM response by storing it for future retrieval.
+
+        This is the primary mechanism for ENGRAM to grow its knowledge base.
+        When the high-cost LLM provides a response, call this method to cache
+        it for future similar queries.
+
+        Args:
+            query: The original user query.
+            response: The LLM's response to cache.
+            tier: Storage tier (default DYNAMIC for evictable).
+
+        Returns:
+            Statement ID of the stored response.
+        """
+        # Normalize the query into a pattern
+        normalized = normalize(query)
+
+        # Create a pattern that will match similar queries
+        # Use the full normalized query as the pattern with wildcards for flexibility
+        words = normalized.split()
+        if len(words) > 5:
+            # For longer queries, create a more flexible pattern
+            # Keep first few significant words + wildcard
+            pattern = " ".join(words[:4]) + " *"
+        else:
+            # For shorter queries, use exact match
+            pattern = normalized.upper()
+
+        return self.store(
+            text=response,
+            pattern=pattern,
+            tier=tier,
+        )
 
     # =========================================================================
     # Statement Operations
@@ -183,16 +379,24 @@ class Engram:
         if not keywords:
             return QueryResult(matches=[], keywords=[])
 
-        # Increment query counts
+        # Expand keywords with synonyms if enabled
+        search_keywords = keywords
+        if self.config.use_synonyms:
+            search_keywords = expand_with_synonyms(
+                keywords,
+                max_synonyms_per_word=self.config.max_synonyms_per_word,
+            )
+
+        # Increment query counts for original keywords only
         with self.keyword_lock:
             for kw in keywords:
                 if kw in self.keywords:
                     self.keywords[kw].query_count += 1
 
-        # Find candidates
+        # Find candidates using expanded keywords
         candidate_ids: set[str] = set()
         with self.keyword_lock:
-            for kw in keywords:
+            for kw in search_keywords:
                 if kw in self.keywords:
                     candidate_ids.update(self.keywords[kw].statement_ids)
 
@@ -315,6 +519,18 @@ class Engram:
                             break
 
         if not responses:
+            # Try graph lookup before falling back
+            graph_response = self.graph_lookup(text)
+            if graph_response:
+                if session:
+                    session.update_context(graph_response, text)
+                return (None, [], graph_response)
+
+            # Use fallback response if configured
+            if self.config.fallback_response:
+                if session:
+                    session.update_context(self.config.fallback_response, text)
+                return (None, [], self.config.fallback_response)
             return None
 
         # Combine responses

@@ -28,10 +28,18 @@ _COMMAND_WORDS = frozenset({'learn', 'remember', 'forget', 'tell', 'say', 'repea
 @lru_cache(maxsize=1)
 def _ensure_nltk_data() -> None:
     """Download required NLTK data if not present."""
-    required = ['punkt', 'averaged_perceptron_tagger', 'punkt_tab', 'averaged_perceptron_tagger_eng']
-    for package in required:
+    required = [
+        ('tokenizers/punkt', 'punkt'),
+        ('tokenizers/punkt_tab', 'punkt_tab'),
+        ('taggers/averaged_perceptron_tagger', 'averaged_perceptron_tagger'),
+        ('taggers/averaged_perceptron_tagger_eng', 'averaged_perceptron_tagger_eng'),
+        ('chunkers/maxent_ne_chunker', 'maxent_ne_chunker'),
+        ('chunkers/maxent_ne_chunker_tab', 'maxent_ne_chunker_tab'),
+        ('corpora/words', 'words'),
+    ]
+    for path, package in required:
         try:
-            nltk.data.find(f'tokenizers/{package}' if 'punkt' in package else f'taggers/{package}')
+            nltk.data.find(path)
         except LookupError:
             nltk.download(package, quiet=True)
 
@@ -191,3 +199,136 @@ def extract_fact(text: str) -> ExtractedFact | None:
 
     # Find copula and extract subject/object
     return _extract_copula_fact(tokens, tagged, text)
+
+
+@dataclass
+class ExtractedEntity:
+    """A named entity extracted from text."""
+
+    text: str  # The entity text (e.g., "John Smith")
+    label: str  # Entity type (PERSON, ORGANIZATION, GPE, etc.)
+    start: int  # Start position in original text
+    end: int  # End position in original text
+
+
+def extract_entities(text: str) -> list[ExtractedEntity]:
+    """Extract named entities from text using NLTK NER.
+
+    Recognizes:
+    - PERSON: People's names
+    - ORGANIZATION: Companies, institutions
+    - GPE: Geopolitical entities (countries, cities, states)
+    - FACILITY: Buildings, airports, highways
+    - GSP: Geo-socio-political groups
+
+    Args:
+        text: Input text to analyze.
+
+    Returns:
+        List of ExtractedEntity objects.
+    """
+    _ensure_nltk_data()
+
+    if not text or not text.strip():
+        return []
+
+    try:
+        from nltk import ne_chunk
+
+        tokens = word_tokenize(text)
+        tagged = pos_tag(tokens)
+        tree = ne_chunk(tagged)
+
+        entities = []
+        current_pos = 0
+
+        for subtree in tree:
+            if hasattr(subtree, 'label'):
+                # This is a named entity
+                entity_text = ' '.join(word for word, tag in subtree)
+                label = subtree.label()
+
+                # Find position in original text
+                start = text.find(entity_text, current_pos)
+                if start == -1:
+                    # Try case-insensitive search
+                    start = text.lower().find(entity_text.lower(), current_pos)
+                if start != -1:
+                    end = start + len(entity_text)
+                    current_pos = end
+                else:
+                    start = current_pos
+                    end = current_pos + len(entity_text)
+
+                entities.append(ExtractedEntity(
+                    text=entity_text,
+                    label=label,
+                    start=start,
+                    end=end,
+                ))
+
+        return entities
+
+    except Exception:
+        return []
+
+
+def extract_entities_by_type(text: str) -> dict[str, list[str]]:
+    """Extract named entities grouped by type.
+
+    Args:
+        text: Input text to analyze.
+
+    Returns:
+        Dict mapping entity types to lists of entity texts.
+        Example: {"PERSON": ["John Smith"], "GPE": ["New York", "France"]}
+    """
+    entities = extract_entities(text)
+    by_type: dict[str, list[str]] = {}
+
+    for entity in entities:
+        if entity.label not in by_type:
+            by_type[entity.label] = []
+        if entity.text not in by_type[entity.label]:
+            by_type[entity.label].append(entity.text)
+
+    return by_type
+
+
+def get_people(text: str) -> list[str]:
+    """Extract person names from text.
+
+    Args:
+        text: Input text to analyze.
+
+    Returns:
+        List of person names found.
+    """
+    entities = extract_entities(text)
+    return [e.text for e in entities if e.label == 'PERSON']
+
+
+def get_places(text: str) -> list[str]:
+    """Extract place names from text.
+
+    Args:
+        text: Input text to analyze.
+
+    Returns:
+        List of place names found (GPE and FACILITY entities).
+    """
+    entities = extract_entities(text)
+    return [e.text for e in entities if e.label in ('GPE', 'FACILITY', 'GSP')]
+
+
+def get_organizations(text: str) -> list[str]:
+    """Extract organization names from text.
+
+    Args:
+        text: Input text to analyze.
+
+    Returns:
+        List of organization names found.
+    """
+    entities = extract_entities(text)
+    return [e.text for e in entities if e.label == 'ORGANIZATION']

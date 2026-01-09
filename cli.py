@@ -8,7 +8,7 @@ from pathlib import Path
 from engram.config import EngramConfig, EvictionPolicy
 from engram.core import Engram, SessionLimitExceeded, SessionNotFound
 from engram.models import Tier
-from engram import persistence
+from engram import metrics, persistence, sessions
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -234,7 +234,7 @@ def load_engram_instance(store_path: str, capacity: int, eviction: str = "fifo")
 
 def save_engram(engram: Engram, store_path: str) -> None:
     """Save engram to file."""
-    engram.save(store_path)
+    persistence.save(engram, store_path)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -346,7 +346,7 @@ def cmd_session(args: argparse.Namespace) -> int:
 
     if args.session_command == "create":
         try:
-            session_id = engram.create_session(session_id=args.id)
+            session_id = sessions.create_session(engram,session_id=args.id)
             print(f"Created session: {session_id}")
             modified = True
         except SessionLimitExceeded as e:
@@ -364,7 +364,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             print("No sessions.")
 
     elif args.session_command == "get":
-        session = engram.get_session(args.id, create_if_missing=False)
+        session = sessions.get_session(engram,args.id, create_if_missing=False)
         if session:
             print(f"Session: {session.session_id}")
             print(f"Created: {session.created_at.isoformat()}")
@@ -389,7 +389,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "delete":
-        if engram.delete_session(args.id):
+        if sessions.delete_session(engram,args.id):
             print(f"Deleted session: {args.id}")
             modified = True
         else:
@@ -404,7 +404,7 @@ def cmd_session(args: argparse.Namespace) -> int:
         modified = count > 0
 
     elif args.session_command == "set":
-        session = engram.get_session(args.id, create_if_missing=False)
+        session = sessions.get_session(engram,args.id, create_if_missing=False)
         if session:
             session.set_predicate(args.name, args.value)
             print(f"Set {args.name}={args.value} for session {args.id}")
@@ -414,7 +414,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "topic":
-        session = engram.get_session(args.id, create_if_missing=False)
+        session = sessions.get_session(engram,args.id, create_if_missing=False)
         if session:
             session.set_predicate("topic", args.topic)
             print(f"Set topic={args.topic} for session {args.id}")
@@ -436,7 +436,7 @@ def cmd_session(args: argparse.Namespace) -> int:
 def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
     engram = load_engram_instance(args.store, args.capacity, args.eviction)
-    metrics = engram.get_metrics()
+    metrics = metrics.get_metrics(engram)
 
     print("ENGRAM Metrics")
     print("-" * 40)
@@ -535,7 +535,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     statements = []
-    for stmt in engram._statements:
+    for stmt in engram.statements:
         if args.static_only and stmt.tier != Tier.STATIC:
             continue
         if args.dynamic_only and stmt.tier != Tier.DYNAMIC:
@@ -578,10 +578,10 @@ class InteractiveChat:
     ):
         self.engram = engram
         self.debug_mode = False
-        self.session_id = session_id or engram.create_session()
+        self.session_id = session_id or sessions.create_session(engram,)
 
         # Ensure session exists
-        self.session = engram.get_session(self.session_id, create_if_missing=True)
+        self.session = sessions.get_session(engram,self.session_id, create_if_missing=True)
 
         # Note: Graph support would require extending core.py to accept graph callbacks
         if enable_graph:
@@ -638,26 +638,26 @@ class InteractiveChat:
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
 
         elif cmd == "metrics":
-            metrics = self.engram.get_metrics()
-            print(f"Patterns: {len(self.engram._pattern_matcher)}")
+            metrics = self.metrics.get_metrics(engram)
+            print(f"Patterns: {len(self.engram.pattern_matcher)}")
             print(f"Statements: {metrics['statement_count']}")
             print(f"Sessions: {metrics['session_count']}")
             print(f"Hit rate: {metrics['hit_rate']:.1%}")
 
         elif cmd == "topic" and len(parts) >= 2:
-            session = self.engram.get_session(self.session_id)
+            session = sessions.get_session(self.engram,self.session_id)
             if session:
                 session.set_predicate("topic", parts[1])
                 print(f"Topic set to: {parts[1]}")
 
         elif cmd == "set" and len(parts) >= 3:
-            session = self.engram.get_session(self.session_id)
+            session = sessions.get_session(self.engram,self.session_id)
             if session:
                 session.set_predicate(parts[1], parts[2])
                 print(f"Set {parts[1]} = {parts[2]}")
 
         elif cmd == "get" and len(parts) >= 2:
-            session = self.engram.get_session(self.session_id)
+            session = sessions.get_session(self.engram,self.session_id)
             if session:
                 value = session.get_predicate(parts[1], "(not set)")
                 print(f"{parts[1]} = {value}")

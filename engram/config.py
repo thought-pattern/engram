@@ -147,6 +147,14 @@ class EngramConfig:
     protect_static: bool = True  # Never evict STATIC tier
     min_hit_rate: float = 0.0  # Protect categories above this hit rate
 
+    # Matching enhancements
+    use_stemming: bool = True  # Enable stemmed matching (run matches running)
+    use_synonyms: bool = True  # Enable synonym expansion at query time
+    max_synonyms_per_word: int = 3  # Maximum synonyms to consider per word
+
+    # Fallback response when no pattern matches
+    fallback_response: str = ""  # Empty means return None on no match
+
     # Knowledge Graph settings
     graph: object = None
 
