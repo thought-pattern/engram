@@ -1,6 +1,7 @@
 """Text processing for ENGRAM."""
 
 import re
+from functools import lru_cache
 
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag
@@ -15,6 +16,7 @@ CONTENT_POS_TAGS = {
 }
 
 
+@lru_cache(maxsize=4096)
 def normalize(text: str) -> str:
     """Normalize text for consistent processing.
 
@@ -139,34 +141,25 @@ def expand_query(query: str, previous_response: str) -> str:
     return f"{query} {previous_response}"
 
 
-# Lazy-loaded stemmer and lemmatizer instances
-_stemmer = None
-_lemmatizer = None
-
-
+@lru_cache(maxsize=1)
 def get_stemmer() -> PorterStemmer:
     """Get or create the module-level Porter stemmer."""
-    global _stemmer
-    if _stemmer is None:
-        _stemmer = PorterStemmer()
-    return _stemmer
+    return PorterStemmer()
 
 
+@lru_cache(maxsize=1)
 def get_lemmatizer() -> WordNetLemmatizer:
     """Get or create the module-level WordNet lemmatizer."""
-    global _lemmatizer
-    if _lemmatizer is None:
-        _lemmatizer = WordNetLemmatizer()
-        # Ensure wordnet data is available
-        try:
-            import nltk
-            nltk.data.find('corpora/wordnet')
-        except LookupError:
-            import nltk
-            nltk.download('wordnet', quiet=True)
-    return _lemmatizer
+    import nltk
+    # Ensure wordnet data is available
+    try:
+        nltk.data.find('corpora/wordnet')
+    except LookupError:
+        nltk.download('wordnet', quiet=True)
+    return WordNetLemmatizer()
 
 
+@lru_cache(maxsize=8192)
 def stem_word(word: str) -> str:
     """Apply Porter stemming to a word.
 
@@ -182,6 +175,7 @@ def stem_word(word: str) -> str:
     return get_stemmer().stem(word.lower())
 
 
+@lru_cache(maxsize=8192)
 def lemmatize_word(word: str, pos: str = 'n') -> str:
     """Apply WordNet lemmatization to a word.
 
@@ -198,6 +192,7 @@ def lemmatize_word(word: str, pos: str = 'n') -> str:
     return get_lemmatizer().lemmatize(word.lower(), pos=pos)
 
 
+@lru_cache(maxsize=4096)
 def stem_text(text: str) -> str:
     """Apply Porter stemming to all words in text.
 
@@ -212,6 +207,7 @@ def stem_text(text: str) -> str:
     return ' '.join(stemmer.stem(w) for w in words)
 
 
+@lru_cache(maxsize=4096)
 def normalize_with_stemming(text: str) -> str:
     """Normalize text and apply stemming for flexible matching.
 

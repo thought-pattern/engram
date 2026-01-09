@@ -1,44 +1,29 @@
 """Core ENGRAM implementation."""
 
-import json
 import threading
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
 
-from engram.config import DEFAULT_STOPWORDS, EngramConfig, EvictionPolicy, SessionOverflow
-from engram.eviction import EvictionMixin
-from engram.metrics import MetricsMixin
+from engram.config import EngramConfig
+from engram import eviction as eviction_mod
+from engram import sessions as sessions_mod
 from engram.models import KeywordEntry, QueryResult, Session, Statement, Tier
 from engram.nlp import ExtractedFact, extract_fact
-from engram.pattern import PatternMatcher, match_pattern
-from engram.persistence import PersistenceMixin, load_engram, load_engram_from_dict, load_engram_json
-from engram.sessions import SessionLimitExceeded, SessionMixin, SessionNotFound
+from engram.pattern import PatternMatcher
 from engram.scoring import score_statement
-from engram.substitutions import (
-    DEFAULT_CONTRACTIONS,
-    DEFAULT_GENDER,
-    DEFAULT_PERSON,
-    DEFAULT_PERSON2,
-    SubstitutionMaps,
-    expand_contractions,
-    split_sentences,
-)
+from engram.substitutions import SubstitutionMaps, expand_contractions, split_sentences
 from engram.template import TemplateContext, TemplateProcessor
 from engram.text import expand_query, extract_keywords, normalize
 
+# Re-export for backward compatibility
+from engram.sessions import SessionLimitExceeded, SessionNotFound
 
-class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
+
+class Engram:
     """Keyword-indexed statement store with hit-rate tracking.
 
     ENGRAM stores flat statements retrieved by keyword overlap and scored by
     relevance signals. It supports multiple concurrent sessions sharing a
     common statement pool.
-
-    Inherits metrics and coverage analysis methods from MetricsMixin.
     """
-
-    PERSISTENCE_VERSION = 1
 
     def __init__(self, config=None) -> None:
         """Initialize ENGRAM instance.
@@ -49,44 +34,44 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         self.config = config or EngramConfig()
 
         # Core data structures
-        self._statements: list[Statement] = []
-        self._statement_index: dict[str, int] = {}  # id -> list index
-        self._keywords: dict[str, KeywordEntry] = {}
-        self._sessions: dict[str, Session] = {}
-        self._pattern_to_statement: dict[str, str] = {}  # pattern -> statement_id
+        self.statements: list[Statement] = []
+        self.statement_index: dict[str, int] = {}  # id -> list index
+        self.keywords: dict[str, KeywordEntry] = {}
+        self.sessions: dict[str, Session] = {}
+        self.pattern_to_statement: dict[str, str] = {}  # pattern -> statement_id
 
-        # Bot properties and data
-        self._bot_properties: dict[str, str] = {
+        # Bot properties and data (public for direct access)
+        self.bot_properties: dict[str, str] = {
             "name": "ENGRAM",
             "version": "0.1.6",
         }
-        self._sets: dict[str, list[str]] = {}
-        self._maps: dict[str, dict[str, str]] = {}
+        self.sets: dict[str, list[str]] = {}
+        self.maps: dict[str, dict[str, str]] = {}
 
         # Pattern matcher with access to sets and bot properties
-        self._pattern_matcher = PatternMatcher(
-            sets=self._sets,
-            bot_properties=self._bot_properties,
+        self.pattern_matcher = PatternMatcher(
+            sets=self.sets,
+            bot_properties=self.bot_properties,
         )
-        self._substitution_maps = SubstitutionMaps()
-        self._default_predicates: dict[str, str] = {}
+        self.substitution_maps = SubstitutionMaps()
+        self.default_predicates: dict[str, str] = {}
 
         # Template processor
-        self._template_processor = TemplateProcessor(
+        self.template_processor = TemplateProcessor(
             srai_limit=self.config.srai_depth_limit
             if hasattr(self.config, "srai_depth_limit")
             else 100
         )
 
         # Concurrency control
-        self._statement_lock = threading.RLock()
-        self._keyword_lock = threading.RLock()
-        self._session_lock = threading.RLock()
+        self.statement_lock = threading.RLock()
+        self.keyword_lock = threading.RLock()
+        self.session_lock = threading.RLock()
 
         # Metrics
-        self._query_count = 0
-        self._hit_count = 0
-        self._eviction_count = 0
+        self.query_count = 0
+        self.hit_count = 0
+        self.eviction_count = 0
 
     # =========================================================================
     # Statement Operations
@@ -138,29 +123,29 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
 
         # Add to pattern matcher if pattern provided
         if pattern:
-            self._pattern_matcher.add_pattern(
+            self.pattern_matcher.add_pattern(
                 pattern, text, that=that or "", topic=topic or ""
             )
-            self._pattern_to_statement[pattern] = statement.id
+            self.pattern_to_statement[pattern] = statement.id
 
-        with self._statement_lock:
+        with self.statement_lock:
             # Check capacity for DYNAMIC statements
             if tier == Tier.DYNAMIC:
-                dynamic_count = sum(1 for s in self._statements if s.tier == Tier.DYNAMIC)
+                dynamic_count = sum(1 for s in self.statements if s.tier == Tier.DYNAMIC)
                 while dynamic_count >= self.config.capacity:
-                    self._evict_oldest_dynamic()
+                    eviction_mod.evict_dynamic(self)
                     dynamic_count -= 1
 
             # Add statement
-            self._statement_index[statement.id] = len(self._statements)
-            self._statements.append(statement)
+            self.statement_index[statement.id] = len(self.statements)
+            self.statements.append(statement)
 
         # Index keywords
-        with self._keyword_lock:
+        with self.keyword_lock:
             for kw in keywords:
-                if kw not in self._keywords:
-                    self._keywords[kw] = KeywordEntry(keyword=kw)
-                self._keywords[kw].add_statement(statement.id)
+                if kw not in self.keywords:
+                    self.keywords[kw] = KeywordEntry(keyword=kw)
+                self.keywords[kw].statement_ids.add(statement.id)
 
         return statement.id
 
@@ -180,13 +165,13 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         Returns:
             QueryResult with matches and extracted keywords.
         """
-        self._query_count += 1
+        self.query_count += 1
 
         # Get session context if provided
         expanded_text = text
         if session_id:
-            with self._session_lock:
-                session = self._sessions.get(session_id)
+            with self.session_lock:
+                session = self.sessions.get(session_id)
                 if session:
                     session.touch()
                     expanded_text = expand_query(text, session.previous_response)
@@ -199,36 +184,36 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
             return QueryResult(matches=[], keywords=[])
 
         # Increment query counts
-        with self._keyword_lock:
+        with self.keyword_lock:
             for kw in keywords:
-                if kw in self._keywords:
-                    self._keywords[kw].increment_query()
+                if kw in self.keywords:
+                    self.keywords[kw].query_count += 1
 
         # Find candidates
         candidate_ids: set[str] = set()
-        with self._keyword_lock:
+        with self.keyword_lock:
             for kw in keywords:
-                if kw in self._keywords:
-                    candidate_ids.update(self._keywords[kw].statement_ids)
+                if kw in self.keywords:
+                    candidate_ids.update(self.keywords[kw].statement_ids)
 
         if not candidate_ids:
             return QueryResult(matches=[], keywords=keywords)
 
         # Score candidates
         scored: list[tuple[Statement, float]] = []
-        with self._statement_lock:
-            total = len(self._statements)
+        with self.statement_lock:
+            total = len(self.statements)
             for stmt_id in candidate_ids:
-                idx = self._statement_index.get(stmt_id)
+                idx = self.statement_index.get(stmt_id)
                 if idx is not None:
-                    stmt = self._statements[idx]
-                    with self._keyword_lock:
+                    stmt = self.statements[idx]
+                    with self.keyword_lock:
                         score = score_statement(
                             statement=stmt,
                             statement_index=idx,
                             total_statements=total,
                             query_keywords=keywords,
-                            keyword_index=self._keywords,
+                            keyword_index=self.keywords,
                             weight_base=self.config.weight_base,
                             weight_recency=self.config.weight_recency,
                             weight_hit_rate=self.config.weight_hit_rate,
@@ -260,13 +245,13 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
             Tuple of (matched_statement, captured_wildcards, response_text) or None.
             For multi-sentence input, returns first matched statement with combined response.
         """
-        self._query_count += 1
+        self.query_count += 1
 
         # Apply contractions expansion if enabled
         processed_text = text
         if self.config.expand_contractions:
             processed_text = expand_contractions(
-                text, self._substitution_maps.contractions
+                text, self.substitution_maps.contractions
             )
 
         # Split into sentences
@@ -283,10 +268,10 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         that = ""
         topic = ""
         if session_id:
-            session = self.get_session(session_id, create_if_missing=True)
+            session = sessions_mod.get_session(self, session_id, create_if_missing=True)
             if session:
-                that = session.that  # Bot's last response (normalized)
-                topic = session.topic  # Current topic
+                that = session.previous_response  # Bot's last response (normalized)
+                topic = session.predicates.get("topic", "")  # Current topic
 
         # Process each sentence
         responses: list[str] = []
@@ -294,7 +279,7 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         first_captured: list[str] = []
 
         for sentence in sentences:
-            result = self._pattern_matcher.match(sentence, that=that, topic=topic)
+            result = self.pattern_matcher.match(sentence, that=that, topic=topic)
             if result:
                 response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = result
 
@@ -306,8 +291,8 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
                     learned = self.learn_fact(fact)
 
                 # Find the statement with this pattern, topic, and that
-                with self._statement_lock:
-                    for stmt in self._statements:
+                with self.statement_lock:
+                    for stmt in self.statements:
                         if stmt.pattern == matched_pattern and stmt.topic == matched_topic and stmt.that == matched_that:
                             # If we learned a fact and matched catch-all, acknowledge instead
                             if learned and matched_pattern == "*":
@@ -370,12 +355,12 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
             topicstars=topicstars or [],
             input_text=input_text,
             request_text=input_text,
-            bot=self._bot_properties,
-            maps=self._maps,
-            person_subs=self._substitution_maps.person,
-            person2_subs=self._substitution_maps.person2,
-            gender_subs=self._substitution_maps.gender,
-            category_count=len(self._statements),
+            bot=self.bot_properties,
+            maps=self.maps,
+            person_subs=self.substitution_maps.person,
+            person2_subs=self.substitution_maps.person2,
+            gender_subs=self.substitution_maps.gender,
+            category_count=len(self.statements),
         )
 
         # Add session context
@@ -388,11 +373,11 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
 
         # Set redirect callback
         def redirect_fn(pattern: str) -> str:
-            result = self._pattern_matcher.match(pattern)
+            result = self.pattern_matcher.match(pattern)
             if result:
                 response_text, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that = result
-                with self._statement_lock:
-                    for s in self._statements:
+                with self.statement_lock:
+                    for s in self.statements:
                         if s.pattern == matched_pattern and s.topic == matched_topic and s.that == matched_that:
                             # Create new context for redirect
                             new_context = TemplateContext(
@@ -416,7 +401,7 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
                                 learn_fn=context.learn_fn,
                             )
                             template_to_process = s.template if s.template is not None else s.text
-                            return self._template_processor.process(
+                            return self.template_processor.process(
                                 template_to_process, new_context
                             )
             return ""
@@ -446,7 +431,7 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
 
         # Process template (use response text if no explicit template)
         template_to_process = stmt.template if stmt.template is not None else stmt.text
-        response = self._template_processor.process(template_to_process, context)
+        response = self.template_processor.process(template_to_process, context)
 
         # Update session predicates from context
         if session:
@@ -460,11 +445,11 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         Args:
             keywords: Query keywords that led to a hit.
         """
-        self._hit_count += 1
-        with self._keyword_lock:
+        self.hit_count += 1
+        with self.keyword_lock:
             for kw in keywords:
-                if kw in self._keywords:
-                    self._keywords[kw].increment_hit()
+                if kw in self.keywords:
+                    self.keywords[kw].hit_count += 1
 
     def learn_fact(self, fact: ExtractedFact) -> bool:
         """Learn a fact extracted from natural language.
@@ -480,8 +465,8 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         """
         # Check if we already have a pattern for the primary subject
         subject_pattern = fact.subject_upper
-        with self._statement_lock:
-            for stmt in self._statements:
+        with self.statement_lock:
+            for stmt in self.statements:
                 if stmt.pattern == subject_pattern:
                     # Already know this - don't overwrite
                     return False
@@ -501,8 +486,8 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         for pattern in fact.query_patterns[1:]:  # Skip first (already stored)
             # Check if pattern already exists
             exists = False
-            with self._statement_lock:
-                for stmt in self._statements:
+            with self.statement_lock:
+                for stmt in self.statements:
                     if stmt.pattern == pattern:
                         exists = True
                         break
@@ -524,54 +509,11 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
         Returns:
             Statement if found, None otherwise.
         """
-        with self._statement_lock:
-            idx = self._statement_index.get(statement_id)
+        with self.statement_lock:
+            idx = self.statement_index.get(statement_id)
             if idx is not None:
-                return self._statements[idx]
+                return self.statements[idx]
         return None
-
-    # =========================================================================
-    # Persistence (classmethods - delegate to module functions)
-    # =========================================================================
-
-    @classmethod
-    def load(cls, path: str, config=None) -> "Engram":
-        """Load state from JSON file.
-
-        Args:
-            path: File path to read.
-            config: Optional configuration override.
-
-        Returns:
-            Engram instance.
-        """
-        return load_engram(path, config, cls)
-
-    @classmethod
-    def load_json(cls, json_str: str, config=None) -> "Engram":
-        """Load state from JSON string.
-
-        Args:
-            json_str: JSON string.
-            config: Optional configuration override.
-
-        Returns:
-            Engram instance.
-        """
-        return load_engram_json(json_str, config, cls)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any], config=None) -> "Engram":
-        """Deserialize state from dictionary.
-
-        Args:
-            data: Dictionary containing serialized state.
-            config: Optional configuration override.
-
-        Returns:
-            Engram instance.
-        """
-        return load_engram_from_dict(data, config, cls)
 
     # =========================================================================
     # Initialization Patterns
@@ -615,84 +557,12 @@ class Engram(MetricsMixin, SessionMixin, PersistenceMixin, EvictionMixin):
             instance.load_corpus(static_corpus, tier=Tier.STATIC)
 
         # Copy parent's DYNAMIC statements
-        with parent._statement_lock:
-            for stmt in parent._statements:
+        with parent.statement_lock:
+            for stmt in parent.statements:
                 if stmt.tier == Tier.DYNAMIC:
                     instance.store(stmt.text, tier=Tier.DYNAMIC)
 
         # Fresh session registry (no inheritance)
         return instance
 
-    # =========================================================================
-    # Sets and Bot Properties
-    # =========================================================================
 
-    def add_set(self, name: str, words: list[str]) -> None:
-        """Add or update a named word set.
-
-        Args:
-            name: Set name (used in patterns as {set:name}).
-            words: List of words in the set.
-        """
-        self._sets[name] = words
-
-    def get_set(self, name: str) -> list[str]:
-        """Get a named word set.
-
-        Args:
-            name: Set name.
-
-        Returns:
-            List of words or None if not found.
-        """
-        return self._sets.get(name)
-
-    def remove_set(self, name: str) -> bool:
-        """Remove a named word set.
-
-        Args:
-            name: Set name to remove.
-
-        Returns:
-            True if removed, False if not found.
-        """
-        if name in self._sets:
-            del self._sets[name]
-            return True
-        return False
-
-    def list_sets(self) -> list[str]:
-        """List all set names.
-
-        Returns:
-            List of set names.
-        """
-        return list(self._sets.keys())
-
-    def set_bot_property(self, name: str, value: str) -> None:
-        """Set a bot property.
-
-        Args:
-            name: Property name (used in patterns as {bot:name}).
-            value: Property value.
-        """
-        self._bot_properties[name] = value
-
-    def get_bot_property(self, name: str) -> str:
-        """Get a bot property.
-
-        Args:
-            name: Property name.
-
-        Returns:
-            Property value or None if not found.
-        """
-        return self._bot_properties.get(name)
-
-    def get_bot_properties(self) -> dict[str, str]:
-        """Get all bot properties.
-
-        Returns:
-            Dictionary of bot properties.
-        """
-        return self._bot_properties.copy()

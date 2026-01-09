@@ -1,7 +1,7 @@
 """Tests for NLP fact extraction."""
 
 import pytest
-from engram.nlp import ExtractedFact, FactExtractor, extract_fact
+from engram.nlp import ExtractedFact, extract_fact
 
 
 class TestFactExtractor:

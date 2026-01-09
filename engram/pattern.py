@@ -27,6 +27,8 @@ Stemming support:
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+
 from engram.text import normalize, stem_text
 
 
@@ -42,6 +44,7 @@ class MatchResult:
     topicstars: list[str] = field(default_factory=list)  # Captures from topic pattern
 
 
+@lru_cache(maxsize=2048)
 def normalize_pattern(pattern: str) -> str:
     """Normalize pattern while preserving wildcards, set references, and $ prefix.
 
@@ -332,22 +335,6 @@ class PatternMatcher:
         self._bot_properties = bot_properties if bot_properties is not None else {}
         self._use_stemming = use_stemming
 
-    def set_sets(self, sets: dict[str, list[str]]) -> None:
-        """Update the sets dictionary.
-
-        Args:
-            sets: Dictionary of named word sets.
-        """
-        self._sets = sets
-
-    def set_bot_properties(self, bot_properties: dict[str, str]) -> None:
-        """Update the bot properties dictionary.
-
-        Args:
-            bot_properties: Dictionary of bot properties.
-        """
-        self._bot_properties = bot_properties
-
     def add_pattern(
         self,
         pattern: str,
@@ -398,20 +385,24 @@ class PatternMatcher:
         self._patterns.append(entry)
 
         # Index by first word for faster lookup
-        normalized = normalize(pattern)
+        normalized = normalize_pattern(pattern)
         words = normalized.split()
         if words:
             first = words[0]
-            if first in ("*", "_", "#", "^"):
+            # Strip $ prefix for indexing ($ is priority operator, not part of the word)
+            index_word = first.lstrip("$")
+            # Treat wildcards and variable references as "any first word"
+            # since they can match multiple possible inputs
+            if first in ("*", "_", "#", "^") or first.startswith("{set:") or first.startswith("{bot:"):
                 self._wildcard_patterns.append(idx)
             else:
-                if first not in self._first_word_index:
-                    self._first_word_index[first] = []
-                self._first_word_index[first].append(idx)
+                if index_word not in self._first_word_index:
+                    self._first_word_index[index_word] = []
+                self._first_word_index[index_word].append(idx)
 
                 # Also index by stemmed first word for flexible matching
                 if self._use_stemming:
-                    stemmed_first = stem_text(first)
+                    stemmed_first = stem_text(index_word)
                     if stemmed_first not in self._stemmed_first_word_index:
                         self._stemmed_first_word_index[stemmed_first] = []
                     if idx not in self._stemmed_first_word_index[stemmed_first]:
@@ -443,21 +434,60 @@ class PatternMatcher:
         that_normalized = normalize(that) if that else ""
         topic_normalized = normalize(topic) if topic else ""
 
-        # Try exact matching first
-        result = self._match_internal(normalized, that_normalized, topic_normalized)
+        # Try exact matching first using the first-word index
+        first_word = words[0]
+        result = self._match_internal(
+            normalized, that_normalized, topic_normalized,
+            first_word, use_stemmed_index=False
+        )
 
         # If no match and stemming enabled, try stemmed matching
         if result is None and self._use_stemming:
             stemmed = stem_text(normalized)
-            result = self._match_internal(stemmed, that_normalized, topic_normalized)
+            stemmed_first = stem_text(first_word)
+            result = self._match_internal(
+                stemmed, that_normalized, topic_normalized,
+                stemmed_first, use_stemmed_index=True
+            )
 
         return result
+
+    def _get_candidate_indices(
+        self,
+        first_word: str,
+        use_stemmed_index: bool,
+    ) -> list[int]:
+        """Get pattern indices that could match based on first word.
+
+        Args:
+            first_word: First word of input text.
+            use_stemmed_index: If True, use stemmed first-word index.
+
+        Returns:
+            List of pattern indices to check.
+        """
+        candidates: set[int] = set()
+
+        # Always include wildcard patterns (they can match any first word)
+        candidates.update(self._wildcard_patterns)
+
+        # Add patterns matching the first word
+        if use_stemmed_index:
+            if first_word in self._stemmed_first_word_index:
+                candidates.update(self._stemmed_first_word_index[first_word])
+        else:
+            if first_word in self._first_word_index:
+                candidates.update(self._first_word_index[first_word])
+
+        return sorted(candidates)
 
     def _match_internal(
         self,
         normalized: str,
         that_normalized: str,
         topic_normalized: str,
+        first_word: str,
+        use_stemmed_index: bool,
     ) -> tuple[str, list[str], list[str], list[str], str, str, str]:
         """Internal matching logic.
 
@@ -465,14 +495,18 @@ class PatternMatcher:
             normalized: Normalized input text.
             that_normalized: Normalized previous response.
             topic_normalized: Normalized topic.
+            first_word: First word of input (for index lookup).
+            use_stemmed_index: If True, use stemmed first-word index.
 
         Returns:
             Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
         """
-        # Check all patterns
+        # Get candidate patterns using first-word index
+        candidate_indices = self._get_candidate_indices(first_word, use_stemmed_index)
         best = None
 
-        for entry in self._patterns:
+        for idx in candidate_indices:
+            entry = self._patterns[idx]
             # First check if pattern matches input
             match = entry.regex.match(normalized)
             if not match:

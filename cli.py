@@ -8,6 +8,7 @@ from pathlib import Path
 from engram.config import EngramConfig, EvictionPolicy
 from engram.core import Engram, SessionLimitExceeded, SessionNotFound
 from engram.models import Tier
+from engram import persistence
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -220,11 +221,11 @@ def get_eviction_policy(name: str) -> EvictionPolicy:
     }[name]
 
 
-def load_engram(store_path: str, capacity: int, eviction: str = "fifo") -> Engram:
+def load_engram_instance(store_path: str, capacity: int, eviction: str = "fifo") -> Engram:
     """Load engram from file or create new."""
     path = Path(store_path)
     if path.exists():
-        return Engram.load(path)
+        return persistence.load_engram(path)
     return Engram(config=EngramConfig(
         capacity=capacity,
         eviction_policy=get_eviction_policy(eviction),
@@ -255,7 +256,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_store(args: argparse.Namespace) -> int:
     """Store a statement."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
@@ -276,7 +277,7 @@ def cmd_store(args: argparse.Namespace) -> int:
 
 def cmd_load(args: argparse.Namespace) -> int:
     """Load statements from JSON file."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     path = Path(args.file)
@@ -317,7 +318,7 @@ def cmd_load(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     """Query for statements."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     result = engram.query(args.text, session_id=args.session, limit=args.limit)
 
@@ -340,7 +341,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_session(args: argparse.Namespace) -> int:
     """Session management commands."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
     modified = False
 
     if args.session_command == "create":
@@ -368,7 +369,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             print(f"Session: {session.session_id}")
             print(f"Created: {session.created_at.isoformat()}")
             print(f"Last active: {session.last_active.isoformat()}")
-            print(f"Topic: {session.topic or '(none)'}")
+            print(f"Topic: {session.predicates.get('topic', '') or '(none)'}")
             print(f"That: {session.previous_response or '(empty)'}")
             if session.predicates:
                 print(f"Predicates: {json.dumps(session.predicates)}")
@@ -434,7 +435,7 @@ def cmd_session(args: argparse.Namespace) -> int:
 
 def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
     metrics = engram.get_metrics()
 
     print("ENGRAM Metrics")
@@ -455,7 +456,7 @@ def cmd_metrics(args: argparse.Namespace) -> int:
 
 def cmd_keywords(args: argparse.Namespace) -> int:
     """Keyword analysis."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     if args.zero_hit:
         results = engram.get_zero_hit_keywords(min_queries=args.min_queries)
@@ -484,7 +485,7 @@ def cmd_keywords(args: argparse.Namespace) -> int:
 
 def cmd_coverage(args: argparse.Namespace) -> int:
     """Coverage analysis."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     if args.report:
         report = engram.get_coverage_report()
@@ -531,7 +532,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export statements."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     statements = []
     for stmt in engram._statements:
@@ -682,7 +683,7 @@ class InteractiveChat:
 
 def cmd_interactive(args: argparse.Namespace) -> int:
     """Interactive AIML-style chat."""
-    engram = load_engram(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     chat = InteractiveChat(
         engram,

@@ -4,8 +4,13 @@ Provides an interface for connecting to graph databases (Memgraph, Neo4j)
 for knowledge storage and retrieval.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from neo4j import Driver
 
 
 @dataclass
@@ -13,7 +18,7 @@ class GraphResult:
     """Result from a graph query."""
 
     success: bool
-    records: list[dict[str, Any]]
+    records: list[dict]
     error: object = None
 
     @property
@@ -22,22 +27,18 @@ class GraphResult:
         return len(self.records) == 0
 
     @property
-    def single(self) -> dict[str, Any]:
+    def single(self) -> dict:
         """Get single record or None."""
         return self.records[0] if self.records else None
 
 
-class GraphClient(Protocol):
-    """Protocol for graph database clients.
+class GraphClient:
+    """Base class for graph database clients.
 
-    Implement this protocol to connect ENGRAM to a graph database.
+    Implement this interface to connect ENGRAM to a graph database.
     """
 
-    def execute(
-        self,
-        query: str,
-        params=None,
-    ) -> GraphResult:
+    def execute(self, query: str, params: dict | None = None) -> GraphResult:
         """Execute a Cypher query.
 
         Args:
@@ -47,14 +48,14 @@ class GraphClient(Protocol):
         Returns:
             GraphResult with success status and records.
         """
-        ...
+        raise NotImplementedError
 
     def close(self) -> None:
         """Close the connection."""
-        ...
+        raise NotImplementedError
 
 
-class MockGraphClient:
+class MockGraphClient(GraphClient):
     """Mock graph client for testing.
 
     Stores data in memory using a simple dict structure.
@@ -62,13 +63,13 @@ class MockGraphClient:
 
     def __init__(self) -> None:
         """Initialize mock client."""
-        self._nodes: dict[str, dict[str, Any]] = {}  # name -> properties
+        self._nodes: dict[str, dict] = {}  # name -> properties
         self._relationships: list[tuple[str, str, str]] = []  # (from, type, to)
 
     def execute(
         self,
         query: str,
-        params=None,
+        params: dict | None = None,
     ) -> GraphResult:
         """Execute a mock query.
 
@@ -151,6 +152,57 @@ class MockGraphClient:
         pass
 
 
+class Neo4jClient(GraphClient):
+    """Neo4j/Memgraph client implementation."""
+
+    def __init__(
+        self,
+        uri: str,
+        username: str,
+        password: str,
+        database: str,
+    ) -> None:
+        """Initialize connection to Neo4j or Memgraph.
+
+        Args:
+            uri: Connection URI (e.g., bolt://localhost:7687).
+            username: Database username.
+            password: Database password.
+            database: Database name (optional for some backends).
+        """
+        from neo4j import GraphDatabase
+
+        auth = (username, password) if username else None
+        self._driver: Driver = GraphDatabase.driver(uri, auth=auth)
+        self._database = database or None
+
+    def execute(
+        self,
+        query: str,
+        params: dict | None = None,
+    ) -> GraphResult:
+        """Execute a Cypher query.
+
+        Args:
+            query: Cypher query string.
+            params: Query parameters.
+
+        Returns:
+            GraphResult with success status and records.
+        """
+        try:
+            with self._driver.session(database=self._database) as session:
+                result = session.run(query, params or {})
+                records = [dict(record) for record in result]
+                return GraphResult(success=True, records=records)
+        except Exception as e:
+            return GraphResult(success=False, records=[], error=str(e))
+
+    def close(self) -> None:
+        """Close the database connection."""
+        self._driver.close()
+
+
 def create_graph_client(
     driver: str,
     uri: str,
@@ -179,40 +231,7 @@ def create_graph_client(
 
     if driver in ("memgraph", "neo4j"):
         try:
-            from neo4j import GraphDatabase
-
-            class Neo4jClient:
-                """Neo4j/Memgraph client implementation."""
-
-                def __init__(
-                    self,
-                    uri: str,
-                    username: str,
-                    password: str,
-                    database: str,
-                ) -> None:
-                    auth = (username, password) if username else None
-                    self._driver = GraphDatabase.driver(uri, auth=auth)
-                    self._database = database or None
-
-                def execute(
-                    self,
-                    query: str,
-                    params=None,
-                ) -> GraphResult:
-                    try:
-                        with self._driver.session(database=self._database) as session:
-                            result = session.run(query, params or {})
-                            records = [dict(record) for record in result]
-                            return GraphResult(success=True, records=records)
-                    except Exception as e:
-                        return GraphResult(success=False, records=[], error=str(e))
-
-                def close(self) -> None:
-                    self._driver.close()
-
             return Neo4jClient(uri, username, password, database)
-
         except ImportError:
             raise ImportError(
                 f"neo4j library required for {driver} driver. "

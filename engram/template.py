@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import random
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
 
 
 @dataclass
@@ -62,73 +62,58 @@ class TemplateContext:
     # Graph callback (set by processor for Knowledge Graph operations)
     graph_fn: object = None
 
-    @property
-    def topic(self) -> str:
-        """Get current topic from predicates."""
-        return self.predicates.get("topic", "")
 
-    @property
-    def that(self) -> str:
-        """Get most recent bot response."""
-        if self.that_history and self.that_history[0]:
-            return self.that_history[0][0]
-        return ""
+# Helper functions for 1-based index access (used by TemplateProcessor)
 
-    def get_star(self, index: int) -> str:
-        """Get star capture by 1-based index."""
-        if 1 <= index <= len(self.stars):
-            return self.stars[index - 1]
-        return ""
+def get_star(ctx: TemplateContext, index: int) -> str:
+    """Get star capture by 1-based index."""
+    if 1 <= index <= len(ctx.stars):
+        return ctx.stars[index - 1]
+    return ""
 
-    def get_thatstar(self, index: int) -> str:
-        """Get thatstar capture by 1-based index."""
-        if 1 <= index <= len(self.thatstars):
-            return self.thatstars[index - 1]
-        return ""
 
-    def get_topicstar(self, index: int) -> str:
-        """Get topicstar capture by 1-based index."""
-        if 1 <= index <= len(self.topicstars):
-            return self.topicstars[index - 1]
-        return ""
+def get_thatstar(ctx: TemplateContext, index: int) -> str:
+    """Get thatstar capture by 1-based index."""
+    if 1 <= index <= len(ctx.thatstars):
+        return ctx.thatstars[index - 1]
+    return ""
 
-    def get_predicate(self, name: str, default: str = "") -> str:
-        """Get predicate value with optional default."""
-        return self.predicates.get(name, default)
 
-    def set_predicate(self, name: str, value: str) -> None:
-        """Set predicate value."""
-        self.predicates[name] = value
+def get_topicstar(ctx: TemplateContext, index: int) -> str:
+    """Get topicstar capture by 1-based index."""
+    if 1 <= index <= len(ctx.topicstars):
+        return ctx.topicstars[index - 1]
+    return ""
 
-    def get_bot(self, name: str, default: str = "") -> str:
-        """Get bot property with optional default."""
-        return self.bot.get(name, default)
 
-    def get_map(self, map_name: str, key: str, default: str = "") -> str:
-        """Get value from named map."""
-        if map_name in self.maps:
-            return self.maps[map_name].get(key.lower(), default)
-        return default
+def get_map(ctx: TemplateContext, map_name: str, key: str, default: str = "") -> str:
+    """Get value from named map."""
+    if map_name in ctx.maps:
+        return ctx.maps[map_name].get(key.lower(), default)
+    return default
 
-    def get_input(self, index: int = 1) -> str:
-        """Get input from history (1-based, 1=most recent)."""
-        if 1 <= index <= len(self.input_history):
-            return self.input_history[index - 1]
-        return ""
 
-    def get_response(self, index: int = 1) -> str:
-        """Get response from history (1-based, 1=most recent)."""
-        if 1 <= index <= len(self.response_history):
-            return self.response_history[index - 1]
-        return ""
+def get_input(ctx: TemplateContext, index: int = 1) -> str:
+    """Get input from history (1-based, 1=most recent)."""
+    if 1 <= index <= len(ctx.input_history):
+        return ctx.input_history[index - 1]
+    return ""
 
-    def get_that(self, response_idx: int = 1, sentence_idx: int = 1) -> str:
-        """Get that by response and sentence index (1-based)."""
-        if 1 <= response_idx <= len(self.that_history):
-            sentences = self.that_history[response_idx - 1]
-            if 1 <= sentence_idx <= len(sentences):
-                return sentences[sentence_idx - 1]
-        return ""
+
+def get_response(ctx: TemplateContext, index: int = 1) -> str:
+    """Get response from history (1-based, 1=most recent)."""
+    if 1 <= index <= len(ctx.response_history):
+        return ctx.response_history[index - 1]
+    return ""
+
+
+def get_that(ctx: TemplateContext, response_idx: int = 1, sentence_idx: int = 1) -> str:
+    """Get that by response and sentence index (1-based)."""
+    if 1 <= response_idx <= len(ctx.that_history):
+        sentences = ctx.that_history[response_idx - 1]
+        if 1 <= sentence_idx <= len(sentences):
+            return sentences[sentence_idx - 1]
+    return ""
 
 
 class TemplateProcessor:
@@ -149,7 +134,7 @@ class TemplateProcessor:
 
     # Simple variable patterns
     SIMPLE_VARS = {
-        '{topic}': lambda ctx: ctx.topic,
+        '{topic}': lambda ctx: ctx.predicates.get("topic", ""),
         '{input}': lambda ctx: ctx.input_text,
         '{request}': lambda ctx: ctx.request_text,
         '{id}': lambda ctx: ctx.session_id,
@@ -173,7 +158,7 @@ class TemplateProcessor:
         self.srai_limit = srai_limit
         self._srai_depth = 0
 
-    def process(self, template: Any, context: TemplateContext) -> str:
+    def process(self, template, context: TemplateContext) -> str:
         """Process a template and return the output string.
 
         Args:
@@ -281,7 +266,7 @@ class TemplateProcessor:
         """Process conditional template."""
         # Support both "var" and "name" for variable name
         var_name = condition.get("var", condition.get("name", ""))
-        var_value = context.get_predicate(var_name)
+        var_value = context.predicates.get(var_name, "")
 
         # Existence check
         if "exists" in condition or "missing" in condition:
@@ -361,7 +346,7 @@ class TemplateProcessor:
         value = set_data.get("value", "")
         if name:
             resolved_value = self._substitute_variables(value, context)
-            context.set_predicate(name, resolved_value)
+            context.predicates[name] = resolved_value
 
     def _process_learn(self, learn_data: dict, context: TemplateContext) -> None:
         """Process learn element."""
@@ -551,59 +536,62 @@ class TemplateProcessor:
 
         # Star captures: {star1}, {star2}, etc.
         result = self.STAR_PATTERN.sub(
-            lambda m: context.get_star(int(m.group(1))),
+            lambda m: get_star(context, int(m.group(1))),
             result
         )
 
         # Thatstar captures: {thatstar1}, etc.
         result = self.THATSTAR_PATTERN.sub(
-            lambda m: context.get_thatstar(int(m.group(1))),
+            lambda m: get_thatstar(context, int(m.group(1))),
             result
         )
 
         # Topicstar captures: {topicstar1}, etc.
         result = self.TOPICSTAR_PATTERN.sub(
-            lambda m: context.get_topicstar(int(m.group(1))),
+            lambda m: get_topicstar(context, int(m.group(1))),
             result
         )
 
         # Get predicates: {get:name} or {get:name:default}
         result = self.GET_PATTERN.sub(
-            lambda m: context.get_predicate(m.group(1), m.group(2) or ""),
+            lambda m: context.predicates.get(m.group(1), m.group(2) or ""),
             result
         )
 
         # Bot properties: {bot:name}
         result = self.BOT_PATTERN.sub(
-            lambda m: context.get_bot(m.group(1)),
+            lambda m: context.bot.get(m.group(1), ""),
             result
         )
 
         # Map lookups: {map:name:key} or {map:name:key:default}
         result = self.MAP_PATTERN.sub(
-            lambda m: context.get_map(m.group(1), m.group(2), m.group(3) or ""),
+            lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""),
             result
         )
 
         # Input history: {input} or {input:N}
         result = self.INPUT_PATTERN.sub(
-            lambda m: context.get_input(int(m.group(1)) if m.group(1) else 1),
+            lambda m: get_input(context, int(m.group(1)) if m.group(1) else 1),
             result
         )
 
         # Response history: {response} or {response:N}
         result = self.RESPONSE_PATTERN.sub(
-            lambda m: context.get_response(int(m.group(1)) if m.group(1) else 1),
+            lambda m: get_response(context, int(m.group(1)) if m.group(1) else 1),
             result
         )
 
         # That history: {that} or {that:M} or {that:M:N}
         def that_sub(m):
             if m.group(1) is None:
-                return context.that
+                # Get most recent bot response
+                if context.that_history and context.that_history[0]:
+                    return context.that_history[0][0]
+                return ""
             resp_idx = int(m.group(1))
             sent_idx = int(m.group(2)) if m.group(2) else 1
-            return context.get_that(resp_idx, sent_idx)
+            return get_that(context, resp_idx, sent_idx)
         result = self.THAT_PATTERN.sub(that_sub, result)
 
         # Simple variables
@@ -705,7 +693,7 @@ class TemplateProcessor:
         return " ".join(result)
 
 
-def parse_template(data: Any) -> Any:
+def parse_template(data):
     """Parse template from JSON/dict representation.
 
     This is a pass-through for now since templates are already in dict form.
@@ -721,7 +709,7 @@ def parse_template(data: Any) -> Any:
 
 
 def process_template(
-    template: Any,
+    template,
     context: TemplateContext,
     srai_limit: int = 100,
 ) -> str:

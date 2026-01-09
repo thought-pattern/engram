@@ -60,37 +60,37 @@ class TestKeywordEntry:
 
     def test_add_statement(self) -> None:
         entry = KeywordEntry(keyword="test")
-        entry.add_statement("stmt_1")
-        entry.add_statement("stmt_2")
-        entry.add_statement("stmt_1")  # Duplicate
+        entry.statement_ids.add("stmt_1")
+        entry.statement_ids.add("stmt_2")
+        entry.statement_ids.add("stmt_1")  # Duplicate ignored by set
 
-        assert entry.statement_ids == ["stmt_1", "stmt_2"]
+        assert entry.statement_ids == {"stmt_1", "stmt_2"}
 
     def test_remove_statement(self) -> None:
-        entry = KeywordEntry(keyword="test", statement_ids=["stmt_1", "stmt_2"])
-        entry.remove_statement("stmt_1")
-        assert entry.statement_ids == ["stmt_2"]
+        entry = KeywordEntry(keyword="test", statement_ids={"stmt_1", "stmt_2"})
+        entry.statement_ids.discard("stmt_1")
+        assert entry.statement_ids == {"stmt_2"}
 
     def test_remove_nonexistent(self) -> None:
-        entry = KeywordEntry(keyword="test", statement_ids=["stmt_1"])
-        entry.remove_statement("stmt_999")  # Should not raise
-        assert entry.statement_ids == ["stmt_1"]
+        entry = KeywordEntry(keyword="test", statement_ids={"stmt_1"})
+        entry.statement_ids.discard("stmt_999")  # discard doesn't raise
+        assert entry.statement_ids == {"stmt_1"}
 
     def test_increment_query(self) -> None:
         entry = KeywordEntry(keyword="test")
-        entry.increment_query()
-        entry.increment_query()
+        entry.query_count += 1
+        entry.query_count += 1
         assert entry.query_count == 2
 
     def test_increment_hit(self) -> None:
         entry = KeywordEntry(keyword="test")
-        entry.increment_hit()
+        entry.hit_count += 1
         assert entry.hit_count == 1
 
     def test_serialization(self) -> None:
         entry = KeywordEntry(
             keyword="paris",
-            statement_ids=["stmt_1"],
+            statement_ids={"stmt_1"},
             query_count=150,
             hit_count=142,
         )
@@ -98,7 +98,7 @@ class TestKeywordEntry:
 
         restored = KeywordEntry.from_dict("paris", data)
         assert restored.keyword == "paris"
-        assert restored.statement_ids == ["stmt_1"]
+        assert restored.statement_ids == {"stmt_1"}
         assert restored.query_count == 150
         assert restored.hit_count == 142
 
@@ -160,20 +160,25 @@ class TestSession:
 class TestQueryResult:
     """Tests for QueryResult model."""
 
-    def test_statements_property(self) -> None:
+    def test_matches_extraction(self) -> None:
         stmt1 = Statement.create("First")
         stmt2 = Statement.create("Second")
 
         result = QueryResult(matches=[(stmt1, 1.5), (stmt2, 1.0)], keywords=["test"])
-        assert result.statements == [stmt1, stmt2]
+        # Extract statements from matches
+        statements = [stmt for stmt, _ in result.matches]
+        assert statements == [stmt1, stmt2]
 
-    def test_top_match(self) -> None:
+    def test_top_match_from_matches(self) -> None:
         stmt1 = Statement.create("First")
         stmt2 = Statement.create("Second")
 
         result = QueryResult(matches=[(stmt1, 1.5), (stmt2, 1.0)], keywords=["test"])
-        assert result.top_match == stmt1
+        # Get top match directly from matches
+        top = result.matches[0][0] if result.matches else None
+        assert top == stmt1
 
-    def test_top_match_empty(self) -> None:
+    def test_empty_matches(self) -> None:
         result = QueryResult(matches=[], keywords=["test"])
-        assert result.top_match is None
+        top = result.matches[0][0] if result.matches else None
+        assert top is None

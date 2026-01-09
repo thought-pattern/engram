@@ -2,7 +2,15 @@
 
 import pytest
 
-from engram.template import TemplateContext, TemplateProcessor, process_template
+from engram.template import (
+    TemplateContext,
+    TemplateProcessor,
+    process_template,
+    get_star,
+    get_input,
+    get_response,
+    get_map,
+)
 
 
 class TestTemplateContext:
@@ -11,75 +19,76 @@ class TestTemplateContext:
     def test_get_star(self):
         """Test star capture retrieval."""
         ctx = TemplateContext(stars=["alice", "pizza"])
-        assert ctx.get_star(1) == "alice"
-        assert ctx.get_star(2) == "pizza"
-        assert ctx.get_star(3) == ""
-        assert ctx.get_star(0) == ""
+        assert get_star(ctx, 1) == "alice"
+        assert get_star(ctx, 2) == "pizza"
+        assert get_star(ctx, 3) == ""
+        assert get_star(ctx, 0) == ""
 
     def test_get_predicate(self):
-        """Test predicate retrieval."""
+        """Test predicate retrieval via direct access."""
         ctx = TemplateContext(predicates={"name": "Alice", "mood": "happy"})
-        assert ctx.get_predicate("name") == "Alice"
-        assert ctx.get_predicate("mood") == "happy"
-        assert ctx.get_predicate("missing") == ""
-        assert ctx.get_predicate("missing", "default") == "default"
+        assert ctx.predicates.get("name") == "Alice"
+        assert ctx.predicates.get("mood") == "happy"
+        assert ctx.predicates.get("missing", "") == ""
+        assert ctx.predicates.get("missing", "default") == "default"
 
     def test_set_predicate(self):
-        """Test predicate setting."""
+        """Test predicate setting via direct access."""
         ctx = TemplateContext()
-        ctx.set_predicate("name", "Bob")
+        ctx.predicates["name"] = "Bob"
         assert ctx.predicates["name"] == "Bob"
 
-    def test_topic_property(self):
-        """Test topic property."""
+    def test_topic_in_predicates(self):
+        """Test topic from predicates."""
         ctx = TemplateContext(predicates={"topic": "WEATHER"})
-        assert ctx.topic == "WEATHER"
+        assert ctx.predicates.get("topic", "") == "WEATHER"
 
     def test_topic_empty(self):
         """Test topic when not set."""
         ctx = TemplateContext()
-        assert ctx.topic == ""
+        assert ctx.predicates.get("topic", "") == ""
 
-    def test_that_property(self):
-        """Test that property."""
+    def test_that_from_history(self):
+        """Test getting that from history."""
         ctx = TemplateContext(that_history=[["HELLO", "HOW ARE YOU"], ["GOODBYE"]])
-        assert ctx.that == "HELLO"
+        # Most recent bot response is first sentence of first history entry
+        assert ctx.that_history[0][0] == "HELLO"
 
     def test_that_empty(self):
         """Test that when empty."""
         ctx = TemplateContext()
-        assert ctx.that == ""
+        assert len(ctx.that_history) == 0
 
     def test_get_input(self):
         """Test input history retrieval."""
         ctx = TemplateContext(input_history=["latest", "previous", "oldest"])
-        assert ctx.get_input(1) == "latest"
-        assert ctx.get_input(2) == "previous"
-        assert ctx.get_input(3) == "oldest"
-        assert ctx.get_input(4) == ""
+        assert get_input(ctx, 1) == "latest"
+        assert get_input(ctx, 2) == "previous"
+        assert get_input(ctx, 3) == "oldest"
+        assert get_input(ctx, 4) == ""
 
     def test_get_response(self):
         """Test response history retrieval."""
         ctx = TemplateContext(response_history=["last", "before"])
-        assert ctx.get_response(1) == "last"
-        assert ctx.get_response(2) == "before"
-        assert ctx.get_response(3) == ""
+        assert get_response(ctx, 1) == "last"
+        assert get_response(ctx, 2) == "before"
+        assert get_response(ctx, 3) == ""
 
     def test_get_bot(self):
-        """Test bot property retrieval."""
+        """Test bot property retrieval via direct access."""
         ctx = TemplateContext(bot={"name": "TestBot", "version": "1.0"})
-        assert ctx.get_bot("name") == "TestBot"
-        assert ctx.get_bot("missing") == ""
-        assert ctx.get_bot("missing", "default") == "default"
+        assert ctx.bot.get("name") == "TestBot"
+        assert ctx.bot.get("missing", "") == ""
+        assert ctx.bot.get("missing", "default") == "default"
 
     def test_get_map(self):
         """Test map lookup."""
         ctx = TemplateContext(maps={"capital": {"france": "paris", "germany": "berlin"}})
-        assert ctx.get_map("capital", "france") == "paris"
-        assert ctx.get_map("capital", "GERMANY") == "berlin"  # Case insensitive
-        assert ctx.get_map("capital", "unknown") == ""
-        assert ctx.get_map("capital", "unknown", "n/a") == "n/a"
-        assert ctx.get_map("missing_map", "key") == ""
+        assert get_map(ctx, "capital", "france") == "paris"
+        assert get_map(ctx, "capital", "GERMANY") == "berlin"  # Case insensitive
+        assert get_map(ctx, "capital", "unknown") == ""
+        assert get_map(ctx, "capital", "unknown", "n/a") == "n/a"
+        assert get_map(ctx, "missing_map", "key") == ""
 
 
 class TestTemplateProcessorBasic:

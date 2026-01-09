@@ -3,8 +3,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
 from uuid import uuid4
+
+from engram.substitutions import split_sentences
 
 
 class Tier(Enum):
@@ -29,12 +30,12 @@ class Statement:
     pattern: str = ""  # AIML-style pattern for matching
     that: str = ""  # Pattern to match bot's previous response
     topic: str = ""  # Topic scope constraint
-    template = field(default=None)  # Structured template (JSON)
+    template: object = None  # Structured template (JSON)
     priority: int = 0  # Override default priority (higher = preferred)
     # Eviction tracking
     hit_count: int = 0  # Number of times this statement was selected
     query_count: int = 0  # Number of times this statement was a candidate
-    last_hit = field(default=None)  # Timestamp of most recent hit
+    last_hit: object = None  # Timestamp of most recent hit
 
     @property
     def hit_rate(self) -> float:
@@ -79,7 +80,7 @@ class Statement:
             priority=priority,
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict:
         """Serialize to dictionary."""
         data = {
             "id": self.id,
@@ -106,7 +107,7 @@ class Statement:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Statement":
+    def from_dict(cls, data: dict) -> "Statement":
         """Deserialize from dictionary."""
         last_hit = None
         if data.get("last_hit"):
@@ -133,7 +134,7 @@ class KeywordEntry:
     """Keyword index entry with retrieval statistics."""
 
     keyword: str
-    statement_ids: list[str] = field(default_factory=list)
+    statement_ids: set[str] = field(default_factory=set)
     query_count: int = 0
     hit_count: int = 0
 
@@ -144,38 +145,20 @@ class KeywordEntry:
             return 0.5
         return self.hit_count / self.query_count
 
-    def add_statement(self, statement_id: str) -> None:
-        """Add a statement ID to this keyword's index."""
-        if statement_id not in self.statement_ids:
-            self.statement_ids.append(statement_id)
-
-    def remove_statement(self, statement_id: str) -> None:
-        """Remove a statement ID from this keyword's index."""
-        if statement_id in self.statement_ids:
-            self.statement_ids.remove(statement_id)
-
-    def increment_query(self) -> None:
-        """Increment query count."""
-        self.query_count += 1
-
-    def increment_hit(self) -> None:
-        """Increment hit count."""
-        self.hit_count += 1
-
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict:
         """Serialize to dictionary."""
         return {
-            "statement_ids": self.statement_ids,
+            "statement_ids": list(self.statement_ids),
             "query_count": self.query_count,
             "hit_count": self.hit_count,
         }
 
     @classmethod
-    def from_dict(cls, keyword: str, data: dict[str, Any]) -> "KeywordEntry":
+    def from_dict(cls, keyword: str, data: dict) -> "KeywordEntry":
         """Deserialize from dictionary."""
         return cls(
             keyword=keyword,
-            statement_ids=data.get("statement_ids", []),
+            statement_ids=set(data.get("statement_ids", [])),
             query_count=data.get("query_count", 0),
             hit_count=data.get("hit_count", 0),
         )
@@ -193,22 +176,12 @@ class Session:
     previous_response: str  # Kept for backward compatibility (alias for that)
     created_at: datetime
     last_active: datetime
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
     predicates: dict[str, str] = field(default_factory=dict)
     input_history: list[str] = field(default_factory=list)
     response_history: list[str] = field(default_factory=list)
     that_history: list[list[str]] = field(default_factory=list)
     history_size: int = 10  # Maximum history entries
-
-    @property
-    def that(self) -> str:
-        """Get bot's last response (normalized)."""
-        return self.previous_response
-
-    @property
-    def topic(self) -> str:
-        """Get current topic from predicates."""
-        return self.predicates.get("topic", "")
 
     @classmethod
     def create(
@@ -253,7 +226,7 @@ class Session:
                 self.response_history.pop()
 
             # Update that_history (split into sentences)
-            sentences = self._split_sentences(previous_response.upper())
+            sentences = split_sentences(previous_response.upper())
             self.that_history.insert(0, sentences)
             if len(self.that_history) > self.history_size:
                 self.that_history.pop()
@@ -264,24 +237,9 @@ class Session:
             if len(self.input_history) > self.history_size:
                 self.input_history.pop()
 
-    def _split_sentences(self, text: str) -> list[str]:
-        """Split text into sentences for that_history."""
-        import re
-        # Split on sentence-ending punctuation
-        sentences = re.split(r'[.!?]+', text)
-        return [s.strip() for s in sentences if s.strip()]
-
     def touch(self) -> None:
         """Update last_active timestamp."""
         self.last_active = datetime.now(timezone.utc)
-
-    def get_predicate(self, name: str, default: str = "") -> str:
-        """Get predicate value with optional default."""
-        return self.predicates.get(name, default)
-
-    def set_predicate(self, name: str, value: str) -> None:
-        """Set predicate value."""
-        self.predicates[name] = value
 
     def clear_predicates(self) -> None:
         """Clear all predicates except topic."""
@@ -290,19 +248,7 @@ class Session:
         if topic:
             self.predicates["topic"] = topic
 
-    def get_input(self, index: int = 1) -> str:
-        """Get input from history (1-based, 1=most recent)."""
-        if 1 <= index <= len(self.input_history):
-            return self.input_history[index - 1]
-        return ""
-
-    def get_response(self, index: int = 1) -> str:
-        """Get response from history (1-based, 1=most recent)."""
-        if 1 <= index <= len(self.response_history):
-            return self.response_history[index - 1]
-        return ""
-
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict:
         """Serialize to dictionary."""
         return {
             "session_id": self.session_id,
@@ -318,7 +264,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Session":
+    def from_dict(cls, data: dict) -> "Session":
         """Deserialize from dictionary."""
         return cls(
             session_id=data["session_id"],
@@ -340,13 +286,3 @@ class QueryResult:
 
     matches: list[tuple[Statement, float]]  # (statement, score) pairs
     keywords: list[str]  # Extracted query keywords
-
-    @property
-    def statements(self) -> list[Statement]:
-        """Get just the statements without scores."""
-        return [stmt for stmt, _ in self.matches]
-
-    @property
-    def top_match(self) -> Statement:
-        """Get the highest-scoring match, if any."""
-        return self.matches[0][0] if self.matches else None
