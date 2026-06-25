@@ -1,6 +1,6 @@
 """Scoring algorithm for ENGRAM."""
 
-from engram.models import KeywordEntry, Statement
+from engram.models import keyword_entry_hit_rate
 
 
 def calculate_overlap(query_keywords: list[str], statement_keywords: list[str]) -> int:
@@ -35,7 +35,7 @@ def calculate_recency(statement_index: int, total_statements: int) -> float:
 def calculate_average_hit_rate(
     query_keywords: list[str],
     statement_keywords: list[str],
-    keyword_index: dict[str, KeywordEntry],
+    keyword_index: dict[str, dict],
 ) -> float:
     """Calculate average hit rate of matched keywords.
 
@@ -57,7 +57,7 @@ def calculate_average_hit_rate(
     for kw in matched_keywords:
         entry = keyword_index.get(kw)
         if entry:
-            hit_rates.append(entry.hit_rate)
+            hit_rates.append(keyword_entry_hit_rate(entry))
         else:
             hit_rates.append(0.5)  # Default for unknown keywords
 
@@ -65,11 +65,11 @@ def calculate_average_hit_rate(
 
 
 def score_statement(
-    statement: Statement,
+    statement: dict,
     statement_index: int,
     total_statements: int,
     query_keywords: list[str],
-    keyword_index: dict[str, KeywordEntry],
+    keyword_index: dict[str, dict],
     weight_base: float,
     weight_recency: float,
     weight_hit_rate: float,
@@ -92,13 +92,13 @@ def score_statement(
     Returns:
         Numeric score (higher = better match).
     """
-    overlap = calculate_overlap(query_keywords, statement.keywords)
+    overlap = calculate_overlap(query_keywords, statement["keywords"])
 
     if overlap == 0:
         return 0.0
 
     recency = calculate_recency(statement_index, total_statements)
-    hit_rate = calculate_average_hit_rate(query_keywords, statement.keywords, keyword_index)
+    hit_rate = calculate_average_hit_rate(query_keywords, statement["keywords"], keyword_index)
 
     score = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate)
     return score

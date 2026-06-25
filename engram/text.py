@@ -9,10 +9,22 @@ from nltk.stem import WordNetLemmatizer, PorterStemmer
 
 # POS tags that indicate content words (nouns, verbs, adjectives, adverbs)
 CONTENT_POS_TAGS = {
-    'NN', 'NNS', 'NNP', 'NNPS',  # Nouns
-    'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ',  # Verbs
-    'JJ', 'JJR', 'JJS',  # Adjectives
-    'RB', 'RBR', 'RBS',  # Adverbs
+    "NN",
+    "NNS",
+    "NNP",
+    "NNPS",  # Nouns
+    "VB",
+    "VBD",
+    "VBG",
+    "VBN",
+    "VBP",
+    "VBZ",  # Verbs
+    "JJ",
+    "JJR",
+    "JJS",  # Adjectives
+    "RB",
+    "RBR",
+    "RBS",  # Adverbs
 }
 
 
@@ -151,11 +163,12 @@ def get_stemmer() -> PorterStemmer:
 def get_lemmatizer() -> WordNetLemmatizer:
     """Get or create the module-level WordNet lemmatizer."""
     import nltk
+
     # Ensure wordnet data is available
     try:
-        nltk.data.find('corpora/wordnet')
+        nltk.data.find("corpora/wordnet")
     except LookupError:
-        nltk.download('wordnet', quiet=True)
+        nltk.download("wordnet", quiet=True)
     return WordNetLemmatizer()
 
 
@@ -176,7 +189,7 @@ def stem_word(word: str) -> str:
 
 
 @lru_cache(maxsize=8192)
-def lemmatize_word(word: str, pos: str = 'n') -> str:
+def lemmatize_word(word: str, pos: str = "n") -> str:
     """Apply WordNet lemmatization to a word.
 
     Lemmatization reduces words to their dictionary form.
@@ -204,7 +217,7 @@ def stem_text(text: str) -> str:
     """
     words = text.split()
     stemmer = get_stemmer()
-    return ' '.join(stemmer.stem(w) for w in words)
+    return " ".join(stemmer.stem(w) for w in words)
 
 
 @lru_cache(maxsize=4096)
@@ -228,14 +241,15 @@ def normalize_with_stemming(text: str) -> str:
 def _ensure_wordnet() -> None:
     """Ensure WordNet data is available."""
     import nltk
+
     try:
-        nltk.data.find('corpora/wordnet')
+        nltk.data.find("corpora/wordnet")
     except LookupError:
-        nltk.download('wordnet', quiet=True)
+        nltk.download("wordnet", quiet=True)
     try:
-        nltk.data.find('corpora/omw-1.4')
+        nltk.data.find("corpora/omw-1.4")
     except LookupError:
-        nltk.download('omw-1.4', quiet=True)
+        nltk.download("omw-1.4", quiet=True)
 
 
 @lru_cache(maxsize=4096)
@@ -257,7 +271,7 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
     try:
         for syn in wordnet.synsets(word):
             for lemma in syn.lemmas():
-                name = lemma.name().lower().replace('_', ' ')
+                name = lemma.name().lower().replace("_", " ")
                 if name != word.lower():
                     synonyms.add(name)
                     if len(synonyms) >= max_synonyms + 1:

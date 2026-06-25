@@ -1,6 +1,8 @@
-"""Configuration for ENGRAM."""
+"""Configuration for ENGRAM.
 
-from dataclasses import dataclass, field
+Configurations are plain dicts built by the factory functions below.
+"""
+
 from enum import Enum
 
 
@@ -21,16 +23,23 @@ class EvictionPolicy(Enum):
     HIT_RATE = "hit_rate"  # Lowest hit rate (hits/queries) evicted
 
 
-@dataclass
-class GraphConfig:
-    """Configuration for Knowledge Graph connection."""
-
-    driver: str = "memgraph"  # memgraph, neo4j
-    uri: str = "bolt://localhost:7687"
-    username: str = ""
-    password: str = ""
-    database: str = ""
-    enabled: bool = False
+def GraphConfig(
+    driver: str = "memgraph",  # memgraph, neo4j
+    uri: str = "bolt://localhost:7687",
+    username: str = "",
+    password: str = "",
+    database: str = "",
+    enabled: bool = False,
+) -> dict:
+    """Build a Knowledge Graph connection configuration dict."""
+    return {
+        "driver": driver,
+        "uri": uri,
+        "username": username,
+        "password": password,
+        "database": database,
+        "enabled": enabled,
+    }
 
 
 # Default stopwords as specified
@@ -118,56 +127,65 @@ DEFAULT_STOPWORDS: frozenset[str] = frozenset(
 )
 
 
-@dataclass
-class EngramConfig:
-    """Configuration for an ENGRAM instance."""
-
+def EngramConfig(
     # Capacity settings
-    capacity: int = 10000
-    max_sessions: int = 10000
-    session_ttl_seconds: float = 86400.0  # 24 hours
-
+    capacity: int = 10000,
+    max_sessions: int = 10000,
+    session_ttl_seconds: float = 86400.0,  # 24 hours
     # Scoring weights
-    weight_base: float = 0.5
-    weight_recency: float = 0.3
-    weight_hit_rate: float = 0.2
-
+    weight_base: float = 0.5,
+    weight_recency: float = 0.3,
+    weight_hit_rate: float = 0.2,
     # Session overflow behavior
-    session_overflow: SessionOverflow = SessionOverflow.LRU
-
+    session_overflow: SessionOverflow = SessionOverflow.LRU,
     # Stopwords
-    stopwords: frozenset[str] = field(default_factory=lambda: DEFAULT_STOPWORDS)
-
+    stopwords=None,
     # Input processing
-    expand_contractions: bool = True
-    srai_depth_limit: int = 100
-
+    expand_contractions: bool = True,
+    srai_depth_limit: int = 100,
     # Eviction settings
-    eviction_policy: EvictionPolicy = EvictionPolicy.FIFO
-    protect_static: bool = True  # Never evict STATIC tier
-    min_hit_rate: float = 0.0  # Protect categories above this hit rate
-
+    eviction_policy: EvictionPolicy = EvictionPolicy.FIFO,
+    protect_static: bool = True,  # Never evict STATIC tier
+    min_hit_rate: float = 0.0,  # Protect categories above this hit rate
     # Matching enhancements
-    use_stemming: bool = True  # Enable stemmed matching (run matches running)
-    use_synonyms: bool = True  # Enable synonym expansion at query time
-    max_synonyms_per_word: int = 3  # Maximum synonyms to consider per word
-
+    use_stemming: bool = True,  # Enable stemmed matching (run matches running)
+    use_synonyms: bool = True,  # Enable synonym expansion at query time
+    max_synonyms_per_word: int = 3,  # Maximum synonyms to consider per word
     # Fallback response when no pattern matches
-    fallback_response: str = ""  # Empty means return None on no match
-
+    fallback_response: str = "",  # Empty means return None on no match
     # Knowledge Graph settings
-    graph: object = None
+    graph: object = None,
+) -> dict:
+    """Build (and validate) a configuration dict for an ENGRAM instance."""
+    if capacity < 1:
+        raise ValueError("capacity must be at least 1")
+    if max_sessions < 1:
+        raise ValueError("max_sessions must be at least 1")
+    if session_ttl_seconds <= 0:
+        raise ValueError("session_ttl_seconds must be positive")
 
-    def __post_init__(self) -> None:
-        """Validate configuration."""
-        if self.capacity < 1:
-            raise ValueError("capacity must be at least 1")
-        if self.max_sessions < 1:
-            raise ValueError("max_sessions must be at least 1")
-        if self.session_ttl_seconds <= 0:
-            raise ValueError("session_ttl_seconds must be positive")
+    # Validate weights sum reasonably
+    total_weight = weight_base + weight_recency + weight_hit_rate
+    if total_weight <= 0:
+        raise ValueError("scoring weights must sum to a positive value")
 
-        # Validate weights sum reasonably
-        total_weight = self.weight_base + self.weight_recency + self.weight_hit_rate
-        if total_weight <= 0:
-            raise ValueError("scoring weights must sum to a positive value")
+    return {
+        "capacity": capacity,
+        "max_sessions": max_sessions,
+        "session_ttl_seconds": session_ttl_seconds,
+        "weight_base": weight_base,
+        "weight_recency": weight_recency,
+        "weight_hit_rate": weight_hit_rate,
+        "session_overflow": session_overflow,
+        "stopwords": stopwords if stopwords is not None else DEFAULT_STOPWORDS,
+        "expand_contractions": expand_contractions,
+        "srai_depth_limit": srai_depth_limit,
+        "eviction_policy": eviction_policy,
+        "protect_static": protect_static,
+        "min_hit_rate": min_hit_rate,
+        "use_stemming": use_stemming,
+        "use_synonyms": use_synonyms,
+        "max_synonyms_per_word": max_synonyms_per_word,
+        "fallback_response": fallback_response,
+        "graph": graph,
+    }

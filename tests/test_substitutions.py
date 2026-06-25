@@ -13,6 +13,7 @@ from engram.substitutions import (
     apply_person2,
     apply_substitutions,
     expand_contractions,
+    get_all_input_subs,
     normalize_for_matching,
     split_sentences,
 )
@@ -282,18 +283,18 @@ class TestSubstitutionMaps:
     def test_default_maps(self):
         """Test default maps are initialized."""
         maps = SubstitutionMaps()
-        assert len(maps.contractions) > 0
-        assert len(maps.person) > 0
-        assert len(maps.person2) > 0
-        assert len(maps.gender) > 0
-        assert len(maps.custom) == 0
+        assert len(maps["contractions"]) > 0
+        assert len(maps["person"]) > 0
+        assert len(maps["person2"]) > 0
+        assert len(maps["gender"]) > 0
+        assert len(maps["custom"]) == 0
 
     def test_get_all_input_subs(self):
         """Test get_all_input_subs combines maps."""
         maps = SubstitutionMaps()
-        maps.custom["foo"] = "bar"
+        maps["custom"]["foo"] = "bar"
 
-        all_subs = maps.get_all_input_subs()
+        all_subs = get_all_input_subs(maps)
         assert "don't" in all_subs
         assert "foo" in all_subs
 
@@ -301,7 +302,7 @@ class TestSubstitutionMaps:
         """Test custom maps can be provided."""
         custom_contractions = {"yo": "hello"}
         maps = SubstitutionMaps(contractions=custom_contractions)
-        assert maps.contractions == {"yo": "hello"}
+        assert maps["contractions"] == {"yo": "hello"}
 
 
 class TestDefaultMaps:
@@ -337,19 +338,20 @@ class TestContractionIntegration:
 
     def test_contractions_expanded_in_pattern_query(self):
         """Test contractions are expanded before pattern matching."""
-        from engram import Engram
+        from engram.core import Engram
 
         engram = Engram()
         engram.store("I know you do not like pizza", pattern="I KNOW YOU DO NOT LIKE *")
 
         # Query with contraction - should match expanded pattern
         result = engram.pattern_query("I know you don't like pizza")
-        assert result is not None
+        assert result
         assert "pizza" in result[1][0].lower()
 
     def test_contractions_disabled(self):
         """Test contractions expansion can be disabled."""
-        from engram import Engram, EngramConfig
+        from engram.core import Engram
+        from engram.config import EngramConfig
 
         config = EngramConfig(expand_contractions=False)
         engram = Engram(config=config)
@@ -357,4 +359,4 @@ class TestContractionIntegration:
 
         # Query with contraction - should NOT match since expansion disabled
         result = engram.pattern_query("you don't like pizza")
-        assert result is None  # Won't match because "don't" != "do not"
+        assert not result  # Won't match because "don't" != "do not"

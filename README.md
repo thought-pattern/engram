@@ -1,4 +1,4 @@
-# engram
+# Engram
 
 A keyword-indexed statement store with hit-rate tracking, designed as a fast-path retrieval layer for conversational systems.
 

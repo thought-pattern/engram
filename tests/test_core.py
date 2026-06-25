@@ -7,9 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from engram import Engram, EngramConfig, SessionOverflow, Tier
-from engram.core import SessionLimitExceeded, SessionNotFound
+from engram.core import Engram, SessionLimitExceeded, SessionNotFound
+from engram.config import EngramConfig, SessionOverflow
+from engram.models import Tier
 from engram import eviction, metrics, persistence, sessions
+from engram.models import (
+    record_statement_hit,
+    record_statement_query,
+    session_update_context,
+)
 
 
 class TestEngramStore:
@@ -76,8 +82,8 @@ class TestEngramQuery:
 
         result = engram.query("What is the capital of France?")
 
-        assert len(result.matches) == 1
-        assert "Paris" in result.matches[0][0].text
+        assert len(result["matches"]) == 1
+        assert "Paris" in result["matches"][0][0]["text"]
 
     def test_query_multiple_matches(self) -> None:
         engram = Engram()
@@ -87,7 +93,7 @@ class TestEngramQuery:
 
         result = engram.query("France Paris")
 
-        assert len(result.matches) >= 2
+        assert len(result["matches"]) >= 2
 
     def test_query_limit(self) -> None:
         engram = Engram()
@@ -96,7 +102,7 @@ class TestEngramQuery:
 
         result = engram.query("France", limit=3)
 
-        assert len(result.matches) == 3
+        assert len(result["matches"]) == 3
 
     def test_query_no_matches(self) -> None:
         engram = Engram()
@@ -104,7 +110,7 @@ class TestEngramQuery:
 
         result = engram.query("Goodbye universe")
 
-        assert len(result.matches) == 0
+        assert len(result["matches"]) == 0
 
     def test_query_stopwords_only(self) -> None:
         engram = Engram()
@@ -112,8 +118,8 @@ class TestEngramQuery:
 
         result = engram.query("the is are")
 
-        assert len(result.keywords) == 0
-        assert len(result.matches) == 0
+        assert len(result["keywords"]) == 0
+        assert len(result["matches"]) == 0
 
     def test_query_increments_query_count(self) -> None:
         engram = Engram()
@@ -137,7 +143,7 @@ class TestEngramQuery:
         result = engram.query("What is its population?", session_id=session_id)
 
         # Context expansion adds "Paris" and "France" keywords
-        assert len(result.keywords) > 1
+        assert len(result["keywords"]) > 1
 
 
 class TestEngramRecordHit:
@@ -219,9 +225,9 @@ class TestEvictionPolicies:
         engram.store("Fourth", tier=Tier.DYNAMIC)
 
         # First should be evicted (FIFO)
-        assert engram.get_statement(id1) is None
-        assert engram.get_statement(id2) is not None
-        assert engram.get_statement(id3) is not None
+        assert not engram.get_statement(id1)
+        assert engram.get_statement(id2)
+        assert engram.get_statement(id3)
 
     def test_lru_eviction(self) -> None:
         """LRU evicts least recently used (oldest last_hit)."""
@@ -239,16 +245,16 @@ class TestEvictionPolicies:
         stmt2 = engram.get_statement(id2)
         stmt3 = engram.get_statement(id3)
         if stmt2:
-            stmt2.record_hit()
+            record_statement_hit(stmt2)
         if stmt3:
-            stmt3.record_hit()
+            record_statement_hit(stmt3)
 
         # Store fourth, should evict first (never hit, so oldest)
         engram.store("Fourth", tier=Tier.DYNAMIC)
 
-        assert engram.get_statement(id1) is None
-        assert engram.get_statement(id2) is not None
-        assert engram.get_statement(id3) is not None
+        assert not engram.get_statement(id1)
+        assert engram.get_statement(id2)
+        assert engram.get_statement(id3)
 
     def test_lfu_eviction(self) -> None:
         """LFU evicts least frequently used (lowest hit_count)."""
@@ -265,17 +271,17 @@ class TestEvictionPolicies:
         stmt2 = engram.get_statement(id2)
         stmt3 = engram.get_statement(id3)
         if stmt2:
-            stmt2.record_hit()
-            stmt2.record_hit()
+            record_statement_hit(stmt2)
+            record_statement_hit(stmt2)
         if stmt3:
-            stmt3.record_hit()
+            record_statement_hit(stmt3)
 
         # First has 0 hits, should be evicted
         engram.store("Fourth", tier=Tier.DYNAMIC)
 
-        assert engram.get_statement(id1) is None
-        assert engram.get_statement(id2) is not None
-        assert engram.get_statement(id3) is not None
+        assert not engram.get_statement(id1)
+        assert engram.get_statement(id2)
+        assert engram.get_statement(id3)
 
     def test_hit_rate_eviction(self) -> None:
         """HIT_RATE evicts statement with lowest hit rate."""
@@ -296,37 +302,33 @@ class TestEvictionPolicies:
         if stmt1:
             # 10 queries, 1 hit = 0.1 hit rate
             for _ in range(10):
-                stmt1.record_query()
-            stmt1.record_hit()
+                record_statement_query(stmt1)
+            record_statement_hit(stmt1)
         if stmt2:
             # 10 queries, 5 hits = 0.5 hit rate
             for _ in range(10):
-                stmt2.record_query()
+                record_statement_query(stmt2)
             for _ in range(5):
-                stmt2.record_hit()
+                record_statement_hit(stmt2)
         if stmt3:
             # 10 queries, 8 hits = 0.8 hit rate
             for _ in range(10):
-                stmt3.record_query()
+                record_statement_query(stmt3)
             for _ in range(8):
-                stmt3.record_hit()
+                record_statement_hit(stmt3)
 
         # First has lowest hit rate, should be evicted
         engram.store("Fourth", tier=Tier.DYNAMIC)
 
-        assert engram.get_statement(id1) is None
-        assert engram.get_statement(id2) is not None
-        assert engram.get_statement(id3) is not None
+        assert not engram.get_statement(id1)
+        assert engram.get_statement(id2)
+        assert engram.get_statement(id3)
 
     def test_min_hit_rate_protection(self) -> None:
         """Statements above min_hit_rate are protected from eviction."""
         from engram.config import EvictionPolicy
 
-        config = EngramConfig(
-            capacity=3,
-            eviction_policy=EvictionPolicy.HIT_RATE,
-            min_hit_rate=0.3
-        )
+        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.HIT_RATE, min_hit_rate=0.3)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -340,28 +342,28 @@ class TestEvictionPolicies:
 
         if stmt1:
             for _ in range(10):
-                stmt1.record_query()
+                record_statement_query(stmt1)
             for _ in range(2):
-                stmt1.record_hit()  # 0.2 hit rate
+                record_statement_hit(stmt1)  # 0.2 hit rate
 
         if stmt2:
             for _ in range(10):
-                stmt2.record_query()
+                record_statement_query(stmt2)
             for _ in range(5):
-                stmt2.record_hit()  # 0.5 hit rate
+                record_statement_hit(stmt2)  # 0.5 hit rate
 
         if stmt3:
             for _ in range(10):
-                stmt3.record_query()
+                record_statement_query(stmt3)
             for _ in range(5):
-                stmt3.record_hit()  # 0.5 hit rate
+                record_statement_hit(stmt3)  # 0.5 hit rate
 
         # Only first is below min_hit_rate, should be evicted
         engram.store("Fourth", tier=Tier.DYNAMIC)
 
-        assert engram.get_statement(id1) is None
-        assert engram.get_statement(id2) is not None
-        assert engram.get_statement(id3) is not None
+        assert not engram.get_statement(id1)
+        assert engram.get_statement(id2)
+        assert engram.get_statement(id3)
 
 
 class TestEngramSessions:
@@ -384,53 +386,53 @@ class TestEngramSessions:
         engram = Engram()
         sessions.create_session(engram, session_id="test", metadata={"user_id": "123"})
 
-        session = sessions.get_session(engram,"test")
-        assert session.metadata["user_id"] == "123"
+        session = sessions.get_session(engram, "test")
+        assert session["metadata"]["user_id"] == "123"
 
     def test_get_session(self) -> None:
         engram = Engram()
         sessions.create_session(engram, session_id="test")
 
-        session = sessions.get_session(engram,"test")
+        session = sessions.get_session(engram, "test")
 
-        assert session is not None
-        assert session.session_id == "test"
+        assert session
+        assert session["session_id"] == "test"
 
     def test_get_session_create_if_missing(self) -> None:
         engram = Engram()
 
-        session = sessions.get_session(engram,"new_session", create_if_missing=True)
+        session = sessions.get_session(engram, "new_session", create_if_missing=True)
 
-        assert session is not None
-        assert session.session_id == "new_session"
+        assert session
+        assert session["session_id"] == "new_session"
 
     def test_get_session_not_found(self) -> None:
         engram = Engram()
 
-        session = sessions.get_session(engram,"nonexistent", create_if_missing=False)
+        session = sessions.get_session(engram, "nonexistent", create_if_missing=False)
 
-        assert session is None
+        assert not session
 
     def test_update_session_context(self) -> None:
         engram = Engram()
         sessions.create_session(engram, session_id="test")
 
-        sessions.update_session_context(engram,"test", "Previous response")
+        sessions.update_session_context(engram, "test", "Previous response")
 
-        session = sessions.get_session(engram,"test")
-        assert session.previous_response == "Previous response"
+        session = sessions.get_session(engram, "test")
+        assert session["previous_response"] == "Previous response"
 
     def test_update_session_context_not_found(self) -> None:
         engram = Engram()
 
         with pytest.raises(SessionNotFound):
-            sessions.update_session_context(engram,"nonexistent", "Response")
+            sessions.update_session_context(engram, "nonexistent", "Response")
 
     def test_delete_session(self) -> None:
         engram = Engram()
         sessions.create_session(engram, session_id="test")
 
-        result = sessions.delete_session(engram,"test")
+        result = sessions.delete_session(engram, "test")
 
         assert result is True
         assert metrics.get_session_count(engram) == 0
@@ -438,7 +440,7 @@ class TestEngramSessions:
     def test_delete_session_not_found(self) -> None:
         engram = Engram()
 
-        result = sessions.delete_session(engram,"nonexistent")
+        result = sessions.delete_session(engram, "nonexistent")
 
         assert result is False
 
@@ -448,10 +450,10 @@ class TestEngramSessions:
         sessions.create_session(engram, session_id="new")
 
         # Manually set old session's last_active to past
-        old_session = sessions.get_session(engram,"old")
-        old_session.last_active = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_session = sessions.get_session(engram, "old")
+        old_session["last_active"] = datetime.now(timezone.utc) - timedelta(hours=2)
 
-        count = sessions.expire_sessions(engram,inactive_threshold=timedelta(hours=1))
+        count = sessions.expire_sessions(engram, inactive_threshold=timedelta(hours=1))
 
         assert count == 1
         assert metrics.get_session_count(engram) == 1
@@ -473,11 +475,9 @@ class TestEngramSessions:
 
         # Set old session to past
         old_session = sessions.get_session(engram, "old")
-        old_session.last_active = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_session["last_active"] = datetime.now(timezone.utc) - timedelta(hours=2)
 
-        session_list = sessions.list_sessions(engram,
-            active_since=datetime.now(timezone.utc) - timedelta(hours=1)
-        )
+        session_list = sessions.list_sessions(engram, active_since=datetime.now(timezone.utc) - timedelta(hours=1))
 
         assert len(session_list) == 1
 
@@ -490,7 +490,7 @@ class TestEngramSessions:
         sessions.create_session(engram, session_id="third")
 
         assert metrics.get_session_count(engram) == 2
-        assert sessions.get_session(engram,"first", create_if_missing=False) is None
+        assert not sessions.get_session(engram, "first", create_if_missing=False)
 
     def test_session_limit_reject(self) -> None:
         config = EngramConfig(max_sessions=2, session_overflow=SessionOverflow.REJECT)
@@ -516,7 +516,7 @@ class TestEngramPersistence:
             path = f.name
 
         try:
-            persistence.save(engram,path)
+            persistence.save(engram, path)
             loaded = persistence.load_engram(path)
 
             assert metrics.get_statement_count(loaded) == 2
@@ -564,22 +564,22 @@ class TestEngramPersistence:
         engram = Engram()
         engram.store("Statement")
         sessions.create_session(engram, session_id="test")
-        sessions.update_session_context(engram,"test", "Previous response")
+        sessions.update_session_context(engram, "test", "Previous response")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             path = f.name
 
         try:
-            persistence.save_sessions(engram,path)
+            persistence.save_sessions(engram, path)
 
             # Create new engram and load sessions
             new_engram = Engram()
-            count = persistence.load_sessions(new_engram,path)
+            count = persistence.load_sessions(new_engram, path)
 
             assert count == 1
             session = sessions.get_session(new_engram, "test", create_if_missing=False)
-            assert session is not None
-            assert session.previous_response == "Previous response"
+            assert session
+            assert session["previous_response"] == "Previous response"
         finally:
             Path(path).unlink()
 
@@ -637,16 +637,16 @@ class TestEngramPersistence:
     def test_persistence_substitutions(self) -> None:
         """Custom substitutions should persist."""
         engram = Engram()
-        engram.substitution_maps.custom["howdy"] = "hello"
-        engram.substitution_maps.contractions["gimme"] = "give me"
+        engram.substitution_maps["custom"]["howdy"] = "hello"
+        engram.substitution_maps["contractions"]["gimme"] = "give me"
 
         data = persistence.to_dict(engram)
         loaded = persistence.load_engram_from_dict(data)
 
-        assert loaded.substitution_maps.custom["howdy"] == "hello"
-        assert loaded.substitution_maps.contractions["gimme"] == "give me"
+        assert loaded.substitution_maps["custom"]["howdy"] == "hello"
+        assert loaded.substitution_maps["contractions"]["gimme"] == "give me"
         # Default contractions should also be present
-        assert "don't" in loaded.substitution_maps.contractions
+        assert "don't" in loaded.substitution_maps["contractions"]
 
     def test_persistence_sets_work_with_patterns(self) -> None:
         """Loaded sets should work with pattern matching."""
@@ -660,7 +660,7 @@ class TestEngramPersistence:
 
         # Pattern matching should work with loaded set
         result = loaded.pattern_query("i like blue")
-        assert result is not None
+        assert result
         assert "Nice color" in result[2]
 
 
@@ -736,7 +736,7 @@ class TestEngramMetrics:
             engram.query("Paris")
         engram.record_hit(["paris"])
 
-        results = metrics.get_low_hit_keywords(engram,min_queries=10, max_hit_rate=0.2)
+        results = metrics.get_low_hit_keywords(engram, min_queries=10, max_hit_rate=0.2)
 
         assert len(results) >= 1
 
@@ -748,7 +748,7 @@ class TestEngramMetrics:
             engram.query("Paris")
         # No hits recorded
 
-        results = metrics.get_zero_hit_keywords(engram,min_queries=10)
+        results = metrics.get_zero_hit_keywords(engram, min_queries=10)
 
         assert len(results) >= 1
 
@@ -763,7 +763,7 @@ class TestEngramMetrics:
         engram.record_hit(["paris"])
         engram.record_hit(["paris"])
 
-        results = metrics.get_coverage_gaps(engram,min_queries=10, max_hit_rate=0.2)
+        results = metrics.get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
 
         assert len(results) >= 1
         assert results[0]["keyword"] == "paris"
@@ -779,7 +779,7 @@ class TestEngramMetrics:
             engram.query("keyword")
         engram.record_hit(["keyword"])
 
-        results = metrics.get_coverage_gaps(engram,min_queries=10, max_hit_rate=0.2)
+        results = metrics.get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
 
         assert len(results) >= 1
         gap = results[0]
@@ -844,23 +844,23 @@ class TestEngramSpecExamples:
 
         # First query
         result1 = engram.query("What is the capital of France?", session_id="user_a")
-        assert len(result1.matches) >= 1
-        assert "Paris" in result1.matches[0][0].text
-        engram.record_hit(result1.keywords)
+        assert len(result1["matches"]) >= 1
+        assert "Paris" in result1["matches"][0][0]["text"]
+        engram.record_hit(result1["keywords"])
 
         # Update context
-        sessions.update_session_context(engram,"user_a", "Paris is the capital of France")
+        sessions.update_session_context(engram, "user_a", "Paris is the capital of France")
 
         # Follow-up query with context
         result2 = engram.query("What is its population?", session_id="user_a")
-        assert len(result2.matches) >= 1
+        assert len(result2["matches"]) >= 1
         # Should find population statement due to context expansion
 
         # Session 2 (concurrent)
         sessions.create_session(engram, session_id="user_b")
         result3 = engram.query("Hello", session_id="user_b")
-        assert len(result3.matches) >= 1
-        assert "Hello" in result3.matches[0][0].text
+        assert len(result3["matches"]) >= 1
+        assert "Hello" in result3["matches"][0][0]["text"]
 
 
 class TestEngramContextMatching:
@@ -877,16 +877,16 @@ class TestEngramContextMatching:
 
         # Without topic, general pattern wins
         result = engram.pattern_query("what is it", session_id=session_id)
-        assert result is not None
+        assert result
         assert result[2] == "General info"
 
         # Set topic in session
-        session = sessions.get_session(engram,session_id)
-        session.predicates["topic"] = "WEATHER"
+        session = sessions.get_session(engram, session_id)
+        session["predicates"]["topic"] = "WEATHER"
 
         # Now weather-specific pattern wins
         result = engram.pattern_query("what is it", session_id=session_id)
-        assert result is not None
+        assert result
         assert result[2] == "Weather info"
 
     def test_pattern_with_that(self) -> None:
@@ -900,16 +900,16 @@ class TestEngramContextMatching:
 
         # Without previous response, general pattern wins
         result = engram.pattern_query("yes", session_id=session_id)
-        assert result is not None
+        assert result
         assert result[2] == "General yes"
 
         # Simulate previous response
-        session = sessions.get_session(engram,session_id)
-        session.update_context("Do you like pizza?")
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "Do you like pizza?")
 
         # Now that-specific pattern wins
         result = engram.pattern_query("yes", session_id=session_id)
-        assert result is not None
+        assert result
         assert result[2] == "Pizza follow-up"
 
     def test_pattern_with_topic_and_that(self) -> None:
@@ -918,22 +918,17 @@ class TestEngramContextMatching:
         session_id = sessions.create_session(engram)
 
         # Add patterns with increasing specificity
-        engram.store(
-            "Full context",
-            pattern="HELLO",
-            topic="GREETINGS",
-            that="HI THERE"
-        )
+        engram.store("Full context", pattern="HELLO", topic="GREETINGS", that="HI THERE")
         engram.store("Topic only", pattern="HELLO", topic="GREETINGS")
         engram.store("General", pattern="HELLO")
 
         # Test with full context
-        session = sessions.get_session(engram,session_id)
-        session.predicates["topic"] = "GREETINGS"
-        session.update_context("Hi there!")
+        session = sessions.get_session(engram, session_id)
+        session["predicates"]["topic"] = "GREETINGS"
+        session_update_context(session, "Hi there!")
 
         result = engram.pattern_query("hello", session_id=session_id)
-        assert result is not None
+        assert result
         assert result[2] == "Full context"
 
     def test_thatstar_in_template(self) -> None:
@@ -943,18 +938,15 @@ class TestEngramContextMatching:
 
         # Add pattern with that wildcard and template using thatstar
         engram.store(
-            "You mentioned {thatstar1}",
-            pattern="YES",
-            that="DO YOU LIKE *",
-            template={"text": "You mentioned {thatstar1}"}
+            "You mentioned {thatstar1}", pattern="YES", that="DO YOU LIKE *", template={"text": "You mentioned {thatstar1}"}
         )
 
         # Set up that context
-        session = sessions.get_session(engram,session_id)
-        session.update_context("Do you like pizza?")
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "Do you like pizza?")
 
         result = engram.pattern_query("yes", session_id=session_id)
-        assert result is not None
+        assert result
         assert "pizza" in result[2]
 
     def test_context_persisted(self) -> None:
@@ -1013,13 +1005,13 @@ class TestEngramSetsAndBotProperties:
         engram.store("{star1} is a nice color!", pattern="I LIKE {set:color}")
 
         result = engram.pattern_query("i like blue")
-        assert result is not None
+        assert result
         assert "blue" in result[1]
         assert "nice color" in result[2]
 
         # Non-set word should not match
         result = engram.pattern_query("i like purple")
-        assert result is None
+        assert not result
 
     def test_bot_property_get_set(self) -> None:
         """Test getting and setting bot properties."""
@@ -1051,12 +1043,12 @@ class TestEngramSetsAndBotProperties:
         engram.store("Yes, that's my name!", pattern="YOUR NAME IS {bot:name}")
 
         result = engram.pattern_query("your name is engram")
-        assert result is not None
+        assert result
         assert "my name" in result[2]
 
         # Wrong name should not match
         result = engram.pattern_query("your name is alice")
-        assert result is None
+        assert not result
 
     def test_sets_pattern_added_after_set(self) -> None:
         """Test that patterns can use sets added before pattern."""
@@ -1069,11 +1061,11 @@ class TestEngramSetsAndBotProperties:
         engram.store("Greeting received!", pattern="{set:greeting} THERE")
 
         result = engram.pattern_query("hello there")
-        assert result is not None
+        assert result
         assert "Greeting" in result[2]
 
         result = engram.pattern_query("hey there")
-        assert result is not None
+        assert result
 
 
 class TestMultiSentenceInput:
@@ -1085,7 +1077,7 @@ class TestMultiSentenceInput:
         engram.store("Hello to you!", pattern="HELLO")
 
         result = engram.pattern_query("hello")
-        assert result is not None
+        assert result
         assert result[2] == "Hello to you!"
 
     def test_single_sentence_with_punctuation(self) -> None:
@@ -1094,7 +1086,7 @@ class TestMultiSentenceInput:
         engram.store("Hello to you!", pattern="HELLO")
 
         result = engram.pattern_query("hello!")
-        assert result is not None
+        assert result
         assert result[2] == "Hello to you!"
 
     def test_two_sentences(self) -> None:
@@ -1104,7 +1096,7 @@ class TestMultiSentenceInput:
         engram.store("Goodbye to you!", pattern="GOODBYE")
 
         result = engram.pattern_query("Hello. Goodbye.")
-        assert result is not None
+        assert result
         assert "Hello to you!" in result[2]
         assert "Goodbye to you!" in result[2]
 
@@ -1116,7 +1108,7 @@ class TestMultiSentenceInput:
         engram.store("Response C", pattern="C")
 
         result = engram.pattern_query("A! B? C.")
-        assert result is not None
+        assert result
         assert "Response A" in result[2]
         assert "Response B" in result[2]
         assert "Response C" in result[2]
@@ -1128,7 +1120,7 @@ class TestMultiSentenceInput:
         # No pattern for "unknown"
 
         result = engram.pattern_query("Hello. Unknown.")
-        assert result is not None
+        assert result
         assert "Hello response" in result[2]
         # "Unknown" doesn't match, so only one response
 
@@ -1139,8 +1131,8 @@ class TestMultiSentenceInput:
         engram.store("Second response", pattern="SECOND")
 
         result = engram.pattern_query("First. Second.")
-        assert result is not None
-        assert result[0].id == stmt1_id
+        assert result
+        assert result[0]["id"] == stmt1_id
 
     def test_multi_sentence_with_session(self) -> None:
         """Multi-sentence with session should update context."""
@@ -1150,12 +1142,11 @@ class TestMultiSentenceInput:
         engram.store("Goodbye!", pattern="GOODBYE")
 
         result = engram.pattern_query("Hello. Goodbye.", session_id=session_id)
-        assert result is not None
-
+        assert result
         # Session context should be updated with combined response
-        session = sessions.get_session(engram,session_id)
+        session = sessions.get_session(engram, session_id)
         # The 'previous_response' should be the combined response (normalized)
-        assert session.previous_response is not None
+        assert session["previous_response"]
 
     def test_that_context_flows_between_sentences(self) -> None:
         """That context should flow between sentences in same input."""
@@ -1171,7 +1162,7 @@ class TestMultiSentenceInput:
         # Both in same input - the "YES" should match because
         # the first response becomes the 'that' for the second sentence
         result = engram.pattern_query("Hello. Yes.", session_id=session_id)
-        assert result is not None
+        assert result
         assert "pizza" in result[2].lower()
 
     def test_no_match_returns_none(self) -> None:
@@ -1180,7 +1171,7 @@ class TestMultiSentenceInput:
         engram.store("Hello!", pattern="HELLO")
 
         result = engram.pattern_query("Unknown. Also unknown.")
-        assert result is None
+        assert not result
 
     def test_empty_input(self) -> None:
         """Empty input should return None."""
@@ -1188,7 +1179,7 @@ class TestMultiSentenceInput:
         engram.store("Hello!", pattern="HELLO")
 
         result = engram.pattern_query("")
-        assert result is None
+        assert not result
 
         result = engram.pattern_query("   ")
-        assert result is None
+        assert not result

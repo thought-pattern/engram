@@ -226,10 +226,12 @@ def load_engram_instance(store_path: str, capacity: int, eviction: str = "fifo")
     path = Path(store_path)
     if path.exists():
         return persistence.load_engram(path)
-    return Engram(config=EngramConfig(
-        capacity=capacity,
-        eviction_policy=get_eviction_policy(eviction),
-    ))
+    return Engram(
+        config=EngramConfig(
+            capacity=capacity,
+            eviction_policy=get_eviction_policy(eviction),
+        )
+    )
 
 
 def save_engram(engram: Engram, store_path: str) -> None:
@@ -245,10 +247,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("Use --force to overwrite", file=sys.stderr)
         return 1
 
-    engram = Engram(config=EngramConfig(
-        capacity=args.capacity,
-        eviction_policy=get_eviction_policy(args.eviction),
-    ))
+    engram = Engram(
+        config=EngramConfig(
+            capacity=args.capacity,
+            eviction_policy=get_eviction_policy(args.eviction),
+        )
+    )
     save_engram(engram, args.store)
     print(f"Initialized engram store: {args.store}")
     return 0
@@ -293,8 +297,8 @@ def cmd_load(args: argparse.Namespace) -> int:
     for item in pairs:
         if isinstance(item, dict):
             pattern = item.get("pattern", "")
-            response = item.get("response", item.get("text", ""))
-            template = item.get("template")
+            response = item.get("response") or item.get("text") or ""
+            template = item.get("template", {})
             that = item.get("that", "")
             topic = item.get("topic", "")
 
@@ -322,18 +326,18 @@ def cmd_query(args: argparse.Namespace) -> int:
 
     result = engram.query(args.text, session_id=args.session, limit=args.limit)
 
-    if args.hit and result.matches:
-        engram.record_hit(result.keywords)
+    if args.hit and result["matches"]:
+        engram.record_hit(result["keywords"])
         save_engram(engram, args.store)
 
-    print(f"Keywords: {', '.join(result.keywords)}")
-    print(f"Matches: {len(result.matches)}")
+    print(f"Keywords: {', '.join(result['keywords'])}")
+    print(f"Matches: {len(result['matches'])}")
     print()
 
-    for i, (stmt, score) in enumerate(result.matches, 1):
-        print(f"{i}. [{score:.3f}] ({stmt.tier.value}) {stmt.text}")
+    for i, (stmt, score) in enumerate(result["matches"], 1):
+        print(f"{i}. [{score:.3f}] ({stmt['tier'].value}) {stmt['text']}")
 
-    if not result.matches:
+    if not result["matches"]:
         print("No matches found.")
 
     return 0
@@ -346,7 +350,7 @@ def cmd_session(args: argparse.Namespace) -> int:
 
     if args.session_command == "create":
         try:
-            session_id = sessions.create_session(engram,session_id=args.id)
+            session_id = sessions.create_session(engram, session_id=args.id)
             print(f"Created session: {session_id}")
             modified = True
         except SessionLimitExceeded as e:
@@ -354,34 +358,34 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "list":
-        sessions = engram.list_sessions()
-        if sessions:
-            print(f"Sessions ({len(sessions)}):")
-            for s in sessions:
-                topic = s.topic or "(none)"
-                print(f"  {s.session_id}: topic={topic}, last={s.last_active.isoformat()}")
+        session_list = sessions.list_sessions(engram)
+        if session_list:
+            print(f"Sessions ({len(session_list)}):")
+            for s in session_list:
+                topic = s["predicates"].get("topic", "") or "(none)"
+                print(f"  {s['session_id']}: topic={topic}, last={s['last_active'].isoformat()}")
         else:
             print("No sessions.")
 
     elif args.session_command == "get":
-        session = sessions.get_session(engram,args.id, create_if_missing=False)
+        session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            print(f"Session: {session.session_id}")
-            print(f"Created: {session.created_at.isoformat()}")
-            print(f"Last active: {session.last_active.isoformat()}")
-            print(f"Topic: {session.predicates.get('topic', '') or '(none)'}")
-            print(f"That: {session.previous_response or '(empty)'}")
-            if session.predicates:
-                print(f"Predicates: {json.dumps(session.predicates)}")
-            if session.input_history:
-                print(f"Input history: {session.input_history[:5]}")
+            print(f"Session: {session['session_id']}")
+            print(f"Created: {session['created_at'].isoformat()}")
+            print(f"Last active: {session['last_active'].isoformat()}")
+            print(f"Topic: {session.get('predicates', {}).get('topic', '') or '(none)'}")
+            print(f"That: {session['previous_response'] or '(empty)'}")
+            if session["predicates"]:
+                print(f"Predicates: {json.dumps(session['predicates'])}")
+            if session["input_history"]:
+                print(f"Input history: {session.get('input_history', [])[:5]}")
         else:
             print(f"Session not found: {args.id}", file=sys.stderr)
             return 1
 
     elif args.session_command == "update":
         try:
-            engram.update_session_context(args.id, args.response)
+            sessions.update_session_context(engram, args.id, args.response)
             print(f"Updated session: {args.id}")
             modified = True
         except SessionNotFound:
@@ -389,7 +393,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "delete":
-        if sessions.delete_session(engram,args.id):
+        if sessions.delete_session(engram, args.id):
             print(f"Deleted session: {args.id}")
             modified = True
         else:
@@ -398,15 +402,16 @@ def cmd_session(args: argparse.Namespace) -> int:
 
     elif args.session_command == "expire":
         from datetime import timedelta
+
         threshold = timedelta(hours=args.hours)
-        count = engram.expire_sessions(inactive_threshold=threshold)
+        count = sessions.expire_sessions(engram, inactive_threshold=threshold)
         print(f"Expired {count} sessions")
         modified = count > 0
 
     elif args.session_command == "set":
-        session = sessions.get_session(engram,args.id, create_if_missing=False)
+        session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            session.set_predicate(args.name, args.value)
+            session["predicates"][args.name] = args.value
             print(f"Set {args.name}={args.value} for session {args.id}")
             modified = True
         else:
@@ -414,9 +419,9 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "topic":
-        session = sessions.get_session(engram,args.id, create_if_missing=False)
+        session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            session.set_predicate("topic", args.topic)
+            session["predicates"]["topic"] = args.topic
             print(f"Set topic={args.topic} for session {args.id}")
             modified = True
         else:
@@ -436,20 +441,20 @@ def cmd_session(args: argparse.Namespace) -> int:
 def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
     engram = load_engram_instance(args.store, args.capacity, args.eviction)
-    metrics = metrics.get_metrics(engram)
+    metric_data = metrics.get_metrics(engram)
 
     print("ENGRAM Metrics")
     print("-" * 40)
-    print(f"Statements:     {metrics['statement_count']:,}")
-    print(f"  STATIC:       {metrics['static_count']:,}")
-    print(f"  DYNAMIC:      {metrics['dynamic_count']:,}")
-    print(f"Keywords:       {metrics['keyword_count']:,}")
-    print(f"Sessions:       {metrics['session_count']:,}")
-    print(f"Total queries:  {metrics['query_count']:,}")
-    print(f"Total hits:     {metrics['hit_count']:,}")
-    print(f"Hit rate:       {metrics['hit_rate']:.1%}")
-    print(f"Evictions:      {metrics['eviction_count']:,}")
-    print(f"Eviction policy: {engram.config.eviction_policy.value}")
+    print(f"Statements:     {metric_data['statement_count']:,}")
+    print(f"  STATIC:       {metric_data['static_count']:,}")
+    print(f"  DYNAMIC:      {metric_data['dynamic_count']:,}")
+    print(f"Keywords:       {metric_data['keyword_count']:,}")
+    print(f"Sessions:       {metric_data['session_count']:,}")
+    print(f"Total queries:  {metric_data['query_count']:,}")
+    print(f"Total hits:     {metric_data['hit_count']:,}")
+    print(f"Hit rate:       {metric_data['hit_rate']:.1%}")
+    print(f"Evictions:      {metric_data['eviction_count']:,}")
+    print(f"Eviction policy: {engram.config.get('eviction_policy', EvictionPolicy.FIFO).value}")
 
     return 0
 
@@ -459,7 +464,7 @@ def cmd_keywords(args: argparse.Namespace) -> int:
     engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     if args.zero_hit:
-        results = engram.get_zero_hit_keywords(min_queries=args.min_queries)
+        results = metrics.get_zero_hit_keywords(engram, min_queries=args.min_queries)
         if results:
             print(f"Zero-hit keywords (min queries: {args.min_queries}):")
             for kw, query_count in results[:20]:
@@ -468,10 +473,10 @@ def cmd_keywords(args: argparse.Namespace) -> int:
             print("No zero-hit keywords found.")
 
     elif args.low_hit:
-        results = engram.get_low_hit_keywords(min_queries=args.min_queries, max_hit_rate=0.2)
-        if results:
+        low = metrics.get_low_hit_keywords(engram, min_queries=args.min_queries, max_hit_rate=0.2)
+        if low:
             print(f"Low hit-rate keywords (min queries: {args.min_queries}, max rate: 20%):")
-            for kw, query_count, hit_rate in results[:20]:
+            for kw, query_count, hit_rate in low[:20]:
                 print(f"  {kw}: {query_count} queries, {hit_rate:.1%} hit rate")
         else:
             print("No low hit-rate keywords found.")
@@ -488,7 +493,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     engram = load_engram_instance(args.store, args.capacity, args.eviction)
 
     if args.report:
-        report = engram.get_coverage_report()
+        report = metrics.get_coverage_report(engram)
         print("Coverage Report")
         print("-" * 40)
         print(f"Total keywords:      {report['total_keywords']:,}")
@@ -497,25 +502,25 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         print(f"Overall hit rate:    {report['overall_hit_rate']:.1%}")
         print()
 
-        if report['coverage_gaps']:
+        if report["coverage_gaps"]:
             print("Coverage Gaps (high queries, low hits):")
-            for gap in report['coverage_gaps'][:10]:
+            for gap in report.get("coverage_gaps", [])[:10]:
                 print(f"  {gap['keyword']}: {gap['queries']} queries, {gap['hit_rate']:.1%} hit rate")
             print()
 
-        if report['top_performing']:
+        if report["top_performing"]:
             print("Top Performing Keywords:")
-            for kw in report['top_performing'][:5]:
+            for kw in report.get("top_performing", [])[:5]:
                 print(f"  {kw['keyword']}: {kw['queries']} queries, {kw['hit_rate']:.1%} hit rate")
             print()
 
-        if report['recommendations']:
+        if report["recommendations"]:
             print("Recommendations:")
-            for rec in report['recommendations']:
+            for rec in report.get("recommendations", []):
                 print(f"  - {rec}")
 
     elif args.gaps:
-        gaps = engram.get_coverage_gaps(min_queries=args.min_queries, max_hit_rate=0.2)
+        gaps = metrics.get_coverage_gaps(engram, min_queries=args.min_queries, max_hit_rate=0.2)
         if gaps:
             print(f"Coverage gaps (min queries: {args.min_queries}, max hit rate: 20%):")
             for gap in gaps[:20]:
@@ -536,26 +541,26 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     statements = []
     for stmt in engram.statements:
-        if args.static_only and stmt.tier != Tier.STATIC:
+        if args.static_only and stmt["tier"] != Tier.STATIC:
             continue
-        if args.dynamic_only and stmt.tier != Tier.DYNAMIC:
+        if args.dynamic_only and stmt["tier"] != Tier.DYNAMIC:
             continue
         statements.append(stmt)
 
     if args.json:
         pairs = []
         for stmt in statements:
-            item = {"pattern": stmt.pattern, "response": stmt.text}
-            if stmt.template:
-                item["template"] = stmt.template
-            if stmt.that:
-                item["that"] = stmt.that
-            if stmt.topic:
-                item["topic"] = stmt.topic
+            item = {"pattern": stmt["pattern"], "response": stmt["text"]}
+            if stmt["template"]:
+                item["template"] = stmt["template"]
+            if stmt["that"]:
+                item["that"] = stmt["that"]
+            if stmt["topic"]:
+                item["topic"] = stmt["topic"]
             pairs.append(item)
         output = json.dumps({"pairs": pairs}, indent=2)
     else:
-        output = "\n".join(stmt.text for stmt in statements)
+        output = "\n".join(stmt["text"] for stmt in statements)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
@@ -573,15 +578,17 @@ class InteractiveChat:
     def __init__(
         self,
         engram: Engram,
-        session_id: str | None = None,
+        session_id=None,
         enable_graph: bool = False,
     ):
         self.engram = engram
         self.debug_mode = False
-        self.session_id = session_id or sessions.create_session(engram,)
+        self.session_id = session_id or sessions.create_session(
+            engram,
+        )
 
         # Ensure session exists
-        self.session = sessions.get_session(engram,self.session_id, create_if_missing=True)
+        self.session = sessions.get_session(engram, self.session_id, create_if_missing=True)
 
         # Note: Graph support would require extending core.py to accept graph callbacks
         if enable_graph:
@@ -597,7 +604,7 @@ class InteractiveChat:
         stmt, captured, response = result
 
         if self.debug_mode:
-            print(f"     [Pattern: '{stmt.pattern}' | Captured: {captured}]")
+            print(f"     [Pattern: '{stmt['pattern']}' | Captured: {captured}]")
 
         # pattern_query already processes templates and updates session context
         return response or "..."
@@ -638,28 +645,28 @@ class InteractiveChat:
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
 
         elif cmd == "metrics":
-            metrics = self.metrics.get_metrics(engram)
+            metric_data = metrics.get_metrics(self.engram)
             print(f"Patterns: {len(self.engram.pattern_matcher)}")
-            print(f"Statements: {metrics['statement_count']}")
-            print(f"Sessions: {metrics['session_count']}")
-            print(f"Hit rate: {metrics['hit_rate']:.1%}")
+            print(f"Statements: {metric_data['statement_count']}")
+            print(f"Sessions: {metric_data['session_count']}")
+            print(f"Hit rate: {metric_data['hit_rate']:.1%}")
 
         elif cmd == "topic" and len(parts) >= 2:
-            session = sessions.get_session(self.engram,self.session_id)
+            session = sessions.get_session(self.engram, self.session_id)
             if session:
-                session.set_predicate("topic", parts[1])
+                session["predicates"]["topic"] = parts[1]
                 print(f"Topic set to: {parts[1]}")
 
         elif cmd == "set" and len(parts) >= 3:
-            session = sessions.get_session(self.engram,self.session_id)
+            session = sessions.get_session(self.engram, self.session_id)
             if session:
-                session.set_predicate(parts[1], parts[2])
+                session["predicates"][parts[1]] = parts[2]
                 print(f"Set {parts[1]} = {parts[2]}")
 
         elif cmd == "get" and len(parts) >= 2:
-            session = sessions.get_session(self.engram,self.session_id)
+            session = sessions.get_session(self.engram, self.session_id)
             if session:
-                value = session.get_predicate(parts[1], "(not set)")
+                value = session.get("predicates", {}).get(parts[1], "(not set)")
                 print(f"{parts[1]} = {value}")
 
         elif cmd == "save":
@@ -711,10 +718,12 @@ def main() -> int:
 
     # Auto-init if store doesn't exist
     if args.command != "init" and not Path(args.store).exists():
-        engram = Engram(config=EngramConfig(
-            capacity=args.capacity,
-            eviction_policy=get_eviction_policy(args.eviction),
-        ))
+        engram = Engram(
+            config=EngramConfig(
+                capacity=args.capacity,
+                eviction_policy=get_eviction_policy(args.eviction),
+            )
+        )
         # Load seed responses from seed.json if available
         seed_file = Path(__file__).parent / "engram" / "seed.json"
         if seed_file.exists():
@@ -723,7 +732,7 @@ def main() -> int:
             for pair in seed_data.get("pairs", []):
                 pattern = pair.get("pattern", "")
                 response = pair.get("response", "")
-                template = pair.get("template")
+                template = pair.get("template", {})
                 engram.store(response, tier=Tier.STATIC, pattern=pattern, template=template)
         save_engram(engram, args.store)
         print(f"Initialized engram store: {args.store}")

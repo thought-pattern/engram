@@ -5,12 +5,12 @@ of the statement store by removing DYNAMIC tier statements based on
 various policies (FIFO, LRU, LFU, HIT_RATE).
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
+from engram.models import statement_hit_rate
 
-def get_eviction_candidates(engram) -> list[tuple[int, object]]:
+
+def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
     """Get DYNAMIC statements eligible for eviction.
 
     Filters out statements that are protected by min_hit_rate threshold.
@@ -25,9 +25,9 @@ def get_eviction_candidates(engram) -> list[tuple[int, object]]:
 
     candidates = []
     for idx, stmt in enumerate(engram.statements):
-        if stmt.tier == Tier.DYNAMIC:
+        if stmt["tier"] == Tier.DYNAMIC:
             # Check min_hit_rate protection
-            if engram.config.min_hit_rate > 0 and stmt.hit_rate >= engram.config.min_hit_rate:
+            if engram.config["min_hit_rate"] > 0 and statement_hit_rate(stmt) >= engram.config["min_hit_rate"]:
                 continue
             candidates.append((idx, stmt))
     return candidates
@@ -52,20 +52,20 @@ def evict_statement_at(engram, idx: int) -> bool:
 
     # Remove from keyword indices
     with engram.keyword_lock:
-        for kw in stmt.keywords:
+        for kw in stmt["keywords"]:
             if kw in engram.keywords:
-                engram.keywords[kw].statement_ids.discard(stmt.id)
+                engram.keywords[kw]["statement_ids"].discard(stmt["id"])
                 # Prune empty keyword entries
-                if not engram.keywords[kw].statement_ids:
+                if not engram.keywords[kw]["statement_ids"]:
                     del engram.keywords[kw]
 
     # Remove from statement list and update index
-    del engram.statement_index[stmt.id]
+    del engram.statement_index[stmt["id"]]
     engram.statements.pop(idx)
 
     # Rebuild indices after removal
     for i, s in enumerate(engram.statements):
-        engram.statement_index[s.id] = i
+        engram.statement_index[s["id"]] = i
 
     engram.eviction_count += 1
     return True
@@ -89,7 +89,7 @@ def evict_dynamic(engram) -> bool:
     if not candidates:
         return False
 
-    policy = engram.config.eviction_policy
+    policy = engram.config["eviction_policy"]
     target_idx: int
 
     if policy == EvictionPolicy.FIFO:
@@ -99,29 +99,27 @@ def evict_dynamic(engram) -> bool:
     elif policy == EvictionPolicy.LRU:
         # Least recently used: evict statement with oldest last_hit
         # Statements never hit use created_at as fallback
-        def lru_key(item: tuple[int, object]) -> datetime:
+        def lru_key(item: tuple[int, dict]) -> datetime:
             _, stmt = item
-            if stmt.last_hit is not None:
-                return stmt.last_hit
-            return stmt.created_at
+            return stmt["last_hit"] or stmt["created_at"]
 
         target_idx = min(candidates, key=lru_key)[0]
 
     elif policy == EvictionPolicy.LFU:
         # Least frequently used: evict statement with lowest hit_count
         # Ties broken by oldest created_at
-        def lfu_key(item: tuple[int, object]) -> tuple[int, datetime]:
+        def lfu_key(item: tuple[int, dict]) -> tuple[int, datetime]:
             _, stmt = item
-            return (stmt.hit_count, stmt.created_at)
+            return (stmt["hit_count"], stmt["created_at"])
 
         target_idx = min(candidates, key=lfu_key)[0]
 
     elif policy == EvictionPolicy.HIT_RATE:
         # Lowest hit rate: evict statement with lowest hit_rate
         # Ties broken by oldest created_at
-        def hit_rate_key(item: tuple[int, object]) -> tuple[float, datetime]:
+        def hit_rate_key(item: tuple[int, dict]) -> tuple[float, datetime]:
             _, stmt = item
-            return (stmt.hit_rate, stmt.created_at)
+            return (statement_hit_rate(stmt), stmt["created_at"])
 
         target_idx = min(candidates, key=hit_rate_key)[0]
 

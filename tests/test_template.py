@@ -27,37 +27,37 @@ class TestTemplateContext:
     def test_get_predicate(self):
         """Test predicate retrieval via direct access."""
         ctx = TemplateContext(predicates={"name": "Alice", "mood": "happy"})
-        assert ctx.predicates.get("name") == "Alice"
-        assert ctx.predicates.get("mood") == "happy"
-        assert ctx.predicates.get("missing", "") == ""
-        assert ctx.predicates.get("missing", "default") == "default"
+        assert ctx["predicates"].get("name") == "Alice"
+        assert ctx["predicates"].get("mood") == "happy"
+        assert ctx["predicates"].get("missing", "") == ""
+        assert ctx["predicates"].get("missing", "default") == "default"
 
     def test_set_predicate(self):
         """Test predicate setting via direct access."""
         ctx = TemplateContext()
-        ctx.predicates["name"] = "Bob"
-        assert ctx.predicates["name"] == "Bob"
+        ctx["predicates"]["name"] = "Bob"
+        assert ctx["predicates"]["name"] == "Bob"
 
     def test_topic_in_predicates(self):
         """Test topic from predicates."""
         ctx = TemplateContext(predicates={"topic": "WEATHER"})
-        assert ctx.predicates.get("topic", "") == "WEATHER"
+        assert ctx["predicates"].get("topic", "") == "WEATHER"
 
     def test_topic_empty(self):
         """Test topic when not set."""
         ctx = TemplateContext()
-        assert ctx.predicates.get("topic", "") == ""
+        assert ctx["predicates"].get("topic", "") == ""
 
     def test_that_from_history(self):
         """Test getting that from history."""
         ctx = TemplateContext(that_history=[["HELLO", "HOW ARE YOU"], ["GOODBYE"]])
         # Most recent bot response is first sentence of first history entry
-        assert ctx.that_history[0][0] == "HELLO"
+        assert ctx["that_history"][0][0] == "HELLO"
 
     def test_that_empty(self):
         """Test that when empty."""
         ctx = TemplateContext()
-        assert len(ctx.that_history) == 0
+        assert len(ctx["that_history"]) == 0
 
     def test_get_input(self):
         """Test input history retrieval."""
@@ -77,9 +77,9 @@ class TestTemplateContext:
     def test_get_bot(self):
         """Test bot property retrieval via direct access."""
         ctx = TemplateContext(bot={"name": "TestBot", "version": "1.0"})
-        assert ctx.bot.get("name") == "TestBot"
-        assert ctx.bot.get("missing", "") == ""
-        assert ctx.bot.get("missing", "default") == "default"
+        assert ctx["bot"].get("name") == "TestBot"
+        assert ctx["bot"].get("missing", "") == ""
+        assert ctx["bot"].get("missing", "default") == "default"
 
     def test_get_map(self):
         """Test map lookup."""
@@ -144,10 +144,7 @@ class TestTemplateProcessorBasic:
     def test_map_lookup(self):
         """Test map lookup."""
         processor = TemplateProcessor()
-        ctx = TemplateContext(
-            stars=["france"],
-            maps={"capital": {"france": "Paris"}}
-        )
+        ctx = TemplateContext(stars=["france"], maps={"capital": {"france": "Paris"}})
         result = processor.process("Capital: {map:capital:{star1}}", ctx)
         assert result == "Capital: Paris"
 
@@ -171,12 +168,7 @@ class TestTemplateProcessorRandom:
         """Test random with nested template."""
         processor = TemplateProcessor()
         ctx = TemplateContext(stars=["Alice"])
-        template = {
-            "random": [
-                {"text": "Hello, {star1}!"},
-                {"text": "Hi, {star1}!"}
-            ]
-        }
+        template = {"random": [{"text": "Hello, {star1}!"}, {"text": "Hi, {star1}!"}]}
         result = processor.process(template, ctx)
         assert result in ["Hello, Alice!", "Hi, Alice!"]
 
@@ -191,11 +183,7 @@ class TestTemplateProcessorCondition:
         # Variable exists
         ctx = TemplateContext(predicates={"name": "Alice"})
         template = {
-            "condition": {
-                "var": "name",
-                "exists": {"text": "Hello, {get:name}!"},
-                "missing": {"text": "What's your name?"}
-            }
+            "condition": {"var": "name", "exists": {"text": "Hello, {get:name}!"}, "missing": {"text": "What's your name?"}}
         }
         assert processor.process(template, ctx) == "Hello, Alice!"
 
@@ -213,8 +201,8 @@ class TestTemplateProcessorCondition:
                 "cases": [
                     {"value": "happy", "template": "Great!"},
                     {"value": "sad", "template": "Sorry to hear."},
-                    {"default": "I see."}
-                ]
+                    {"default": "I see."},
+                ],
             }
         }
         assert processor.process(template, ctx) == "Great!"
@@ -234,7 +222,7 @@ class TestTemplateProcessorCondition:
                 "var": "age",
                 "pattern": r"^\d+$",
                 "match": {"text": "You are {get:age}."},
-                "nomatch": {"text": "Invalid age."}
+                "nomatch": {"text": "Invalid age."},
             }
         }
         assert processor.process(template, ctx) == "You are 25."
@@ -250,26 +238,16 @@ class TestTemplateProcessorSequence:
         """Test basic sequence."""
         processor = TemplateProcessor()
         ctx = TemplateContext()
-        template = {
-            "sequence": [
-                {"set": {"name": "topic", "value": "weather"}},
-                {"text": "Let's talk about weather!"}
-            ]
-        }
+        template = {"sequence": [{"set": {"name": "topic", "value": "weather"}}, {"text": "Let's talk about weather!"}]}
         result = processor.process(template, ctx)
         assert result == "Let's talk about weather!"
-        assert ctx.predicates["topic"] == "weather"
+        assert ctx["predicates"]["topic"] == "weather"
 
     def test_sequence_multiple_text(self):
         """Test sequence with multiple text outputs."""
         processor = TemplateProcessor()
         ctx = TemplateContext()
-        template = {
-            "sequence": [
-                {"text": "First."},
-                {"text": "Second."}
-            ]
-        }
+        template = {"sequence": [{"text": "First."}, {"text": "Second."}]}
         result = processor.process(template, ctx)
         assert result == "First. Second."
 
@@ -281,25 +259,16 @@ class TestTemplateProcessorThink:
         """Test think produces no output."""
         processor = TemplateProcessor()
         ctx = TemplateContext()
-        template = {
-            "think": [
-                {"set": {"name": "secret", "value": "hidden"}}
-            ]
-        }
+        template = {"think": [{"set": {"name": "secret", "value": "hidden"}}]}
         result = processor.process(template, ctx)
         assert result == ""
-        assert ctx.predicates["secret"] == "hidden"
+        assert ctx["predicates"]["secret"] == "hidden"
 
     def test_think_in_sequence(self):
         """Test think in sequence."""
         processor = TemplateProcessor()
         ctx = TemplateContext()
-        template = {
-            "sequence": [
-                {"think": [{"set": {"name": "name", "value": "Alice"}}]},
-                {"text": "Hello, {get:name}!"}
-            ]
-        }
+        template = {"sequence": [{"think": [{"set": {"name": "name", "value": "Alice"}}]}, {"text": "Hello, {get:name}!"}]}
         result = processor.process(template, ctx)
         assert result == "Hello, Alice!"
 
@@ -485,10 +454,7 @@ class TestTemplateProcessorRedirect:
                 return "Python is a programming language."
             return ""
 
-        ctx = TemplateContext(
-            stars=["python"],
-            redirect_fn=redirect_fn
-        )
+        ctx = TemplateContext(stars=["python"], redirect_fn=redirect_fn)
         result = processor.process({"redirect": "WHAT IS {star1}"}, ctx)
         assert result == "Python is a programming language."
 
@@ -501,10 +467,7 @@ class TestTemplateProcessorRedirect:
                 return "How can I help?"
             return ""
 
-        ctx = TemplateContext(
-            stars=["help me"],
-            redirect_fn=redirect_fn
-        )
+        ctx = TemplateContext(stars=["help me"], redirect_fn=redirect_fn)
         result = processor.process({"sr": True}, ctx)
         assert result == "How can I help?"
 
@@ -513,11 +476,11 @@ class TestTemplateProcessorRedirect:
         processor = TemplateProcessor(srai_limit=3)
 
         call_count = [0]
+
         def redirect_fn(pattern):
             call_count[0] += 1
             # Infinite recursion attempt
-            return processor.process({"redirect": "LOOP"},
-                TemplateContext(redirect_fn=redirect_fn))
+            return processor.process({"redirect": "LOOP"}, TemplateContext(redirect_fn=redirect_fn))
 
         ctx = TemplateContext(redirect_fn=redirect_fn)
         processor.process({"redirect": "START"}, ctx)
@@ -533,19 +496,12 @@ class TestTemplateProcessorLearn:
         processor = TemplateProcessor()
 
         learned = []
+
         def learn_fn(data):
             learned.append(data)
 
-        ctx = TemplateContext(
-            stars=["the sky", "blue"],
-            learn_fn=learn_fn
-        )
-        template = {
-            "learn": {
-                "pattern": "{upper:{star1}}",
-                "template": {"text": "{star2}"}
-            }
-        }
+        ctx = TemplateContext(stars=["the sky", "blue"], learn_fn=learn_fn)
+        template = {"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}
         processor.process(template, ctx)
 
         assert len(learned) == 1
@@ -577,15 +533,10 @@ class TestTemplateIntegration:
         """Test spec example: MY NAME IS pattern."""
         processor = TemplateProcessor()
         ctx = TemplateContext(stars=["Alice"])
-        template = {
-            "sequence": [
-                {"set": {"name": "username", "value": "{star1}"}},
-                {"text": "Nice to meet you, {star1}!"}
-            ]
-        }
+        template = {"sequence": [{"set": {"name": "username", "value": "{star1}"}}, {"text": "Nice to meet you, {star1}!"}]}
         result = processor.process(template, ctx)
         assert result == "Nice to meet you, Alice!"
-        assert ctx.predicates["username"] == "Alice"
+        assert ctx["predicates"]["username"] == "Alice"
 
     def test_spec_example_what_is_my_name(self):
         """Test spec example: WHAT IS MY NAME pattern."""
@@ -597,7 +548,7 @@ class TestTemplateIntegration:
             "condition": {
                 "var": "username",
                 "exists": {"text": "Your name is {get:username}."},
-                "missing": {"text": "I don't know your name yet."}
+                "missing": {"text": "I don't know your name yet."},
             }
         }
         assert processor.process(template, ctx1) == "Your name is Alice."
@@ -609,10 +560,7 @@ class TestTemplateIntegration:
     def test_nested_template(self):
         """Test deeply nested template."""
         processor = TemplateProcessor()
-        ctx = TemplateContext(
-            predicates={"mood": "happy"},
-            stars=["Alice"]
-        )
+        ctx = TemplateContext(predicates={"mood": "happy"}, stars=["Alice"])
         template = {
             "sequence": [
                 {"set": {"name": "greeted", "value": "true"}},
@@ -620,19 +568,16 @@ class TestTemplateIntegration:
                     "condition": {
                         "var": "mood",
                         "cases": [
-                            {
-                                "value": "happy",
-                                "template": {"text": "Hello, {star1}! You seem happy!"}
-                            },
-                            {"default": "Hello, {star1}."}
-                        ]
+                            {"value": "happy", "template": {"text": "Hello, {star1}! You seem happy!"}},
+                            {"default": "Hello, {star1}."},
+                        ],
                     }
-                }
+                },
             ]
         }
         result = processor.process(template, ctx)
         assert result == "Hello, Alice! You seem happy!"
-        assert ctx.predicates["greeted"] == "true"
+        assert ctx["predicates"]["greeted"] == "true"
 
 
 class TestSystemVariables:
@@ -680,6 +625,7 @@ class TestSystemVariables:
         # Use a format that's easy to verify
         result = processor.process("{date:%Y}", ctx)
         from datetime import datetime
+
         assert result == datetime.now().strftime("%Y")
 
     def test_date_formatted_complex(self):
@@ -688,6 +634,7 @@ class TestSystemVariables:
         ctx = TemplateContext()
         result = processor.process("{date:%Y-%m-%d}", ctx)
         from datetime import datetime
+
         assert result == datetime.now().strftime("%Y-%m-%d")
 
     def test_date_formatted_time(self):
@@ -696,6 +643,7 @@ class TestSystemVariables:
         ctx = TemplateContext()
         result = processor.process("{date:%H:%M}", ctx)
         from datetime import datetime
+
         # Just check format is correct (time may differ by seconds)
         assert len(result) == 5
         assert ":" in result

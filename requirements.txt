@@ -1,4 +1,4 @@
 # ENGRAM dependencies
 
 # Natural Language Processing
-nltk>=3.8.1
+nltk==3.9.4

@@ -26,22 +26,28 @@ Stemming support:
 """
 
 import re
-from dataclasses import dataclass, field
 from functools import lru_cache
 
 from engram.text import normalize, stem_text
 
 
-@dataclass
-class MatchResult:
-    """Result of a pattern match attempt."""
-
-    matched: bool
-    pattern: str
-    score: int  # Higher = more specific match
-    captured: list[str]  # Text captured by wildcards
-    thatstars: list[str] = field(default_factory=list)  # Captures from that pattern
-    topicstars: list[str] = field(default_factory=list)  # Captures from topic pattern
+def MatchResult(
+    matched: bool,
+    pattern: str,
+    score: int,  # Higher = more specific match
+    captured: list[str],  # Text captured by wildcards
+    thatstars=None,  # Captures from that pattern
+    topicstars=None,  # Captures from topic pattern
+) -> dict:
+    """Build a pattern-match result dict."""
+    return {
+        "matched": matched,
+        "pattern": pattern,
+        "score": score,
+        "captured": captured,
+        "thatstars": thatstars if thatstars is not None else [],
+        "topicstars": topicstars if topicstars is not None else [],
+    }
 
 
 @lru_cache(maxsize=2048)
@@ -87,9 +93,7 @@ def normalize_pattern(pattern: str) -> str:
     result = re_module.sub(r"\$(\w)", lambda m: "\x07" + m.group(1), result)
 
     # Remove punctuation (but keep placeholders and digits for index)
-    result = "".join(
-        c for c in result if c.isalnum() or c.isspace() or c in "\x01\x02\x03\x04\x05\x06\x07"
-    )
+    result = "".join(c for c in result if c.isalnum() or c.isspace() or c in "\x01\x02\x03\x04\x05\x06\x07")
 
     # Restore wildcards
     result = result.replace("\x01", "*").replace("\x02", "_")
@@ -164,7 +168,7 @@ def pattern_to_regex(
             regex_parts.append(r"(.+?)")
             can_be_empty.append(False)
             specificity -= 4  # Largest penalty (lowest priority wildcard)
-        elif (set_match := set_ref_pattern.match(word)):
+        elif set_match := set_ref_pattern.match(word):
             # {set:name} - match any word from the named set
             set_name = set_match.group(1)
             if sets and set_name in sets and sets[set_name]:
@@ -176,7 +180,7 @@ def pattern_to_regex(
                 regex_parts.append(r"(?!.)")
             can_be_empty.append(False)
             specificity += 90  # High but less than exact word match
-        elif (bot_match := bot_ref_pattern.match(word)):
+        elif bot_match := bot_ref_pattern.match(word):
             # {bot:name} - match the bot property value
             prop_name = bot_match.group(1)
             if bot_properties and prop_name in bot_properties:
@@ -228,7 +232,7 @@ def pattern_to_regex(
     return re.compile(regex_str, re.IGNORECASE), specificity
 
 
-def match_pattern(pattern: str, text: str) -> MatchResult:
+def match_pattern(pattern: str, text: str) -> dict:
     """Match text against an AIML-style pattern.
 
     Args:
@@ -260,9 +264,7 @@ def match_pattern(pattern: str, text: str) -> MatchResult:
     )
 
 
-def find_best_match(
-    patterns: list[tuple[str, str]], text: str
-) -> tuple[str, str, list[str]]:
+def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
     """Find the best matching pattern for input text.
 
     Args:
@@ -272,35 +274,46 @@ def find_best_match(
     Returns:
         Tuple of (pattern, response, captured) or None if no match.
     """
-    best_match = None
+    best_match: tuple = ()
 
     for pattern, response in patterns:
         result = match_pattern(pattern, text)
 
-        if result.matched:
-            if best_match is None or result.score > best_match[3]:
-                best_match = (pattern, response, result.captured, result.score)
+        if result["matched"]:
+            if not best_match or result["score"] > best_match[3]:
+                best_match = (pattern, response, result["captured"], result["score"])
 
     if best_match:
         return (best_match[0], best_match[1], best_match[2])
 
-    return None
+    return ()
 
 
-@dataclass
-class PatternEntry:
-    """A pattern entry with optional context constraints."""
-
-    pattern: str
-    response: str
-    regex: re.Pattern
-    specificity: int
-    that: str = ""  # Pattern for bot's previous response
-    that_regex: object = None
-    that_specificity: int = 0
-    topic: str = ""  # Topic scope (exact match or pattern)
-    topic_regex: object = None
-    topic_specificity: int = 0
+def PatternEntry(
+    pattern: str,
+    response: str,
+    regex,
+    specificity: int,
+    that: str = "",  # Pattern for bot's previous response
+    that_regex=None,
+    that_specificity: int = 0,
+    topic: str = "",  # Topic scope (exact match or pattern)
+    topic_regex=None,
+    topic_specificity: int = 0,
+) -> dict:
+    """Build a pattern entry dict with optional context constraints."""
+    return {
+        "pattern": pattern,
+        "response": response,
+        "regex": regex,
+        "specificity": specificity,
+        "that": that,
+        "that_regex": that_regex,
+        "that_specificity": that_specificity,
+        "topic": topic,
+        "topic_regex": topic_regex,
+        "topic_specificity": topic_specificity,
+    }
 
 
 # Context priority multipliers
@@ -324,7 +337,7 @@ class PatternMatcher:
             bot_properties: Optional bot properties for {bot:name} matching.
             use_stemming: If True, use stemmed matching as fallback when exact match fails.
         """
-        self._patterns: list[PatternEntry] = []
+        self._patterns: list[dict] = []
         # Index: first word -> list of pattern indices for faster lookup
         self._first_word_index: dict[str, list[int]] = {}
         # Index for stemmed first words (when stemming enabled)
@@ -356,17 +369,13 @@ class PatternMatcher:
         that_regex = None
         that_specificity = 0
         if that:
-            that_regex, that_specificity = pattern_to_regex(
-                that, self._sets, self._bot_properties
-            )
+            that_regex, that_specificity = pattern_to_regex(that, self._sets, self._bot_properties)
 
         # Build topic regex if provided (topics can have wildcards too)
         topic_regex = None
         topic_specificity = 0
         if topic:
-            topic_regex, topic_specificity = pattern_to_regex(
-                topic, self._sets, self._bot_properties
-            )
+            topic_regex, topic_specificity = pattern_to_regex(topic, self._sets, self._bot_properties)
 
         entry = PatternEntry(
             pattern=pattern,
@@ -413,7 +422,7 @@ class PatternMatcher:
         text: str,
         that: str = "",
         topic: str = "",
-    ) -> tuple[str, list[str], list[str], list[str], str, str, str]:
+    ) -> tuple:
         """Find best matching response for input with context.
 
         Args:
@@ -428,7 +437,7 @@ class PatternMatcher:
         words = normalized.split()
 
         if not words:
-            return None
+            return ()
 
         # Normalize context
         that_normalized = normalize(that) if that else ""
@@ -436,19 +445,13 @@ class PatternMatcher:
 
         # Try exact matching first using the first-word index
         first_word = words[0]
-        result = self._match_internal(
-            normalized, that_normalized, topic_normalized,
-            first_word, use_stemmed_index=False
-        )
+        result = self._match_internal(normalized, that_normalized, topic_normalized, first_word, use_stemmed_index=False)
 
         # If no match and stemming enabled, try stemmed matching
-        if result is None and self._use_stemming:
+        if not result and self._use_stemming:
             stemmed = stem_text(normalized)
             stemmed_first = stem_text(first_word)
-            result = self._match_internal(
-                stemmed, that_normalized, topic_normalized,
-                stemmed_first, use_stemmed_index=True
-            )
+            result = self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, use_stemmed_index=True)
 
         return result
 
@@ -488,7 +491,7 @@ class PatternMatcher:
         topic_normalized: str,
         first_word: str,
         use_stemmed_index: bool,
-    ) -> tuple[str, list[str], list[str], list[str], str, str, str]:
+    ) -> tuple:
         """Internal matching logic.
 
         Args:
@@ -503,55 +506,55 @@ class PatternMatcher:
         """
         # Get candidate patterns using first-word index
         candidate_indices = self._get_candidate_indices(first_word, use_stemmed_index)
-        best = None
+        best: tuple = ()
 
         for idx in candidate_indices:
             entry = self._patterns[idx]
             # First check if pattern matches input
-            match = entry.regex.match(normalized)
+            match = entry["regex"].match(normalized)
             if not match:
                 continue
 
             captured = list(match.groups())
             thatstars: list[str] = []
             topicstars: list[str] = []
-            score = entry.specificity
+            score = entry["specificity"]
 
             # Check topic constraint if pattern has one
-            if entry.topic and entry.topic_regex:
+            if entry["topic"] and entry["topic_regex"]:
                 if not topic_normalized:
                     # Pattern requires topic but no topic set - skip
                     continue
-                topic_match = entry.topic_regex.match(topic_normalized)
+                topic_match = entry["topic_regex"].match(topic_normalized)
                 if not topic_match:
                     continue
                 # Topic matches - add priority and capture wildcards
-                score += TOPIC_PRIORITY + entry.topic_specificity
+                score += TOPIC_PRIORITY + entry["topic_specificity"]
                 topicstars = list(topic_match.groups())
 
             # Check that constraint if pattern has one
-            if entry.that and entry.that_regex:
+            if entry["that"] and entry["that_regex"]:
                 if not that_normalized:
                     # Pattern requires that but no previous response - skip
                     continue
-                that_match = entry.that_regex.match(that_normalized)
+                that_match = entry["that_regex"].match(that_normalized)
                 if not that_match:
                     continue
                 # That matches - add priority and capture wildcards
-                score += THAT_PRIORITY + entry.that_specificity
+                score += THAT_PRIORITY + entry["that_specificity"]
                 thatstars = list(that_match.groups())
 
             # Update best if this is better
-            if best is None or score > best[4]:
-                best = (entry.response, captured, thatstars, topicstars, score, entry.pattern, entry.topic, entry.that)
+            if not best or score > best[4]:
+                best = (entry["response"], captured, thatstars, topicstars, score, entry["pattern"], entry["topic"], entry["that"])
 
         if best:
             # Return (response, captured, thatstars, topicstars, pattern, topic, that)
             return (best[0], best[1], best[2], best[3], best[5], best[6], best[7])
 
-        return None
+        return ()
 
-    def match_simple(self, text: str) -> tuple[str, list[str]]:
+    def match_simple(self, text: str) -> tuple:
         """Find best matching response without context (backward compatible).
 
         Args:
@@ -563,7 +566,7 @@ class PatternMatcher:
         result = self.match(text)
         if result:
             return (result[0], result[1])
-        return None
+        return ()
 
     def get_patterns(self) -> list[tuple[str, str]]:
         """Get all pattern-response pairs.
@@ -571,7 +574,7 @@ class PatternMatcher:
         Returns:
             List of (pattern, response) tuples.
         """
-        return [(p.pattern, p.response) for p in self._patterns]
+        return [(p["pattern"], p["response"]) for p in self._patterns]
 
     def get_patterns_with_context(self) -> list[tuple[str, str, str, str]]:
         """Get all pattern-response pairs with context.
@@ -579,7 +582,7 @@ class PatternMatcher:
         Returns:
             List of (pattern, response, that, topic) tuples.
         """
-        return [(p.pattern, p.response, p.that, p.topic) for p in self._patterns]
+        return [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self._patterns]
 
     def clear(self) -> None:
         """Remove all patterns."""

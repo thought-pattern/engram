@@ -4,16 +4,13 @@ This module provides save/load functionality for serializing and
 deserializing ENGRAM state to/from JSON files and strings.
 """
 
-from __future__ import annotations
-
 import json
-from pathlib import Path
 
 # Version constant for persistence format
 PERSISTENCE_VERSION = 1
 
 
-def save(engram, path: str | Path) -> None:
+def save(engram, path) -> None:
     """Save complete state to JSON file.
 
     Args:
@@ -46,27 +43,33 @@ def to_dict(engram) -> dict:
     Returns:
         Dictionary containing all persistent state.
     """
+    from engram.models import (
+        keyword_entry_to_dict,
+        session_to_dict,
+        statement_to_dict,
+    )
+
     with engram.statement_lock, engram.keyword_lock, engram.session_lock:
         return {
             "version": PERSISTENCE_VERSION,
-            "capacity": engram.config.capacity,
+            "capacity": engram.config["capacity"],
             "bot": engram.bot_properties.copy(),
             "sets": {k: list(v) for k, v in engram.sets.items()},
             "maps": {k: dict(v) for k, v in engram.maps.items()},
             "substitutions": {
-                "contractions": dict(engram.substitution_maps.contractions),
-                "person": dict(engram.substitution_maps.person),
-                "person2": dict(engram.substitution_maps.person2),
-                "gender": dict(engram.substitution_maps.gender),
-                "custom": dict(engram.substitution_maps.custom),
+                "contractions": dict(engram.substitution_maps["contractions"]),
+                "person": dict(engram.substitution_maps["person"]),
+                "person2": dict(engram.substitution_maps["person2"]),
+                "gender": dict(engram.substitution_maps["gender"]),
+                "custom": dict(engram.substitution_maps["custom"]),
             },
-            "statements": [s.to_dict() for s in engram.statements],
-            "keywords": {kw: entry.to_dict() for kw, entry in engram.keywords.items()},
-            "sessions": [s.to_dict() for s in engram.sessions.values()],
+            "statements": [statement_to_dict(s) for s in engram.statements],
+            "keywords": {kw: keyword_entry_to_dict(entry) for kw, entry in engram.keywords.items()},
+            "sessions": [session_to_dict(s) for s in engram.sessions.values()],
         }
 
 
-def save_sessions(engram, path: str | Path) -> None:
+def save_sessions(engram, path) -> None:
     """Save sessions only to JSON file.
 
     Useful for persisting session state separately from the knowledge base.
@@ -75,16 +78,18 @@ def save_sessions(engram, path: str | Path) -> None:
         engram: Engram instance.
         path: File path to write.
     """
+    from engram.models import session_to_dict
+
     with engram.session_lock:
         data = {
             "version": PERSISTENCE_VERSION,
-            "sessions": [s.to_dict() for s in engram.sessions.values()],
+            "sessions": [session_to_dict(s) for s in engram.sessions.values()],
         }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
-def load_sessions(engram, path: str | Path) -> int:
+def load_sessions(engram, path) -> int:
     """Load sessions from JSON file.
 
     Adds sessions to the current instance without clearing existing sessions.
@@ -96,15 +101,15 @@ def load_sessions(engram, path: str | Path) -> int:
     Returns:
         Number of sessions loaded.
     """
-    from engram.models import Session
+    from engram.models import session_from_dict
 
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     with engram.session_lock:
         for sess_data in data.get("sessions", []):
-            sess = Session.from_dict(sess_data)
-            engram.sessions[sess.session_id] = sess
+            sess = session_from_dict(sess_data)
+            engram.sessions[sess["session_id"]] = sess
         return len(data.get("sessions", []))
 
 
@@ -121,13 +126,13 @@ def rebuild_index(engram) -> None:
     with engram.statement_lock, engram.keyword_lock:
         engram.keywords.clear()
         for stmt in engram.statements:
-            for kw in stmt.keywords:
+            for kw in stmt["keywords"]:
                 if kw not in engram.keywords:
                     engram.keywords[kw] = KeywordEntry(keyword=kw)
-                engram.keywords[kw].statement_ids.add(stmt.id)
+                engram.keywords[kw]["statement_ids"].add(stmt["id"])
 
 
-def load_engram(path: str, config=None, engram_class=None):
+def load_engram(path, config=None, engram_class=None):
     """Load ENGRAM state from JSON file.
 
     Args:
@@ -173,10 +178,15 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
         ValueError: If persistence version is unsupported.
     """
     from engram.config import EngramConfig
-    from engram.models import KeywordEntry, Session, Statement
+    from engram.models import (
+        keyword_entry_from_dict,
+        session_from_dict,
+        statement_from_dict,
+    )
 
     if engram_class is None:
         from engram.core import Engram
+
         engram_class = Engram
 
     version = data.get("version", 1)
@@ -206,35 +216,33 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
     if "substitutions" in data:
         subs = data["substitutions"]
         if "contractions" in subs:
-            instance.substitution_maps.contractions.update(subs["contractions"])
+            instance.substitution_maps["contractions"].update(subs["contractions"])
         if "person" in subs:
-            instance.substitution_maps.person.update(subs["person"])
+            instance.substitution_maps["person"].update(subs["person"])
         if "person2" in subs:
-            instance.substitution_maps.person2.update(subs["person2"])
+            instance.substitution_maps["person2"].update(subs["person2"])
         if "gender" in subs:
-            instance.substitution_maps.gender.update(subs["gender"])
+            instance.substitution_maps["gender"].update(subs["gender"])
         if "custom" in subs:
-            instance.substitution_maps.custom.update(subs["custom"])
+            instance.substitution_maps["custom"].update(subs["custom"])
 
     # Restore statements
     for stmt_data in data.get("statements", []):
-        stmt = Statement.from_dict(stmt_data)
+        stmt = statement_from_dict(stmt_data)
         instance.statements.append(stmt)
-        instance.statement_index[stmt.id] = len(instance.statements) - 1
+        instance.statement_index[stmt["id"]] = len(instance.statements) - 1
         # Rebuild pattern matcher with context
-        if stmt.pattern:
-            instance.pattern_matcher.add_pattern(
-                stmt.pattern, stmt.text, that=stmt.that, topic=stmt.topic
-            )
-            instance.pattern_to_statement[stmt.pattern] = stmt.id
+        if stmt["pattern"]:
+            instance.pattern_matcher.add_pattern(stmt["pattern"], stmt["text"], that=stmt["that"], topic=stmt["topic"])
+            instance.pattern_to_statement[stmt["pattern"]] = stmt["id"]
 
     # Restore keyword index
     for kw, entry_data in data.get("keywords", {}).items():
-        instance.keywords[kw] = KeywordEntry.from_dict(kw, entry_data)
+        instance.keywords[kw] = keyword_entry_from_dict(kw, entry_data)
 
     # Restore sessions
     for sess_data in data.get("sessions", []):
-        sess = Session.from_dict(sess_data)
-        instance.sessions[sess.session_id] = sess
+        sess = session_from_dict(sess_data)
+        instance.sessions[sess["session_id"]] = sess
 
     return instance

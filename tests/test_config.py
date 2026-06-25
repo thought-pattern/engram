@@ -11,14 +11,14 @@ class TestEngramConfig:
     def test_defaults(self) -> None:
         config = EngramConfig()
 
-        assert config.capacity == 10000
-        assert config.max_sessions == 10000
-        assert config.session_ttl_seconds == 86400.0
-        assert config.weight_base == 0.5
-        assert config.weight_recency == 0.3
-        assert config.weight_hit_rate == 0.2
-        assert config.session_overflow == SessionOverflow.LRU
-        assert config.stopwords == DEFAULT_STOPWORDS
+        assert config["capacity"] == 10000
+        assert config["max_sessions"] == 10000
+        assert config["session_ttl_seconds"] == 86400.0
+        assert config["weight_base"] == 0.5
+        assert config["weight_recency"] == 0.3
+        assert config["weight_hit_rate"] == 0.2
+        assert config["session_overflow"] == SessionOverflow.LRU
+        assert config["stopwords"] == DEFAULT_STOPWORDS
 
     def test_custom_values(self) -> None:
         config = EngramConfig(
@@ -31,9 +31,9 @@ class TestEngramConfig:
             session_overflow=SessionOverflow.REJECT,
         )
 
-        assert config.capacity == 5000
-        assert config.max_sessions == 100
-        assert config.session_overflow == SessionOverflow.REJECT
+        assert config["capacity"] == 5000
+        assert config["max_sessions"] == 100
+        assert config["session_overflow"] == SessionOverflow.REJECT
 
     def test_invalid_capacity(self) -> None:
         with pytest.raises(ValueError):
@@ -61,7 +61,7 @@ class TestEngramConfig:
         custom = frozenset(["custom", "stop", "words"])
         config = EngramConfig(stopwords=custom)
 
-        assert config.stopwords == custom
+        assert config["stopwords"] == custom
 
 
 class TestDefaultStopwords:

@@ -4,10 +4,6 @@ This module provides substitution maps for normalizing input text and
 performing pronoun/person transformations in templates.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-
 from nltk.tokenize import sent_tokenize
 
 
@@ -116,26 +112,32 @@ DEFAULT_GENDER: dict[str, str] = {
 }
 
 
+def SubstitutionMaps(
+    contractions=None,
+    person=None,
+    person2=None,
+    gender=None,
+    custom=None,
+) -> dict:
+    """Build a container dict holding all substitution maps."""
+    return {
+        "contractions": contractions if contractions is not None else DEFAULT_CONTRACTIONS.copy(),
+        "person": person if person is not None else DEFAULT_PERSON.copy(),
+        "person2": person2 if person2 is not None else DEFAULT_PERSON2.copy(),
+        "gender": gender if gender is not None else DEFAULT_GENDER.copy(),
+        "custom": custom if custom is not None else {},
+    }
 
-@dataclass
-class SubstitutionMaps:
-    """Container for all substitution maps."""
 
-    contractions: dict[str, str] = field(default_factory=lambda: DEFAULT_CONTRACTIONS.copy())
-    person: dict[str, str] = field(default_factory=lambda: DEFAULT_PERSON.copy())
-    person2: dict[str, str] = field(default_factory=lambda: DEFAULT_PERSON2.copy())
-    gender: dict[str, str] = field(default_factory=lambda: DEFAULT_GENDER.copy())
-    custom: dict[str, str] = field(default_factory=dict)
+def get_all_input_subs(maps: dict) -> dict[str, str]:
+    """Get combined substitution map for input normalization.
 
-    def get_all_input_subs(self) -> dict[str, str]:
-        """Get combined substitution map for input normalization.
-
-        Returns contractions and custom substitutions merged.
-        """
-        result = {}
-        result.update(self.contractions)
-        result.update(self.custom)
-        return result
+    Returns contractions and custom substitutions merged.
+    """
+    result = {}
+    result.update(maps["contractions"])
+    result.update(maps["custom"])
+    return result
 
 
 def apply_substitutions(text: str, subs: dict[str, str]) -> str:

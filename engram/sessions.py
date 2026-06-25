@@ -4,8 +4,6 @@ This module provides session management functionality including creation,
 retrieval, updates, expiration, and cleanup of user sessions.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta, timezone
 
 
@@ -40,17 +38,17 @@ def create_session(engram, session_id=None, metadata=None) -> str:
 
     with engram.session_lock:
         # Check session limit
-        if len(engram.sessions) >= engram.config.max_sessions:
-            if engram.config.session_overflow == SessionOverflow.REJECT:
+        if len(engram.sessions) >= engram.config["max_sessions"]:
+            if engram.config["session_overflow"] == SessionOverflow.REJECT:
                 raise SessionLimitExceeded("Maximum sessions reached")
-            elif engram.config.session_overflow == SessionOverflow.EXPIRE_OLDEST:
+            elif engram.config["session_overflow"] == SessionOverflow.EXPIRE_OLDEST:
                 _expire_oldest_session(engram)
             else:  # LRU
                 _expire_lru_session(engram)
 
-        session = Session.create(session_id=session_id, metadata=metadata)
-        engram.sessions[session.session_id] = session
-        return session.session_id
+        session = Session(session_id=session_id, metadata=metadata)
+        engram.sessions[session["session_id"]] = session
+        return session["session_id"]
 
 
 def get_session(engram, session_id: str, create_if_missing: bool = True):
@@ -83,11 +81,13 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
     Raises:
         SessionNotFound: If session does not exist.
     """
+    from engram.models import session_update_context
+
     with engram.session_lock:
         session = engram.sessions.get(session_id)
         if session is None:
             raise SessionNotFound(f"Session not found: {session_id}")
-        session.update_context(previous_response)
+        session_update_context(session, previous_response)
 
 
 def delete_session(engram, session_id: str) -> bool:
@@ -118,14 +118,14 @@ def expire_sessions(engram, inactive_threshold=None) -> int:
         Number of sessions removed.
     """
     if inactive_threshold is None:
-        inactive_threshold = timedelta(seconds=engram.config.session_ttl_seconds)
+        inactive_threshold = timedelta(seconds=engram.config["session_ttl_seconds"])
 
     cutoff = datetime.now(timezone.utc) - inactive_threshold
     expired_ids: list[str] = []
 
     with engram.session_lock:
         for sid, session in engram.sessions.items():
-            if session.last_active < cutoff:
+            if session["last_active"] < cutoff:
                 expired_ids.append(sid)
         for sid in expired_ids:
             del engram.sessions[sid]
@@ -146,7 +146,7 @@ def list_sessions(engram, active_since=None) -> list:
     with engram.session_lock:
         if active_since is None:
             return list(engram.sessions.values())
-        return [s for s in engram.sessions.values() if s.last_active >= active_since]
+        return [s for s in engram.sessions.values() if s["last_active"] >= active_since]
 
 
 def _expire_oldest_session(engram) -> None:
@@ -156,8 +156,8 @@ def _expire_oldest_session(engram) -> None:
     """
     if not engram.sessions:
         return
-    oldest = min(engram.sessions.values(), key=lambda s: s.created_at)
-    del engram.sessions[oldest.session_id]
+    oldest = min(engram.sessions.values(), key=lambda s: s["created_at"])
+    del engram.sessions[oldest["session_id"]]
 
 
 def _expire_lru_session(engram) -> None:
@@ -167,5 +167,5 @@ def _expire_lru_session(engram) -> None:
     """
     if not engram.sessions:
         return
-    lru = min(engram.sessions.values(), key=lambda s: s.last_active)
-    del engram.sessions[lru.session_id]
+    lru = min(engram.sessions.values(), key=lambda s: s["last_active"])
+    del engram.sessions[lru["session_id"]]

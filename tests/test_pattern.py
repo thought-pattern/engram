@@ -71,46 +71,46 @@ class TestMatchPattern:
 
     def test_exact_match(self):
         result = match_pattern("HELLO", "hello")
-        assert result.matched is True
-        assert result.score == 100  # 1 exact word * 100
-        assert result.captured == []
+        assert result["matched"] is True
+        assert result["score"] == 100  # 1 exact word * 100
+        assert result["captured"] == []
 
     def test_exact_match_case_insensitive(self):
         result = match_pattern("HELLO", "HeLLo")
-        assert result.matched is True
+        assert result["matched"] is True
 
     def test_wildcard_capture(self):
         result = match_pattern("HELLO *", "hello world")
-        assert result.matched is True
-        assert result.captured == ["world"]
+        assert result["matched"] is True
+        assert result["captured"] == ["world"]
 
     def test_wildcard_capture_multiple_words(self):
         result = match_pattern("HELLO *", "hello there my friend")
-        assert result.matched is True
-        assert result.captured == ["there my friend"]
+        assert result["matched"] is True
+        assert result["captured"] == ["there my friend"]
 
     def test_no_match(self):
         result = match_pattern("HELLO", "goodbye")
-        assert result.matched is False
+        assert result["matched"] is False
 
     def test_partial_no_match(self):
         result = match_pattern("HELLO WORLD", "hello")
-        assert result.matched is False
+        assert result["matched"] is False
 
     def test_catchall(self):
         result = match_pattern("*", "anything at all")
-        assert result.matched is True
-        assert result.captured == ["anything at all"]
+        assert result["matched"] is True
+        assert result["captured"] == ["anything at all"]
 
     def test_wildcard_at_start(self):
         result = match_pattern("* WORLD", "hello world")
-        assert result.matched is True
-        assert result.captured == ["hello"]
+        assert result["matched"] is True
+        assert result["captured"] == ["hello"]
 
     def test_wildcard_in_middle(self):
         result = match_pattern("HELLO * WORLD", "hello beautiful world")
-        assert result.matched is True
-        assert result.captured == ["beautiful"]
+        assert result["matched"] is True
+        assert result["captured"] == ["beautiful"]
 
 
 class TestZeroOrMoreWildcards:
@@ -119,83 +119,84 @@ class TestZeroOrMoreWildcards:
     def test_hash_matches_zero_words(self):
         """# should match zero words."""
         result = match_pattern("HELLO # WORLD", "hello world")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
     def test_hash_matches_one_word(self):
         """# should match one word."""
         result = match_pattern("HELLO # WORLD", "hello beautiful world")
-        assert result.matched is True
-        assert result.captured == ["beautiful"]
+        assert result["matched"] is True
+        assert result["captured"] == ["beautiful"]
 
     def test_hash_matches_multiple_words(self):
         """# should match multiple words."""
         result = match_pattern("HELLO # WORLD", "hello very beautiful world")
-        assert result.matched is True
-        assert result.captured == ["very beautiful"]
+        assert result["matched"] is True
+        assert result["captured"] == ["very beautiful"]
 
     def test_caret_matches_zero_words(self):
         """^ should match zero words."""
         result = match_pattern("HELLO ^ WORLD", "hello world")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
     def test_caret_matches_one_word(self):
         """^ should match one word."""
         result = match_pattern("HELLO ^ WORLD", "hello beautiful world")
-        assert result.matched is True
-        assert result.captured == ["beautiful"]
+        assert result["matched"] is True
+        assert result["captured"] == ["beautiful"]
 
     def test_hash_at_start(self):
         """# at start matches zero or more."""
         result = match_pattern("# WORLD", "world")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
         result = match_pattern("# WORLD", "hello world")
-        assert result.matched is True
-        assert result.captured == ["hello"]
+        assert result["matched"] is True
+        assert result["captured"] == ["hello"]
 
     def test_hash_at_end(self):
         """# at end matches zero or more."""
         result = match_pattern("HELLO #", "hello")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
         result = match_pattern("HELLO #", "hello world")
-        assert result.matched is True
-        assert result.captured == ["world"]
+        assert result["matched"] is True
+        assert result["captured"] == ["world"]
 
     def test_caret_at_start(self):
         """^ at start matches zero or more."""
         result = match_pattern("^ WORLD", "world")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
         result = match_pattern("^ WORLD", "hello world")
-        assert result.matched is True
-        assert result.captured == ["hello"]
+        assert result["matched"] is True
+        assert result["captured"] == ["hello"]
 
     def test_caret_at_end(self):
         """^ at end matches zero or more."""
         result = match_pattern("HELLO ^", "hello")
-        assert result.matched is True
-        assert result.captured == [""]
+        assert result["matched"] is True
+        assert result["captured"] == [""]
 
         result = match_pattern("HELLO ^", "hello world")
-        assert result.matched is True
-        assert result.captured == ["world"]
+        assert result["matched"] is True
+        assert result["captured"] == ["world"]
 
     def test_hash_only_pattern(self):
         """# alone should match anything including empty."""
         # Note: Empty input is edge case, typically won't happen
         result = match_pattern("#", "hello world")
-        assert result.matched is True
-        assert result.captured == ["hello world"]
+        assert result["matched"] is True
+        assert result["captured"] == ["hello world"]
 
     def test_caret_priority_over_hash(self):
         """^ should have higher priority than #."""
         from engram.pattern import pattern_to_regex
+
         _, hash_score = pattern_to_regex("HELLO #")
         _, caret_score = pattern_to_regex("HELLO ^")
         assert caret_score > hash_score
@@ -203,6 +204,7 @@ class TestZeroOrMoreWildcards:
     def test_caret_priority_over_underscore(self):
         """^ should have higher priority than _."""
         from engram.pattern import pattern_to_regex
+
         _, underscore_score = pattern_to_regex("HELLO _")
         _, caret_score = pattern_to_regex("HELLO ^")
         assert caret_score > underscore_score
@@ -210,12 +212,12 @@ class TestZeroOrMoreWildcards:
     def test_star_requires_one_word(self):
         """* still requires at least one word."""
         result = match_pattern("HELLO * WORLD", "hello world")
-        assert result.matched is False  # * needs at least one word
+        assert result["matched"] is False  # * needs at least one word
 
     def test_underscore_requires_one_word(self):
         """_ still requires at least one word."""
         result = match_pattern("HELLO _ WORLD", "hello world")
-        assert result.matched is False  # _ needs at least one word
+        assert result["matched"] is False  # _ needs at least one word
 
 
 class TestPatternMatcherZeroWildcards:
@@ -227,12 +229,12 @@ class TestPatternMatcherZeroWildcards:
         pm.add_pattern("HELLO # WORLD", "Hash response")
 
         result = pm.match("hello world")
-        assert result is not None
+        assert result
         assert result[0] == "Hash response"
         assert result[1] == [""]
 
         result = pm.match("hello beautiful world")
-        assert result is not None
+        assert result
         assert result[0] == "Hash response"
         assert result[1] == ["beautiful"]
 
@@ -242,7 +244,7 @@ class TestPatternMatcherZeroWildcards:
         pm.add_pattern("HELLO ^ WORLD", "Caret response")
 
         result = pm.match("hello world")
-        assert result is not None
+        assert result
         assert result[0] == "Caret response"
         assert result[1] == [""]
 
@@ -295,7 +297,7 @@ class TestPatternMatcher:
         pm = PatternMatcher()
         pm.add_pattern("HELLO", "Hello response")
         result = pm.match("goodbye")
-        assert result is None
+        assert not result
 
     def test_specificity_priority(self):
         pm = PatternMatcher()
@@ -349,7 +351,7 @@ class TestPatternMatcher:
         pm.add_pattern("HELLO", "response")
         pm.clear()
         assert len(pm) == 0
-        assert pm.match("hello") is None
+        assert not pm.match("hello")
 
     def test_get_patterns(self):
         pm = PatternMatcher()
@@ -406,11 +408,11 @@ class TestPatternMatcherContextMatching:
 
         # No topic set - pattern shouldn't match
         result = pm.match("hello")
-        assert result is None
+        assert not result
 
         # Wrong topic - pattern shouldn't match
         result = pm.match("hello", topic="sports")
-        assert result is None
+        assert not result
 
         # Correct topic - should match
         result = pm.match("hello", topic="weather")
@@ -437,19 +439,16 @@ class TestPatternMatcherContextMatching:
 
         # No that context - pattern shouldn't match
         result = pm.match("yes")
-        assert result is None
+        assert not result
 
         # Wrong that context - pattern shouldn't match
         result = pm.match("yes", that="how are you")
-        assert result is None
+        assert not result
 
     def test_topic_and_that_combined(self):
         """Pattern with both topic and that should require both to match."""
         pm = PatternMatcher()
-        pm.add_pattern(
-            "YES", "Full context response",
-            topic="FOOD", that="DO YOU WANT MORE"
-        )
+        pm.add_pattern("YES", "Full context response", topic="FOOD", that="DO YOU WANT MORE")
         pm.add_pattern("YES", "Topic only", topic="FOOD")
         pm.add_pattern("YES", "General yes")
 
@@ -471,7 +470,7 @@ class TestPatternMatcherContextMatching:
         pm.add_pattern("YES", "Got thatstar", that="DO YOU LIKE *")
 
         result = pm.match("yes", that="do you like pizza")
-        assert result is not None
+        assert result
         assert result[0] == "Got thatstar"
         assert result[2] == ["pizza"]  # thatstars
 
@@ -481,7 +480,7 @@ class TestPatternMatcherContextMatching:
         pm.add_pattern("HELLO", "Got topicstar", topic="FAVORITE *")
 
         result = pm.match("hello", topic="favorite food")
-        assert result is not None
+        assert result
         assert result[0] == "Got topicstar"
         assert result[3] == ["food"]  # topicstars
 
@@ -537,7 +536,7 @@ class TestSetPatternMatching:
         pm.add_pattern("I LIKE {set:color}", "Nice color!")
 
         result = pm.match("i like blue")
-        assert result is not None
+        assert result
         assert result[0] == "Nice color!"
         assert result[1] == ["blue"]
 
@@ -548,11 +547,11 @@ class TestSetPatternMatching:
         pm.add_pattern("{set:greeting} THERE", "Greeting received")
 
         result = pm.match("hello there")
-        assert result is not None
+        assert result
         assert result[1] == ["hello"]
 
         result = pm.match("hi there")
-        assert result is not None
+        assert result
         assert result[1] == ["hi"]
 
     def test_set_match_case_insensitive(self):
@@ -562,11 +561,11 @@ class TestSetPatternMatching:
         pm.add_pattern("I LIKE {set:color}", "Color matched")
 
         result = pm.match("I LIKE RED")
-        assert result is not None
+        assert result
         assert result[1] == ["red"]
 
         result = pm.match("i like BLUE")
-        assert result is not None
+        assert result
         assert result[1] == ["blue"]
 
     def test_set_no_match_if_word_not_in_set(self):
@@ -576,7 +575,7 @@ class TestSetPatternMatching:
         pm.add_pattern("I LIKE {set:color}", "Color matched")
 
         result = pm.match("i like purple")
-        assert result is None
+        assert not result
 
     def test_unknown_set_no_match(self):
         """Test that unknown sets don't match anything."""
@@ -584,7 +583,7 @@ class TestSetPatternMatching:
         pm.add_pattern("I LIKE {set:unknown}", "Should not match")
 
         result = pm.match("i like anything")
-        assert result is None
+        assert not result
 
     def test_set_with_wildcards(self):
         """Test set matching combined with wildcards."""
@@ -593,7 +592,7 @@ class TestSetPatternMatching:
         pm.add_pattern("* IS {set:color}", "Color described")
 
         result = pm.match("the sky is blue")
-        assert result is not None
+        assert result
         assert result[0] == "Color described"
         assert result[1] == ["the sky", "blue"]
 
@@ -620,7 +619,7 @@ class TestSetPatternMatching:
         pm.add_pattern("A {set:size} {set:color} BALL", "Matched both")
 
         result = pm.match("a big red ball")
-        assert result is not None
+        assert result
         assert result[0] == "Matched both"
         assert result[1] == ["big", "red"]
 
@@ -635,7 +634,7 @@ class TestBotPatternMatching:
         pm.add_pattern("YOUR NAME IS {bot:name}", "Yes it is!")
 
         result = pm.match("your name is testbot")
-        assert result is not None
+        assert result
         assert result[0] == "Yes it is!"
 
     def test_bot_match_captures_value(self):
@@ -645,7 +644,7 @@ class TestBotPatternMatching:
         pm.add_pattern("YOU ARE {bot:name}", "Correct!")
 
         result = pm.match("you are alice")
-        assert result is not None
+        assert result
         assert result[1] == ["alice"]
 
     def test_bot_match_case_insensitive(self):
@@ -655,10 +654,9 @@ class TestBotPatternMatching:
         pm.add_pattern("HELLO {bot:name}", "Hi!")
 
         result = pm.match("hello TESTBOT")
-        assert result is not None
-
+        assert result
         result = pm.match("HELLO testbot")
-        assert result is not None
+        assert result
 
     def test_unknown_bot_property_no_match(self):
         """Test that unknown bot properties don't match."""
@@ -667,7 +665,7 @@ class TestBotPatternMatching:
         pm.add_pattern("YOUR {bot:unknown} IS", "Should not match")
 
         result = pm.match("your something is")
-        assert result is None
+        assert not result
 
     def test_bot_with_sets_combined(self):
         """Test bot properties combined with sets."""
@@ -677,7 +675,7 @@ class TestBotPatternMatching:
         pm.add_pattern("{bot:name} LIKES {set:color}", "Combined match")
 
         result = pm.match("testbot likes blue")
-        assert result is not None
+        assert result
         assert result[0] == "Combined match"
         assert result[1] == ["testbot", "blue"]
 
@@ -744,7 +742,7 @@ class TestPriorityOperator:
         result2 = match_pattern("$WHO IS *", "who is john")
         # Regular: 100 + 100 - 4 = 196
         # Priority: 1000 + 100 - 4 = 1096
-        assert result2.score > result1.score
+        assert result2["score"] > result1["score"]
 
     def test_matcher_prefers_dollar(self):
         """Test that PatternMatcher prefers $ patterns."""
@@ -754,7 +752,7 @@ class TestPriorityOperator:
         matcher.add_pattern("$WHO IS *", "priority")
 
         result = matcher.match_simple("who is alice")
-        assert result is not None
+        assert result
         assert result[0] == "priority"
 
     def test_dollar_at_end(self):
@@ -766,8 +764,8 @@ class TestPriorityOperator:
     def test_dollar_captures_wildcards(self):
         """Test capturing with $ patterns."""
         result = match_pattern("$WHO IS *", "who is john smith")
-        assert result.matched
-        assert result.captured == ["john smith"]
+        assert result["matched"]
+        assert result["captured"] == ["john smith"]
 
     def test_multiple_dollar_words(self):
         """Test multiple $ words in same pattern."""
@@ -787,11 +785,10 @@ class TestStemmingSupport:
 
         # Exact match should work
         result = pm.match("run")
-        assert result is not None
-
+        assert result
         # Variant should not match without stemming
         result = pm.match("running")
-        assert result is None
+        assert not result
 
     def test_stemming_enabled_matches_variants(self):
         """Test stemming allows matching word variants."""
@@ -800,16 +797,16 @@ class TestStemmingSupport:
 
         # Exact match should work
         result = pm.match("run")
-        assert result is not None
+        assert result
         assert result[0] == "Running response"
 
         # Variants should match with stemming
         result = pm.match("running")
-        assert result is not None
+        assert result
         assert result[0] == "Running response"
 
         result = pm.match("runs")
-        assert result is not None
+        assert result
         assert result[0] == "Running response"
 
     def test_stemming_with_wildcard_pattern(self):
@@ -818,7 +815,7 @@ class TestStemmingSupport:
         pm.add_pattern("I LIKE *", "You like {star1}!")
 
         result = pm.match("i liked pizza")
-        assert result is not None
+        assert result
 
     def test_stemming_exact_match_preferred(self):
         """Test exact match is preferred over stemmed match."""
@@ -828,12 +825,12 @@ class TestStemmingSupport:
 
         # "run" should match "RUN" pattern exactly
         result = pm.match("run")
-        assert result is not None
+        assert result
         assert result[0] == "Exact run"
 
         # "running" should match "RUNNING" pattern exactly
         result = pm.match("running")
-        assert result is not None
+        assert result
         assert result[0] == "Exact running"
 
     def test_stemming_cats_mammals(self):
@@ -842,5 +839,5 @@ class TestStemmingSupport:
         pm.add_pattern("CAT", "Cats are mammals.")
 
         result = pm.match("cats")
-        assert result is not None
+        assert result
         assert result[0] == "Cats are mammals."
