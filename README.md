@@ -14,18 +14,6 @@ Key features:
 - **Session support** - Multiple concurrent sessions with context expansion
 - **Persistence** - JSON-based save/load with full state preservation
 
-## Installation
-
-```bash
-pip install engram
-```
-
-Or install from source:
-
-```bash
-pip install -e .
-```
-
 ## Quick Start
 
 ```python
