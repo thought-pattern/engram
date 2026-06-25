@@ -7,9 +7,10 @@ relationships for dynamic learning.
 
 from functools import lru_cache
 
-import nltk
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag
+
+from engram.nltk_data import ensure_resource
 
 
 # Copula verbs that indicate definitional statements
@@ -24,7 +25,7 @@ _COMMAND_WORDS = frozenset({"learn", "remember", "forget", "tell", "say", "repea
 
 @lru_cache(maxsize=1)
 def _ensure_nltk_data() -> None:
-    """Download required NLTK data if not present."""
+    """Ensure required NLTK data is present, fetching into the local data dir."""
     required = [
         ("tokenizers/punkt", "punkt"),
         ("tokenizers/punkt_tab", "punkt_tab"),
@@ -35,10 +36,7 @@ def _ensure_nltk_data() -> None:
         ("corpora/words", "words"),
     ]
     for path, package in required:
-        try:
-            nltk.data.find(path)
-        except LookupError:
-            nltk.download(package, quiet=True)
+        ensure_resource(path, package)
 
 
 def ExtractedFact(subject: str, predicate: str, obj: str, original: str) -> dict:

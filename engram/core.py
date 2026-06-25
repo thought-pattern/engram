@@ -66,6 +66,7 @@ class Engram:
             sets=self.sets,
             bot_properties=self.bot_properties,
             use_stemming=self.config["use_stemming"],
+            use_lemmatization=self.config["use_lemmatization"],
         )
         self.substitution_maps = SubstitutionMaps()
         self.default_predicates: dict[str, str] = {}

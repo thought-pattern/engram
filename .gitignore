@@ -208,3 +208,6 @@ __marimo__/
 
 # Engram store
 engram.json
+
+# NLTK data (downloaded at setup via `python -m engram.nltk_data`, not committed)
+data/

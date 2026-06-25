@@ -2,3 +2,9 @@
 
 # Natural Language Processing
 nltk==3.9.4
+
+# NLTK corpora/models are NOT pip packages. After installing the above, run:
+#   python -m engram.nltk_data
+# This downloads the required datasets (punkt, averaged_perceptron_tagger,
+# maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon) into the local,
+# gitignored data/nltk_data directory so they are not fetched during runtime.

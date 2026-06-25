@@ -14,10 +14,29 @@ Key features:
 - **Session support** - Multiple concurrent sessions with context expansion
 - **Persistence** - JSON-based save/load with full state preservation
 
+## Setup
+
+```bash
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Download NLTK data into the local, gitignored data/nltk_data directory.
+# Run this once after install so datasets are not fetched during runtime.
+python -m engram.nltk_data
+```
+
+ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
+maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon). They are managed
+centrally by `engram/nltk_data.py`, which stores them in `data/nltk_data`
+(gitignored) and puts that directory first on NLTK's search path. If a dataset
+is missing at runtime it is fetched on demand as a fallback, but pre-fetching
+keeps normal operation offline and fast.
+
 ## Quick Start
 
 ```python
-from engram import Engram, Tier
+from engram.core import Engram
+from engram.models import Tier
 
 # Create an instance
 engram = Engram()
@@ -63,6 +82,9 @@ config = EngramConfig(
     weight_recency=0.3,          # Scoring weight: recency
     weight_hit_rate=0.2,         # Scoring weight: hit rate
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
+    use_stemming=True,           # Porter-stemmed fallback matching
+    use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
+    use_synonyms=True,           # WordNet synonym expansion on keyword queries
 )
 
 engram = Engram(config=config)
@@ -214,6 +236,63 @@ In interactive mode:
 - `/metrics` - Show metrics
 - `/save` - Save to disk
 - `/quit` - Exit
+
+## NLP Features
+
+ENGRAM uses NLTK to make pattern matching and responses more robust.
+
+### Flexible matching
+
+When an exact pattern match fails, the matcher retries against normalized forms
+of the input, in order of precision:
+
+1. **Lemmatization** (`use_lemmatization`, default on) - WordNet lemmas map
+   irregular forms to their base, e.g. `mice` -> `MOUSE`, `went` -> `GO`.
+2. **Stemming** (`use_stemming`, default on) - Porter stemming handles common
+   inflections, e.g. `running` -> `RUN`, `cats` -> `CAT`.
+
+Exact matches always win; lemmatization is tried before the more aggressive
+stemming fallback.
+
+Contraction expansion also normalizes input before matching, including
+apostrophe-less forms (`whats` -> `what is`, `im` -> `i am`).
+
+### Sentiment-aware responses
+
+Templates can branch on the sentiment of captured input using the
+`{sentiment:...}` transform, which returns `positive`, `negative`, or `neutral`
+(via NLTK VADER). This lets a single pattern respond with an appropriate tone
+instead of enumerating every emotion word:
+
+```json
+{"pattern": "I AM *", "template": {"sequence": [
+  {"set": {"name": "_mood", "value": "{sentiment:{star1}}"}},
+  {"condition": {"name": "_mood", "branches": [
+    {"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}. Want to talk about it?"}},
+    {"value": "positive", "then": {"text": "That's great that you're {star1}!"}},
+    {"then": {"text": "Nice to know you're {star1}."}}
+  ]}}
+]}}
+```
+
+So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
+with no per-emotion patterns.
+
+## Evaluation
+
+`eval/run_eval.py` cycles a corpus of prompts (`eval/corpus.json`) through a
+freshly seeded engram instance (in memory; it never touches `engram.json`) and
+reports how each prompt is answered:
+
+```bash
+python eval/run_eval.py            # human-readable report
+python eval/run_eval.py --json report.json
+```
+
+Each prompt is classified as a **specific** match (a real, intentional
+pattern), **catch-all** (only the `*` fallback matched - a coverage gap), or
+**fallback** (no statement). The matched pattern shown for each gap indicates
+whether it needs new content or an engine fix.
 
 ## Development
 

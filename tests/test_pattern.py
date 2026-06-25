@@ -841,3 +841,58 @@ class TestStemmingSupport:
         result = pm.match("cats")
         assert result
         assert result[0] == "Cats are mammals."
+
+
+class TestLemmatizationSupport:
+    """Tests for WordNet lemmatization support in pattern matching."""
+
+    def test_lemmatization_disabled_by_default(self):
+        """Lemmatization is off unless requested."""
+        pm = PatternMatcher()
+        pm.add_pattern("MOUSE", "A mouse!")
+        assert not pm.match("mice")
+
+    def test_regular_plural_matches(self):
+        """A regular plural lemmatizes to the singular pattern."""
+        pm = PatternMatcher(use_lemmatization=True)
+        pm.add_pattern("CAT", "A cat!")
+        result = pm.match("cats")
+        assert result
+        assert result[0] == "A cat!"
+
+    def test_irregular_plural_matches(self):
+        """Lemmatization handles irregular plurals that stemming misses."""
+        pm_lemma = PatternMatcher(use_lemmatization=True, use_stemming=False)
+        pm_lemma.add_pattern("MOUSE", "A mouse!")
+        result = pm_lemma.match("mice")
+        assert result
+        assert result[0] == "A mouse!"
+
+        # Porter stemming cannot bridge mice -> mouse
+        pm_stem = PatternMatcher(use_lemmatization=False, use_stemming=True)
+        pm_stem.add_pattern("MOUSE", "A mouse!")
+        assert not pm_stem.match("mice")
+
+    def test_irregular_verb_matches(self):
+        """Lemmatization maps irregular verb forms to the base verb."""
+        pm = PatternMatcher(use_lemmatization=True, use_stemming=False)
+        pm.add_pattern("GO", "Going!")
+        result = pm.match("went")
+        assert result
+        assert result[0] == "Going!"
+
+    def test_exact_match_preferred(self):
+        """Exact matches win over lemmatized matches."""
+        pm = PatternMatcher(use_lemmatization=True)
+        pm.add_pattern("MOUSE", "Exact mouse")
+        pm.add_pattern("MICE", "Exact mice")
+        result = pm.match("mice")
+        assert result
+        assert result[0] == "Exact mice"
+
+    def test_lemmatization_with_wildcard(self):
+        """Lemmatization works alongside wildcard capture."""
+        pm = PatternMatcher(use_lemmatization=True)
+        pm.add_pattern("I SAW *", "You saw {star1}!")
+        result = pm.match("i saw dogs")
+        assert result

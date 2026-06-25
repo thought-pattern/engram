@@ -1,0 +1,83 @@
+{
+  "_comment": "Evaluation prompts for the engram feedback cycle. Each prompt is a natural user utterance. The harness reports which pattern (if any) answers it; a match on the catch-all '*' means we have no specific response (a gap).",
+  "prompts": [
+    {"text": "hello", "category": "greeting"},
+    {"text": "hi there", "category": "greeting"},
+    {"text": "hey!", "category": "greeting"},
+    {"text": "good morning", "category": "greeting"},
+    {"text": "good evening", "category": "greeting"},
+    {"text": "good night", "category": "greeting"},
+    {"text": "sup", "category": "greeting"},
+    {"text": "yo", "category": "greeting"},
+
+    {"text": "how are you", "category": "smalltalk"},
+    {"text": "how are you doing", "category": "smalltalk"},
+    {"text": "what's up", "category": "smalltalk"},
+
+    {"text": "what is your name", "category": "identity"},
+    {"text": "what's your name", "category": "identity"},
+    {"text": "who are you", "category": "identity"},
+    {"text": "what can you do", "category": "identity"},
+    {"text": "tell me about yourself", "category": "identity"},
+
+    {"text": "my name is Bob", "category": "personal"},
+    {"text": "call me Ace", "category": "personal"},
+    {"text": "what is my name", "category": "personal"},
+    {"text": "i like pizza", "category": "personal"},
+    {"text": "i am tired", "category": "personal"},
+
+    {"text": "thanks", "category": "courtesy"},
+    {"text": "thank you so much", "category": "courtesy"},
+    {"text": "thx", "category": "courtesy"},
+    {"text": "goodbye", "category": "farewell"},
+    {"text": "bye", "category": "farewell"},
+    {"text": "see ya", "category": "farewell"},
+
+    {"text": "help", "category": "help"},
+    {"text": "can you help me", "category": "help"},
+    {"text": "do you know python", "category": "help"},
+
+    {"text": "what time is it", "category": "utility"},
+    {"text": "what day is it", "category": "utility"},
+    {"text": "flip a coin", "category": "utility"},
+    {"text": "roll a die", "category": "utility"},
+    {"text": "roll a dice", "category": "utility"},
+    {"text": "pick a number", "category": "utility"},
+
+    {"text": "tell me a joke", "category": "content-gap"},
+    {"text": "sing me a song", "category": "content-gap"},
+    {"text": "what is the weather", "category": "content-gap"},
+    {"text": "what is the capital of France", "category": "content-gap"},
+    {"text": "how do I cook pasta", "category": "content-gap"},
+    {"text": "yep", "category": "content-gap"},
+    {"text": "nope", "category": "content-gap"},
+
+    {"text": "whats your name", "category": "engine-probe"},
+    {"text": "im happy", "category": "engine-probe"},
+    {"text": "dont worry", "category": "engine-probe"},
+    {"text": "HELLO THERE", "category": "engine-probe"},
+    {"text": "hi, how are you?", "category": "engine-probe"},
+
+    {"text": "are you a robot", "category": "identity-gap"},
+    {"text": "are you human", "category": "identity-gap"},
+    {"text": "are you alive", "category": "identity-gap"},
+    {"text": "how old are you", "category": "identity-gap"},
+    {"text": "where are you from", "category": "identity-gap"},
+    {"text": "who made you", "category": "identity-gap"},
+
+    {"text": "i feel sad", "category": "emotion-gap"},
+    {"text": "i am bored", "category": "emotion-gap"},
+    {"text": "do you love me", "category": "social-gap"},
+    {"text": "nice to meet you", "category": "social-gap"},
+    {"text": "let's play a game", "category": "social-gap"},
+
+    {"text": "ok", "category": "ack-gap"},
+    {"text": "okay", "category": "ack-gap"},
+    {"text": "cool", "category": "ack-gap"},
+    {"text": "i agree", "category": "ack-gap"},
+
+    {"text": "happy birthday", "category": "occasion-gap"},
+    {"text": "you are stupid", "category": "insult-gap"},
+    {"text": "shut up", "category": "insult-gap"}
+  ]
+}

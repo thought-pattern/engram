@@ -162,13 +162,9 @@ def get_stemmer() -> PorterStemmer:
 @lru_cache(maxsize=1)
 def get_lemmatizer() -> WordNetLemmatizer:
     """Get or create the module-level WordNet lemmatizer."""
-    import nltk
+    from engram.nltk_data import ensure_resource
 
-    # Ensure wordnet data is available
-    try:
-        nltk.data.find("corpora/wordnet")
-    except LookupError:
-        nltk.download("wordnet", quiet=True)
+    ensure_resource("corpora/wordnet", "wordnet")
     return WordNetLemmatizer()
 
 
@@ -221,6 +217,32 @@ def stem_text(text: str) -> str:
 
 
 @lru_cache(maxsize=4096)
+def lemmatize_text(text: str) -> str:
+    """Apply WordNet lemmatization to all words in text.
+
+    Each word is lemmatized as a verb first, then as a noun if unchanged, so
+    both "running" -> "run" and "cats" -> "cat" normalize. Unlike Porter
+    stemming, lemmatization preserves real dictionary forms, so it is the more
+    precise normalization for matching.
+
+    Args:
+        text: Input text.
+
+    Returns:
+        Text with all words lemmatized.
+    """
+    lemmatizer = get_lemmatizer()
+    out = []
+    for word in text.split():
+        lower = word.lower()
+        lemma = lemmatizer.lemmatize(lower, pos="v")
+        if lemma == lower:
+            lemma = lemmatizer.lemmatize(lower, pos="n")
+        out.append(lemma)
+    return " ".join(out)
+
+
+@lru_cache(maxsize=4096)
 def normalize_with_stemming(text: str) -> str:
     """Normalize text and apply stemming for flexible matching.
 
@@ -239,17 +261,11 @@ def normalize_with_stemming(text: str) -> str:
 
 @lru_cache(maxsize=1)
 def _ensure_wordnet() -> None:
-    """Ensure WordNet data is available."""
-    import nltk
+    """Ensure WordNet data is available, fetching into the local data dir."""
+    from engram.nltk_data import ensure_resource
 
-    try:
-        nltk.data.find("corpora/wordnet")
-    except LookupError:
-        nltk.download("wordnet", quiet=True)
-    try:
-        nltk.data.find("corpora/omw-1.4")
-    except LookupError:
-        nltk.download("omw-1.4", quiet=True)
+    ensure_resource("corpora/wordnet", "wordnet")
+    ensure_resource("corpora/omw-1.4", "omw-1.4")
 
 
 @lru_cache(maxsize=4096)

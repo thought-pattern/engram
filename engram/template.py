@@ -142,7 +142,7 @@ class TemplateProcessor:
     THAT_PATTERN = re.compile(r"\{that(?::(\d+)(?::(\d+))?)?\}")
     # Match transforms with content that doesn't contain braces - processes innermost first
     TRANSFORM_PATTERN = re.compile(
-        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount):([^{}]*)\}"
+        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount|sentiment):([^{}]*)\}"
     )
 
     # Simple variable patterns
@@ -645,6 +645,10 @@ class TemplateProcessor:
                 return " ".join(unique)
             elif fn_name == "wordcount":
                 return str(len(resolved.split()))
+            elif fn_name == "sentiment":
+                from engram.sentiment import sentiment_label
+
+                return sentiment_label(resolved)
             return resolved
 
         # Keep applying until no more transforms

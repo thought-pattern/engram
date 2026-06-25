@@ -326,9 +326,12 @@ def cmd_query(args: argparse.Namespace) -> int:
 
     result = engram.query(args.text, session_id=args.session, limit=args.limit)
 
+    # A query is a stat-generating event: query() bumped the global and
+    # per-keyword query counters, so persist them. --hit additionally records
+    # the hit (numerator) before saving.
     if args.hit and result["matches"]:
         engram.record_hit(result["keywords"])
-        save_engram(engram, args.store)
+    save_engram(engram, args.store)
 
     print(f"Keywords: {', '.join(result['keywords'])}")
     print(f"Matches: {len(result['matches'])}")

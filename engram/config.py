@@ -149,6 +149,7 @@ def EngramConfig(
     min_hit_rate: float = 0.0,  # Protect categories above this hit rate
     # Matching enhancements
     use_stemming: bool = True,  # Enable stemmed matching (run matches running)
+    use_lemmatization: bool = True,  # Enable WordNet-lemmatized matching (precise)
     use_synonyms: bool = True,  # Enable synonym expansion at query time
     max_synonyms_per_word: int = 3,  # Maximum synonyms to consider per word
     # Fallback response when no pattern matches
@@ -184,6 +185,7 @@ def EngramConfig(
         "protect_static": protect_static,
         "min_hit_rate": min_hit_rate,
         "use_stemming": use_stemming,
+        "use_lemmatization": use_lemmatization,
         "use_synonyms": use_synonyms,
         "max_synonyms_per_word": max_synonyms_per_word,
         "fallback_response": fallback_response,

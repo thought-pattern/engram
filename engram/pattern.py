@@ -28,7 +28,7 @@ Stemming support:
 import re
 from functools import lru_cache
 
-from engram.text import normalize, stem_text
+from engram.text import lemmatize_text, normalize, stem_text
 
 
 def MatchResult(
@@ -329,6 +329,7 @@ class PatternMatcher:
         sets=None,
         bot_properties=None,
         use_stemming: bool = False,
+        use_lemmatization: bool = False,
     ) -> None:
         """Initialize pattern matcher.
 
@@ -336,17 +337,22 @@ class PatternMatcher:
             sets: Optional dictionary of named word sets for {set:name} matching.
             bot_properties: Optional bot properties for {bot:name} matching.
             use_stemming: If True, use stemmed matching as fallback when exact match fails.
+            use_lemmatization: If True, try WordNet-lemmatized matching as a
+                fallback (more precise than stemming) before stemmed matching.
         """
         self._patterns: list[dict] = []
         # Index: first word -> list of pattern indices for faster lookup
         self._first_word_index: dict[str, list[int]] = {}
         # Index for stemmed first words (when stemming enabled)
         self._stemmed_first_word_index: dict[str, list[int]] = {}
+        # Index for lemmatized first words (when lemmatization enabled)
+        self._lemmatized_first_word_index: dict[str, list[int]] = {}
         self._wildcard_patterns: list[int] = []  # Patterns starting with * or _
         # Use 'is not None' to preserve reference to passed dict even if empty
         self._sets = sets if sets is not None else {}
         self._bot_properties = bot_properties if bot_properties is not None else {}
         self._use_stemming = use_stemming
+        self._use_lemmatization = use_lemmatization
 
     def add_pattern(
         self,
@@ -417,6 +423,14 @@ class PatternMatcher:
                     if idx not in self._stemmed_first_word_index[stemmed_first]:
                         self._stemmed_first_word_index[stemmed_first].append(idx)
 
+                # Also index by lemmatized first word for precise flexible matching
+                if self._use_lemmatization:
+                    lemma_first = lemmatize_text(index_word)
+                    if lemma_first not in self._lemmatized_first_word_index:
+                        self._lemmatized_first_word_index[lemma_first] = []
+                    if idx not in self._lemmatized_first_word_index[lemma_first]:
+                        self._lemmatized_first_word_index[lemma_first].append(idx)
+
     def match(
         self,
         text: str,
@@ -445,26 +459,33 @@ class PatternMatcher:
 
         # Try exact matching first using the first-word index
         first_word = words[0]
-        result = self._match_internal(normalized, that_normalized, topic_normalized, first_word, use_stemmed_index=False)
+        result = self._match_internal(normalized, that_normalized, topic_normalized, first_word, index_kind="exact")
 
-        # If no match and stemming enabled, try stemmed matching
+        # If no match and lemmatization enabled, try lemmatized matching (precise)
+        if not result and self._use_lemmatization:
+            lemmatized = lemmatize_text(normalized)
+            lemma_first = lemmatize_text(first_word)
+            result = self._match_internal(lemmatized, that_normalized, topic_normalized, lemma_first, index_kind="lemmatized")
+
+        # If still no match and stemming enabled, try stemmed matching (aggressive)
         if not result and self._use_stemming:
             stemmed = stem_text(normalized)
             stemmed_first = stem_text(first_word)
-            result = self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, use_stemmed_index=True)
+            result = self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
 
         return result
 
     def _get_candidate_indices(
         self,
         first_word: str,
-        use_stemmed_index: bool,
+        index_kind: str = "exact",
     ) -> list[int]:
         """Get pattern indices that could match based on first word.
 
         Args:
             first_word: First word of input text.
-            use_stemmed_index: If True, use stemmed first-word index.
+            index_kind: Which first-word index to use: "exact", "lemmatized",
+                or "stemmed".
 
         Returns:
             List of pattern indices to check.
@@ -474,13 +495,13 @@ class PatternMatcher:
         # Always include wildcard patterns (they can match any first word)
         candidates.update(self._wildcard_patterns)
 
-        # Add patterns matching the first word
-        if use_stemmed_index:
-            if first_word in self._stemmed_first_word_index:
-                candidates.update(self._stemmed_first_word_index[first_word])
+        # Add patterns matching the first word in the requested index
+        if index_kind == "stemmed":
+            candidates.update(self._stemmed_first_word_index.get(first_word, []))
+        elif index_kind == "lemmatized":
+            candidates.update(self._lemmatized_first_word_index.get(first_word, []))
         else:
-            if first_word in self._first_word_index:
-                candidates.update(self._first_word_index[first_word])
+            candidates.update(self._first_word_index.get(first_word, []))
 
         return sorted(candidates)
 
@@ -490,7 +511,7 @@ class PatternMatcher:
         that_normalized: str,
         topic_normalized: str,
         first_word: str,
-        use_stemmed_index: bool,
+        index_kind: str = "exact",
     ) -> tuple:
         """Internal matching logic.
 
@@ -499,13 +520,14 @@ class PatternMatcher:
             that_normalized: Normalized previous response.
             topic_normalized: Normalized topic.
             first_word: First word of input (for index lookup).
-            use_stemmed_index: If True, use stemmed first-word index.
+            index_kind: Which first-word index to use: "exact", "lemmatized",
+                or "stemmed".
 
         Returns:
             Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
         """
         # Get candidate patterns using first-word index
-        candidate_indices = self._get_candidate_indices(first_word, use_stemmed_index)
+        candidate_indices = self._get_candidate_indices(first_word, index_kind)
         best: tuple = ()
 
         for idx in candidate_indices:

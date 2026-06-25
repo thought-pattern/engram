@@ -4,7 +4,18 @@ This module provides substitution maps for normalizing input text and
 performing pronoun/person transformations in templates.
 """
 
+from functools import lru_cache
+
 from nltk.tokenize import sent_tokenize
+
+from engram.nltk_data import ensure_resource
+
+
+@lru_cache(maxsize=1)
+def _ensure_punkt() -> None:
+    """Ensure the punkt tokenizers are present (cached, runs once)."""
+    ensure_resource("tokenizers/punkt", "punkt")
+    ensure_resource("tokenizers/punkt_tab", "punkt_tab")
 
 
 # Default contractions expansion map
@@ -68,6 +79,42 @@ DEFAULT_CONTRACTIONS: dict[str, str] = {
     "woulda": "would have",
     "shoulda": "should have",
     "musta": "must have",
+    # Apostrophe-less variants. Only forms that are not valid standalone English
+    # words are included, to avoid corrupting normal text. Deliberately omitted:
+    # "its", "were", "well", "ill", "id", "shed", "wed", "lets" (all real words).
+    "im": "i am",
+    "ive": "i have",
+    "youre": "you are",
+    "youve": "you have",
+    "youll": "you will",
+    "hes": "he is",
+    "shes": "she is",
+    "weve": "we have",
+    "theyre": "they are",
+    "theyve": "they have",
+    "theyll": "they will",
+    "thats": "that is",
+    "theres": "there is",
+    "heres": "here is",
+    "whats": "what is",
+    "whos": "who is",
+    "wheres": "where is",
+    "hows": "how is",
+    "isnt": "is not",
+    "arent": "are not",
+    "wasnt": "was not",
+    "werent": "were not",
+    "havent": "have not",
+    "hasnt": "has not",
+    "hadnt": "had not",
+    "dont": "do not",
+    "doesnt": "does not",
+    "didnt": "did not",
+    "couldnt": "could not",
+    "wouldnt": "would not",
+    "shouldnt": "should not",
+    "cant": "cannot",
+    "wont": "will not",
 }
 
 # Person substitution (first person <-> second person)
@@ -270,7 +317,8 @@ def split_sentences(text: str) -> list[str]:
     if not text or not text.strip():
         return []
 
-    # Use NLTK's sentence tokenizer
+    # Use NLTK's sentence tokenizer (ensure punkt is present locally first)
+    _ensure_punkt()
     sentences = sent_tokenize(text)
 
     # Strip whitespace and filter empty

@@ -53,6 +53,9 @@ def to_dict(engram) -> dict:
         return {
             "version": PERSISTENCE_VERSION,
             "capacity": engram.config["capacity"],
+            "query_count": engram.query_count,
+            "hit_count": engram.hit_count,
+            "eviction_count": engram.eviction_count,
             "bot": engram.bot_properties.copy(),
             "sets": {k: list(v) for k, v in engram.sets.items()},
             "maps": {k: dict(v) for k, v in engram.maps.items()},
@@ -197,6 +200,11 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
     if config is None:
         config = EngramConfig(capacity=data.get("capacity", 10000))
     instance = engram_class(config=config)
+
+    # Restore global counters
+    instance.query_count = data.get("query_count", 0)
+    instance.hit_count = data.get("hit_count", 0)
+    instance.eviction_count = data.get("eviction_count", 0)
 
     # Restore bot properties
     if "bot" in data:
