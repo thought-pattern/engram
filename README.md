@@ -183,7 +183,14 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 
 ## Command Line Interface
 
-ENGRAM includes a CLI for managing stores from the terminal.
+ENGRAM includes a CLI for managing stores from the terminal, at `scripts/cli.py`:
+
+```bash
+python scripts/cli.py --help
+```
+
+The examples below write `engram` as shorthand for `python scripts/cli.py` (set a
+shell alias if you like: `alias engram='python scripts/cli.py'`).
 
 ### Initialize a Store
 

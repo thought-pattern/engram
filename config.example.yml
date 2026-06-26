@@ -1,0 +1,48 @@
+# ENGRAM configuration template.
+#
+# Copy this file to config.yml and edit it:  cp config.example.yml config.yml
+# config.yml is gitignored (local config); this template is tracked. Any setting
+# you omit falls back to its built-in default (shown below).
+
+# --- Capacity ---
+capacity: 10000              # Maximum DYNAMIC statements
+max_sessions: 10000          # Maximum concurrent sessions
+session_ttl_seconds: 86400   # Session time-to-live in seconds (24 hours)
+
+# --- Scoring weights (keyword retrieval) ---
+weight_base: 0.5
+weight_recency: 0.3
+weight_hit_rate: 0.2
+
+# --- Sessions ---
+session_overflow: lru        # reject | expire_oldest | lru
+
+# --- Input processing ---
+expand_contractions: true
+srai_depth_limit: 100
+
+# --- Eviction ---
+eviction_policy: fifo        # fifo | lru | lfu | hit_rate
+protect_static: true         # Never evict STATIC statements
+min_hit_rate: 0.0            # Protect statements above this hit rate
+
+# --- Matching / NLP ---
+use_stemming: true              # Porter-stemmed fallback matching
+use_lemmatization: true         # WordNet-lemmatized fallback matching
+use_synonyms: true              # WordNet synonym expansion on keyword queries
+max_synonyms_per_word: 3
+use_spacy_facts: false          # spaCy dependency-parse fact extraction (needs en_core_web_sm)
+use_spacy_lemmatization: false  # spaCy context-aware lemmas in the matcher
+use_phrase_keywords: false      # spaCy noun-chunk phrase keywords for retrieval
+
+# --- Fallback ---
+fallback_response: ""        # Response when nothing matches ("" = no fallback)
+
+# --- Knowledge graph (optional) ---
+# graph:
+#   driver: memgraph           # memgraph | neo4j
+#   uri: bolt://localhost:7687
+#   username: ""
+#   password: ""
+#   database: ""
+#   enabled: false

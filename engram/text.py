@@ -71,7 +71,7 @@ def normalize(text: str) -> str:
 
 def extract_keywords(
     text: str,
-    stopwords: frozenset[str],
+    stopwords: set[str],
     use_pos_filter: bool = False,
 ) -> list[str]:
     """Extract keywords from text using NLTK tokenization.
@@ -134,7 +134,7 @@ def extract_keywords(
     return keywords
 
 
-def extract_keywords_spacy(text: str, stopwords: frozenset[str]) -> list:
+def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     """Extract keywords using spaCy, keeping noun-chunk phrases as units.
 
     Returns content-word lemmas plus multi-word noun-chunk phrases (e.g.

@@ -34,6 +34,19 @@ REQUIRED_PACKAGES = (
     ("sentiment/vader_lexicon", "vader_lexicon"),
 )
 
+# Stopwords filtered out during keyword extraction. A set for O(1) membership.
+DEFAULT_STOPWORDS: set[str] = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "dare", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
+    "into", "through", "during", "before", "after", "above", "below", "between",
+    "under", "again", "further", "then", "once", "here", "there", "when",
+    "where", "why", "how", "all", "each", "few", "more", "most", "other",
+    "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than",
+    "too", "very", "just", "also",
+}
+
 
 def configure_path() -> str:
     """Ensure the local data directory exists and is first on NLTK's path.

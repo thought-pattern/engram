@@ -1,5 +1,7 @@
 # ENGRAM dependencies
 
+PyYAML==6.0.3
+
 # Natural Language Processing
 nltk==3.9.4
 

@@ -2,7 +2,8 @@
 
 import pytest
 
-from engram.config import DEFAULT_STOPWORDS, EngramConfig, SessionOverflow
+from engram.config import EngramConfig, SessionOverflow
+from engram.nltk_data import DEFAULT_STOPWORDS
 
 
 class TestEngramConfig:
@@ -79,5 +80,5 @@ class TestDefaultStopwords:
         assert "capital" not in DEFAULT_STOPWORDS
         assert "population" not in DEFAULT_STOPWORDS
 
-    def test_is_frozenset(self) -> None:
-        assert isinstance(DEFAULT_STOPWORDS, frozenset)
+    def test_is_set(self) -> None:
+        assert isinstance(DEFAULT_STOPWORDS, set)

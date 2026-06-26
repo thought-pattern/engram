@@ -5,6 +5,8 @@ Configurations are plain dicts built by the factory functions below.
 
 from enum import Enum
 
+from engram.nltk_data import DEFAULT_STOPWORDS
+
 
 class SessionOverflow(Enum):
     """Behavior when session limit is reached."""
@@ -40,91 +42,6 @@ def GraphConfig(
         "database": database,
         "enabled": enabled,
     }
-
-
-# Default stopwords as specified
-DEFAULT_STOPWORDS: frozenset[str] = frozenset(
-    [
-        "a",
-        "an",
-        "the",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "must",
-        "shall",
-        "can",
-        "need",
-        "dare",
-        "ought",
-        "used",
-        "to",
-        "of",
-        "in",
-        "for",
-        "on",
-        "with",
-        "at",
-        "by",
-        "from",
-        "as",
-        "into",
-        "through",
-        "during",
-        "before",
-        "after",
-        "above",
-        "below",
-        "between",
-        "under",
-        "again",
-        "further",
-        "then",
-        "once",
-        "here",
-        "there",
-        "when",
-        "where",
-        "why",
-        "how",
-        "all",
-        "each",
-        "few",
-        "more",
-        "most",
-        "other",
-        "some",
-        "such",
-        "no",
-        "nor",
-        "not",
-        "only",
-        "own",
-        "same",
-        "so",
-        "than",
-        "too",
-        "very",
-        "just",
-        "also",
-    ]
-)
 
 
 def EngramConfig(
@@ -197,3 +114,63 @@ def EngramConfig(
         "fallback_response": fallback_response,
         "graph": graph,
     }
+
+
+# Scalar/bool/numeric config keys that map straight from a YAML file.
+_YAML_SCALAR_KEYS = (
+    "capacity",
+    "max_sessions",
+    "session_ttl_seconds",
+    "weight_base",
+    "weight_recency",
+    "weight_hit_rate",
+    "expand_contractions",
+    "srai_depth_limit",
+    "protect_static",
+    "min_hit_rate",
+    "use_stemming",
+    "use_lemmatization",
+    "use_synonyms",
+    "max_synonyms_per_word",
+    "use_spacy_facts",
+    "use_spacy_lemmatization",
+    "use_phrase_keywords",
+    "fallback_response",
+)
+
+
+def load_config(path: str = "config.yml") -> dict:
+    """Build an EngramConfig dict from a YAML file.
+
+    A missing file, an empty file, or any omitted key falls back to the
+    EngramConfig defaults. Enum fields are given by their string value
+    (``eviction_policy``, ``session_overflow``); a ``graph`` mapping is built
+    into a GraphConfig.
+
+    Args:
+        path: Path to the YAML configuration file.
+
+    Returns:
+        A validated EngramConfig dict.
+    """
+    import os
+
+    if not os.path.exists(path):
+        return EngramConfig()
+
+    import yaml
+
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not data:
+        return EngramConfig()
+
+    kwargs = {key: data[key] for key in _YAML_SCALAR_KEYS if key in data}
+    if "eviction_policy" in data:
+        kwargs["eviction_policy"] = EvictionPolicy(data["eviction_policy"])
+    if "session_overflow" in data:
+        kwargs["session_overflow"] = SessionOverflow(data["session_overflow"])
+    if data.get("graph"):
+        kwargs["graph"] = GraphConfig(**data["graph"])
+
+    return EngramConfig(**kwargs)

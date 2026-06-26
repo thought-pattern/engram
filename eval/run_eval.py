@@ -5,7 +5,7 @@ instance, classifies how each prompt is answered, and prints the gaps so that
 content and engine improvements can be driven from real signal.
 
 The harness is side-effect free on the user's data: it builds state in memory
-from engram/seed.json and never saves to engram.json.
+from data/seed.json and never saves to engram.json.
 
 Classification (pattern path):
     specific  - matched a real, intentional pattern (the desired outcome)
@@ -41,7 +41,7 @@ WEAK_SCORE = 1.0  # keyword top-score at or below this is a weak retrieval
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
     engram = Engram(config=EngramConfig())
-    seed_path = os.path.join(REPO_ROOT, "engram", "seed.json")
+    seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)
     for pair in seed_data.get("pairs", []):

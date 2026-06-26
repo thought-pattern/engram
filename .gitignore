@@ -209,5 +209,9 @@ __marimo__/
 # Engram store
 engram.json
 
-# NLTK data (downloaded at setup via `python -m engram.nltk_data`, not committed)
-data/
+# Local configuration (copy config.example.yml to config.yml). Template is tracked.
+config.yml
+
+# NLTK data (downloaded at setup via `python -m engram.nltk_data`, not committed).
+# Only the downloaded model cache is ignored; data/seed.json is tracked.
+data/nltk_data/

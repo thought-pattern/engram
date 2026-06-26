@@ -2,10 +2,17 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from engram.config import EngramConfig, EvictionPolicy
+# Allow running as `python scripts/cli.py` without installing the package: put
+# the repo root (this file's parent's parent) on the import path.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from engram.config import EvictionPolicy, load_config
 from engram.core import Engram, SessionLimitExceeded, SessionNotFound
 from engram.models import Tier
 from engram import metrics, persistence, sessions
@@ -25,17 +32,24 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to engram store file (default: engram.json)",
     )
     parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default="config.yml",
+        help="Path to YAML config file (default: config.yml; defaults used if absent)",
+    )
+    parser.add_argument(
         "--capacity",
         type=int,
-        default=10000,
-        help="Maximum DYNAMIC statements (default: 10000)",
+        default=None,
+        help="Override maximum DYNAMIC statements (default: from config)",
     )
     parser.add_argument(
         "--eviction",
         type=str,
         choices=["fifo", "lru", "lfu", "hit_rate"],
-        default="fifo",
-        help="Eviction policy (default: fifo)",
+        default=None,
+        help="Override eviction policy (default: from config)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -221,17 +235,22 @@ def get_eviction_policy(name: str) -> EvictionPolicy:
     }[name]
 
 
-def load_engram_instance(store_path: str, capacity: int, eviction: str = "fifo") -> Engram:
-    """Load engram from file or create new."""
-    path = Path(store_path)
+def resolve_config(args: argparse.Namespace) -> dict:
+    """Build the EngramConfig from the config file, applying CLI flag overrides."""
+    config = load_config(args.config)
+    if args.capacity is not None:
+        config["capacity"] = args.capacity
+    if args.eviction is not None:
+        config["eviction_policy"] = get_eviction_policy(args.eviction)
+    return config
+
+
+def load_engram_instance(args: argparse.Namespace) -> Engram:
+    """Load engram from file (applying the resolved config) or create a new one."""
+    path = Path(args.store)
     if path.exists():
-        return persistence.load_engram(path)
-    return Engram(
-        config=EngramConfig(
-            capacity=capacity,
-            eviction_policy=get_eviction_policy(eviction),
-        )
-    )
+        return persistence.load_engram(path, config=args.engram_config)
+    return Engram(config=args.engram_config)
 
 
 def save_engram(engram: Engram, store_path: str) -> None:
@@ -247,12 +266,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("Use --force to overwrite", file=sys.stderr)
         return 1
 
-    engram = Engram(
-        config=EngramConfig(
-            capacity=args.capacity,
-            eviction_policy=get_eviction_policy(args.eviction),
-        )
-    )
+    engram = Engram(config=args.engram_config)
     save_engram(engram, args.store)
     print(f"Initialized engram store: {args.store}")
     return 0
@@ -260,7 +274,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_store(args: argparse.Namespace) -> int:
     """Store a statement."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
@@ -281,7 +295,7 @@ def cmd_store(args: argparse.Namespace) -> int:
 
 def cmd_load(args: argparse.Namespace) -> int:
     """Load statements from JSON file."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     path = Path(args.file)
@@ -322,7 +336,7 @@ def cmd_load(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     """Query for statements."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
 
     result = engram.query(args.text, session_id=args.session, limit=args.limit)
 
@@ -348,7 +362,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_session(args: argparse.Namespace) -> int:
     """Session management commands."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
     modified = False
 
     if args.session_command == "create":
@@ -443,7 +457,7 @@ def cmd_session(args: argparse.Namespace) -> int:
 
 def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
     metric_data = metrics.get_metrics(engram)
 
     print("ENGRAM Metrics")
@@ -464,7 +478,7 @@ def cmd_metrics(args: argparse.Namespace) -> int:
 
 def cmd_keywords(args: argparse.Namespace) -> int:
     """Keyword analysis."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
 
     if args.zero_hit:
         results = metrics.get_zero_hit_keywords(engram, min_queries=args.min_queries)
@@ -493,7 +507,7 @@ def cmd_keywords(args: argparse.Namespace) -> int:
 
 def cmd_coverage(args: argparse.Namespace) -> int:
     """Coverage analysis."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
 
     if args.report:
         report = metrics.get_coverage_report(engram)
@@ -540,7 +554,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export statements."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
 
     statements = []
     for stmt in engram.statements:
@@ -693,7 +707,7 @@ class InteractiveChat:
 
 def cmd_interactive(args: argparse.Namespace) -> int:
     """Interactive AIML-style chat."""
-    engram = load_engram_instance(args.store, args.capacity, args.eviction)
+    engram = load_engram_instance(args)
 
     chat = InteractiveChat(
         engram,
@@ -719,16 +733,14 @@ def main() -> int:
         args.session = None
         args.graph = False
 
+    # Resolve configuration once (config.yml, with CLI flag overrides applied).
+    args.engram_config = resolve_config(args)
+
     # Auto-init if store doesn't exist
     if args.command != "init" and not Path(args.store).exists():
-        engram = Engram(
-            config=EngramConfig(
-                capacity=args.capacity,
-                eviction_policy=get_eviction_policy(args.eviction),
-            )
-        )
+        engram = Engram(config=args.engram_config)
         # Load seed responses from seed.json if available
-        seed_file = Path(__file__).parent / "engram" / "seed.json"
+        seed_file = Path(_REPO_ROOT) / "data" / "seed.json"
         if seed_file.exists():
             with open(seed_file, encoding="utf-8") as f:
                 seed_data = json.load(f)

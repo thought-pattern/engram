@@ -20,8 +20,9 @@ classifiers = [
 
 dependencies = []
 
-[project.scripts]
-engram = "engram.cli:main"
+# The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
+# packaged console entry point; scripts/ is intentionally outside the engram
+# package.
 
 [project.optional-dependencies]
 dev = [

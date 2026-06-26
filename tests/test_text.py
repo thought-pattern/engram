@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import DEFAULT_STOPWORDS
+from engram.nltk_data import DEFAULT_STOPWORDS
 from engram.text import (
     expand_query,
     extract_keywords,
