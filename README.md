@@ -23,6 +23,9 @@ pip install -r requirements.txt
 # Download NLTK data into the local, gitignored data/nltk_data directory.
 # Run this once after install so datasets are not fetched during runtime.
 python -m engram.nltk_data
+
+# Download the spaCy English model (parsing, NER, lemmas).
+python -m spacy download en_core_web_sm
 ```
 
 ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
@@ -45,12 +48,13 @@ engram = Engram()
 engram.store("Paris is the capital of France", tier=Tier.STATIC)
 engram.store("France has a population of 67 million", tier=Tier.STATIC)
 
-# Query
+# Query - returns a dict with "matches" (a list of (statement, score)) and "keywords"
 result = engram.query("What is the capital of France?")
-print(result.top_match.text)  # "Paris is the capital of France"
+stmt, score = result["matches"][0]
+print(stmt["text"])  # "Paris is the capital of France"
 
 # Record successful retrieval
-engram.record_hit(result.keywords)
+engram.record_hit(result["keywords"])
 ```
 
 ## Sessions
@@ -58,12 +62,15 @@ engram.record_hit(result.keywords)
 Sessions enable context expansion for follow-up queries:
 
 ```python
+from engram import sessions
+
 # Create a session
-session_id = engram.create_session()
+session_id = sessions.create_session(engram)
 
 # First query
 result = engram.query("What is the capital of France?", session_id=session_id)
-engram.update_session_context(session_id, result.top_match.text)
+stmt, score = result["matches"][0]
+sessions.update_session_context(engram, session_id, stmt["text"])
 
 # Follow-up query - context expands "its" to include France/Paris
 result = engram.query("What is its population?", session_id=session_id)
@@ -72,7 +79,8 @@ result = engram.query("What is its population?", session_id=session_id)
 ## Configuration
 
 ```python
-from engram import Engram, EngramConfig, SessionOverflow
+from engram.core import Engram
+from engram.config import EngramConfig, SessionOverflow
 
 config = EngramConfig(
     capacity=10000,              # Max DYNAMIC statements
@@ -93,15 +101,17 @@ engram = Engram(config=config)
 ## Persistence
 
 ```python
+from engram import persistence
+
 # Save to file
-engram.save("engram_state.json")
+persistence.save(engram, "engram_state.json")
 
 # Load from file
-engram = Engram.load("engram_state.json")
+engram = persistence.load_engram("engram_state.json")
 
 # Or use JSON strings
-json_str = engram.save_json()
-engram = Engram.load_json(json_str)
+json_str = persistence.save_json(engram)
+engram = persistence.load_engram_json(json_str)
 ```
 
 ## Scoring Algorithm
@@ -119,48 +129,57 @@ Where:
 
 ## API Reference
 
-### Statement Operations
+The data model is plain dicts, and behavior is split between `Engram` methods and
+module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics`).
+
+### Engram methods
 
 | Method | Description |
 |--------|-------------|
-| `store(text, tier)` | Add a statement |
-| `query(text, session_id, limit)` | Retrieve matching statements |
-| `record_hit(keywords)` | Update statistics after successful retrieval |
-| `evict()` | Remove oldest DYNAMIC statement |
-| `clear_dynamic()` | Remove all DYNAMIC statements |
+| `store(text, tier, pattern, template)` | Add a statement |
+| `query(text, session_id, limit)` | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords` |
+| `pattern_query(text, session_id)` | AIML-style match; returns `(statement, captured, response)` or `()` |
+| `record_hit(keywords)` | Update hit statistics after a successful retrieval |
+| `learn_fact(fact)` | Learn an extracted fact |
+| `get_statement(statement_id)` | Fetch a statement dict by id (`{}` if absent) |
+| `load_corpus(statements, tier)` | Bulk-add statements |
+| `fork(...)` | Create a child instance sharing the knowledge base |
 
-### Session Operations
+### Sessions (`from engram import sessions`)
 
-| Method | Description |
-|--------|-------------|
-| `create_session(session_id, metadata)` | Create a new session |
-| `get_session(session_id, create_if_missing)` | Retrieve a session |
-| `update_session_context(session_id, previous_response)` | Update session context |
-| `delete_session(session_id)` | Remove a session |
-| `expire_sessions(inactive_threshold)` | Remove inactive sessions |
-| `list_sessions(active_since)` | List sessions |
-
-### Persistence
-
-| Method | Description |
-|--------|-------------|
-| `save(path)` | Save state to JSON file |
-| `load(path)` | Load state from JSON file |
-| `save_json()` | Serialize to JSON string |
-| `load_json(json_str)` | Deserialize from JSON string |
-
-### Metrics
-
-| Property | Description |
+| Function | Description |
 |----------|-------------|
+| `create_session(engram, session_id, metadata)` | Create a session, returns its id |
+| `get_session(engram, session_id, create_if_missing)` | Retrieve a session dict |
+| `update_session_context(engram, session_id, previous_response)` | Update session context |
+| `delete_session(engram, session_id)` | Remove a session |
+| `expire_sessions(engram, inactive_threshold)` | Remove inactive sessions |
+| `list_sessions(engram, active_since)` | List sessions |
+
+### Persistence (`from engram import persistence`)
+
+| Function | Description |
+|----------|-------------|
+| `save(engram, path)` | Save state to JSON file |
+| `load_engram(path)` | Load state from JSON file |
+| `save_json(engram)` | Serialize to JSON string |
+| `load_engram_json(json_str)` | Deserialize from JSON string |
+
+### Metrics (`from engram import metrics`)
+
+`metrics.get_metrics(engram)` returns a dict with these keys:
+
+| Key | Description |
+|-----|-------------|
 | `statement_count` | Total statements |
 | `static_count` | STATIC tier count |
 | `dynamic_count` | DYNAMIC tier count |
 | `keyword_count` | Distinct keywords |
 | `session_count` | Active sessions |
-| `total_queries` | Queries performed |
-| `total_hits` | Hits recorded |
-| `overall_hit_rate` | Hit percentage |
+| `query_count` | Queries performed |
+| `hit_count` | Hits recorded |
+| `eviction_count` | Evictions |
+| `hit_rate` | Hit rate (0.0 to 1.0) |
 
 ## Command Line Interface
 
@@ -183,8 +202,8 @@ engram store "Dynamic statement that can be evicted"
 ### Load from File
 
 ```bash
-# Load statements from a file (one per line)
-engram load corpus.txt --static
+# Load statements from a JSON file of patterns/templates
+engram load corpus.json --static
 ```
 
 ### Query
@@ -228,14 +247,16 @@ engram export --dynamic-only
 engram interactive
 ```
 
-In interactive mode:
-- Type queries directly to search
-- `/store <text>` - Store a new statement
-- `/hit` - Record last query as a hit
-- `/context [text]` - View or set session context
+Interactive mode is a chat loop (pattern matching, not keyword search). Type a
+message to get a response, or use a slash command:
+- `/debug` - Toggle debug output
 - `/metrics` - Show metrics
+- `/topic <name>` - Set the conversation topic
+- `/set <name> <value>` - Set a session predicate
+- `/get <name>` - Show a session predicate
 - `/save` - Save to disk
-- `/quit` - Exit
+- `/help` - List commands
+- `/quit` - Exit (also `/exit`, `/q`)
 
 ## NLP Features
 
@@ -277,6 +298,51 @@ instead of enumerating every emotion word:
 
 So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
 with no per-emotion patterns.
+
+### Relational fact extraction (spaCy)
+
+NLTK has no dependency parser, so the built-in fact extractor
+(`engram.nlp.extract_fact`) only handles copula sentences ("X is/are Y"). With
+spaCy enabled, `engram.facts_spacy.extract_facts` uses the dependency parse to
+pull subject-predicate-object triples from arbitrary declaratives:
+
+| Sentence | Triple |
+|----------|--------|
+| Paris is the capital of France | `(Paris, is, capital of France)` |
+| Paris is in France | `(Paris, in, France)` |
+| Einstein developed the theory of relativity | `(Einstein, develop, theory of relativity)` |
+| The book belongs to Mary | `(book, belong to, Mary)` |
+
+Copulas keep their surface form, prepositional links use the preposition, and
+action verbs are normalized to the verb lemma. Each fact also carries
+`subject_type`/`obj_type` from NER (`PERSON`/`GPE`/`ORG`/`DATE`, `""` when not an
+entity), so triples can populate typed graph nodes. This is opt-in
+(`use_spacy_facts`, default off) and feeds the knowledge-graph triple layer.
+Run `python eval/compare_facts.py` to see it next to the copula extractor.
+
+This is the deliberate spaCy/NLTK split: spaCy for dependency parsing, NLTK for
+tokenization, WordNet lemmas/synonyms, and VADER sentiment.
+
+### Optional spaCy matching/retrieval enhancements
+
+All off by default; each is a config flag.
+
+- **`use_spacy_lemmatization`** - lemmatize matcher input with spaCy's
+  context-aware lemmatizer instead of the WordNet heuristic, so `saw` (verb)
+  resolves to `see` while `saw` (noun) stays `saw`.
+- **`use_phrase_keywords`** - extract keywords with spaCy, keeping noun-chunk
+  phrases (`machine learning`) as index terms alongside their component lemmas,
+  for higher retrieval precision on compound terms.
+
+Note: when a catch-all `*` pattern is present, a pure-wildcard match no longer
+blocks the lemma/stem fallbacks - the matcher sets the catch-all aside, tries for
+a more specific match, and restores it only if none is found.
+
+(Vector-based semantic matching was prototyped and removed: measured against the
+seed, `en_core_web_md` averaged word vectors are too coarse for short-utterance
+intent matching - shared question/greeting frames dominate, so paraphrases
+mis-route even at high thresholds. It would need sentence embeddings, not word
+vectors, to be worthwhile.)
 
 ## Evaluation
 

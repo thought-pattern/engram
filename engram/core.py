@@ -24,7 +24,7 @@ from engram.pattern import PatternMatcher
 from engram.scoring import score_statement
 from engram.substitutions import SubstitutionMaps, expand_contractions, split_sentences
 from engram.template import TemplateContext, TemplateProcessor
-from engram.text import expand_query, expand_with_synonyms, extract_keywords, normalize
+from engram.text import expand_query, expand_with_synonyms, extract_keywords, extract_keywords_spacy, normalize
 
 # Re-export for backward compatibility
 from engram.sessions import SessionLimitExceeded, SessionNotFound
@@ -67,6 +67,7 @@ class Engram:
             bot_properties=self.bot_properties,
             use_stemming=self.config["use_stemming"],
             use_lemmatization=self.config["use_lemmatization"],
+            use_spacy_lemmatization=self.config["use_spacy_lemmatization"],
         )
         self.substitution_maps = SubstitutionMaps()
         self.default_predicates: dict[str, str] = {}
@@ -282,6 +283,16 @@ class Engram:
     # Statement Operations
     # =========================================================================
 
+    def _extract_keywords(self, normalized_text: str) -> list:
+        """Extract keywords using the configured extractor (token or phrase).
+
+        Both store-time indexing and query-time retrieval go through here so the
+        keyword index and queries always use the same extraction.
+        """
+        if self.config["use_phrase_keywords"]:
+            return extract_keywords_spacy(normalized_text, self.config["stopwords"])
+        return extract_keywords(normalized_text, self.config["stopwords"])
+
     def store(
         self,
         text: str,
@@ -311,7 +322,7 @@ class Engram:
         # Normalize and extract keywords from pattern if provided, else from text
         keyword_source = pattern if pattern else text
         normalized = normalize(keyword_source)
-        keywords = extract_keywords(normalized, self.config["stopwords"])
+        keywords = self._extract_keywords(normalized)
 
         # Create statement
         statement = Statement(
@@ -381,7 +392,7 @@ class Engram:
 
         # Normalize and extract keywords
         normalized = normalize(expanded_text)
-        keywords = extract_keywords(normalized, self.config["stopwords"])
+        keywords = self._extract_keywords(normalized)
 
         if not keywords:
             return QueryResult(matches=[], keywords=[])

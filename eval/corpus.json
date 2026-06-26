@@ -78,6 +78,28 @@
 
     {"text": "happy birthday", "category": "occasion-gap"},
     {"text": "you are stupid", "category": "insult-gap"},
-    {"text": "shut up", "category": "insult-gap"}
+    {"text": "shut up", "category": "insult-gap"},
+
+    {"text": "i dont know", "category": "engine-probe"},
+    {"text": "thats funny", "category": "engine-probe"},
+    {"text": "youre welcome", "category": "engine-probe"},
+    {"text": "i don't understand", "category": "confusion-gap"},
+    {"text": "i am confused", "category": "confusion-gap"},
+    {"text": "what should I do", "category": "advice-gap"},
+    {"text": "what do you like", "category": "identity-gap"},
+    {"text": "do you have a name", "category": "identity-gap"},
+    {"text": "what languages do you speak", "category": "capability-gap"},
+    {"text": "how does this work", "category": "capability-gap"},
+    {"text": "tell me something interesting", "category": "request-gap"},
+    {"text": "this is great", "category": "sentiment-gap"},
+    {"text": "this is terrible", "category": "sentiment-gap"},
+    {"text": "you are funny", "category": "compliment-gap"},
+    {"text": "i appreciate it", "category": "courtesy-gap"},
+    {"text": "no thanks", "category": "courtesy-gap"},
+    {"text": "good to see you", "category": "greeting-gap"},
+    {"text": "long time no see", "category": "greeting-gap"},
+    {"text": "maybe", "category": "ack-gap"},
+    {"text": "i guess", "category": "ack-gap"},
+    {"text": "i have a question", "category": "meta-gap"}
   ]
 }

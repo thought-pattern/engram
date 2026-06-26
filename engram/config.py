@@ -152,6 +152,9 @@ def EngramConfig(
     use_lemmatization: bool = True,  # Enable WordNet-lemmatized matching (precise)
     use_synonyms: bool = True,  # Enable synonym expansion at query time
     max_synonyms_per_word: int = 3,  # Maximum synonyms to consider per word
+    use_spacy_facts: bool = False,  # Opt-in spaCy dependency-parse fact extraction
+    use_spacy_lemmatization: bool = False,  # spaCy POS-aware lemmas in the matcher
+    use_phrase_keywords: bool = False,  # Noun-chunk phrase keywords for retrieval
     # Fallback response when no pattern matches
     fallback_response: str = "",  # Empty means return None on no match
     # Knowledge Graph settings
@@ -188,6 +191,9 @@ def EngramConfig(
         "use_lemmatization": use_lemmatization,
         "use_synonyms": use_synonyms,
         "max_synonyms_per_word": max_synonyms_per_word,
+        "use_spacy_facts": use_spacy_facts,
+        "use_spacy_lemmatization": use_spacy_lemmatization,
+        "use_phrase_keywords": use_phrase_keywords,
         "fallback_response": fallback_response,
         "graph": graph,
     }

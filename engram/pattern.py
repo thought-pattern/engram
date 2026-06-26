@@ -28,7 +28,7 @@ Stemming support:
 import re
 from functools import lru_cache
 
-from engram.text import lemmatize_text, normalize, stem_text
+from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
 
 def MatchResult(
@@ -320,6 +320,14 @@ def PatternEntry(
 TOPIC_PRIORITY = 1000  # Having topic match adds significant priority
 THAT_PRIORITY = 500  # Having that match adds priority
 
+_WILDCARD_TOKENS = frozenset({"*", "_", "#", "^"})
+
+
+def _is_pure_wildcard(pattern: str) -> bool:
+    """Return True if a pattern is only wildcard tokens (e.g. '*' or '* *')."""
+    words = pattern.split()
+    return bool(words) and all(word.lstrip("$") in _WILDCARD_TOKENS for word in words)
+
 
 class PatternMatcher:
     """AIML-style pattern matcher with indexed patterns and context matching."""
@@ -330,6 +338,7 @@ class PatternMatcher:
         bot_properties=None,
         use_stemming: bool = False,
         use_lemmatization: bool = False,
+        use_spacy_lemmatization: bool = False,
     ) -> None:
         """Initialize pattern matcher.
 
@@ -337,8 +346,10 @@ class PatternMatcher:
             sets: Optional dictionary of named word sets for {set:name} matching.
             bot_properties: Optional bot properties for {bot:name} matching.
             use_stemming: If True, use stemmed matching as fallback when exact match fails.
-            use_lemmatization: If True, try WordNet-lemmatized matching as a
-                fallback (more precise than stemming) before stemmed matching.
+            use_lemmatization: If True, try lemmatized matching as a fallback
+                (more precise than stemming) before stemmed matching.
+            use_spacy_lemmatization: If True, lemmatize with spaCy's context-aware
+                lemmatizer instead of the WordNet heuristic.
         """
         self._patterns: list[dict] = []
         # Index: first word -> list of pattern indices for faster lookup
@@ -353,6 +364,8 @@ class PatternMatcher:
         self._bot_properties = bot_properties if bot_properties is not None else {}
         self._use_stemming = use_stemming
         self._use_lemmatization = use_lemmatization
+        # Select the lemmatizer used for the lemmatized index and fallback.
+        self._lemmatize = lemmatize_text_spacy if use_spacy_lemmatization else lemmatize_text
 
     def add_pattern(
         self,
@@ -425,7 +438,7 @@ class PatternMatcher:
 
                 # Also index by lemmatized first word for precise flexible matching
                 if self._use_lemmatization:
-                    lemma_first = lemmatize_text(index_word)
+                    lemma_first = self._lemmatize(index_word)
                     if lemma_first not in self._lemmatized_first_word_index:
                         self._lemmatized_first_word_index[lemma_first] = []
                     if idx not in self._lemmatized_first_word_index[lemma_first]:
@@ -461,18 +474,37 @@ class PatternMatcher:
         first_word = words[0]
         result = self._match_internal(normalized, that_normalized, topic_normalized, first_word, index_kind="exact")
 
-        # If no match and lemmatization enabled, try lemmatized matching (precise)
-        if not result and self._use_lemmatization:
-            lemmatized = lemmatize_text(normalized)
-            lemma_first = lemmatize_text(first_word)
-            result = self._match_internal(lemmatized, that_normalized, topic_normalized, lemma_first, index_kind="lemmatized")
+        # A pure-wildcard (catch-all) match must not block the flexible
+        # fallbacks - set it aside and try for something more specific. The
+        # fallback stages ignore pure-wildcard results (via _specific) so they
+        # don't simply re-return the catch-all.
+        catchall = ()
+        if result and _is_pure_wildcard(result[4]):
+            catchall, result = result, ()
 
-        # If still no match and stemming enabled, try stemmed matching (aggressive)
+        # If no specific match and lemmatization enabled, try lemmatized matching
+        if not result and self._use_lemmatization:
+            lemmatized = self._lemmatize(normalized)
+            lemma_first = self._lemmatize(first_word)
+            result = self._specific(
+                self._match_internal(lemmatized, that_normalized, topic_normalized, lemma_first, index_kind="lemmatized")
+            )
+
+        # If still nothing and stemming enabled, try stemmed matching (aggressive)
         if not result and self._use_stemming:
             stemmed = stem_text(normalized)
             stemmed_first = stem_text(first_word)
-            result = self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
+            result = self._specific(
+                self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
+            )
 
+        return result if result else catchall
+
+    @staticmethod
+    def _specific(result: tuple) -> tuple:
+        """Return result unless it is a pure-wildcard (catch-all) match, then ()."""
+        if result and _is_pure_wildcard(result[4]):
+            return ()
         return result
 
     def _get_candidate_indices(

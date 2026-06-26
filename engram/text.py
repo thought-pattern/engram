@@ -134,6 +134,54 @@ def extract_keywords(
     return keywords
 
 
+def extract_keywords_spacy(text: str, stopwords: frozenset[str]) -> list:
+    """Extract keywords using spaCy, keeping noun-chunk phrases as units.
+
+    Returns content-word lemmas plus multi-word noun-chunk phrases (e.g.
+    "machine learning"), so the keyword index can match precise compound terms
+    while still indexing their component words for recall. Falls back to
+    extract_keywords if the spaCy model is unavailable.
+
+    Args:
+        text: Input text string.
+        stopwords: Set of stopwords to filter out.
+
+    Returns:
+        List of keywords (lemmatized single words and noun-chunk phrases),
+        deduplicated with order preserved.
+    """
+    if not text or not text.strip():
+        return []
+
+    from engram.spacy_setup import get_nlp
+
+    nlp = get_nlp()
+    if not nlp:
+        return extract_keywords(text, stopwords)
+
+    doc = nlp(text)
+    seen: set[str] = set()
+    keywords: list = []
+
+    def add(word: str) -> None:
+        if word and word not in stopwords and word not in seen:
+            seen.add(word)
+            keywords.append(word)
+
+    # Single content-word lemmas (nouns, verbs, adjectives, adverbs).
+    for token in doc:
+        if token.is_alpha and not token.is_stop and token.pos_ in ("NOUN", "PROPN", "VERB", "ADJ", "ADV"):
+            add(token.lemma_.lower())
+
+    # Multi-word noun-chunk phrases, with stopwords/determiners dropped.
+    for chunk in doc.noun_chunks:
+        words = [t.lemma_.lower() for t in chunk if t.is_alpha and not t.is_stop]
+        if len(words) >= 2:
+            add(" ".join(words))
+
+    return keywords
+
+
 def expand_query(query: str, previous_response: str) -> str:
     """Expand query with previous response context.
 
@@ -240,6 +288,30 @@ def lemmatize_text(text: str) -> str:
             lemma = lemmatizer.lemmatize(lower, pos="n")
         out.append(lemma)
     return " ".join(out)
+
+
+@lru_cache(maxsize=4096)
+def lemmatize_text_spacy(text: str) -> str:
+    """Lemmatize text using spaCy's context-aware lemmatizer.
+
+    More accurate than lemmatize_text's WordNet heuristic because spaCy uses POS
+    context from the parse: "saw" the verb lemmatizes to "see" while "saw" the
+    noun stays "saw". Falls back to the lowercased input if the model is
+    unavailable.
+
+    Args:
+        text: Input text.
+
+    Returns:
+        Text with all words lemmatized.
+    """
+    from engram.spacy_setup import get_nlp
+
+    nlp = get_nlp()
+    if not nlp:
+        return text.lower()
+    doc = nlp(text)
+    return " ".join(token.lemma_.lower() for token in doc)
 
 
 @lru_cache(maxsize=4096)
