@@ -1,13 +1,10 @@
 """Tests for text substitution maps."""
 
-import pytest
-
 from engram.substitutions import (
     DEFAULT_CONTRACTIONS,
     DEFAULT_GENDER,
     DEFAULT_PERSON,
     DEFAULT_PERSON2,
-    SubstitutionMaps,
     apply_gender,
     apply_person,
     apply_person2,
@@ -16,6 +13,7 @@ from engram.substitutions import (
     get_all_input_subs,
     normalize_for_matching,
     split_sentences,
+    substitution_maps,
 )
 
 
@@ -282,7 +280,7 @@ class TestSubstitutionMaps:
 
     def test_default_maps(self):
         """Test default maps are initialized."""
-        maps = SubstitutionMaps()
+        maps = substitution_maps()
         assert len(maps["contractions"]) > 0
         assert len(maps["person"]) > 0
         assert len(maps["person2"]) > 0
@@ -291,7 +289,7 @@ class TestSubstitutionMaps:
 
     def test_get_all_input_subs(self):
         """Test get_all_input_subs combines maps."""
-        maps = SubstitutionMaps()
+        maps = substitution_maps()
         maps["custom"]["foo"] = "bar"
 
         all_subs = get_all_input_subs(maps)
@@ -301,7 +299,7 @@ class TestSubstitutionMaps:
     def test_custom_maps_override(self):
         """Test custom maps can be provided."""
         custom_contractions = {"yo": "hello"}
-        maps = SubstitutionMaps(contractions=custom_contractions)
+        maps = substitution_maps(contractions=custom_contractions)
         assert maps["contractions"] == {"yo": "hello"}
 
 
@@ -350,10 +348,10 @@ class TestContractionIntegration:
 
     def test_contractions_disabled(self):
         """Test contractions expansion can be disabled."""
+        from engram.config import engram_config
         from engram.core import Engram
-        from engram.config import EngramConfig
 
-        config = EngramConfig(expand_contractions=False)
+        config = engram_config(expand_contractions=False)
         engram = Engram(config=config)
         engram.store("You do not like pizza", pattern="YOU DO NOT LIKE *")
 

@@ -7,7 +7,8 @@ various policies (FIFO, LRU, LFU, HIT_RATE).
 
 from datetime import datetime
 
-from engram.models import statement_hit_rate
+from engram.config import EvictionPolicy
+from engram.models import Tier, statement_hit_rate
 
 
 def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
@@ -21,7 +22,6 @@ def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
     Returns:
         List of (index, statement) tuples for eviction candidates.
     """
-    from engram.models import Tier
 
     candidates = []
     for idx, stmt in enumerate(engram.statements):
@@ -83,7 +83,6 @@ def evict_dynamic(engram) -> bool:
     Returns:
         True if a statement was evicted, False if no candidates available.
     """
-    from engram.config import EvictionPolicy
 
     candidates = get_eviction_candidates(engram)
     if not candidates:
@@ -101,7 +100,8 @@ def evict_dynamic(engram) -> bool:
         # Statements never hit use created_at as fallback
         def lru_key(item: tuple[int, dict]) -> datetime:
             _, stmt = item
-            return stmt["last_hit"] or stmt["created_at"]
+            key = stmt["last_hit"] or stmt["created_at"]
+            return key
 
         target_idx = min(candidates, key=lru_key)[0]
 
@@ -110,7 +110,8 @@ def evict_dynamic(engram) -> bool:
         # Ties broken by oldest created_at
         def lfu_key(item: tuple[int, dict]) -> tuple[int, datetime]:
             _, stmt = item
-            return (stmt["hit_count"], stmt["created_at"])
+            key = (stmt["hit_count"], stmt["created_at"])
+            return key
 
         target_idx = min(candidates, key=lfu_key)[0]
 
@@ -119,7 +120,8 @@ def evict_dynamic(engram) -> bool:
         # Ties broken by oldest created_at
         def hit_rate_key(item: tuple[int, dict]) -> tuple[float, datetime]:
             _, stmt = item
-            return (statement_hit_rate(stmt), stmt["created_at"])
+            key = (statement_hit_rate(stmt), stmt["created_at"])
+            return key
 
         target_idx = min(candidates, key=hit_rate_key)[0]
 
@@ -127,7 +129,8 @@ def evict_dynamic(engram) -> bool:
         # Default to FIFO
         target_idx = candidates[0][0]
 
-    return evict_statement_at(engram, target_idx)
+    evicted = evict_statement_at(engram, target_idx)
+    return evicted
 
 
 def evict(engram) -> bool:
@@ -142,7 +145,8 @@ def evict(engram) -> bool:
         True if a statement was evicted, False otherwise.
     """
     with engram.statement_lock:
-        return evict_dynamic(engram)
+        evicted = evict_dynamic(engram)
+        return evicted
 
 
 def clear_dynamic(engram) -> int:

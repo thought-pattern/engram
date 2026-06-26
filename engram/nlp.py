@@ -7,11 +7,11 @@ relationships for dynamic learning.
 
 from functools import lru_cache
 
-from nltk.tokenize import word_tokenize
+from nltk import ne_chunk
 from nltk.tag import pos_tag
+from nltk.tokenize import word_tokenize
 
 from engram.nltk_data import ensure_resource
-
 
 # Copula verbs that indicate definitional statements
 _COPULAS = frozenset({"is", "are", "was", "were"})
@@ -39,22 +39,24 @@ def _ensure_nltk_data() -> None:
         ensure_resource(path, package)
 
 
-def ExtractedFact(subject: str, predicate: str, obj: str, original: str) -> dict:
+def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:
     """Build a fact dict extracted from natural language.
 
     Keys: subject, predicate (copula verb), obj (complement), original sentence.
     """
-    return {
+    fact = {
         "subject": subject,
         "predicate": predicate,
         "obj": obj,
         "original": original,
     }
+    return fact
 
 
 def fact_subject_upper(fact: dict) -> str:
     """Subject in uppercase for pattern matching."""
-    return fact["subject"].upper()
+    subject_upper = fact["subject"].upper()
+    return subject_upper
 
 
 def fact_query_patterns(fact: dict) -> list[str]:
@@ -102,7 +104,8 @@ def _is_question(text: str) -> bool:
 def _is_command(text: str) -> bool:
     """Check if text is a command."""
     first_word = text.split()[0].lower() if text.split() else ""
-    return first_word in _COMMAND_WORDS
+    is_command = first_word in _COMMAND_WORDS
+    return is_command
 
 
 def _clean_subject(tokens: list[str]) -> str:
@@ -114,7 +117,8 @@ def _clean_subject(tokens: list[str]) -> str:
     while tokens and tokens[0].lower() in ("a", "an", "the"):
         tokens = tokens[1:]
 
-    return " ".join(tokens)
+    cleaned = " ".join(tokens)
+    return cleaned
 
 
 def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], original: str) -> dict:
@@ -149,7 +153,9 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     if subject.lower() in ("i", "you", "he", "she", "it", "they", "we"):
         return {}
 
-    return ExtractedFact(subject=subject, predicate=copula, obj=obj, original=original.rstrip(".") + ".")  # Normalize punctuation
+    normalized_original = original.rstrip(".") + "."  # Normalize punctuation
+    fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
+    return fact
 
 
 def extract_fact(text: str) -> dict:
@@ -187,15 +193,17 @@ def extract_fact(text: str) -> dict:
         return {}
 
     # Find copula and extract subject/object
-    return _extract_copula_fact(tokens, tagged, text)
+    fact = _extract_copula_fact(tokens, tagged, text)
+    return fact
 
 
-def ExtractedEntity(text: str, label: str, start: int, end: int) -> dict:
+def extracted_entity(text: str, label: str, start: int, end: int) -> dict:
     """Build a named-entity dict.
 
     Keys: text, label (PERSON/ORGANIZATION/GPE/...), start and end positions.
     """
-    return {"text": text, "label": label, "start": start, "end": end}
+    entity = {"text": text, "label": label, "start": start, "end": end}
+    return entity
 
 
 def extract_entities(text: str) -> list[dict]:
@@ -220,8 +228,6 @@ def extract_entities(text: str) -> list[dict]:
         return []
 
     try:
-        from nltk import ne_chunk
-
         tokens = word_tokenize(text)
         tagged = pos_tag(tokens)
         tree = ne_chunk(tagged)
@@ -248,7 +254,7 @@ def extract_entities(text: str) -> list[dict]:
                     end = current_pos + len(entity_text)
 
                 entities.append(
-                    ExtractedEntity(
+                    extracted_entity(
                         text=entity_text,
                         label=label,
                         start=start,
@@ -294,7 +300,8 @@ def get_people(text: str) -> list[str]:
         List of person names found.
     """
     entities = extract_entities(text)
-    return [e["text"] for e in entities if e["label"] == "PERSON"]
+    people = [e["text"] for e in entities if e["label"] == "PERSON"]
+    return people
 
 
 def get_places(text: str) -> list[str]:
@@ -307,7 +314,8 @@ def get_places(text: str) -> list[str]:
         List of place names found (GPE and FACILITY entities).
     """
     entities = extract_entities(text)
-    return [e["text"] for e in entities if e["label"] in ("GPE", "FACILITY", "GSP")]
+    places = [e["text"] for e in entities if e["label"] in ("GPE", "FACILITY", "GSP")]
+    return places
 
 
 def get_organizations(text: str) -> list[str]:
@@ -320,4 +328,5 @@ def get_organizations(text: str) -> list[str]:
         List of organization names found.
     """
     entities = extract_entities(text)
-    return [e["text"] for e in entities if e["label"] == "ORGANIZATION"]
+    organizations = [e["text"] for e in entities if e["label"] == "ORGANIZATION"]
+    return organizations

@@ -3,7 +3,10 @@
 Configurations are plain dicts built by the factory functions below.
 """
 
+import os
 from enum import Enum
+
+import yaml
 
 from engram.nltk_data import DEFAULT_STOPWORDS
 
@@ -25,8 +28,7 @@ class EvictionPolicy(Enum):
     HIT_RATE = "hit_rate"  # Lowest hit rate (hits/queries) evicted
 
 
-def GraphConfig(
-    driver: str = "memgraph",  # memgraph, neo4j
+def graph_config(
     uri: str = "bolt://localhost:7687",
     username: str = "",
     password: str = "",
@@ -34,17 +36,17 @@ def GraphConfig(
     enabled: bool = False,
 ) -> dict:
     """Build a Knowledge Graph connection configuration dict."""
-    return {
-        "driver": driver,
+    config = {
         "uri": uri,
         "username": username,
         "password": password,
         "database": database,
         "enabled": enabled,
     }
+    return config
 
 
-def EngramConfig(
+def engram_config(
     # Capacity settings
     capacity: int = 10000,
     max_sessions: int = 10000,
@@ -75,7 +77,7 @@ def EngramConfig(
     # Fallback response when no pattern matches
     fallback_response: str = "",  # Empty means return None on no match
     # Knowledge Graph settings
-    graph: object = None,
+    graph=None,  # dict from graph_config(), or None for no graph
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if capacity < 1:
@@ -90,7 +92,10 @@ def EngramConfig(
     if total_weight <= 0:
         raise ValueError("scoring weights must sum to a positive value")
 
-    return {
+    if stopwords is None:
+        stopwords = DEFAULT_STOPWORDS
+
+    config = {
         "capacity": capacity,
         "max_sessions": max_sessions,
         "session_ttl_seconds": session_ttl_seconds,
@@ -98,7 +103,7 @@ def EngramConfig(
         "weight_recency": weight_recency,
         "weight_hit_rate": weight_hit_rate,
         "session_overflow": session_overflow,
-        "stopwords": stopwords if stopwords is not None else DEFAULT_STOPWORDS,
+        "stopwords": stopwords,
         "expand_contractions": expand_contractions,
         "srai_depth_limit": srai_depth_limit,
         "eviction_policy": eviction_policy,
@@ -114,63 +119,39 @@ def EngramConfig(
         "fallback_response": fallback_response,
         "graph": graph,
     }
-
-
-# Scalar/bool/numeric config keys that map straight from a YAML file.
-_YAML_SCALAR_KEYS = (
-    "capacity",
-    "max_sessions",
-    "session_ttl_seconds",
-    "weight_base",
-    "weight_recency",
-    "weight_hit_rate",
-    "expand_contractions",
-    "srai_depth_limit",
-    "protect_static",
-    "min_hit_rate",
-    "use_stemming",
-    "use_lemmatization",
-    "use_synonyms",
-    "max_synonyms_per_word",
-    "use_spacy_facts",
-    "use_spacy_lemmatization",
-    "use_phrase_keywords",
-    "fallback_response",
-)
+    return config
 
 
 def load_config(path: str = "config.yml") -> dict:
-    """Build an EngramConfig dict from a YAML file.
+    """Build a config dict from a YAML file.
 
-    A missing file, an empty file, or any omitted key falls back to the
-    EngramConfig defaults. Enum fields are given by their string value
-    (``eviction_policy``, ``session_overflow``); a ``graph`` mapping is built
-    into a GraphConfig.
+    A missing or empty file returns the ``engram_config`` defaults. Scalar keys
+    map straight through; ``eviction_policy`` and ``session_overflow`` are given
+    by their string value, and a ``graph`` mapping is built with ``graph_config``.
+    An unknown key raises -- a config typo should fail loudly, not be dropped.
 
     Args:
         path: Path to the YAML configuration file.
 
     Returns:
-        A validated EngramConfig dict.
+        A validated config dict.
     """
-    import os
-
     if not os.path.exists(path):
-        return EngramConfig()
-
-    import yaml
+        config = engram_config()
+        return config
 
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not data:
-        return EngramConfig()
+        config = engram_config()
+        return config
 
-    kwargs = {key: data[key] for key in _YAML_SCALAR_KEYS if key in data}
     if "eviction_policy" in data:
-        kwargs["eviction_policy"] = EvictionPolicy(data["eviction_policy"])
+        data["eviction_policy"] = EvictionPolicy(data["eviction_policy"])
     if "session_overflow" in data:
-        kwargs["session_overflow"] = SessionOverflow(data["session_overflow"])
-    if data.get("graph"):
-        kwargs["graph"] = GraphConfig(**data["graph"])
+        data["session_overflow"] = SessionOverflow(data["session_overflow"])
+    if "graph" in data and data["graph"]:
+        data["graph"] = graph_config(**data["graph"])
 
-    return EngramConfig(**kwargs)
+    config = engram_config(**data)
+    return config

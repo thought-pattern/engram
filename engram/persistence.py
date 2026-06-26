@@ -6,6 +6,18 @@ deserializing ENGRAM state to/from JSON files and strings.
 
 import json
 
+from engram.config import engram_config
+from engram.core import Engram
+from engram.models import (
+    keyword_entry,
+    keyword_entry_from_dict,
+    keyword_entry_to_dict,
+    session_from_dict,
+    session_to_dict,
+    statement_from_dict,
+    statement_to_dict,
+)
+
 # Version constant for persistence format
 PERSISTENCE_VERSION = 1
 
@@ -31,7 +43,8 @@ def save_json(engram) -> str:
     Returns:
         JSON string representation of the complete state.
     """
-    return json.dumps(to_dict(engram), indent=2)
+    json_str = json.dumps(to_dict(engram), indent=2)
+    return json_str
 
 
 def to_dict(engram) -> dict:
@@ -43,14 +56,9 @@ def to_dict(engram) -> dict:
     Returns:
         Dictionary containing all persistent state.
     """
-    from engram.models import (
-        keyword_entry_to_dict,
-        session_to_dict,
-        statement_to_dict,
-    )
 
     with engram.statement_lock, engram.keyword_lock, engram.session_lock:
-        return {
+        state = {
             "version": PERSISTENCE_VERSION,
             "capacity": engram.config["capacity"],
             "query_count": engram.query_count,
@@ -70,6 +78,7 @@ def to_dict(engram) -> dict:
             "keywords": {kw: keyword_entry_to_dict(entry) for kw, entry in engram.keywords.items()},
             "sessions": [session_to_dict(s) for s in engram.sessions.values()],
         }
+        return state
 
 
 def save_sessions(engram, path) -> None:
@@ -81,7 +90,6 @@ def save_sessions(engram, path) -> None:
         engram: Engram instance.
         path: File path to write.
     """
-    from engram.models import session_to_dict
 
     with engram.session_lock:
         data = {
@@ -104,7 +112,6 @@ def load_sessions(engram, path) -> int:
     Returns:
         Number of sessions loaded.
     """
-    from engram.models import session_from_dict
 
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -113,7 +120,8 @@ def load_sessions(engram, path) -> int:
         for sess_data in data.get("sessions", []):
             sess = session_from_dict(sess_data)
             engram.sessions[sess["session_id"]] = sess
-        return len(data.get("sessions", []))
+        loaded_count = len(data.get("sessions", []))
+        return loaded_count
 
 
 def rebuild_index(engram) -> None:
@@ -124,14 +132,13 @@ def rebuild_index(engram) -> None:
     Args:
         engram: Engram instance.
     """
-    from engram.models import KeywordEntry
 
     with engram.statement_lock, engram.keyword_lock:
         engram.keywords.clear()
         for stmt in engram.statements:
             for kw in stmt["keywords"]:
                 if kw not in engram.keywords:
-                    engram.keywords[kw] = KeywordEntry(keyword=kw)
+                    engram.keywords[kw] = keyword_entry(keyword=kw)
                 engram.keywords[kw]["statement_ids"].add(stmt["id"])
 
 
@@ -148,7 +155,8 @@ def load_engram(path, config=None, engram_class=None):
     """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    return load_engram_from_dict(data, config, engram_class)
+    instance = load_engram_from_dict(data, config, engram_class)
+    return instance
 
 
 def load_engram_json(json_str: str, config=None, engram_class=None):
@@ -163,7 +171,8 @@ def load_engram_json(json_str: str, config=None, engram_class=None):
         Engram instance with restored state.
     """
     data = json.loads(json_str)
-    return load_engram_from_dict(data, config, engram_class)
+    instance = load_engram_from_dict(data, config, engram_class)
+    return instance
 
 
 def load_engram_from_dict(data: dict, config=None, engram_class=None):
@@ -180,16 +189,8 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
     Raises:
         ValueError: If persistence version is unsupported.
     """
-    from engram.config import EngramConfig
-    from engram.models import (
-        keyword_entry_from_dict,
-        session_from_dict,
-        statement_from_dict,
-    )
 
     if engram_class is None:
-        from engram.core import Engram
-
         engram_class = Engram
 
     version = data.get("version", 1)
@@ -198,7 +199,7 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
 
     # Create instance with config
     if config is None:
-        config = EngramConfig(capacity=data.get("capacity", 10000))
+        config = engram_config(capacity=data.get("capacity", 10000))
     instance = engram_class(config=config)
 
     # Restore global counters

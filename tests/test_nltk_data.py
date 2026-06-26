@@ -4,12 +4,7 @@ import os
 
 import nltk
 
-from engram.nltk_data import (
-    NLTK_DATA_DIR,
-    REQUIRED_PACKAGES,
-    configure_path,
-    ensure_nltk_data,
-)
+from engram.nltk_data import NLTK_DATA_DIR, REQUIRED_PACKAGES, configure_path, ensure_nltk_data
 
 
 class TestDataDirectory:

@@ -12,9 +12,10 @@ import re
 from datetime import datetime
 
 from engram.graph import graph_is_empty, graph_single
+from engram.sentiment import sentiment_label
 
 
-def TemplateContext(
+def template_context(
     # Wildcard captures from pattern matching
     stars=None,
     thatstars=None,
@@ -49,7 +50,7 @@ def TemplateContext(
     Contains all data needed to evaluate a template, including wildcard captures,
     session predicates, bot properties, and history.
     """
-    return {
+    context = {
         "stars": stars if stars is not None else [],
         "thatstars": thatstars if thatstars is not None else [],
         "topicstars": topicstars if topicstars is not None else [],
@@ -71,6 +72,7 @@ def TemplateContext(
         "learn_fn": learn_fn,
         "graph_fn": graph_fn,
     }
+    return context
 
 
 # Helper functions for 1-based index access (used by TemplateProcessor)
@@ -79,42 +81,48 @@ def TemplateContext(
 def get_star(ctx: dict, index: int) -> str:
     """Get star capture by 1-based index."""
     if 1 <= index <= len(ctx["stars"]):
-        return ctx["stars"][index - 1]
+        star = ctx["stars"][index - 1]
+        return star
     return ""
 
 
 def get_thatstar(ctx: dict, index: int) -> str:
     """Get thatstar capture by 1-based index."""
     if 1 <= index <= len(ctx["thatstars"]):
-        return ctx["thatstars"][index - 1]
+        thatstar = ctx["thatstars"][index - 1]
+        return thatstar
     return ""
 
 
 def get_topicstar(ctx: dict, index: int) -> str:
     """Get topicstar capture by 1-based index."""
     if 1 <= index <= len(ctx["topicstars"]):
-        return ctx["topicstars"][index - 1]
+        topicstar = ctx["topicstars"][index - 1]
+        return topicstar
     return ""
 
 
 def get_map(ctx: dict, map_name: str, key: str, default: str = "") -> str:
     """Get value from named map."""
     if map_name in ctx["maps"]:
-        return ctx["maps"][map_name].get(key.lower(), default)
+        value = ctx["maps"][map_name].get(key.lower(), default)
+        return value
     return default
 
 
 def get_input(ctx: dict, index: int = 1) -> str:
     """Get input from history (1-based, 1=most recent)."""
     if 1 <= index <= len(ctx["input_history"]):
-        return ctx["input_history"][index - 1]
+        value = ctx["input_history"][index - 1]
+        return value
     return ""
 
 
 def get_response(ctx: dict, index: int = 1) -> str:
     """Get response from history (1-based, 1=most recent)."""
     if 1 <= index <= len(ctx["response_history"]):
-        return ctx["response_history"][index - 1]
+        value = ctx["response_history"][index - 1]
+        return value
     return ""
 
 
@@ -123,7 +131,8 @@ def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
     if 1 <= response_idx <= len(ctx["that_history"]):
         sentences = ctx["that_history"][response_idx - 1]
         if 1 <= sentence_idx <= len(sentences):
-            return sentences[sentence_idx - 1]
+            sentence = sentences[sentence_idx - 1]
+            return sentence
     return ""
 
 
@@ -185,45 +194,55 @@ class TemplateProcessor:
             return ""
 
         if isinstance(template, str):
-            return self._substitute_variables(template, context)
+            result = self._substitute_variables(template, context)
+            return result
 
         if isinstance(template, dict):
-            return self._process_dict_template(template, context)
+            result = self._process_dict_template(template, context)
+            return result
 
         if isinstance(template, list):
             # List is treated as sequence
-            return self._process_sequence(template, context)
+            result = self._process_sequence(template, context)
+            return result
 
-        return str(template)
+        result = str(template)
+        return result
 
     def _process_dict_template(self, template: dict, context: dict) -> str:
         """Process a dictionary template."""
 
         # Text template
         if "text" in template:
-            return self._substitute_variables(str(template["text"]), context)
+            result = self._substitute_variables(str(template["text"]), context)
+            return result
 
         # Random selection
         if "random" in template:
-            return self._process_random(template["random"], context)
+            result = self._process_random(template["random"], context)
+            return result
 
         # Condition
         if "condition" in template:
-            return self._process_condition(template["condition"], context)
+            result = self._process_condition(template["condition"], context)
+            return result
 
         # Sequence
         if "sequence" in template:
-            return self._process_sequence(template["sequence"], context)
+            result = self._process_sequence(template["sequence"], context)
+            return result
 
         # Redirect (SRAI)
         if "redirect" in template:
-            return self._process_redirect(template["redirect"], context)
+            result = self._process_redirect(template["redirect"], context)
+            return result
 
         # Shorthand redirect
         if "sr" in template and template["sr"]:
             # Redirect to first star capture
             if context["stars"]:
-                return self._process_redirect(context["stars"][0], context)
+                result = self._process_redirect(context["stars"][0], context)
+                return result
             return ""
 
         # Think (silent processing)
@@ -248,23 +267,28 @@ class TemplateProcessor:
 
         # Graph query
         if "graph_query" in template:
-            return self._process_graph_query(template["graph_query"], context)
+            result = self._process_graph_query(template["graph_query"], context)
+            return result
 
         # Graph write
         if "graph_write" in template:
-            return self._process_graph_write(template["graph_write"], context)
+            result = self._process_graph_write(template["graph_write"], context)
+            return result
 
         # Graph delete
         if "graph_delete" in template:
-            return self._process_graph_delete(template["graph_delete"], context)
+            result = self._process_graph_delete(template["graph_delete"], context)
+            return result
 
         # Triple add shorthand
         if "triple_add" in template:
-            return self._process_triple_add(template["triple_add"], context)
+            result = self._process_triple_add(template["triple_add"], context)
+            return result
 
         # Triple query shorthand
         if "triple_query" in template:
-            return self._process_triple_query(template["triple_query"], context)
+            result = self._process_triple_query(template["triple_query"], context)
+            return result
 
         return ""
 
@@ -273,7 +297,8 @@ class TemplateProcessor:
         if not choices:
             return ""
         choice = random.choice(choices)
-        return self.process(choice, context)
+        result = self.process(choice, context)
+        return result
 
     def _process_condition(self, condition: dict, context: dict) -> str:
         """Process conditional template."""
@@ -284,17 +309,21 @@ class TemplateProcessor:
         # Existence check
         if "exists" in condition or "missing" in condition:
             if var_value:
-                return self.process(condition.get("exists", ""), context)
+                result = self.process(condition.get("exists", ""), context)
+                return result
             else:
-                return self.process(condition.get("missing", ""), context)
+                result = self.process(condition.get("missing", ""), context)
+                return result
 
         # Pattern match check
         if "pattern" in condition:
             pattern = condition["pattern"]
             if re.match(pattern, var_value):
-                return self.process(condition.get("match", ""), context)
+                result = self.process(condition.get("match", ""), context)
+                return result
             else:
-                return self.process(condition.get("nomatch", ""), context)
+                result = self.process(condition.get("nomatch", ""), context)
+                return result
 
         # Support both "cases" and "branches" for value matching
         cases = condition.get("cases", condition.get("branches", []))
@@ -307,7 +336,8 @@ class TemplateProcessor:
                         result = self.process(result_template, context)
                         # Check for loop
                         if isinstance(result_template, dict) and "loop" in result_template:
-                            return result + self._process_condition(condition, context)
+                            combined = result + self._process_condition(condition, context)
+                            return combined
                         return result
                 elif "default" in case or "then" in case:
                     # Default case (no value specified)
@@ -315,7 +345,8 @@ class TemplateProcessor:
                     result = self.process(result_template, context)
                     # Check for loop in default
                     if isinstance(result_template, dict) and "loop" in result_template:
-                        return result + self._process_condition(condition, context)
+                        combined = result + self._process_condition(condition, context)
+                        return combined
                     return result
 
         return ""
@@ -328,7 +359,8 @@ class TemplateProcessor:
             if result:
                 output_parts.append(result)
         # Return all non-empty outputs joined
-        return " ".join(output_parts) if output_parts else ""
+        output = " ".join(output_parts) if output_parts else ""
+        return output
 
     def _process_redirect(self, pattern: str, context: dict) -> str:
         """Process redirect (SRAI)."""
@@ -342,7 +374,8 @@ class TemplateProcessor:
         if context["redirect_fn"]:
             self._srai_depth += 1
             try:
-                return context["redirect_fn"](resolved_pattern)
+                response = context["redirect_fn"](resolved_pattern)
+                return response
             finally:
                 self._srai_depth -= 1
 
@@ -382,17 +415,21 @@ class TemplateProcessor:
     def _resolve_template_vars(self, template, context: dict):
         """Recursively resolve variables in a template structure."""
         if isinstance(template, str):
-            return self._substitute_variables(template, context)
+            resolved = self._substitute_variables(template, context)
+            return resolved
         elif isinstance(template, dict):
-            return {k: self._resolve_template_vars(v, context) for k, v in template.items()}
+            resolved = {k: self._resolve_template_vars(v, context) for k, v in template.items()}
+            return resolved
         elif isinstance(template, list):
-            return [self._resolve_template_vars(item, context) for item in template]
+            resolved = [self._resolve_template_vars(item, context) for item in template]
+            return resolved
         return template
 
     def _process_graph_query(self, query_data: dict, context: dict) -> str:
         """Process graph query operation."""
         if not context["graph_fn"]:
-            return self.process(query_data.get("on_failure", ""), context)
+            output = self.process(query_data.get("on_failure", ""), context)
+            return output
 
         # Resolve query and parameters
         query = self._substitute_variables(query_data.get("query", ""), context)
@@ -404,10 +441,12 @@ class TemplateProcessor:
         result = context["graph_fn"](query, params)
 
         if result is None or not result["success"]:
-            return self.process(query_data.get("on_failure", ""), context)
+            output = self.process(query_data.get("on_failure", ""), context)
+            return output
 
         if graph_is_empty(result):
-            return self.process(query_data.get("on_empty", query_data.get("on_failure", "")), context)
+            output = self.process(query_data.get("on_empty", query_data.get("on_failure", "")), context)
+            return output
 
         # Format results
         format_type = query_data.get("format", "single")
@@ -438,13 +477,15 @@ class TemplateProcessor:
             template_copy = success_template.copy()
             if "text" in template_copy:
                 template_copy["text"] = template_copy["text"].replace("{result}", result_str)
-            return self.process(template_copy, context)
+            output = self.process(template_copy, context)
+            return output
         return result_str
 
     def _process_graph_write(self, write_data: dict, context: dict) -> str:
         """Process graph write operation."""
         if not context["graph_fn"]:
-            return self.process(write_data.get("on_failure", ""), context)
+            output = self.process(write_data.get("on_failure", ""), context)
+            return output
 
         # Resolve query and parameters
         query = self._substitute_variables(write_data.get("query", ""), context)
@@ -456,14 +497,17 @@ class TemplateProcessor:
         result = context["graph_fn"](query, params)
 
         if result is None or not result["success"]:
-            return self.process(write_data.get("on_failure", ""), context)
+            output = self.process(write_data.get("on_failure", ""), context)
+            return output
 
-        return self.process(write_data.get("on_success", ""), context)
+        output = self.process(write_data.get("on_success", ""), context)
+        return output
 
     def _process_graph_delete(self, delete_data: dict, context: dict) -> str:
         """Process graph delete operation."""
         if not context["graph_fn"]:
-            return self.process(delete_data.get("on_failure", ""), context)
+            output = self.process(delete_data.get("on_failure", ""), context)
+            return output
 
         # Resolve query and parameters
         query = self._substitute_variables(delete_data.get("query", ""), context)
@@ -475,9 +519,11 @@ class TemplateProcessor:
         result = context["graph_fn"](query, params)
 
         if result is None or not result["success"]:
-            return self.process(delete_data.get("on_failure", ""), context)
+            output = self.process(delete_data.get("on_failure", ""), context)
+            return output
 
-        return self.process(delete_data.get("on_success", ""), context)
+        output = self.process(delete_data.get("on_success", ""), context)
+        return output
 
     def _process_triple_add(self, triple_data: dict, context: dict) -> str:
         """Process triple add shorthand operation."""
@@ -532,7 +578,8 @@ class TemplateProcessor:
 
         result = context["graph_fn"](query, params)
         if result and result["success"] and graph_single(result):
-            return str(graph_single(result).get("result", ""))
+            value = str(graph_single(result).get("result", ""))
+            return value
         return ""
 
     def _substitute_variables(self, text: str, context: dict) -> str:
@@ -572,7 +619,8 @@ class TemplateProcessor:
                 return ""
             resp_idx = int(m.group(1))
             sent_idx = int(m.group(2)) if m.group(2) else 1
-            return get_that(context, resp_idx, sent_idx)
+            that_value = get_that(context, resp_idx, sent_idx)
+            return that_value
 
         result = self.THAT_PATTERN.sub(that_sub, result)
 
@@ -585,9 +633,11 @@ class TemplateProcessor:
         def date_format_sub(m):
             fmt = m.group(1)
             try:
-                return datetime.now().strftime(fmt)
+                formatted = datetime.now().strftime(fmt)
+                return formatted
             except ValueError:
-                return m.group(0)  # Return original if invalid format
+                original = m.group(0)  # Return original if invalid format
+                return original
 
         result = self.DATE_FORMAT_PATTERN.sub(date_format_sub, result)
 
@@ -607,33 +657,45 @@ class TemplateProcessor:
             resolved = self._substitute_variables(content, context)
 
             if fn_name == "upper":
-                return resolved.upper()
+                transformed = resolved.upper()
+                return transformed
             elif fn_name == "lower":
-                return resolved.lower()
+                transformed = resolved.lower()
+                return transformed
             elif fn_name == "capitalize":
-                return resolved.capitalize()
+                transformed = resolved.capitalize()
+                return transformed
             elif fn_name == "formal":
-                return resolved.title()
+                transformed = resolved.title()
+                return transformed
             elif fn_name == "sentence":
-                return resolved.capitalize()
+                transformed = resolved.capitalize()
+                return transformed
             elif fn_name == "person":
-                return self._apply_substitution(resolved, context["person_subs"])
+                transformed = self._apply_substitution(resolved, context["person_subs"])
+                return transformed
             elif fn_name == "person2":
-                return self._apply_substitution(resolved, context["person2_subs"])
+                transformed = self._apply_substitution(resolved, context["person2_subs"])
+                return transformed
             elif fn_name == "gender":
-                return self._apply_substitution(resolved, context["gender_subs"])
+                transformed = self._apply_substitution(resolved, context["gender_subs"])
+                return transformed
             elif fn_name == "normalize":
-                return resolved.upper()
+                transformed = resolved.upper()
+                return transformed
             elif fn_name == "denormalize":
                 return resolved
             elif fn_name == "explode":
-                return " ".join(resolved)
+                transformed = " ".join(resolved)
+                return transformed
             elif fn_name == "first":
                 words = resolved.split()
-                return words[0] if words else ""
+                transformed = words[0] if words else ""
+                return transformed
             elif fn_name == "rest":
                 words = resolved.split()
-                return " ".join(words[1:]) if len(words) > 1 else ""
+                transformed = " ".join(words[1:]) if len(words) > 1 else ""
+                return transformed
             elif fn_name == "uniq":
                 words = resolved.split()
                 seen = set()
@@ -642,13 +704,14 @@ class TemplateProcessor:
                     if word not in seen:
                         seen.add(word)
                         unique.append(word)
-                return " ".join(unique)
+                transformed = " ".join(unique)
+                return transformed
             elif fn_name == "wordcount":
-                return str(len(resolved.split()))
+                transformed = str(len(resolved.split()))
+                return transformed
             elif fn_name == "sentiment":
-                from engram.sentiment import sentiment_label
-
-                return sentiment_label(resolved)
+                transformed = sentiment_label(resolved)
+                return transformed
             return resolved
 
         # Keep applying until no more transforms
@@ -678,7 +741,8 @@ class TemplateProcessor:
                 result.append(replacement)
             else:
                 result.append(word)
-        return " ".join(result)
+        joined = " ".join(result)
+        return joined
 
 
 def parse_template(data):
@@ -714,4 +778,5 @@ def process_template(
         Processed output string.
     """
     processor = TemplateProcessor(srai_limit=srai_limit)
-    return processor.process(template, context)
+    result = processor.process(template, context)
+    return result

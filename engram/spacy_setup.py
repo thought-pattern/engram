@@ -12,21 +12,22 @@ Install once after dependencies:
 
 from functools import lru_cache
 
+import spacy
+from spacy.cli import download
+
 MODEL_NAME = "en_core_web_sm"
 
 
 def _load(model_name: str, disable):
     """Load a spaCy model, downloading once if absent. Returns () on failure."""
-    import spacy
-
     try:
-        return spacy.load(model_name, disable=list(disable))
+        nlp = spacy.load(model_name, disable=list(disable))
+        return nlp
     except OSError:
-        from spacy.cli import download
-
         download(model_name)
     try:
-        return spacy.load(model_name, disable=list(disable))
+        nlp = spacy.load(model_name, disable=list(disable))
+        return nlp
     except OSError:
         return ()
 
@@ -43,4 +44,5 @@ def get_nlp(disable=()):
         A loaded spaCy Language object, or falsy () if the model cannot be
         loaded (so callers degrade gracefully rather than crash).
     """
-    return _load(MODEL_NAME, disable)
+    nlp = _load(MODEL_NAME, disable)
+    return nlp

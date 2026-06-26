@@ -31,7 +31,7 @@ from functools import lru_cache
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
 
-def MatchResult(
+def match_result(
     matched: bool,
     pattern: str,
     score: int,  # Higher = more specific match
@@ -40,7 +40,7 @@ def MatchResult(
     topicstars=None,  # Captures from topic pattern
 ) -> dict:
     """Build a pattern-match result dict."""
-    return {
+    result = {
         "matched": matched,
         "pattern": pattern,
         "score": score,
@@ -48,6 +48,7 @@ def MatchResult(
         "thatstars": thatstars if thatstars is not None else [],
         "topicstars": topicstars if topicstars is not None else [],
     }
+    return result
 
 
 @lru_cache(maxsize=2048)
@@ -61,22 +62,23 @@ def normalize_pattern(pattern: str) -> str:
         Normalized pattern with wildcards, {set:...}, and $prefix preserved.
     """
     # Preserve {set:name} and {bot:name} tokens BEFORE lowercasing
-    import re as re_module
 
-    set_pattern = re_module.compile(r"\{set:(\w+)\}", re_module.IGNORECASE)
-    bot_pattern = re_module.compile(r"\{bot:(\w+)\}", re_module.IGNORECASE)
+    set_pattern = re.compile(r"\{set:(\w+)\}", re.IGNORECASE)
+    bot_pattern = re.compile(r"\{bot:(\w+)\}", re.IGNORECASE)
 
     # Store set/bot references and replace with placeholders
     set_refs: list[str] = []
     bot_refs: list[str] = []
 
-    def save_set(m: re_module.Match) -> str:
+    def save_set(m: re.Match) -> str:
         set_refs.append(m.group(1).lower())  # Store lowercase name
-        return f"\x05{len(set_refs) - 1}\x05"
+        placeholder = f"\x05{len(set_refs) - 1}\x05"
+        return placeholder
 
-    def save_bot(m: re_module.Match) -> str:
+    def save_bot(m: re.Match) -> str:
         bot_refs.append(m.group(1).lower())  # Store lowercase name
-        return f"\x06{len(bot_refs) - 1}\x06"
+        placeholder = f"\x06{len(bot_refs) - 1}\x06"
+        return placeholder
 
     result = set_pattern.sub(save_set, pattern)
     result = bot_pattern.sub(save_bot, result)
@@ -90,7 +92,7 @@ def normalize_pattern(pattern: str) -> str:
 
     # Preserve $ prefix by replacing $word with placeholder
     # \x07 is placeholder for $
-    result = re_module.sub(r"\$(\w)", lambda m: "\x07" + m.group(1), result)
+    result = re.sub(r"\$(\w)", lambda m: "\x07" + m.group(1), result)
 
     # Remove punctuation (but keep placeholders and digits for index)
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c in "\x01\x02\x03\x04\x05\x06\x07")
@@ -134,7 +136,9 @@ def pattern_to_regex(
 
     if not words:
         # Empty pattern matches nothing
-        return re.compile(r"^$"), 0
+        empty_regex = re.compile(r"^$")
+        empty_result = (empty_regex, 0)
+        return empty_result
 
     regex_parts = []
     specificity = 0
@@ -229,7 +233,9 @@ def pattern_to_regex(
         regex_str += part
     regex_str += r"\s*$"
 
-    return re.compile(regex_str, re.IGNORECASE), specificity
+    compiled = re.compile(regex_str, re.IGNORECASE)
+    result = (compiled, specificity)
+    return result
 
 
 def match_pattern(pattern: str, text: str) -> dict:
@@ -249,19 +255,21 @@ def match_pattern(pattern: str, text: str) -> dict:
 
     if match:
         captured = list(match.groups())
-        return MatchResult(
+        matched_result = match_result(
             matched=True,
             pattern=pattern,
             score=specificity,
             captured=captured,
         )
+        return matched_result
 
-    return MatchResult(
+    unmatched_result = match_result(
         matched=False,
         pattern=pattern,
         score=0,
         captured=[],
     )
+    return unmatched_result
 
 
 def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
@@ -284,12 +292,13 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
                 best_match = (pattern, response, result["captured"], result["score"])
 
     if best_match:
-        return (best_match[0], best_match[1], best_match[2])
+        best = (best_match[0], best_match[1], best_match[2])
+        return best
 
     return ()
 
 
-def PatternEntry(
+def pattern_entry(
     pattern: str,
     response: str,
     regex,
@@ -302,7 +311,7 @@ def PatternEntry(
     topic_specificity: int = 0,
 ) -> dict:
     """Build a pattern entry dict with optional context constraints."""
-    return {
+    entry = {
         "pattern": pattern,
         "response": response,
         "regex": regex,
@@ -314,6 +323,7 @@ def PatternEntry(
         "topic_regex": topic_regex,
         "topic_specificity": topic_specificity,
     }
+    return entry
 
 
 # Context priority multipliers
@@ -326,7 +336,8 @@ _WILDCARD_TOKENS = frozenset({"*", "_", "#", "^"})
 def _is_pure_wildcard(pattern: str) -> bool:
     """Return True if a pattern is only wildcard tokens (e.g. '*' or '* *')."""
     words = pattern.split()
-    return bool(words) and all(word.lstrip("$") in _WILDCARD_TOKENS for word in words)
+    is_wildcard = bool(words) and all(word.lstrip("$") in _WILDCARD_TOKENS for word in words)
+    return is_wildcard
 
 
 class PatternMatcher:
@@ -396,7 +407,7 @@ class PatternMatcher:
         if topic:
             topic_regex, topic_specificity = pattern_to_regex(topic, self._sets, self._bot_properties)
 
-        entry = PatternEntry(
+        entry = pattern_entry(
             pattern=pattern,
             response=response,
             regex=regex,
@@ -487,7 +498,13 @@ class PatternMatcher:
             lemmatized = self._lemmatize(normalized)
             lemma_first = self._lemmatize(first_word)
             result = self._specific(
-                self._match_internal(lemmatized, that_normalized, topic_normalized, lemma_first, index_kind="lemmatized")
+                self._match_internal(
+                    lemmatized,
+                    that_normalized,
+                    topic_normalized,
+                    lemma_first,
+                    index_kind="lemmatized",
+                )
             )
 
         # If still nothing and stemming enabled, try stemmed matching (aggressive)
@@ -498,7 +515,8 @@ class PatternMatcher:
                 self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
             )
 
-        return result if result else catchall
+        final = result if result else catchall
+        return final
 
     @staticmethod
     def _specific(result: tuple) -> tuple:
@@ -535,7 +553,8 @@ class PatternMatcher:
         else:
             candidates.update(self._first_word_index.get(first_word, []))
 
-        return sorted(candidates)
+        ordered = sorted(candidates)
+        return ordered
 
     def _match_internal(
         self,
@@ -600,26 +619,22 @@ class PatternMatcher:
 
             # Update best if this is better
             if not best or score > best[4]:
-                best = (entry["response"], captured, thatstars, topicstars, score, entry["pattern"], entry["topic"], entry["that"])
+                best = (
+                    entry["response"],
+                    captured,
+                    thatstars,
+                    topicstars,
+                    score,
+                    entry["pattern"],
+                    entry["topic"],
+                    entry["that"],
+                )
 
         if best:
             # Return (response, captured, thatstars, topicstars, pattern, topic, that)
-            return (best[0], best[1], best[2], best[3], best[5], best[6], best[7])
+            best_result = (best[0], best[1], best[2], best[3], best[5], best[6], best[7])
+            return best_result
 
-        return ()
-
-    def match_simple(self, text: str) -> tuple:
-        """Find best matching response without context (backward compatible).
-
-        Args:
-            text: User input text.
-
-        Returns:
-            Tuple of (response, captured_wildcards) or None.
-        """
-        result = self.match(text)
-        if result:
-            return (result[0], result[1])
         return ()
 
     def get_patterns(self) -> list[tuple[str, str]]:
@@ -628,7 +643,8 @@ class PatternMatcher:
         Returns:
             List of (pattern, response) tuples.
         """
-        return [(p["pattern"], p["response"]) for p in self._patterns]
+        pairs = [(p["pattern"], p["response"]) for p in self._patterns]
+        return pairs
 
     def get_patterns_with_context(self) -> list[tuple[str, str, str, str]]:
         """Get all pattern-response pairs with context.
@@ -636,7 +652,8 @@ class PatternMatcher:
         Returns:
             List of (pattern, response, that, topic) tuples.
         """
-        return [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self._patterns]
+        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self._patterns]
+        return entries
 
     def clear(self) -> None:
         """Remove all patterns."""
@@ -647,4 +664,5 @@ class PatternMatcher:
 
     def __len__(self) -> int:
         """Return number of patterns."""
-        return len(self._patterns)
+        count = len(self._patterns)
+        return count

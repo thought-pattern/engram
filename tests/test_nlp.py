@@ -1,7 +1,6 @@
 """Tests for NLP fact extraction."""
 
-import pytest
-from engram.nlp import ExtractedFact, extract_fact, fact_query_patterns
+from engram.nlp import extract_fact, extracted_fact, fact_query_patterns
 
 
 class TestFactExtractor:
@@ -57,7 +56,7 @@ class TestFactExtractor:
 
     def test_query_patterns_is(self):
         """Test query pattern generation for 'is' facts."""
-        fact = ExtractedFact(subject="sky", predicate="is", obj="blue", original="The sky is blue.")
+        fact = extracted_fact(subject="sky", predicate="is", obj="blue", original="The sky is blue.")
         patterns = fact_query_patterns(fact)
         assert "SKY" in patterns
         assert "WHAT IS SKY" in patterns
@@ -66,7 +65,7 @@ class TestFactExtractor:
 
     def test_query_patterns_are(self):
         """Test query pattern generation for 'are' facts."""
-        fact = ExtractedFact(subject="cats", predicate="are", obj="mammals", original="Cats are mammals.")
+        fact = extracted_fact(subject="cats", predicate="are", obj="mammals", original="Cats are mammals.")
         patterns = fact_query_patterns(fact)
         assert "CATS" in patterns
         assert "WHAT ARE CATS" in patterns

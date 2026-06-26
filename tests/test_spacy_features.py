@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import EngramConfig
+from engram.config import engram_config
 from engram.nltk_data import DEFAULT_STOPWORDS
 from engram.pattern import PatternMatcher
 from engram.spacy_setup import get_nlp
@@ -15,7 +15,7 @@ class TestConfigDefaults:
     """All spaCy-backed features are opt-in (default off)."""
 
     def test_defaults(self):
-        cfg = EngramConfig()
+        cfg = engram_config()
         assert cfg["use_spacy_facts"] is False
         assert cfg["use_spacy_lemmatization"] is False
         assert cfg["use_phrase_keywords"] is False

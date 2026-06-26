@@ -4,43 +4,47 @@ This module provides functions for analyzing keyword performance,
 coverage gaps, and generating recommendations for improving the knowledge base.
 """
 
-from engram.models import keyword_entry_hit_rate
+from engram.models import Tier, keyword_entry_hit_rate
 
 
 def get_statement_count(engram) -> int:
     """Number of statements stored."""
-    return len(engram.statements)
+    count = len(engram.statements)
+    return count
 
 
 def get_static_count(engram) -> int:
     """Number of STATIC tier statements."""
-    from engram.models import Tier
 
-    return sum(1 for s in engram.statements if s["tier"] == Tier.STATIC)
+    count = sum(1 for s in engram.statements if s["tier"] == Tier.STATIC)
+    return count
 
 
 def get_dynamic_count(engram) -> int:
     """Number of DYNAMIC tier statements."""
-    from engram.models import Tier
 
-    return sum(1 for s in engram.statements if s["tier"] == Tier.DYNAMIC)
+    count = sum(1 for s in engram.statements if s["tier"] == Tier.DYNAMIC)
+    return count
 
 
 def get_keyword_count(engram) -> int:
     """Number of unique keywords indexed."""
-    return len(engram.keywords)
+    count = len(engram.keywords)
+    return count
 
 
 def get_session_count(engram) -> int:
     """Number of active sessions."""
-    return len(engram.sessions)
+    count = len(engram.sessions)
+    return count
 
 
 def get_overall_hit_rate(engram) -> float:
     """Overall hit rate percentage."""
     if engram.query_count == 0:
         return 0.0
-    return engram.hit_count / engram.query_count
+    rate = engram.hit_count / engram.query_count
+    return rate
 
 
 def get_metrics(engram) -> dict:
@@ -52,7 +56,7 @@ def get_metrics(engram) -> dict:
     Returns:
         Dict with counts and rates for statements, keywords, sessions, etc.
     """
-    return {
+    metrics = {
         "statement_count": get_statement_count(engram),
         "static_count": get_static_count(engram),
         "dynamic_count": get_dynamic_count(engram),
@@ -63,6 +67,7 @@ def get_metrics(engram) -> dict:
         "eviction_count": engram.eviction_count,
         "hit_rate": get_overall_hit_rate(engram),
     }
+    return metrics
 
 
 def get_low_hit_keywords(
@@ -89,7 +94,8 @@ def get_low_hit_keywords(
             hit_rate = keyword_entry_hit_rate(entry)
             if entry["query_count"] >= min_queries and hit_rate <= max_hit_rate:
                 results.append((kw, entry["query_count"], hit_rate))
-    return sorted(results, key=lambda x: x[1], reverse=True)
+    ranked = sorted(results, key=lambda x: x[1], reverse=True)
+    return ranked
 
 
 def get_zero_hit_keywords(engram, min_queries: int = 10) -> list[tuple[str, int]]:
@@ -110,7 +116,8 @@ def get_zero_hit_keywords(engram, min_queries: int = 10) -> list[tuple[str, int]
         for kw, entry in engram.keywords.items():
             if entry["query_count"] >= min_queries and entry["hit_count"] == 0:
                 results.append((kw, entry["query_count"]))
-    return sorted(results, key=lambda x: x[1], reverse=True)
+    ranked = sorted(results, key=lambda x: x[1], reverse=True)
+    return ranked
 
 
 def get_coverage_gaps(
@@ -144,7 +151,8 @@ def get_coverage_gaps(
                         "hit_rate": round(hit_rate, 3),
                     }
                 )
-    return sorted(results, key=lambda x: x["queries"], reverse=True)
+    ranked = sorted(results, key=lambda x: x["queries"], reverse=True)
+    return ranked
 
 
 def get_coverage_report(engram) -> dict:
@@ -195,9 +203,9 @@ def get_coverage_report(engram) -> dict:
         # Recommend reviewing low-performing keywords
         for gap in coverage_gaps[:3]:
             if gap["hit_rate"] < 0.1:
-                recommendations.append(f"Review low-performing: {gap['keyword']} " f"({gap['hit_rate']*100:.1f}% hit rate)")
+                recommendations.append(f"Review low-performing: {gap['keyword']} ({gap['hit_rate'] * 100:.1f}% hit rate)")
 
-        return {
+        report = {
             "total_keywords": total_keywords,
             "keywords_with_hits": keywords_with_hits,
             "keywords_zero_hits": keywords_zero_hits,
@@ -206,3 +214,4 @@ def get_coverage_report(engram) -> dict:
             "top_performing": top_performing,
             "recommendations": recommendations,
         }
+        return report

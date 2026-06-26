@@ -1,12 +1,6 @@
 """Tests for VADER sentiment analysis and its template integration."""
 
-from engram.sentiment import (
-    NEGATIVE,
-    NEUTRAL,
-    POSITIVE,
-    sentiment_label,
-    sentiment_scores,
-)
+from engram.sentiment import NEGATIVE, NEUTRAL, POSITIVE, sentiment_label, sentiment_scores
 
 
 class TestSentimentLabel:
@@ -58,21 +52,21 @@ class TestSentimentTemplateTransform:
 
     def test_transform_positive(self):
         """{sentiment:...} resolves to a label string."""
-        from engram.template import TemplateContext, process_template
+        from engram.template import process_template, template_context
 
-        assert process_template("{sentiment:i love it}", TemplateContext()) == POSITIVE
+        assert process_template("{sentiment:i love it}", template_context()) == POSITIVE
 
     def test_transform_negative(self):
         """{sentiment:...} labels negative content."""
-        from engram.template import TemplateContext, process_template
+        from engram.template import process_template, template_context
 
-        assert process_template("{sentiment:this is horrible}", TemplateContext()) == NEGATIVE
+        assert process_template("{sentiment:this is horrible}", template_context()) == NEGATIVE
 
     def test_transform_resolves_star_first(self):
         """{sentiment:{star1}} analyzes the captured wildcard."""
-        from engram.template import TemplateContext, process_template
+        from engram.template import process_template, template_context
 
-        ctx = TemplateContext(stars=["delighted"])
+        ctx = template_context(stars=["delighted"])
         assert process_template("{sentiment:{star1}}", ctx) == POSITIVE
 
 
@@ -94,8 +88,14 @@ class TestSentimentIntegration:
                         "condition": {
                             "name": "_mood",
                             "branches": [
-                                {"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}."}},
-                                {"value": "positive", "then": {"text": "That's great that you're {star1}!"}},
+                                {
+                                    "value": "negative",
+                                    "then": {"text": "I'm sorry to hear you're {star1}."},
+                                },
+                                {
+                                    "value": "positive",
+                                    "then": {"text": "That's great that you're {star1}!"},
+                                },
                                 {"then": {"text": "Nice to know you're {star1}."}},
                             ],
                         }
@@ -123,8 +123,14 @@ class TestSentimentIntegration:
                         "condition": {
                             "name": "_mood",
                             "branches": [
-                                {"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}."}},
-                                {"value": "positive", "then": {"text": "That's great that you're {star1}!"}},
+                                {
+                                    "value": "negative",
+                                    "then": {"text": "I'm sorry to hear you're {star1}."},
+                                },
+                                {
+                                    "value": "positive",
+                                    "then": {"text": "That's great that you're {star1}!"},
+                                },
                                 {"then": {"text": "Nice to know you're {star1}."}},
                             ],
                         }

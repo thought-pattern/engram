@@ -26,6 +26,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+    "black>=24.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1.0",
@@ -40,12 +41,26 @@ where = ["."]
 include = ["engram*"]
 
 [tool.ruff]
-line-length = 100
+line-length = 132
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
+
+# Black is the formatter of record: `black -l 132 -t py311`. The code targets
+# 3.12+ (see requires-python and ruff target-version), but the py311 formatting
+# style is preferred over py312's.
+[tool.black]
+line-length = 132
+target-version = ["py311"]
+
+# isort uses the black profile + matching line length so it never disagrees with
+# black (or ruff's own `I` import-order rule) on how to wrap parenthesized imports.
+[tool.isort]
+profile = "black"
+line_length = 132
+known_first_party = ["engram"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

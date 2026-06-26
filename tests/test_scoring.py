@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.models import KeywordEntry, Statement, Tier
+from engram.models import keyword_entry, statement
 from engram.scoring import (
     calculate_average_hit_rate,
     calculate_overlap,
@@ -62,22 +62,22 @@ class TestCalculateAverageHitRate:
 
     def test_single_keyword(self) -> None:
         keyword_index = {
-            "paris": KeywordEntry(keyword="paris", query_count=100, hit_count=90),
+            "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
         }
         result = calculate_average_hit_rate(["paris"], ["paris"], keyword_index)
         assert result == 0.9
 
     def test_multiple_keywords(self) -> None:
         keyword_index = {
-            "paris": KeywordEntry(keyword="paris", query_count=100, hit_count=90),
-            "france": KeywordEntry(keyword="france", query_count=100, hit_count=80),
+            "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
+            "france": keyword_entry(keyword="france", query_count=100, hit_count=80),
         }
         result = calculate_average_hit_rate(["paris", "france"], ["paris", "france"], keyword_index)
         assert result == pytest.approx(0.85)  # (0.9 + 0.8) / 2
 
     def test_partial_match(self) -> None:
         keyword_index = {
-            "paris": KeywordEntry(keyword="paris", query_count=100, hit_count=90),
+            "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
         }
         # Only "paris" matches between query and statement
         result = calculate_average_hit_rate(["paris", "capital"], ["paris", "city"], keyword_index)
@@ -99,14 +99,14 @@ class TestScoreStatement:
 
     def test_spec_example(self) -> None:
         # Example from spec: "population of france" query
-        stmt = Statement(
+        stmt = statement(
             "France has a population of 67 million",
             keywords=["france", "population", "67", "million"],
         )
 
         keyword_index = {
-            "population": KeywordEntry(keyword="population", query_count=50, hit_count=45),
-            "france": KeywordEntry(keyword="france", query_count=150, hit_count=140),
+            "population": keyword_entry(keyword="population", query_count=50, hit_count=45),
+            "france": keyword_entry(keyword="france", query_count=150, hit_count=140),
         }
 
         # Statement is index 2 of 3 total
@@ -135,7 +135,7 @@ class TestScoreStatement:
         assert 1.9 < score < 2.0
 
     def test_zero_overlap(self) -> None:
-        stmt = Statement("Hello world", keywords=["hello", "world"])
+        stmt = statement("Hello world", keywords=["hello", "world"])
 
         score = score_statement(
             statement=stmt,
@@ -151,7 +151,7 @@ class TestScoreStatement:
         assert score == 0.0
 
     def test_default_weights(self) -> None:
-        stmt = Statement("Test statement", keywords=["test", "statement"])
+        stmt = statement("Test statement", keywords=["test", "statement"])
 
         score = score_statement(
             statement=stmt,

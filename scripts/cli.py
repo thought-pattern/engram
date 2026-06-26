@@ -12,10 +12,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from engram.config import EvictionPolicy, load_config
-from engram.core import Engram, SessionLimitExceeded, SessionNotFound
-from engram.models import Tier
 from engram import metrics, persistence, sessions
+from engram.config import EvictionPolicy, load_config
+from engram.core import Engram
+from engram.models import Tier
+from engram.sessions import SessionLimitExceeded, SessionNotFound
 
 
 def create_parser() -> argparse.ArgumentParser:

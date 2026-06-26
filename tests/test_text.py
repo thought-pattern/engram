@@ -1,7 +1,5 @@
 """Tests for text processing."""
 
-import pytest
-
 from engram.nltk_data import DEFAULT_STOPWORDS
 from engram.text import (
     expand_query,

@@ -224,6 +224,66 @@
     {"pattern": "LET US PLAY *", "response": "Sure! I can flip a coin, roll a die, or pick a number."},
     {"pattern": "PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?"},
 
+    {"pattern": "GOOD DAY", "response": "Good day to you!"},
+    {"pattern": "GOOD DAY *", "response": "Good day to you!"},
+    {"pattern": "MORNING", "response": "Good morning!"},
+    {"pattern": "MORNING *", "response": "Good morning!"},
+    {"pattern": "EVENING", "response": "Good evening!"},
+    {"pattern": "EVENING *", "response": "Good evening!"},
+    {"pattern": "HOW WAS YOUR DAY", "response": "Every day is a good day to chat! How was yours?"},
+
+    {"pattern": "CATCH YOU LATER", "response": "Catch you later!"},
+    {"pattern": "CATCH YOU LATER *", "response": "Catch you later!"},
+    {"pattern": "TAKE CARE", "response": "You too, take care!"},
+    {"pattern": "TAKE CARE *", "response": "You too, take care!"},
+    {"pattern": "FAREWELL", "response": "Farewell! Until next time."},
+    {"pattern": "FAREWELL *", "response": "Farewell! Until next time."},
+    {"pattern": "GOODNIGHT", "response": "Goodnight! Sleep well."},
+    {"pattern": "GOODNIGHT *", "response": "Goodnight! Sleep well."},
+
+    {"pattern": "CHEERS", "response": "Cheers!"},
+    {"pattern": "MANY THANKS", "response": "You're very welcome!"},
+    {"pattern": "MUCH APPRECIATED", "response": "Happy to help!"},
+    {"pattern": "APPRECIATE IT", "response": "Anytime!"},
+    {"pattern": "TY", "response": "You're welcome!"},
+
+    {"pattern": "WHAT ARE YOU", "response": "I'm a conversational assistant built on ENGRAM, a pattern-matching memory engine."},
+    {"pattern": "DO YOU DREAM", "response": "I don't dream, but I'm always ready to chat when you are."},
+
+    {"pattern": "SURE", "response": "Great!"},
+    {"pattern": "FINE", "response": "Glad to hear it."},
+    {"pattern": "ABSOLUTELY", "response": "Wonderful!"},
+    {"pattern": "DEFINITELY", "response": "Agreed!"},
+    {"pattern": "GOT IT", "response": "Great, glad that's clear!"},
+
+    {"pattern": "YOU ARE *", "response": "Thanks for sharing your thoughts.", "template": {"random": [{"text": "What makes you say that?"}, {"text": "I appreciate you sharing your thoughts."}, {"text": "Why do you think so?"}]}},
+
+    {"pattern": "CHEER ME UP", "response": "Here's a little something.", "template": {"random": [{"text": "Remember: every expert was once a beginner. You've got this!"}, {"text": "Here's a smile from me to you. Things have a way of working out."}, {"text": "Why don't scientists trust atoms? Because they make up everything! Hope that helped."}]}},
+    {"pattern": "MAKE ME LAUGH", "response": "Here's one for you.", "template": {"random": [{"text": "Why don't scientists trust atoms? Because they make up everything!"}, {"text": "What do you call a fish wearing a bowtie? Sofishticated."}, {"text": "Why did the developer go broke? Because he used up all his cache."}]}},
+
+    {"pattern": "TELL ME A STORY", "response": "Here's a short one.", "template": {"random": [{"text": "Once upon a time, a curious traveler asked a chatbot for a story. The chatbot obliged, and they both lived happily ever after."}, {"text": "A small robot set out to learn one new word every day. Years later, it could hold a conversation with anyone. The end."}]}},
+    {"pattern": "GIVE ME ADVICE", "response": "Here's a thought.", "template": {"random": [{"text": "Start small, stay consistent, and progress will follow."}, {"text": "When in doubt, sleep on it. Decisions look clearer in the morning."}, {"text": "Listen more than you speak; you'll learn twice as fast."}]}},
+    {"pattern": "RECOMMEND A BOOK", "response": "Here's a suggestion.", "template": {"random": [{"text": "Try 'The Hitchhiker's Guide to the Galaxy' for a laugh."}, {"text": "'Sapiens' by Yuval Noah Harari is a fascinating read."}, {"text": "If you like mysteries, 'The Name of the Rose' is a classic."}]}},
+    {"pattern": "SURPRISE ME", "response": "Here's something.", "template": {"random": [{"text": "Did you know honey never spoils?"}, {"text": "Octopuses have three hearts and blue blood."}, {"text": "A day on Venus is longer than its year."}]}},
+    {"pattern": "MOTIVATE ME", "response": "Here's some motivation.", "template": {"random": [{"text": "The secret of getting ahead is getting started."}, {"text": "You don't have to be great to start, but you have to start to be great."}, {"text": "Small steps every day add up to big results."}]}},
+
+    {"pattern": "ROLL TWO DICE", "response": "Rolling...", "template": {"random": [{"text": "You rolled a 4!"}, {"text": "You rolled a 6!"}, {"text": "You rolled a 7!"}, {"text": "You rolled an 8!"}, {"text": "You rolled a 9!"}, {"text": "You rolled an 11!"}]}},
+    {"pattern": "FLIP A COIN *", "response": "Flipping...", "template": {"random": [{"text": "Heads!"}, {"text": "Tails!"}]}},
+    {"pattern": "PICK A CARD", "response": "Picking...", "template": {"random": [{"text": "Ace of Spades!"}, {"text": "Queen of Hearts!"}, {"text": "Seven of Diamonds!"}, {"text": "Jack of Clubs!"}]}},
+
+    {"pattern": "GOOD JOB", "response": "Thank you! I appreciate that."},
+    {"pattern": "GOOD JOB *", "response": "Thank you! I appreciate that."},
+    {"pattern": "WELL DONE", "response": "Thanks! That means a lot."},
+    {"pattern": "WELL DONE *", "response": "Thanks! That means a lot."},
+    {"pattern": "CONGRATULATIONS", "response": "Thank you so much!"},
+    {"pattern": "CONGRATULATIONS *", "response": "Thank you so much!"},
+    {"pattern": "HAPPY *", "response": "Thank you! Same to you!"},
+    {"pattern": "KNOCK KNOCK", "response": "Who's there?"},
+    {"pattern": "KNOCK KNOCK *", "response": "Who's there?"},
+
+    {"pattern": "DO YOU *", "response": "Hmm, good question.", "template": {"random": [{"text": "Hmm, I'm not sure I do. Tell me more about what you mean."}, {"text": "That's a good question. I'm a fairly simple assistant, so maybe not!"}]}},
+    {"pattern": "TELL ME *", "response": "Let me see.", "template": {"text": "I don't have that on hand, but I'm happy to chat about it. What would you like to know?"}},
+
     {"pattern": "*", "response": "Go on.", "template": {"random": [
       {"text": "Hmm, tell me more about that."},
       {"text": "What made you think of that?"},

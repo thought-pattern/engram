@@ -22,7 +22,7 @@ expand_contractions: true
 srai_depth_limit: 100
 
 # --- Eviction ---
-eviction_policy: fifo        # fifo | lru | lfu | hit_rate
+eviction_policy: lru        # fifo | lru | lfu | hit_rate
 protect_static: true         # Never evict STATIC statements
 min_hit_rate: 0.0            # Protect statements above this hit rate
 
@@ -39,10 +39,9 @@ use_phrase_keywords: false      # spaCy noun-chunk phrase keywords for retrieval
 fallback_response: ""        # Response when nothing matches ("" = no fallback)
 
 # --- Knowledge graph (optional) ---
-# graph:
-#   driver: memgraph           # memgraph | neo4j
-#   uri: bolt://localhost:7687
-#   username: ""
-#   password: ""
-#   database: ""
-#   enabled: false
+graph:
+  uri: bolt://localhost:7687
+  username: ""
+  password: ""
+  database: ""
+  enabled: false

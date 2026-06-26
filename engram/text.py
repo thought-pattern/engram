@@ -3,9 +3,13 @@
 import re
 from functools import lru_cache
 
-from nltk.tokenize import word_tokenize
+from nltk.corpus import wordnet
+from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
-from nltk.stem import WordNetLemmatizer, PorterStemmer
+from nltk.tokenize import word_tokenize
+
+from engram.nltk_data import ensure_resource
+from engram.spacy_setup import get_nlp
 
 # POS tags that indicate content words (nouns, verbs, adjectives, adverbs)
 CONTENT_POS_TAGS = {
@@ -66,7 +70,8 @@ def normalize(text: str) -> str:
     result = re.sub(r"\s+", " ", result)
 
     # Trim
-    return result.strip()
+    trimmed = result.strip()
+    return trimmed
 
 
 def extract_keywords(
@@ -153,11 +158,10 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     if not text or not text.strip():
         return []
 
-    from engram.spacy_setup import get_nlp
-
     nlp = get_nlp()
     if not nlp:
-        return extract_keywords(text, stopwords)
+        fallback = extract_keywords(text, stopwords)
+        return fallback
 
     doc = nlp(text)
     seen: set[str] = set()
@@ -198,22 +202,24 @@ def expand_query(query: str, previous_response: str) -> str:
     """
     if not previous_response:
         return query
-    return f"{query} {previous_response}"
+    expanded = f"{query} {previous_response}"
+    return expanded
 
 
 @lru_cache(maxsize=1)
 def get_stemmer() -> PorterStemmer:
     """Get or create the module-level Porter stemmer."""
-    return PorterStemmer()
+    stemmer = PorterStemmer()
+    return stemmer
 
 
 @lru_cache(maxsize=1)
 def get_lemmatizer() -> WordNetLemmatizer:
     """Get or create the module-level WordNet lemmatizer."""
-    from engram.nltk_data import ensure_resource
 
     ensure_resource("corpora/wordnet", "wordnet")
-    return WordNetLemmatizer()
+    lemmatizer = WordNetLemmatizer()
+    return lemmatizer
 
 
 @lru_cache(maxsize=8192)
@@ -229,7 +235,8 @@ def stem_word(word: str) -> str:
     Returns:
         Stemmed word.
     """
-    return get_stemmer().stem(word.lower())
+    stemmed = get_stemmer().stem(word.lower())
+    return stemmed
 
 
 @lru_cache(maxsize=8192)
@@ -246,7 +253,8 @@ def lemmatize_word(word: str, pos: str = "n") -> str:
     Returns:
         Lemmatized word.
     """
-    return get_lemmatizer().lemmatize(word.lower(), pos=pos)
+    lemmatized = get_lemmatizer().lemmatize(word.lower(), pos=pos)
+    return lemmatized
 
 
 @lru_cache(maxsize=4096)
@@ -261,7 +269,8 @@ def stem_text(text: str) -> str:
     """
     words = text.split()
     stemmer = get_stemmer()
-    return " ".join(stemmer.stem(w) for w in words)
+    stemmed = " ".join(stemmer.stem(w) for w in words)
+    return stemmed
 
 
 @lru_cache(maxsize=4096)
@@ -287,7 +296,8 @@ def lemmatize_text(text: str) -> str:
         if lemma == lower:
             lemma = lemmatizer.lemmatize(lower, pos="n")
         out.append(lemma)
-    return " ".join(out)
+    lemmatized = " ".join(out)
+    return lemmatized
 
 
 @lru_cache(maxsize=4096)
@@ -305,13 +315,14 @@ def lemmatize_text_spacy(text: str) -> str:
     Returns:
         Text with all words lemmatized.
     """
-    from engram.spacy_setup import get_nlp
 
     nlp = get_nlp()
     if not nlp:
-        return text.lower()
+        lowered = text.lower()
+        return lowered
     doc = nlp(text)
-    return " ".join(token.lemma_.lower() for token in doc)
+    lemmatized = " ".join(token.lemma_.lower() for token in doc)
+    return lemmatized
 
 
 @lru_cache(maxsize=4096)
@@ -328,13 +339,13 @@ def normalize_with_stemming(text: str) -> str:
         Normalized and stemmed text.
     """
     normalized = normalize(text)
-    return stem_text(normalized)
+    stemmed = stem_text(normalized)
+    return stemmed
 
 
 @lru_cache(maxsize=1)
 def _ensure_wordnet() -> None:
     """Ensure WordNet data is available, fetching into the local data dir."""
-    from engram.nltk_data import ensure_resource
 
     ensure_resource("corpora/wordnet", "wordnet")
     ensure_resource("corpora/omw-1.4", "omw-1.4")
@@ -351,7 +362,6 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
     Returns:
         Frozenset of synonyms (includes the original word).
     """
-    from nltk.corpus import wordnet
 
     _ensure_wordnet()
 
@@ -363,11 +373,13 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
                 if name != word.lower():
                     synonyms.add(name)
                     if len(synonyms) >= max_synonyms + 1:
-                        return frozenset(synonyms)
+                        capped = frozenset(synonyms)
+                        return capped
     except Exception:
         pass
 
-    return frozenset(synonyms)
+    result = frozenset(synonyms)
+    return result
 
 
 def expand_with_synonyms(

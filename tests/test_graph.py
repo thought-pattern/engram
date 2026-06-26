@@ -1,8 +1,7 @@
 """Tests for Knowledge Graph integration."""
 
-import pytest
-from engram.graph import GraphClient, GraphResult, graph_is_empty, graph_single
-from engram.template import TemplateContext, TemplateProcessor
+from engram.graph import GraphClient, graph_is_empty, graph_result, graph_single
+from engram.template import TemplateProcessor, template_context
 
 
 class MockGraphClient(GraphClient):
@@ -39,7 +38,7 @@ class MockGraphClient(GraphClient):
                         self._nodes[obj] = {"name": obj}
                         self._relationships.append((subject, predicate, obj))
 
-                return GraphResult(success=True, records=[])
+                return graph_result(success=True, records=[])
 
             # Handle MATCH queries
             if "MATCH" in query_upper and "RETURN" in query_upper:
@@ -67,7 +66,7 @@ class MockGraphClient(GraphClient):
                         elif o == name:
                             records.append({"relation": p, "target": s})
 
-                return GraphResult(success=True, records=records)
+                return graph_result(success=True, records=records)
 
             # Handle DELETE
             if "DELETE" in query_upper:
@@ -75,12 +74,12 @@ class MockGraphClient(GraphClient):
                 if name:
                     self._nodes.pop(name, None)
                     self._relationships = [(s, p, o) for s, p, o in self._relationships if s != name and o != name]
-                return GraphResult(success=True, records=[])
+                return graph_result(success=True, records=[])
 
-            return GraphResult(success=True, records=[])
+            return graph_result(success=True, records=[])
 
         except Exception as e:
-            return GraphResult(success=False, records=[], error=str(e))
+            return graph_result(success=False, records=[], error=str(e))
 
     def close(self) -> None:
         """Close the mock connection."""
@@ -91,19 +90,19 @@ class TestGraphResult:
     """Tests for GraphResult."""
 
     def test_success_with_records(self):
-        result = GraphResult(success=True, records=[{"name": "Alice"}])
+        result = graph_result(success=True, records=[{"name": "Alice"}])
         assert result["success"]
         assert not graph_is_empty(result)
         assert graph_single(result) == {"name": "Alice"}
 
     def test_success_empty(self):
-        result = GraphResult(success=True, records=[])
+        result = graph_result(success=True, records=[])
         assert result["success"]
         assert graph_is_empty(result)
         assert not graph_single(result)
 
     def test_failure(self):
-        result = GraphResult(success=False, records=[], error="Connection failed")
+        result = graph_result(success=False, records=[], error="Connection failed")
         assert not result["success"]
         assert result["error"] == "Connection failed"
 
@@ -183,7 +182,7 @@ class TestTemplateGraphOperations:
         )
 
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["capital", "France"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["capital", "France"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_query": {
@@ -201,7 +200,7 @@ class TestTemplateGraphOperations:
     def test_graph_query_not_found(self):
         client = MockGraphClient()
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["capital", "Unknown"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["capital", "Unknown"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_query": {
@@ -218,9 +217,14 @@ class TestTemplateGraphOperations:
     def test_graph_query_no_client(self):
         """Test graceful handling when no graph client is configured."""
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["test"])
+        ctx = template_context(stars=["test"])
 
-        template = {"graph_query": {"query": "MATCH (n) RETURN n", "on_failure": {"text": "Graph not available."}}}
+        template = {
+            "graph_query": {
+                "query": "MATCH (n) RETURN n",
+                "on_failure": {"text": "Graph not available."},
+            }
+        }
 
         result = processor.process(template, ctx)
         assert result == "Graph not available."
@@ -228,7 +232,7 @@ class TestTemplateGraphOperations:
     def test_graph_write_success(self):
         client = MockGraphClient()
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["Alice"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_write": {
@@ -249,7 +253,7 @@ class TestTemplateGraphOperations:
         client.execute("CREATE (p:Person {name: $name})", {"name": "Alice"})
 
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["Alice"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_delete": {
@@ -266,7 +270,7 @@ class TestTemplateGraphOperations:
     def test_triple_add(self):
         client = MockGraphClient()
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["Alice", "friend", "Bob"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["Alice", "friend", "Bob"], graph_fn=self.make_graph_fn(client))
 
         template = {"triple_add": {"subject": "{star1}", "predicate": "{star2}", "object": "{star3}"}}
 
@@ -287,7 +291,7 @@ class TestTemplateGraphOperations:
         )
 
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["Paris"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["Paris"], graph_fn=self.make_graph_fn(client))
 
         template = {"triple_query": {"subject": "{star1}", "predicate": "CAPITAL_OF", "object": "?"}}
 
@@ -303,7 +307,7 @@ class TestTemplateGraphOperations:
         )
 
         processor = TemplateProcessor()
-        ctx = TemplateContext(graph_fn=self.make_graph_fn(client))
+        ctx = template_context(graph_fn=self.make_graph_fn(client))
 
         template = {"triple_query": {"subject": "?", "predicate": "CAPITAL_OF", "object": "France"}}
 
@@ -323,7 +327,7 @@ class TestTemplateGraphOperations:
         )
 
         processor = TemplateProcessor()
-        ctx = TemplateContext(stars=["Alice"], graph_fn=self.make_graph_fn(client))
+        ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_query": {

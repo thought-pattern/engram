@@ -1,28 +1,29 @@
 """Knowledge Graph integration for ENGRAM.
 
-Provides an interface for connecting to graph databases (Memgraph, Neo4j)
-for knowledge storage and retrieval.
+Provides an interface for connecting to a Bolt-protocol graph database for
+knowledge storage and retrieval. Memgraph and Neo4j both speak Bolt and use the
+same official ``neo4j`` Python driver, so a single client serves either backend.
 """
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from neo4j import Driver
+from neo4j import Driver, GraphDatabase
 
 
-def GraphResult(success: bool, records: list[dict], error: object = "") -> dict:
+def graph_result(success: bool, records: list[dict], error: object = "") -> dict:
     """Build a graph query result dict (keys: success, records, error)."""
-    return {"success": success, "records": records, "error": error}
+    result = {"success": success, "records": records, "error": error}
+    return result
 
 
 def graph_is_empty(result: dict) -> bool:
     """Check if a graph result has no records."""
-    return len(result["records"]) == 0
+    is_empty = len(result["records"]) == 0
+    return is_empty
 
 
 def graph_single(result: dict) -> dict:
     """Get the single (first) record from a graph result, or an empty dict."""
-    return result["records"][0] if result["records"] else {}
+    record = result["records"][0] if result["records"] else {}
+    return record
 
 
 class GraphClient:
@@ -48,8 +49,13 @@ class GraphClient:
         raise NotImplementedError
 
 
-class Neo4jClient(GraphClient):
-    """Neo4j/Memgraph client implementation."""
+class BoltGraphClient(GraphClient):
+    """Graph client for any Bolt-protocol database (Memgraph or Neo4j).
+
+    Memgraph and Neo4j both speak the Bolt protocol and use the same official
+    ``neo4j`` Python driver, so one client serves both. The backend is
+    determined entirely by the connection URI.
+    """
 
     def __init__(
         self,
@@ -58,7 +64,7 @@ class Neo4jClient(GraphClient):
         password: str,
         database: str,
     ) -> None:
-        """Initialize connection to Neo4j or Memgraph.
+        """Open a Bolt connection to the graph database.
 
         Args:
             uri: Connection URI (e.g., bolt://localhost:7687).
@@ -66,8 +72,6 @@ class Neo4jClient(GraphClient):
             password: Database password.
             database: Database name (optional for some backends).
         """
-        from neo4j import GraphDatabase
-
         auth = (username, password) if username else None
         self._driver: Driver = GraphDatabase.driver(uri, auth=auth)
         self._database = database
@@ -90,9 +94,11 @@ class Neo4jClient(GraphClient):
             with self._driver.session(database=self._database or None) as session:
                 result = session.run(query, params or {})
                 records = [dict(record) for record in result]
-                return GraphResult(success=True, records=records)
+                ok_result = graph_result(success=True, records=records)
+                return ok_result
         except Exception as e:
-            return GraphResult(success=False, records=[], error=str(e))
+            err_result = graph_result(success=False, records=[], error=str(e))
+            return err_result
 
     def close(self) -> None:
         """Close the database connection."""
@@ -100,32 +106,24 @@ class Neo4jClient(GraphClient):
 
 
 def create_graph_client(
-    driver: str,
     uri: str,
     username: str = "",
     password: str = "",
     database: str = "",
 ) -> GraphClient:
-    """Create a graph client based on driver type.
+    """Create a Bolt-protocol graph client (Memgraph or Neo4j).
+
+    Both backends use the same ``neo4j`` library over Bolt, so the connection is
+    determined entirely by the URI and credentials.
 
     Args:
-        driver: Driver type (memgraph, neo4j).
-        uri: Connection URI.
+        uri: Connection URI (e.g., bolt://localhost:7687).
         username: Database username.
         password: Database password.
         database: Database name.
 
     Returns:
         GraphClient instance.
-
-    Raises:
-        ImportError: If required driver library is not installed.
-        ValueError: If driver type is not supported.
     """
-    if driver in ("memgraph", "neo4j"):
-        try:
-            return Neo4jClient(uri, username, password, database)
-        except ImportError:
-            raise ImportError(f"neo4j library required for {driver} driver. " "Install with: pip install neo4j")
-
-    raise ValueError(f"Unsupported graph driver: {driver}")
+    client = BoltGraphClient(uri, username, password, database)
+    return client

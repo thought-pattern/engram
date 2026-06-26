@@ -30,7 +30,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from engram.config import EngramConfig
+from engram.config import engram_config
 from engram.core import Engram
 from engram.models import Tier
 
@@ -40,7 +40,7 @@ WEAK_SCORE = 1.0  # keyword top-score at or below this is a weak retrieval
 
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
-    engram = Engram(config=EngramConfig())
+    engram = Engram(config=engram_config())
     seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)

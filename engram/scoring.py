@@ -14,7 +14,8 @@ def calculate_overlap(query_keywords: list[str], statement_keywords: list[str]) 
         Count of query keywords present in statement.
     """
     statement_set = set(statement_keywords)
-    return sum(1 for kw in query_keywords if kw in statement_set)
+    overlap = sum(1 for kw in query_keywords if kw in statement_set)
+    return overlap
 
 
 def calculate_recency(statement_index: int, total_statements: int) -> float:
@@ -29,7 +30,8 @@ def calculate_recency(statement_index: int, total_statements: int) -> float:
     """
     if total_statements <= 1:
         return 1.0
-    return statement_index / (total_statements - 1)
+    recency = statement_index / (total_statements - 1)
+    return recency
 
 
 def calculate_average_hit_rate(
@@ -61,7 +63,8 @@ def calculate_average_hit_rate(
         else:
             hit_rates.append(0.5)  # Default for unknown keywords
 
-    return sum(hit_rates) / len(hit_rates)
+    average = sum(hit_rates) / len(hit_rates)
+    return average
 
 
 def score_statement(

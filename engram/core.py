@@ -2,32 +2,30 @@
 
 import threading
 
-from engram.config import EngramConfig
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
-from engram.graph import GraphClient, GraphResult, create_graph_client
+from engram.config import engram_config
+from engram.graph import create_graph_client, graph_result
 from engram.models import (
-    KeywordEntry,
-    QueryResult,
-    Statement,
     Tier,
+    keyword_entry,
+    query_result,
     session_touch,
     session_update_context,
+    statement,
 )
-from engram.nlp import (
-    extract_fact,
-    extract_entities,
-    fact_query_patterns,
-    fact_subject_upper,
-)
+from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper
 from engram.pattern import PatternMatcher
 from engram.scoring import score_statement
-from engram.substitutions import SubstitutionMaps, expand_contractions, split_sentences
-from engram.template import TemplateContext, TemplateProcessor
-from engram.text import expand_query, expand_with_synonyms, extract_keywords, extract_keywords_spacy, normalize
-
-# Re-export for backward compatibility
-from engram.sessions import SessionLimitExceeded, SessionNotFound
+from engram.substitutions import expand_contractions, split_sentences, substitution_maps
+from engram.template import TemplateProcessor, template_context
+from engram.text import (
+    expand_query,
+    expand_with_synonyms,
+    extract_keywords,
+    extract_keywords_spacy,
+    normalize,
+)
 
 
 class Engram:
@@ -44,7 +42,7 @@ class Engram:
         Args:
             config: Configuration options. Uses defaults if not provided.
         """
-        self.config = config or EngramConfig()
+        self.config = config or engram_config()
 
         # Core data structures
         self.statements: list[dict] = []
@@ -69,7 +67,7 @@ class Engram:
             use_lemmatization=self.config["use_lemmatization"],
             use_spacy_lemmatization=self.config["use_spacy_lemmatization"],
         )
-        self.substitution_maps = SubstitutionMaps()
+        self.substitution_maps = substitution_maps()
         self.default_predicates: dict[str, str] = {}
 
         # Template processor
@@ -95,7 +93,6 @@ class Engram:
             graph_config = self.config["graph"]
             if isinstance(graph_config, dict) and graph_config["enabled"]:
                 self._graph_client = create_graph_client(
-                    driver=graph_config["driver"],
                     uri=graph_config["uri"],
                     username=graph_config["username"],
                     password=graph_config["password"],
@@ -115,8 +112,10 @@ class Engram:
         """
         client = self.graph_client
         if client is None:
-            return GraphResult(success=False, records=[], error="Graph not configured")
-        return client.execute(cypher, params)
+            not_configured = graph_result(success=False, records=[], error="Graph not configured")
+            return not_configured
+        response = client.execute(cypher, params)
+        return response
 
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
@@ -165,7 +164,8 @@ class Engram:
                             if prop_parts:
                                 responses.append(f"{name}: {', '.join(prop_parts)}")
                     if responses:
-                        return " ".join(responses)
+                        joined = " ".join(responses)
+                        return joined
             return ""
 
         # Query graph for each entity
@@ -201,7 +201,8 @@ class Engram:
 
         if facts:
             # Format facts as natural language
-            return self._format_graph_facts(facts)
+            formatted = self._format_graph_facts(facts)
+            return formatted
         return ""
 
     def _format_graph_facts(self, facts: list[tuple[str, str, str]]) -> str:
@@ -237,7 +238,8 @@ class Engram:
                     last = parts.pop()
                     sentences.append(f"{subj} {', '.join(parts)}, and {last}")
 
-        return ". ".join(sentences) + "."
+        result = ". ".join(sentences) + "."
+        return result
 
     def learn_from_response(
         self,
@@ -273,11 +275,12 @@ class Engram:
             # For shorter queries, use exact match
             pattern = normalized.upper()
 
-        return self.store(
+        stmt_id = self.store(
             text=response,
             pattern=pattern,
             tier=tier,
         )
+        return stmt_id
 
     # =========================================================================
     # Statement Operations
@@ -290,8 +293,10 @@ class Engram:
         keyword index and queries always use the same extraction.
         """
         if self.config["use_phrase_keywords"]:
-            return extract_keywords_spacy(normalized_text, self.config["stopwords"])
-        return extract_keywords(normalized_text, self.config["stopwords"])
+            phrase_keywords = extract_keywords_spacy(normalized_text, self.config["stopwords"])
+            return phrase_keywords
+        token_keywords = extract_keywords(normalized_text, self.config["stopwords"])
+        return token_keywords
 
     def store(
         self,
@@ -325,7 +330,7 @@ class Engram:
         keywords = self._extract_keywords(normalized)
 
         # Create statement
-        statement = Statement(
+        stmt = statement(
             text=text,
             tier=tier,
             keywords=keywords,
@@ -340,7 +345,7 @@ class Engram:
         # Add to pattern matcher if pattern provided
         if pattern:
             self.pattern_matcher.add_pattern(pattern, text, that=that or "", topic=topic or "")
-            self.pattern_to_statement[pattern] = statement["id"]
+            self.pattern_to_statement[pattern] = stmt["id"]
 
         with self.statement_lock:
             # Check capacity for DYNAMIC statements
@@ -351,17 +356,17 @@ class Engram:
                     dynamic_count -= 1
 
             # Add statement
-            self.statement_index[statement["id"]] = len(self.statements)
-            self.statements.append(statement)
+            self.statement_index[stmt["id"]] = len(self.statements)
+            self.statements.append(stmt)
 
         # Index keywords
         with self.keyword_lock:
             for kw in keywords:
                 if kw not in self.keywords:
-                    self.keywords[kw] = KeywordEntry(keyword=kw)
-                self.keywords[kw]["statement_ids"].add(statement["id"])
+                    self.keywords[kw] = keyword_entry(keyword=kw)
+                self.keywords[kw]["statement_ids"].add(stmt["id"])
 
-        return statement["id"]
+        return stmt["id"]
 
     def query(
         self,
@@ -395,7 +400,8 @@ class Engram:
         keywords = self._extract_keywords(normalized)
 
         if not keywords:
-            return QueryResult(matches=[], keywords=[])
+            empty_result = query_result(matches=[], keywords=[])
+            return empty_result
 
         # Expand keywords with synonyms if enabled
         search_keywords = keywords
@@ -419,7 +425,8 @@ class Engram:
                     candidate_ids.update(self.keywords[kw]["statement_ids"])
 
         if not candidate_ids:
-            return QueryResult(matches=[], keywords=keywords)
+            no_candidates = query_result(matches=[], keywords=keywords)
+            return no_candidates
 
         # Score candidates
         scored: list[tuple[dict, float]] = []
@@ -447,7 +454,8 @@ class Engram:
         scored.sort(key=lambda x: x[1], reverse=True)
         matches = scored[:limit]
 
-        return QueryResult(matches=matches, keywords=keywords)
+        result = query_result(matches=matches, keywords=keywords)
+        return result
 
     def pattern_query(
         self,
@@ -501,7 +509,15 @@ class Engram:
         for sentence in sentences:
             result = self.pattern_matcher.match(sentence, that=that, topic=topic)
             if result:
-                response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = result
+                (
+                    response_text,
+                    captured,
+                    thatstars,
+                    topicstars,
+                    matched_pattern,
+                    matched_topic,
+                    matched_that,
+                ) = result
 
                 # Try to extract and learn facts from declarative sentences
                 # Do this before responding so we acknowledge learning
@@ -520,7 +536,12 @@ class Engram:
                             else:
                                 # Process template if present
                                 final_response = self._process_statement_template(
-                                    stmt, captured, sentence, session, thatstars=thatstars, topicstars=topicstars
+                                    stmt,
+                                    captured,
+                                    sentence,
+                                    session,
+                                    thatstars=thatstars,
+                                    topicstars=topicstars,
                                 )
                             responses.append(final_response)
 
@@ -539,13 +560,15 @@ class Engram:
             if graph_response:
                 if session:
                     session_update_context(session, graph_response, text)
-                return (None, [], graph_response)
+                graph_result_tuple = (None, [], graph_response)
+                return graph_result_tuple
 
             # Use fallback response if configured
             if self.config["fallback_response"]:
                 if session:
                     session_update_context(session, self.config["fallback_response"], text)
-                return (None, [], self.config["fallback_response"])
+                fallback_tuple = (None, [], self.config["fallback_response"])
+                return fallback_tuple
             return ()
 
         # Combine responses
@@ -555,7 +578,8 @@ class Engram:
         if session:
             session_update_context(session, combined_response, text)
 
-        return (first_stmt, first_captured, combined_response)
+        match_tuple = (first_stmt, first_captured, combined_response)
+        return match_tuple
 
     def _process_statement_template(
         self,
@@ -580,7 +604,7 @@ class Engram:
             Processed response string.
         """
         # Build template context (even for plain text to support {bot:name} etc.)
-        context = TemplateContext(
+        context = template_context(
             stars=captured,
             thatstars=thatstars or [],
             topicstars=topicstars or [],
@@ -606,12 +630,20 @@ class Engram:
         def redirect_fn(pattern: str) -> str:
             result = self.pattern_matcher.match(pattern)
             if result:
-                response_text, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that = result
+                (
+                    response_text,
+                    new_captured,
+                    new_thatstars,
+                    new_topicstars,
+                    matched_pattern,
+                    matched_topic,
+                    matched_that,
+                ) = result
                 with self.statement_lock:
                     for s in self.statements:
                         if s["pattern"] == matched_pattern and s["topic"] == matched_topic and s["that"] == matched_that:
                             # Create new context for redirect
-                            new_context = TemplateContext(
+                            new_context = template_context(
                                 stars=new_captured,
                                 thatstars=new_thatstars,
                                 topicstars=new_topicstars,
@@ -632,7 +664,8 @@ class Engram:
                                 learn_fn=context["learn_fn"],
                             )
                             template_to_process = s["template"] or s["text"]
-                            return self.template_processor.process(template_to_process, new_context)
+                            redirect_response = self.template_processor.process(template_to_process, new_context)
+                            return redirect_response
             return ""
 
         context["redirect_fn"] = redirect_fn
@@ -760,7 +793,8 @@ class Engram:
         """
         for text in statements:
             self.store(text, tier=tier)
-        return len(statements)
+        count = len(statements)
+        return count
 
     @classmethod
     def fork(

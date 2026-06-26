@@ -159,7 +159,7 @@ DEFAULT_GENDER: dict[str, str] = {
 }
 
 
-def SubstitutionMaps(
+def substitution_maps(
     contractions=None,
     person=None,
     person2=None,
@@ -167,13 +167,14 @@ def SubstitutionMaps(
     custom=None,
 ) -> dict:
     """Build a container dict holding all substitution maps."""
-    return {
+    maps = {
         "contractions": contractions if contractions is not None else DEFAULT_CONTRACTIONS.copy(),
         "person": person if person is not None else DEFAULT_PERSON.copy(),
         "person2": person2 if person2 is not None else DEFAULT_PERSON2.copy(),
         "gender": gender if gender is not None else DEFAULT_GENDER.copy(),
         "custom": custom if custom is not None else {},
     }
+    return maps
 
 
 def get_all_input_subs(maps: dict) -> dict[str, str]:
@@ -239,7 +240,8 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
         else:
             result.append(word)
 
-    return " ".join(result)
+    substituted = " ".join(result)
+    return substituted
 
 
 def expand_contractions(text: str, contractions=None) -> str:
@@ -254,7 +256,8 @@ def expand_contractions(text: str, contractions=None) -> str:
     """
     if contractions is None:
         contractions = DEFAULT_CONTRACTIONS
-    return apply_substitutions(text, contractions)
+    expanded = apply_substitutions(text, contractions)
+    return expanded
 
 
 def apply_person(text: str, person_map=None) -> str:
@@ -269,7 +272,8 @@ def apply_person(text: str, person_map=None) -> str:
     """
     if person_map is None:
         person_map = DEFAULT_PERSON
-    return apply_substitutions(text, person_map)
+    substituted = apply_substitutions(text, person_map)
+    return substituted
 
 
 def apply_person2(text: str, person2_map=None) -> str:
@@ -284,7 +288,8 @@ def apply_person2(text: str, person2_map=None) -> str:
     """
     if person2_map is None:
         person2_map = DEFAULT_PERSON2
-    return apply_substitutions(text, person2_map)
+    substituted = apply_substitutions(text, person2_map)
+    return substituted
 
 
 def apply_gender(text: str, gender_map=None) -> str:
@@ -299,7 +304,8 @@ def apply_gender(text: str, gender_map=None) -> str:
     """
     if gender_map is None:
         gender_map = DEFAULT_GENDER
-    return apply_substitutions(text, gender_map)
+    substituted = apply_substitutions(text, gender_map)
+    return substituted
 
 
 def split_sentences(text: str) -> list[str]:
@@ -322,7 +328,8 @@ def split_sentences(text: str) -> list[str]:
     sentences = sent_tokenize(text)
 
     # Strip whitespace and filter empty
-    return [s.strip() for s in sentences if s.strip()]
+    cleaned = [s.strip() for s in sentences if s.strip()]
+    return cleaned
 
 
 def normalize_for_matching(text: str, expand_contr: bool = True) -> str:

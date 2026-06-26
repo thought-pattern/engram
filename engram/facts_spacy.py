@@ -16,7 +16,7 @@ Copulas keep their surface form (is/are); prepositional links use the
 preposition; action verbs use the verb lemma so relations are normalized.
 """
 
-from engram.nlp import ExtractedFact
+from engram.nlp import extracted_fact
 from engram.spacy_setup import get_nlp
 
 _QUESTION_WORDS = frozenset({"what", "who", "where", "when", "why", "how", "which", "whose"})
@@ -33,12 +33,14 @@ def _clean_span(tokens) -> str:
     words = [t.text for t in ordered]
     if words and words[0].lower() in _ARTICLES:
         words = words[1:]
-    return " ".join(words).strip()
+    span = " ".join(words).strip()
+    return span
 
 
 def _phrase(token) -> str:
     """Full subtree text for a token (captures 'capital of France', etc.)."""
-    return _clean_span(list(token.subtree))
+    phrase = _clean_span(list(token.subtree))
+    return phrase
 
 
 def _first_child(token, deps) -> object:
@@ -58,8 +60,10 @@ def _prep_link(verb):
         if child.dep_ == "prep":
             pobj = _first_child(child, frozenset({"pobj"}))
             if pobj:
-                return child.text, pobj
-    return "", ()
+                link = (child.text, pobj)
+                return link
+    empty_link = ("", ())
+    return empty_link
 
 
 def _extract_from_sentence(sent) -> dict:
@@ -109,7 +113,7 @@ def _extract_from_sentence(sent) -> dict:
     if not obj or obj.lower() in _PRONOUNS:
         return {}
 
-    fact = ExtractedFact(
+    fact = extracted_fact(
         subject=subject,
         predicate=predicate,
         obj=obj,

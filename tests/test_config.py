@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import EngramConfig, SessionOverflow
+from engram.config import SessionOverflow, engram_config
 from engram.nltk_data import DEFAULT_STOPWORDS
 
 
@@ -10,7 +10,7 @@ class TestEngramConfig:
     """Tests for configuration."""
 
     def test_defaults(self) -> None:
-        config = EngramConfig()
+        config = engram_config()
 
         assert config["capacity"] == 10000
         assert config["max_sessions"] == 10000
@@ -22,7 +22,7 @@ class TestEngramConfig:
         assert config["stopwords"] == DEFAULT_STOPWORDS
 
     def test_custom_values(self) -> None:
-        config = EngramConfig(
+        config = engram_config(
             capacity=5000,
             max_sessions=100,
             session_ttl_seconds=3600.0,
@@ -38,29 +38,29 @@ class TestEngramConfig:
 
     def test_invalid_capacity(self) -> None:
         with pytest.raises(ValueError):
-            EngramConfig(capacity=0)
+            engram_config(capacity=0)
 
         with pytest.raises(ValueError):
-            EngramConfig(capacity=-1)
+            engram_config(capacity=-1)
 
     def test_invalid_max_sessions(self) -> None:
         with pytest.raises(ValueError):
-            EngramConfig(max_sessions=0)
+            engram_config(max_sessions=0)
 
     def test_invalid_session_ttl(self) -> None:
         with pytest.raises(ValueError):
-            EngramConfig(session_ttl_seconds=0)
+            engram_config(session_ttl_seconds=0)
 
         with pytest.raises(ValueError):
-            EngramConfig(session_ttl_seconds=-1)
+            engram_config(session_ttl_seconds=-1)
 
     def test_invalid_weights(self) -> None:
         with pytest.raises(ValueError):
-            EngramConfig(weight_base=-1, weight_recency=-1, weight_hit_rate=-1)
+            engram_config(weight_base=-1, weight_recency=-1, weight_hit_rate=-1)
 
     def test_custom_stopwords(self) -> None:
         custom = frozenset(["custom", "stop", "words"])
-        config = EngramConfig(stopwords=custom)
+        config = engram_config(stopwords=custom)
 
         assert config["stopwords"] == custom
 

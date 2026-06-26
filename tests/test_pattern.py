@@ -1,9 +1,7 @@
 """Tests for AIML-style pattern matching."""
 
-import pytest
 from engram.pattern import (
     PatternMatcher,
-    MatchResult,
     match_pattern,
     normalize_pattern,
     pattern_to_regex,
@@ -508,13 +506,6 @@ class TestPatternMatcherContextMatching:
         result = pm.match("hi")
         assert result[0] == "No context"
 
-    def test_match_simple_backward_compatible(self):
-        """match_simple should return old format for compatibility."""
-        pm = PatternMatcher()
-        pm.add_pattern("HELLO", "Hello response")
-        result = pm.match_simple("hello")
-        assert result == ("Hello response", [])
-
     def test_get_patterns_with_context(self):
         """get_patterns_with_context should return all pattern info."""
         pm = PatternMatcher()
@@ -751,7 +742,7 @@ class TestPriorityOperator:
         matcher.add_pattern("WHO IS *", "regular")
         matcher.add_pattern("$WHO IS *", "priority")
 
-        result = matcher.match_simple("who is alice")
+        result = matcher.match("who is alice")
         assert result
         assert result[0] == "priority"
 

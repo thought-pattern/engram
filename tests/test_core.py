@@ -1,21 +1,16 @@
 """Tests for core ENGRAM implementation."""
 
-import json
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from engram.core import Engram, SessionLimitExceeded, SessionNotFound
-from engram.config import EngramConfig, SessionOverflow
-from engram.models import Tier
 from engram import eviction, metrics, persistence, sessions
-from engram.models import (
-    record_statement_hit,
-    record_statement_query,
-    session_update_context,
-)
+from engram.config import SessionOverflow, engram_config
+from engram.core import Engram
+from engram.models import Tier, record_statement_hit, record_statement_query, session_update_context
+from engram.sessions import SessionLimitExceeded, SessionNotFound
 
 
 class TestEngramStore:
@@ -49,7 +44,7 @@ class TestEngramStore:
         assert metrics.get_keyword_count(engram) > 0
 
     def test_store_capacity_eviction(self) -> None:
-        config = EngramConfig(capacity=3)
+        config = engram_config(capacity=3)
         engram = Engram(config=config)
 
         engram.store("First", tier=Tier.DYNAMIC)
@@ -61,7 +56,7 @@ class TestEngramStore:
         assert engram.eviction_count == 1
 
     def test_store_static_not_evicted(self) -> None:
-        config = EngramConfig(capacity=2)
+        config = engram_config(capacity=2)
         engram = Engram(config=config)
 
         engram.store("Static", tier=Tier.STATIC)
@@ -215,7 +210,7 @@ class TestEvictionPolicies:
         """FIFO evicts oldest (first stored) DYNAMIC statement."""
         from engram.config import EvictionPolicy
 
-        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.FIFO)
+        config = engram_config(capacity=3, eviction_policy=EvictionPolicy.FIFO)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -231,10 +226,10 @@ class TestEvictionPolicies:
 
     def test_lru_eviction(self) -> None:
         """LRU evicts least recently used (oldest last_hit)."""
-        from engram.config import EvictionPolicy
-        from datetime import datetime, timezone, timedelta
 
-        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.LRU)
+        from engram.config import EvictionPolicy
+
+        config = engram_config(capacity=3, eviction_policy=EvictionPolicy.LRU)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -260,7 +255,7 @@ class TestEvictionPolicies:
         """LFU evicts least frequently used (lowest hit_count)."""
         from engram.config import EvictionPolicy
 
-        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.LFU)
+        config = engram_config(capacity=3, eviction_policy=EvictionPolicy.LFU)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -287,7 +282,7 @@ class TestEvictionPolicies:
         """HIT_RATE evicts statement with lowest hit rate."""
         from engram.config import EvictionPolicy
 
-        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.HIT_RATE)
+        config = engram_config(capacity=3, eviction_policy=EvictionPolicy.HIT_RATE)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -328,7 +323,7 @@ class TestEvictionPolicies:
         """Statements above min_hit_rate are protected from eviction."""
         from engram.config import EvictionPolicy
 
-        config = EngramConfig(capacity=3, eviction_policy=EvictionPolicy.HIT_RATE, min_hit_rate=0.3)
+        config = engram_config(capacity=3, eviction_policy=EvictionPolicy.HIT_RATE, min_hit_rate=0.3)
         engram = Engram(config=config)
 
         id1 = engram.store("First", tier=Tier.DYNAMIC)
@@ -451,7 +446,7 @@ class TestEngramSessions:
 
         # Manually set old session's last_active to past
         old_session = sessions.get_session(engram, "old")
-        old_session["last_active"] = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_session["last_active"] = datetime.now(UTC) - timedelta(hours=2)
 
         count = sessions.expire_sessions(engram, inactive_threshold=timedelta(hours=1))
 
@@ -475,14 +470,14 @@ class TestEngramSessions:
 
         # Set old session to past
         old_session = sessions.get_session(engram, "old")
-        old_session["last_active"] = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_session["last_active"] = datetime.now(UTC) - timedelta(hours=2)
 
-        session_list = sessions.list_sessions(engram, active_since=datetime.now(timezone.utc) - timedelta(hours=1))
+        session_list = sessions.list_sessions(engram, active_since=datetime.now(UTC) - timedelta(hours=1))
 
         assert len(session_list) == 1
 
     def test_session_limit_lru(self) -> None:
-        config = EngramConfig(max_sessions=2, session_overflow=SessionOverflow.LRU)
+        config = engram_config(max_sessions=2, session_overflow=SessionOverflow.LRU)
         engram = Engram(config=config)
 
         sessions.create_session(engram, session_id="first")
@@ -493,7 +488,7 @@ class TestEngramSessions:
         assert not sessions.get_session(engram, "first", create_if_missing=False)
 
     def test_session_limit_reject(self) -> None:
-        config = EngramConfig(max_sessions=2, session_overflow=SessionOverflow.REJECT)
+        config = engram_config(max_sessions=2, session_overflow=SessionOverflow.REJECT)
         engram = Engram(config=config)
 
         sessions.create_session(engram, session_id="first")
@@ -832,7 +827,7 @@ class TestEngramSpecExamples:
 
     def test_appendix_a_example(self) -> None:
         """Test the example session from Appendix A."""
-        engram = Engram(config=EngramConfig(capacity=1000))
+        engram = Engram(config=engram_config(capacity=1000))
 
         # Initialize
         engram.store("Hello", tier=Tier.STATIC)
@@ -938,7 +933,10 @@ class TestEngramContextMatching:
 
         # Add pattern with that wildcard and template using thatstar
         engram.store(
-            "You mentioned {thatstar1}", pattern="YES", that="DO YOU LIKE *", template={"text": "You mentioned {thatstar1}"}
+            "You mentioned {thatstar1}",
+            pattern="YES",
+            that="DO YOU LIKE *",
+            template={"text": "You mentioned {thatstar1}"},
         )
 
         # Set up that context

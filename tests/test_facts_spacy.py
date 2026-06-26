@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import EngramConfig
+from engram.config import engram_config
 from engram.facts_spacy import extract_facts
 from engram.spacy_setup import get_nlp
 
@@ -124,7 +124,7 @@ class TestConfigFlag:
     """The use_spacy_facts flag exists and is opt-in."""
 
     def test_default_off(self):
-        assert EngramConfig()["use_spacy_facts"] is False
+        assert engram_config()["use_spacy_facts"] is False
 
     def test_can_enable(self):
-        assert EngramConfig(use_spacy_facts=True)["use_spacy_facts"] is True
+        assert engram_config(use_spacy_facts=True)["use_spacy_facts"] is True

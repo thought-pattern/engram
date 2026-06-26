@@ -4,7 +4,10 @@ This module provides session management functionality including creation,
 retrieval, updates, expiration, and cleanup of user sessions.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
+from engram.config import SessionOverflow
+from engram.models import session, session_update_context
 
 
 class SessionLimitExceeded(Exception):
@@ -33,8 +36,6 @@ def create_session(engram, session_id=None, metadata=None) -> str:
     Raises:
         SessionLimitExceeded: If at maximum sessions and overflow policy is REJECT.
     """
-    from engram.config import SessionOverflow
-    from engram.models import Session
 
     with engram.session_lock:
         # Check session limit
@@ -46,9 +47,9 @@ def create_session(engram, session_id=None, metadata=None) -> str:
             else:  # LRU
                 _expire_lru_session(engram)
 
-        session = Session(session_id=session_id, metadata=metadata)
-        engram.sessions[session["session_id"]] = session
-        return session["session_id"]
+        sess = session(session_id=session_id, metadata=metadata)
+        engram.sessions[sess["session_id"]] = sess
+        return sess["session_id"]
 
 
 def get_session(engram, session_id: str, create_if_missing: bool = True):
@@ -81,7 +82,6 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
     Raises:
         SessionNotFound: If session does not exist.
     """
-    from engram.models import session_update_context
 
     with engram.session_lock:
         session = engram.sessions.get(session_id)
@@ -120,7 +120,7 @@ def expire_sessions(engram, inactive_threshold=None) -> int:
     if inactive_threshold is None:
         inactive_threshold = timedelta(seconds=engram.config["session_ttl_seconds"])
 
-    cutoff = datetime.now(timezone.utc) - inactive_threshold
+    cutoff = datetime.now(UTC) - inactive_threshold
     expired_ids: list[str] = []
 
     with engram.session_lock:
@@ -130,7 +130,8 @@ def expire_sessions(engram, inactive_threshold=None) -> int:
         for sid in expired_ids:
             del engram.sessions[sid]
 
-    return len(expired_ids)
+    removed = len(expired_ids)
+    return removed
 
 
 def list_sessions(engram, active_since=None) -> list:
@@ -145,8 +146,10 @@ def list_sessions(engram, active_since=None) -> list:
     """
     with engram.session_lock:
         if active_since is None:
-            return list(engram.sessions.values())
-        return [s for s in engram.sessions.values() if s["last_active"] >= active_since]
+            all_sessions = list(engram.sessions.values())
+            return all_sessions
+        filtered = [s for s in engram.sessions.values() if s["last_active"] >= active_since]
+        return filtered
 
 
 def _expire_oldest_session(engram) -> None:

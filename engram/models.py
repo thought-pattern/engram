@@ -5,7 +5,7 @@ that returns a dict, plus module-level helper functions for behaviors that used
 to be methods.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ class Tier(Enum):
 # =============================================================================
 
 
-def Statement(
+def statement(
     text: str,
     tier: Tier = Tier.DYNAMIC,
     keywords=None,
@@ -39,11 +39,11 @@ def Statement(
 
     Generates an ID and creation timestamp. Eviction tracking fields start at zero.
     """
-    return {
+    stmt = {
         "id": statement_id or f"stmt_{uuid4().hex[:12]}",
         "text": text,  # Response text or template
         "tier": tier,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
         "keywords": keywords or [],
         "pattern": pattern,  # AIML-style pattern for matching
         "that": that,  # Pattern to match bot's previous response
@@ -54,19 +54,21 @@ def Statement(
         "query_count": 0,  # Number of times this statement was a candidate
         "last_hit": "",  # Timestamp of most recent hit ("" when never hit)
     }
+    return stmt
 
 
 def statement_hit_rate(stmt: dict) -> float:
     """Calculate hit rate (hits/queries), default 0.5 when undefined."""
     if stmt["query_count"] == 0:
         return 0.5
-    return stmt["hit_count"] / stmt["query_count"]
+    rate = stmt["hit_count"] / stmt["query_count"]
+    return rate
 
 
 def record_statement_hit(stmt: dict) -> None:
     """Record a hit on this statement."""
     stmt["hit_count"] += 1
-    stmt["last_hit"] = datetime.now(timezone.utc)
+    stmt["last_hit"] = datetime.now(UTC)
 
 
 def record_statement_query(stmt: dict) -> None:
@@ -104,7 +106,7 @@ def statement_to_dict(stmt: dict) -> dict:
 def statement_from_dict(data: dict) -> dict:
     """Deserialize a statement from a dictionary."""
     last_hit_raw = data.get("last_hit", "")
-    return {
+    stmt = {
         "id": data["id"],
         "text": data["text"],
         "tier": Tier(data["tier"]),
@@ -119,6 +121,7 @@ def statement_from_dict(data: dict) -> dict:
         "query_count": data.get("query_count", 0),
         "last_hit": datetime.fromisoformat(last_hit_raw) if last_hit_raw else "",
     }
+    return stmt
 
 
 # =============================================================================
@@ -126,45 +129,49 @@ def statement_from_dict(data: dict) -> dict:
 # =============================================================================
 
 
-def KeywordEntry(
+def keyword_entry(
     keyword: str,
     statement_ids=None,
     query_count: int = 0,
     hit_count: int = 0,
 ) -> dict:
     """Build a keyword index entry dict with retrieval statistics."""
-    return {
+    entry = {
         "keyword": keyword,
         "statement_ids": set(statement_ids) if statement_ids is not None else set(),
         "query_count": query_count,
         "hit_count": hit_count,
     }
+    return entry
 
 
 def keyword_entry_hit_rate(entry: dict) -> float:
     """Calculate hit rate, defaulting to 0.5 when undefined."""
     if entry["query_count"] == 0:
         return 0.5
-    return entry["hit_count"] / entry["query_count"]
+    rate = entry["hit_count"] / entry["query_count"]
+    return rate
 
 
 def keyword_entry_to_dict(entry: dict) -> dict:
     """Serialize a keyword entry to a dictionary."""
-    return {
+    data = {
         "statement_ids": list(entry["statement_ids"]),
         "query_count": entry["query_count"],
         "hit_count": entry["hit_count"],
     }
+    return data
 
 
 def keyword_entry_from_dict(keyword: str, data: dict) -> dict:
     """Deserialize a keyword entry from a dictionary."""
-    return {
+    entry = {
         "keyword": keyword,
         "statement_ids": set(data.get("statement_ids", [])),
         "query_count": data.get("query_count", 0),
         "hit_count": data.get("hit_count", 0),
     }
+    return entry
 
 
 # =============================================================================
@@ -172,7 +179,7 @@ def keyword_entry_from_dict(keyword: str, data: dict) -> dict:
 # =============================================================================
 
 
-def Session(
+def session(
     session_id=None,
     metadata=None,
     history_size: int = 10,
@@ -182,10 +189,10 @@ def Session(
     Stores per-user state including predicates (variables), topic, and
     conversation history. Generates an ID and timestamps.
     """
-    now = datetime.now(timezone.utc)
-    return {
+    now = datetime.now(UTC)
+    sess = {
         "session_id": session_id or f"sess_{uuid4().hex[:12]}",
-        "previous_response": "",  # Kept for backward compatibility (alias for that)
+        "previous_response": "",  # Bot's most recent response (for that-matching and query expansion)
         "created_at": now,
         "last_active": now,
         "metadata": metadata or {},
@@ -195,6 +202,7 @@ def Session(
         "that_history": [],
         "history_size": history_size,  # Maximum history entries
     }
+    return sess
 
 
 def session_update_context(
@@ -210,7 +218,7 @@ def session_update_context(
         user_input: User's input text (optional).
     """
     session["previous_response"] = previous_response
-    session["last_active"] = datetime.now(timezone.utc)
+    session["last_active"] = datetime.now(UTC)
 
     # Update response history
     if previous_response:
@@ -233,7 +241,7 @@ def session_update_context(
 
 def session_touch(session: dict) -> None:
     """Update last_active timestamp."""
-    session["last_active"] = datetime.now(timezone.utc)
+    session["last_active"] = datetime.now(UTC)
 
 
 def session_clear_predicates(session: dict) -> None:
@@ -246,7 +254,7 @@ def session_clear_predicates(session: dict) -> None:
 
 def session_to_dict(session: dict) -> dict:
     """Serialize a session to a JSON-ready dictionary."""
-    return {
+    data = {
         "session_id": session["session_id"],
         "previous_response": session["previous_response"],
         "created_at": session["created_at"].isoformat(),
@@ -258,11 +266,12 @@ def session_to_dict(session: dict) -> dict:
         "that_history": session["that_history"],
         "history_size": session["history_size"],
     }
+    return data
 
 
 def session_from_dict(data: dict) -> dict:
     """Deserialize a session from a dictionary."""
-    return {
+    sess = {
         "session_id": data["session_id"],
         "previous_response": data.get("previous_response", ""),
         "created_at": datetime.fromisoformat(data["created_at"]),
@@ -274,6 +283,7 @@ def session_from_dict(data: dict) -> dict:
         "that_history": data.get("that_history", []),
         "history_size": data.get("history_size", 10),
     }
+    return sess
 
 
 # =============================================================================
@@ -281,9 +291,10 @@ def session_from_dict(data: dict) -> dict:
 # =============================================================================
 
 
-def QueryResult(matches, keywords) -> dict:
+def query_result(matches, keywords) -> dict:
     """Build a query result dict.
 
     matches: list of (statement, score) pairs. keywords: extracted query keywords.
     """
-    return {"matches": matches, "keywords": keywords}
+    result = {"matches": matches, "keywords": keywords}
+    return result
