@@ -4,7 +4,8 @@ This module provides functions for analyzing keyword performance,
 coverage gaps, and generating recommendations for improving the knowledge base.
 """
 
-from engram.models import Tier, keyword_entry_hit_rate
+from engram.constants import Tier
+from engram.models import keyword_entry_hit_rate
 
 
 def get_statement_count(engram) -> int:

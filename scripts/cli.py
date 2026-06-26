@@ -13,9 +13,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from engram import metrics, persistence, sessions
-from engram.config import EvictionPolicy, load_config
+from engram.config import load_config
+from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
-from engram.models import Tier
 from engram.sessions import SessionLimitExceeded, SessionNotFound
 
 

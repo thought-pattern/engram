@@ -16,22 +16,16 @@ Copulas keep their surface form (is/are); prepositional links use the
 preposition; action verbs use the verb lemma so relations are normalized.
 """
 
+from engram.constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
 from engram.nlp import extracted_fact
 from engram.spacy_setup import get_nlp
-
-_QUESTION_WORDS = frozenset({"what", "who", "where", "when", "why", "how", "which", "whose"})
-_COMMAND_WORDS = frozenset({"learn", "remember", "forget", "tell", "say", "repeat", "echo"})
-_PRONOUNS = frozenset({"i", "you", "he", "she", "it", "we", "they", "this", "that", "these", "those"})
-_SUBJECT_DEPS = frozenset({"nsubj", "nsubjpass"})
-_OBJECT_DEPS = frozenset({"dobj", "attr", "acomp", "oprd", "dative"})
-_ARTICLES = frozenset({"a", "an", "the"})
 
 
 def _clean_span(tokens) -> str:
     """Join tokens in document order, dropping a single leading article."""
     ordered = sorted(tokens, key=lambda t: t.i)
     words = [t.text for t in ordered]
-    if words and words[0].lower() in _ARTICLES:
+    if words and words[0].lower() in ARTICLES:
         words = words[1:]
     span = " ".join(words).strip()
     return span
@@ -58,7 +52,7 @@ def _prep_link(verb):
     """
     for child in verb.children:
         if child.dep_ == "prep":
-            pobj = _first_child(child, frozenset({"pobj"}))
+            pobj = _first_child(child, {"pobj"})
             if pobj:
                 link = (child.text, pobj)
                 return link
@@ -69,7 +63,7 @@ def _prep_link(verb):
 def _extract_from_sentence(sent) -> dict:
     """Extract a single triple from one parsed sentence, or {} if none."""
     first = sent[0].text.lower()
-    if first in _QUESTION_WORDS or first in _COMMAND_WORDS:
+    if first in QUESTION_WORDS or first in COMMAND_WORDS:
         return {}
     if sent.text.strip().endswith("?"):
         return {}
@@ -80,18 +74,18 @@ def _extract_from_sentence(sent) -> dict:
         # mistags) - skip rather than emit a garbage triple.
         return {}
 
-    subject_token = _first_child(root, _SUBJECT_DEPS)
+    subject_token = _first_child(root, SUBJECT_DEPS)
     if not subject_token:
         return {}
 
     subject = _phrase(subject_token)
-    if not subject or subject.lower() in _PRONOUNS:
+    if not subject or subject.lower() in PRONOUNS:
         return {}
 
     is_copula = root.pos_ == "AUX" or root.lemma_ == "be"
 
     if is_copula:
-        obj_token = _first_child(root, _OBJECT_DEPS)
+        obj_token = _first_child(root, OBJECT_DEPS)
         if obj_token:
             predicate = root.text  # keep surface "is"/"are"/"was"/"were"
         else:
@@ -100,7 +94,7 @@ def _extract_from_sentence(sent) -> dict:
                 return {}
             predicate = prep_text  # "Paris is in France" -> (Paris, in, France)
     else:
-        obj_token = _first_child(root, _OBJECT_DEPS)
+        obj_token = _first_child(root, OBJECT_DEPS)
         if obj_token:
             predicate = root.lemma_  # normalized relation: develop, have, chase
         else:
@@ -110,7 +104,7 @@ def _extract_from_sentence(sent) -> dict:
             predicate = f"{root.lemma_} {prep_text}"  # "belong to"
 
     obj = _phrase(obj_token)
-    if not obj or obj.lower() in _PRONOUNS:
+    if not obj or obj.lower() in PRONOUNS:
         return {}
 
     fact = extracted_fact(

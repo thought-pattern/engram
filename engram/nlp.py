@@ -11,16 +11,8 @@ from nltk import ne_chunk
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
+from engram.constants import COMMAND_WORDS, COPULAS, QUESTION_WORDS
 from engram.nltk_data import ensure_resource
-
-# Copula verbs that indicate definitional statements
-_COPULAS = frozenset({"is", "are", "was", "were"})
-
-# Words that indicate a question (should not extract facts)
-_QUESTION_WORDS = frozenset({"what", "who", "where", "when", "why", "how", "which", "whose"})
-
-# Words that indicate a command (should not extract facts)
-_COMMAND_WORDS = frozenset({"learn", "remember", "forget", "tell", "say", "repeat", "echo"})
 
 
 @lru_cache(maxsize=1)
@@ -90,12 +82,12 @@ def _is_question(text: str) -> bool:
 
     # Starts with question word
     first_word = text.split()[0].lower() if text.split() else ""
-    if first_word in _QUESTION_WORDS:
+    if first_word in QUESTION_WORDS:
         return True
 
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
-    if len(words) >= 2 and words[0] in _COPULAS:
+    if len(words) >= 2 and words[0] in COPULAS:
         return True
 
     return False
@@ -104,7 +96,7 @@ def _is_question(text: str) -> bool:
 def _is_command(text: str) -> bool:
     """Check if text is a command."""
     first_word = text.split()[0].lower() if text.split() else ""
-    is_command = first_word in _COMMAND_WORDS
+    is_command = first_word in COMMAND_WORDS
     return is_command
 
 
@@ -128,7 +120,7 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     copula = ""
 
     for i, (word, pos) in enumerate(tagged):
-        if word.lower() in _COPULAS and pos.startswith("VB"):
+        if word.lower() in COPULAS and pos.startswith("VB"):
             copula_idx = i
             copula = word.lower()
             break

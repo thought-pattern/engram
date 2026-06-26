@@ -4,28 +4,10 @@ Configurations are plain dicts built by the factory functions below.
 """
 
 import os
-from enum import Enum
 
 import yaml
 
-from engram.nltk_data import DEFAULT_STOPWORDS
-
-
-class SessionOverflow(Enum):
-    """Behavior when session limit is reached."""
-
-    REJECT = "reject"
-    EXPIRE_OLDEST = "expire_oldest"
-    LRU = "lru"
-
-
-class EvictionPolicy(Enum):
-    """Policy for evicting DYNAMIC categories when at capacity."""
-
-    FIFO = "fifo"  # First-in, first-out (oldest evicted first)
-    LRU = "lru"  # Least recently used (oldest last-hit evicted)
-    LFU = "lfu"  # Least frequently used (lowest hit count evicted)
-    HIT_RATE = "hit_rate"  # Lowest hit rate (hits/queries) evicted
+from engram.constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
 
 
 def graph_config(

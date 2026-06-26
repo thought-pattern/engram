@@ -1,0 +1,384 @@
+"""Shared constants and enumerations for ENGRAM.
+
+This module is the single home for the package's enums and literal data
+constants (stopword lists, substitution maps, POS-tag sets, scoring weights, and
+so on). It depends only on the standard library, so it sits at the root of the
+import graph: every other ENGRAM module may import from it without risk of a
+cycle.
+"""
+
+import os
+from enum import Enum
+
+# =============================================================================
+# Enumerations
+# =============================================================================
+
+
+class SessionOverflow(Enum):
+    """Behavior when session limit is reached."""
+
+    REJECT = "reject"
+    EXPIRE_OLDEST = "expire_oldest"
+    LRU = "lru"
+
+
+class EvictionPolicy(Enum):
+    """Policy for evicting DYNAMIC categories when at capacity."""
+
+    FIFO = "fifo"  # First-in, first-out (oldest evicted first)
+    LRU = "lru"  # Least recently used (oldest last-hit evicted)
+    LFU = "lfu"  # Least frequently used (lowest hit count evicted)
+    HIT_RATE = "hit_rate"  # Lowest hit rate (hits/queries) evicted
+
+
+class Tier(Enum):
+    """Statement tier classification."""
+
+    STATIC = "STATIC"
+    DYNAMIC = "DYNAMIC"
+
+
+# =============================================================================
+# NLTK data
+# =============================================================================
+
+# Local data directory: <repo root>/data/nltk_data
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_THIS_DIR)
+NLTK_DATA_DIR = os.path.join(_REPO_ROOT, "data", "nltk_data")
+
+# Required packages as (find_path, download_name) pairs. find_path is what
+# nltk.data.find expects; download_name is what nltk.download expects.
+REQUIRED_PACKAGES = (
+    ("tokenizers/punkt", "punkt"),
+    ("tokenizers/punkt_tab", "punkt_tab"),
+    ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
+    ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
+    ("chunkers/maxent_ne_chunker", "maxent_ne_chunker"),
+    ("chunkers/maxent_ne_chunker_tab", "maxent_ne_chunker_tab"),
+    ("corpora/words", "words"),
+    ("corpora/wordnet", "wordnet"),
+    ("corpora/omw-1.4", "omw-1.4"),
+    ("sentiment/vader_lexicon", "vader_lexicon"),
+)
+
+# Stopwords filtered out during keyword extraction. A set for O(1) membership.
+DEFAULT_STOPWORDS: set[str] = {
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "when",
+    "where",
+    "why",
+    "how",
+    "all",
+    "each",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "also",
+}
+
+
+# =============================================================================
+# spaCy
+# =============================================================================
+
+MODEL_NAME = "en_core_web_sm"
+
+
+# =============================================================================
+# Text processing
+# =============================================================================
+
+# POS tags that indicate content words (nouns, verbs, adjectives, adverbs)
+CONTENT_POS_TAGS = {
+    "NN",
+    "NNS",
+    "NNP",
+    "NNPS",  # Nouns
+    "VB",
+    "VBD",
+    "VBG",
+    "VBN",
+    "VBP",
+    "VBZ",  # Verbs
+    "JJ",
+    "JJR",
+    "JJS",  # Adjectives
+    "RB",
+    "RBR",
+    "RBS",  # Adverbs
+}
+
+
+# =============================================================================
+# NLP fact extraction
+# =============================================================================
+
+# Copula verbs that indicate definitional statements
+COPULAS = {"is", "are", "was", "were"}
+
+# Words that indicate a question (should not extract facts)
+QUESTION_WORDS = {"what", "who", "where", "when", "why", "how", "which", "whose"}
+
+# Words that indicate a command (should not extract facts)
+COMMAND_WORDS = {"learn", "remember", "forget", "tell", "say", "repeat", "echo"}
+
+# Personal pronouns excluded as relational-triple subjects or objects
+PRONOUNS = {"i", "you", "he", "she", "it", "we", "they", "this", "that", "these", "those"}
+
+# spaCy dependency labels marking subjects and objects
+SUBJECT_DEPS = {"nsubj", "nsubjpass"}
+OBJECT_DEPS = {"dobj", "attr", "acomp", "oprd", "dative"}
+
+# Articles dropped from the front of an extracted span
+ARTICLES = {"a", "an", "the"}
+
+
+# =============================================================================
+# Sentiment (VADER)
+# =============================================================================
+
+# VADER compound-score thresholds (the standard cutoffs from the VADER paper).
+POSITIVE_THRESHOLD = 0.05
+NEGATIVE_THRESHOLD = -0.05
+
+NEUTRAL = "neutral"
+POSITIVE = "positive"
+NEGATIVE = "negative"
+
+NEUTRAL_SCORES = {"compound": 0.0, "pos": 0.0, "neu": 1.0, "neg": 0.0}
+
+
+# =============================================================================
+# Substitution maps
+# =============================================================================
+
+# Default contractions expansion map
+DEFAULT_CONTRACTIONS: dict[str, str] = {
+    "i'm": "i am",
+    "i've": "i have",
+    "i'll": "i will",
+    "i'd": "i would",
+    "you're": "you are",
+    "you've": "you have",
+    "you'll": "you will",
+    "you'd": "you would",
+    "he's": "he is",
+    "she's": "she is",
+    "it's": "it is",
+    "we're": "we are",
+    "we've": "we have",
+    "we'll": "we will",
+    "we'd": "we would",
+    "they're": "they are",
+    "they've": "they have",
+    "they'll": "they will",
+    "they'd": "they would",
+    "that's": "that is",
+    "there's": "there is",
+    "here's": "here is",
+    "what's": "what is",
+    "who's": "who is",
+    "where's": "where is",
+    "when's": "when is",
+    "why's": "why is",
+    "how's": "how is",
+    "isn't": "is not",
+    "aren't": "are not",
+    "wasn't": "was not",
+    "weren't": "were not",
+    "haven't": "have not",
+    "hasn't": "has not",
+    "hadn't": "had not",
+    "won't": "will not",
+    "wouldn't": "would not",
+    "don't": "do not",
+    "doesn't": "does not",
+    "didn't": "did not",
+    "can't": "cannot",
+    "couldn't": "could not",
+    "shouldn't": "should not",
+    "mightn't": "might not",
+    "mustn't": "must not",
+    "let's": "let us",
+    "ain't": "is not",
+    "y'all": "you all",
+    "gonna": "going to",
+    "gotta": "got to",
+    "wanna": "want to",
+    "gimme": "give me",
+    "lemme": "let me",
+    "kinda": "kind of",
+    "sorta": "sort of",
+    "coulda": "could have",
+    "woulda": "would have",
+    "shoulda": "should have",
+    "musta": "must have",
+    # Apostrophe-less variants. Only forms that are not valid standalone English
+    # words are included, to avoid corrupting normal text. Deliberately omitted:
+    # "its", "were", "well", "ill", "id", "shed", "wed", "lets" (all real words).
+    "im": "i am",
+    "ive": "i have",
+    "youre": "you are",
+    "youve": "you have",
+    "youll": "you will",
+    "hes": "he is",
+    "shes": "she is",
+    "weve": "we have",
+    "theyre": "they are",
+    "theyve": "they have",
+    "theyll": "they will",
+    "thats": "that is",
+    "theres": "there is",
+    "heres": "here is",
+    "whats": "what is",
+    "whos": "who is",
+    "wheres": "where is",
+    "hows": "how is",
+    "isnt": "is not",
+    "arent": "are not",
+    "wasnt": "was not",
+    "werent": "were not",
+    "havent": "have not",
+    "hasnt": "has not",
+    "hadnt": "had not",
+    "dont": "do not",
+    "doesnt": "does not",
+    "didnt": "did not",
+    "couldnt": "could not",
+    "wouldnt": "would not",
+    "shouldnt": "should not",
+    "cant": "cannot",
+    "wont": "will not",
+}
+
+# Person substitution (first person <-> second person)
+# Used for transforming user input when echoing back
+DEFAULT_PERSON: dict[str, str] = {
+    "i": "you",
+    "me": "you",
+    "my": "your",
+    "mine": "yours",
+    "myself": "yourself",
+    "am": "are",
+    "was": "were",
+    "i'm": "you are",
+    "i've": "you have",
+    "i'll": "you will",
+    "i'd": "you would",
+}
+
+# Person2 substitution (second person -> first person)
+# Reverse of person substitution
+DEFAULT_PERSON2: dict[str, str] = {
+    "you": "i",
+    "your": "my",
+    "yours": "mine",
+    "yourself": "myself",
+    "you're": "i am",
+    "you've": "i have",
+    "you'll": "i will",
+    "you'd": "i would",
+}
+
+# Gender substitution: gendered pronouns map to singular they/them, so
+# apply_gender rewrites text into gender-neutral pronouns rather than swapping
+# he <-> she. Object "her" and possessive "her" both map to "them" (the
+# possessive case is the less common one and a perfect split is not possible
+# with a flat word map).
+DEFAULT_GENDER: dict[str, str] = {
+    "he": "they",
+    "she": "they",
+    "him": "them",
+    "her": "them",
+    "his": "their",
+    "hers": "theirs",
+    "himself": "themself",
+    "herself": "themself",
+}
+
+
+# =============================================================================
+# Pattern matching
+# =============================================================================
+
+TOPIC_PRIORITY = 1000  # Having topic match adds significant priority
+THAT_PRIORITY = 500  # Having that match adds priority
+
+WILDCARD_TOKENS = {"*", "_", "#", "^"}
+
+
+# =============================================================================
+# Persistence
+# =============================================================================
+
+# Version constant for persistence format
+PERSISTENCE_VERSION = 1

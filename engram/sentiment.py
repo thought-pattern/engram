@@ -12,17 +12,8 @@ from functools import lru_cache
 
 from nltk.sentiment import SentimentIntensityAnalyzer
 
+from engram.constants import NEGATIVE, NEGATIVE_THRESHOLD, NEUTRAL, NEUTRAL_SCORES, POSITIVE, POSITIVE_THRESHOLD
 from engram.nltk_data import ensure_resource
-
-# VADER compound-score thresholds (the standard cutoffs from the VADER paper).
-POSITIVE_THRESHOLD = 0.05
-NEGATIVE_THRESHOLD = -0.05
-
-NEUTRAL = "neutral"
-POSITIVE = "positive"
-NEGATIVE = "negative"
-
-_NEUTRAL_SCORES = {"compound": 0.0, "pos": 0.0, "neu": 1.0, "neg": 0.0}
 
 
 @lru_cache(maxsize=1)
@@ -45,11 +36,11 @@ def sentiment_scores(text: str) -> dict:
         or the lexicon is unavailable.
     """
     if not text or not text.strip():
-        neutral_scores = dict(_NEUTRAL_SCORES)
+        neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
     analyzer = _get_analyzer()
     if not analyzer:
-        neutral_scores = dict(_NEUTRAL_SCORES)
+        neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
     scores = analyzer.polarity_scores(text)
     return scores

@@ -7,9 +7,10 @@ from pathlib import Path
 import pytest
 
 from engram import eviction, metrics, persistence, sessions
-from engram.config import SessionOverflow, engram_config
+from engram.config import engram_config
+from engram.constants import SessionOverflow, Tier
 from engram.core import Engram
-from engram.models import Tier, record_statement_hit, record_statement_query, session_update_context
+from engram.models import record_statement_hit, record_statement_query, session_update_context
 from engram.sessions import SessionLimitExceeded, SessionNotFound
 
 

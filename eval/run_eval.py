@@ -31,8 +31,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from engram.config import engram_config
+from engram.constants import Tier
 from engram.core import Engram
-from engram.models import Tier
 
 CATCHALL = "*"
 WEAK_SCORE = 1.0  # keyword top-score at or below this is a weak retrieval

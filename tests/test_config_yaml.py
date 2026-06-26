@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-from engram.config import EvictionPolicy, SessionOverflow, engram_config, load_config
+from engram.config import engram_config, load_config
+from engram.constants import EvictionPolicy, SessionOverflow
 
 SCRATCH = os.environ.get("CLAUDE_SCRATCH", os.path.dirname(__file__))
 

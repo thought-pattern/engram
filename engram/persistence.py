@@ -7,6 +7,7 @@ deserializing ENGRAM state to/from JSON files and strings.
 import json
 
 from engram.config import engram_config
+from engram.constants import PERSISTENCE_VERSION
 from engram.core import Engram
 from engram.models import (
     keyword_entry,
@@ -17,9 +18,6 @@ from engram.models import (
     statement_from_dict,
     statement_to_dict,
 )
-
-# Version constant for persistence format
-PERSISTENCE_VERSION = 1
 
 
 def save(engram, path) -> None:

@@ -6,7 +6,7 @@ retrieval, updates, expiration, and cleanup of user sessions.
 
 from datetime import UTC, datetime, timedelta
 
-from engram.config import SessionOverflow
+from engram.constants import SessionOverflow
 from engram.models import session, session_update_context
 
 

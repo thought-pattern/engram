@@ -38,8 +38,8 @@ keeps normal operation offline and fast.
 ## Quick Start
 
 ```python
+from engram.constants import Tier
 from engram.core import Engram
-from engram.models import Tier
 
 # Create an instance
 engram = Engram()
@@ -79,10 +79,11 @@ result = engram.query("What is its population?", session_id=session_id)
 ## Configuration
 
 ```python
+from engram.config import engram_config
+from engram.constants import SessionOverflow
 from engram.core import Engram
-from engram.config import EngramConfig, SessionOverflow
 
-config = EngramConfig(
+config = engram_config(
     capacity=10000,              # Max DYNAMIC statements
     max_sessions=10000,          # Max concurrent sessions
     session_ttl_seconds=86400,   # 24 hour session TTL

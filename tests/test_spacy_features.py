@@ -3,7 +3,7 @@
 import pytest
 
 from engram.config import engram_config
-from engram.nltk_data import DEFAULT_STOPWORDS
+from engram.constants import DEFAULT_STOPWORDS
 from engram.pattern import PatternMatcher
 from engram.spacy_setup import get_nlp
 from engram.text import extract_keywords_spacy, lemmatize_text_spacy

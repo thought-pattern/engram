@@ -6,18 +6,10 @@ to be methods.
 """
 
 from datetime import UTC, datetime
-from enum import Enum
 from uuid import uuid4
 
+from engram.constants import Tier
 from engram.substitutions import split_sentences
-
-
-class Tier(Enum):
-    """Statement tier classification."""
-
-    STATIC = "STATIC"
-    DYNAMIC = "DYNAMIC"
-
 
 # =============================================================================
 # Statement

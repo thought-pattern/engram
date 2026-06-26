@@ -1,10 +1,7 @@
 """Tests for text substitution maps."""
 
+from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
 from engram.substitutions import (
-    DEFAULT_CONTRACTIONS,
-    DEFAULT_GENDER,
-    DEFAULT_PERSON,
-    DEFAULT_PERSON2,
     apply_gender,
     apply_person,
     apply_person2,
@@ -167,30 +164,30 @@ class TestApplyPerson2:
 
 
 class TestApplyGender:
-    """Tests for gender substitution (he <-> she)."""
+    """Tests for gender substitution (gendered pronouns -> singular they/them)."""
 
-    def test_he_to_she(self):
-        """Test he -> she."""
+    def test_he_to_they(self):
+        """Test he -> they."""
         result = apply_gender("he is here")
-        assert "she" in result.lower()
+        assert "they" in result.lower()
 
-    def test_she_to_he(self):
-        """Test she -> he."""
+    def test_she_to_they(self):
+        """Test she -> they."""
         result = apply_gender("she is here")
-        assert "he" in result.lower()
+        assert "they" in result.lower()
 
-    def test_him_her(self):
-        """Test him <-> her."""
+    def test_him_her_to_them(self):
+        """Test him -> them and her -> them."""
         result = apply_gender("I saw him")
-        assert "her" in result.lower()
+        assert "them" in result.lower()
 
         result = apply_gender("I saw her")
-        assert "him" in result.lower()
+        assert "them" in result.lower()
 
-    def test_himself_herself(self):
-        """Test himself <-> herself."""
+    def test_himself_herself_to_themself(self):
+        """Test himself -> themself and herself -> themself."""
         result = apply_gender("he did it himself")
-        assert "herself" in result.lower()
+        assert "themself" in result.lower()
 
     def test_custom_gender_map(self):
         """Test custom gender map."""

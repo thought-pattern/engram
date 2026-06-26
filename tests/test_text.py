@@ -1,6 +1,6 @@
 """Tests for text processing."""
 
-from engram.nltk_data import DEFAULT_STOPWORDS
+from engram.constants import DEFAULT_STOPWORDS
 from engram.text import (
     expand_query,
     extract_keywords,
@@ -79,7 +79,7 @@ class TestExtractKeywords:
         assert result == []
 
     def test_custom_stopwords(self) -> None:
-        custom = frozenset(["custom", "stop"])
+        custom = {"custom", "stop"}
         result = extract_keywords("custom stop word", custom)
         assert result == ["word"]
 

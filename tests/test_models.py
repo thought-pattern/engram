@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
+from engram.constants import Tier
 from engram.models import (
-    Tier,
     keyword_entry,
     keyword_entry_from_dict,
     keyword_entry_hit_rate,

@@ -8,6 +8,7 @@ from functools import lru_cache
 
 from nltk.tokenize import sent_tokenize
 
+from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
 from engram.nltk_data import ensure_resource
 
 
@@ -16,147 +17,6 @@ def _ensure_punkt() -> None:
     """Ensure the punkt tokenizers are present (cached, runs once)."""
     ensure_resource("tokenizers/punkt", "punkt")
     ensure_resource("tokenizers/punkt_tab", "punkt_tab")
-
-
-# Default contractions expansion map
-DEFAULT_CONTRACTIONS: dict[str, str] = {
-    "i'm": "i am",
-    "i've": "i have",
-    "i'll": "i will",
-    "i'd": "i would",
-    "you're": "you are",
-    "you've": "you have",
-    "you'll": "you will",
-    "you'd": "you would",
-    "he's": "he is",
-    "she's": "she is",
-    "it's": "it is",
-    "we're": "we are",
-    "we've": "we have",
-    "we'll": "we will",
-    "we'd": "we would",
-    "they're": "they are",
-    "they've": "they have",
-    "they'll": "they will",
-    "they'd": "they would",
-    "that's": "that is",
-    "there's": "there is",
-    "here's": "here is",
-    "what's": "what is",
-    "who's": "who is",
-    "where's": "where is",
-    "when's": "when is",
-    "why's": "why is",
-    "how's": "how is",
-    "isn't": "is not",
-    "aren't": "are not",
-    "wasn't": "was not",
-    "weren't": "were not",
-    "haven't": "have not",
-    "hasn't": "has not",
-    "hadn't": "had not",
-    "won't": "will not",
-    "wouldn't": "would not",
-    "don't": "do not",
-    "doesn't": "does not",
-    "didn't": "did not",
-    "can't": "cannot",
-    "couldn't": "could not",
-    "shouldn't": "should not",
-    "mightn't": "might not",
-    "mustn't": "must not",
-    "let's": "let us",
-    "ain't": "is not",
-    "y'all": "you all",
-    "gonna": "going to",
-    "gotta": "got to",
-    "wanna": "want to",
-    "gimme": "give me",
-    "lemme": "let me",
-    "kinda": "kind of",
-    "sorta": "sort of",
-    "coulda": "could have",
-    "woulda": "would have",
-    "shoulda": "should have",
-    "musta": "must have",
-    # Apostrophe-less variants. Only forms that are not valid standalone English
-    # words are included, to avoid corrupting normal text. Deliberately omitted:
-    # "its", "were", "well", "ill", "id", "shed", "wed", "lets" (all real words).
-    "im": "i am",
-    "ive": "i have",
-    "youre": "you are",
-    "youve": "you have",
-    "youll": "you will",
-    "hes": "he is",
-    "shes": "she is",
-    "weve": "we have",
-    "theyre": "they are",
-    "theyve": "they have",
-    "theyll": "they will",
-    "thats": "that is",
-    "theres": "there is",
-    "heres": "here is",
-    "whats": "what is",
-    "whos": "who is",
-    "wheres": "where is",
-    "hows": "how is",
-    "isnt": "is not",
-    "arent": "are not",
-    "wasnt": "was not",
-    "werent": "were not",
-    "havent": "have not",
-    "hasnt": "has not",
-    "hadnt": "had not",
-    "dont": "do not",
-    "doesnt": "does not",
-    "didnt": "did not",
-    "couldnt": "could not",
-    "wouldnt": "would not",
-    "shouldnt": "should not",
-    "cant": "cannot",
-    "wont": "will not",
-}
-
-# Person substitution (first person <-> second person)
-# Used for transforming user input when echoing back
-DEFAULT_PERSON: dict[str, str] = {
-    "i": "you",
-    "me": "you",
-    "my": "your",
-    "mine": "yours",
-    "myself": "yourself",
-    "am": "are",
-    "was": "were",
-    "i'm": "you are",
-    "i've": "you have",
-    "i'll": "you will",
-    "i'd": "you would",
-}
-
-# Person2 substitution (second person -> first person)
-# Reverse of person substitution
-DEFAULT_PERSON2: dict[str, str] = {
-    "you": "i",
-    "your": "my",
-    "yours": "mine",
-    "yourself": "myself",
-    "you're": "i am",
-    "you've": "i have",
-    "you'll": "i will",
-    "you'd": "i would",
-}
-
-# Gender substitution (he <-> she)
-DEFAULT_GENDER: dict[str, str] = {
-    "he": "she",
-    "she": "he",
-    "him": "her",
-    "her": "him",
-    "his": "her",
-    "hers": "his",
-    "himself": "herself",
-    "herself": "himself",
-}
 
 
 def substitution_maps(
@@ -293,7 +153,7 @@ def apply_person2(text: str, person2_map=None) -> str:
 
 
 def apply_gender(text: str, gender_map=None) -> str:
-    """Apply gender substitution (he <-> she).
+    """Apply gender substitution (gendered pronouns -> singular they/them).
 
     Args:
         text: Input text.

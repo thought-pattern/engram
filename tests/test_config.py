@@ -2,8 +2,8 @@
 
 import pytest
 
-from engram.config import SessionOverflow, engram_config
-from engram.nltk_data import DEFAULT_STOPWORDS
+from engram.config import engram_config
+from engram.constants import DEFAULT_STOPWORDS, SessionOverflow
 
 
 class TestEngramConfig:
@@ -59,7 +59,7 @@ class TestEngramConfig:
             engram_config(weight_base=-1, weight_recency=-1, weight_hit_rate=-1)
 
     def test_custom_stopwords(self) -> None:
-        custom = frozenset(["custom", "stop", "words"])
+        custom = {"custom", "stop", "words"}
         config = engram_config(stopwords=custom)
 
         assert config["stopwords"] == custom

@@ -8,28 +8,9 @@ from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
+from engram.constants import CONTENT_POS_TAGS
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
-
-# POS tags that indicate content words (nouns, verbs, adjectives, adverbs)
-CONTENT_POS_TAGS = {
-    "NN",
-    "NNS",
-    "NNP",
-    "NNPS",  # Nouns
-    "VB",
-    "VBD",
-    "VBG",
-    "VBN",
-    "VBP",
-    "VBZ",  # Verbs
-    "JJ",
-    "JJR",
-    "JJS",  # Adjectives
-    "RB",
-    "RBR",
-    "RBS",  # Adverbs
-}
 
 
 @lru_cache(maxsize=4096)
@@ -352,7 +333,7 @@ def _ensure_wordnet() -> None:
 
 
 @lru_cache(maxsize=4096)
-def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
+def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     """Get synonyms for a word using WordNet.
 
     Args:
@@ -360,7 +341,9 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
         max_synonyms: Maximum number of synonyms to return.
 
     Returns:
-        Frozenset of synonyms (includes the original word).
+        Tuple of synonyms (includes the original word). A tuple rather than a set
+        because the result is cached and shared, so an immutable return keeps a
+        caller from mutating the cached value.
     """
 
     _ensure_wordnet()
@@ -373,12 +356,12 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> frozenset[str]:
                 if name != word.lower():
                     synonyms.add(name)
                     if len(synonyms) >= max_synonyms + 1:
-                        capped = frozenset(synonyms)
+                        capped = tuple(synonyms)
                         return capped
     except Exception:
         pass
 
-    result = frozenset(synonyms)
+    result = tuple(synonyms)
     return result
 
 

@@ -28,6 +28,7 @@ Stemming support:
 import re
 from functools import lru_cache
 
+from engram.constants import THAT_PRIORITY, TOPIC_PRIORITY, WILDCARD_TOKENS
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
 
@@ -326,17 +327,10 @@ def pattern_entry(
     return entry
 
 
-# Context priority multipliers
-TOPIC_PRIORITY = 1000  # Having topic match adds significant priority
-THAT_PRIORITY = 500  # Having that match adds priority
-
-_WILDCARD_TOKENS = frozenset({"*", "_", "#", "^"})
-
-
 def _is_pure_wildcard(pattern: str) -> bool:
     """Return True if a pattern is only wildcard tokens (e.g. '*' or '* *')."""
     words = pattern.split()
-    is_wildcard = bool(words) and all(word.lstrip("$") in _WILDCARD_TOKENS for word in words)
+    is_wildcard = bool(words) and all(word.lstrip("$") in WILDCARD_TOKENS for word in words)
     return is_wildcard
 
 
