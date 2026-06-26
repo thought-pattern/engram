@@ -1,6 +1,6 @@
 [project]
 name = "engram"
-version = "0.1.6"
+dynamic = ["version"]
 description = "Keyword-indexed statement store with hit-rate tracking for conversational systems"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -39,6 +39,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["engram*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "engram.constants.VERSION"}
 
 [tool.ruff]
 line-length = 132

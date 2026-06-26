@@ -172,6 +172,63 @@
     {"text": "happy friday", "category": "holdout-occasion"},
     {"text": "good job", "category": "holdout-praise"},
     {"text": "well done", "category": "holdout-praise"},
-    {"text": "congratulations", "category": "holdout-occasion"}
+    {"text": "congratulations", "category": "holdout-occasion"},
+
+    {"text": "wassup", "category": "r2-greeting"},
+    {"text": "welcome back", "category": "r2-greeting"},
+    {"text": "how have you been", "category": "r2-smalltalk"},
+    {"text": "what are you up to", "category": "r2-smalltalk"},
+
+    {"text": "of course", "category": "r2-ack"},
+    {"text": "exactly", "category": "r2-ack"},
+    {"text": "right", "category": "r2-ack"},
+    {"text": "for sure", "category": "r2-ack"},
+    {"text": "indeed", "category": "r2-ack"},
+    {"text": "totally", "category": "r2-ack"},
+
+    {"text": "sorry", "category": "r2-apology"},
+    {"text": "my apologies", "category": "r2-apology"},
+    {"text": "excuse me", "category": "r2-apology"},
+    {"text": "please", "category": "r2-politeness"},
+    {"text": "pardon me", "category": "r2-apology"},
+
+    {"text": "good luck", "category": "r2-wellwish"},
+    {"text": "i miss you", "category": "r2-social"},
+    {"text": "bless you", "category": "r2-wellwish"},
+    {"text": "get well soon", "category": "r2-wellwish"},
+
+    {"text": "huh", "category": "r2-confusion"},
+    {"text": "what", "category": "r2-confusion"},
+    {"text": "i dont get it", "category": "r2-confusion"},
+
+    {"text": "wassup man", "category": "r3-generalization"},
+    {"text": "sorry about that", "category": "r3-generalization"},
+    {"text": "excuse me please", "category": "r3-generalization"},
+    {"text": "good luck with that", "category": "r3-generalization"},
+    {"text": "i dont get this", "category": "r3-generalization"},
+
+    {"text": "my bad", "category": "r3-apology"},
+    {"text": "fair enough", "category": "r3-ack"},
+    {"text": "good point", "category": "r3-ack"},
+    {"text": "makes sense", "category": "r3-ack"},
+    {"text": "you rock", "category": "r3-compliment"},
+    {"text": "have a good one", "category": "r3-farewell"},
+    {"text": "talk to you later", "category": "r3-farewell"},
+    {"text": "lol", "category": "r3-reaction"},
+    {"text": "haha", "category": "r3-reaction"},
+    {"text": "brb", "category": "r3-presence"},
+    {"text": "gtg", "category": "r3-farewell"},
+    {"text": "come again", "category": "r3-confusion"},
+    {"text": "what did you say", "category": "r3-confusion"},
+
+    {"text": "my bad sorry", "category": "r4-generalization"},
+    {"text": "fair enough then", "category": "r4-generalization"},
+    {"text": "lol thats funny", "category": "r4-generalization"},
+    {"text": "haha nice", "category": "r4-generalization"},
+    {"text": "have a great day", "category": "r4-generalization"},
+    {"text": "talk to you soon", "category": "r4-generalization"},
+    {"text": "you rock dude", "category": "r4-generalization"},
+    {"text": "good point there", "category": "r4-generalization"},
+    {"text": "gtg now", "category": "r4-generalization"}
   ]
 }

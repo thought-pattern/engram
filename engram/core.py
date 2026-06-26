@@ -5,7 +5,7 @@ import threading
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
 from engram.config import engram_config
-from engram.constants import Tier
+from engram.constants import VERSION, Tier
 from engram.graph import create_graph_client, graph_result
 from engram.models import (
     keyword_entry,
@@ -54,7 +54,7 @@ class Engram:
         # Bot properties and data (public for direct access)
         self.bot_properties: dict[str, str] = {
             "name": "ENGRAM",
-            "version": "0.1.6",
+            "version": VERSION,
         }
         self.sets: dict[str, list[str]] = {}
         self.maps: dict[str, dict[str, str]] = {}

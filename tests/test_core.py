@@ -1018,7 +1018,6 @@ class TestEngramSetsAndBotProperties:
 
         # Default properties
         assert engram.bot_properties.get("name") == "ENGRAM"
-        assert engram.bot_properties.get("version") == "0.1.6"
 
         # Custom property
         engram.bot_properties["master"] = "Alice"
