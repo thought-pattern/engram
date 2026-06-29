@@ -11,18 +11,22 @@ from engram.constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
 
 
 def graph_config(
-    uri: str = "bolt://localhost:7687",
+    host: str = "localhost",
+    port: int = 7687,
     username: str = "",
     password: str = "",
-    database: str = "",
     enabled: bool = False,
 ) -> dict:
-    """Build a Knowledge Graph connection configuration dict."""
+    """Build a Knowledge Graph connection configuration dict.
+
+    Connects to MemGraph with the pymgclient driver over host/port, matching
+    the Tapestry knowledge-graph connection interface.
+    """
     config = {
-        "uri": uri,
+        "host": host,
+        "port": port,
         "username": username,
         "password": password,
-        "database": database,
         "enabled": enabled,
     }
     return config

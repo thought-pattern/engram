@@ -39,9 +39,11 @@ use_phrase_keywords: false      # spaCy noun-chunk phrase keywords for retrieval
 fallback_response: ""        # Response when nothing matches ("" = no fallback)
 
 # --- Knowledge graph (optional) ---
+# MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
+# interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
 graph:
-  uri: bolt://localhost:7687
+  host: localhost
+  port: 7687
   username: ""
   password: ""
-  database: ""
   enabled: false

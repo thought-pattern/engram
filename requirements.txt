@@ -18,10 +18,13 @@ spacy==3.8.14
 # runtime). After installing the above, run:
 #   python -m spacy download en_core_web_sm   # parser/tagger/NER/lemmatizer
 
-confection==1.3.3 
-srsly==2.5.3 
-thinc==8.3.13 
+confection==1.3.3
+srsly==2.5.3
+thinc==8.3.13
 weasel==1.0.0
 
 
-neo4j==6.2.0
+# Knowledge graph: MemGraph over the pymgclient driver (imports as `mgclient`).
+# Matches the Tapestry knowledge-graph connection interface. Only needed when
+# the optional graph layer is enabled (graph.enabled in config.yml).
+pymgclient==1.5.2

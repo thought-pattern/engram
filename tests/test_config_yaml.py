@@ -57,8 +57,9 @@ class TestLoadConfigValues:
         assert cfg["session_overflow"] == SessionOverflow.REJECT
 
     def test_graph_mapping(self, tmp_path):
-        cfg = load_config(_write(tmp_path, "graph:\n  uri: bolt://db:7687\n  enabled: true\n"))
-        assert cfg["graph"]["uri"] == "bolt://db:7687"
+        cfg = load_config(_write(tmp_path, "graph:\n  host: db\n  port: 7777\n  enabled: true\n"))
+        assert cfg["graph"]["host"] == "db"
+        assert cfg["graph"]["port"] == 7777
         assert cfg["graph"]["enabled"] is True
 
     def test_unknown_key_raises(self, tmp_path):

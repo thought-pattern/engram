@@ -10,9 +10,63 @@ The evaluation context is a plain dict built by ``TemplateContext``.
 import random
 import re
 from datetime import datetime
+from uuid import uuid4
 
 from engram.graph import graph_is_empty, graph_single
 from engram.sentiment import sentiment_label
+
+# Canonical-graph triple operations. A triple is stored as a Claim node linked by
+# edge to canonical Entity/Predicate nodes, mirroring the Tapestry schema; the
+# surface triple is also written to the Claim's denormalized projection so a
+# reader sees it without joining edges. See schema.cypher.
+TRIPLE_ADD_QUERY = (
+    "MERGE (s:Entity {primary_label: $subject}) "
+    "ON CREATE SET s.canonical_id = $subject_cid, s.aliases = [], s.created_at = datetime() "
+    "MERGE (o:Entity {primary_label: $object}) "
+    "ON CREATE SET o.canonical_id = $object_cid, o.aliases = [], o.created_at = datetime() "
+    "MERGE (p:Predicate {label: $predicate}) "
+    "ON CREATE SET p.canonical_id = $predicate_cid, p.synonyms = [], p.created_at = datetime() "
+    "CREATE (c:Claim {id: $claim_id, claim_type: 'relational', "
+    "subject: $subject, predicate: $predicate, object: $object, "
+    "normalized: $normalized, invalidated_at: NULL, created_at: datetime()}) "
+    "CREATE (c)-[:HAS_SUBJECT {surface_form: $subject}]->(s) "
+    "CREATE (c)-[:USES_PREDICATE]->(p) "
+    "CREATE (c)-[:HAS_OBJECT {surface_form: $object}]->(o)"
+)
+TRIPLE_QUERY_OBJECT = (
+    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
+    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
+    "WHERE (toLower(s.primary_label) = toLower($subject) "
+    "OR toLower($subject) IN [a IN s.aliases | toLower(a)] "
+    "OR toLower(hs.surface_form) = toLower($subject)) "
+    "AND (toLower(p.label) = toLower($predicate) "
+    "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
+    "AND c.invalidated_at IS NULL "
+    "RETURN ho.surface_form AS result LIMIT 1"
+)
+TRIPLE_QUERY_SUBJECT = (
+    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
+    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
+    "WHERE (toLower(o.primary_label) = toLower($object) "
+    "OR toLower($object) IN [a IN o.aliases | toLower(a)] "
+    "OR toLower(ho.surface_form) = toLower($object)) "
+    "AND (toLower(p.label) = toLower($predicate) "
+    "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
+    "AND c.invalidated_at IS NULL "
+    "RETURN hs.surface_form AS result LIMIT 1"
+)
+
+
+def canonical_slug(text: str) -> str:
+    """Lowercase underscore slug used as a lightweight canonical id for triples.
+
+    Standalone ENGRAM has no entity reconciler, so a triple's canonical_id is
+    derived deterministically from its surface form. Tapestry assigns richer
+    canonical ids when it owns the write; this keeps standalone triples
+    interoperable with the canonical schema.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    return slug
 
 
 def template_context(
@@ -437,14 +491,17 @@ class TemplateProcessor:
         for key, value in query_data.get("params", {}).items():
             params[key] = self._substitute_variables(str(value), context)
 
-        # Execute query
-        result = context["graph_fn"](query, params)
+        # Execute query. The graph layer raises on a query-level failure and
+        # degrades to an empty list when unreachable; either way recall falls
+        # through to on_empty / on_failure rather than surfacing an error.
+        try:
+            records = context["graph_fn"](query, params)
+        except Exception:
+            records = []
+        if records is None:
+            records = []
 
-        if result is None or not result["success"]:
-            output = self.process(query_data.get("on_failure", ""), context)
-            return output
-
-        if graph_is_empty(result):
+        if graph_is_empty(records):
             output = self.process(query_data.get("on_empty", query_data.get("on_failure", "")), context)
             return output
 
@@ -456,7 +513,7 @@ class TemplateProcessor:
             item_template = query_data.get("item_template", "{result}")
             join_str = query_data.get("join", ", ")
             items = []
-            for record in result["records"]:
+            for record in records:
                 # Add record values to context for substitution
                 item_text = item_template
                 for key, value in record.items():
@@ -465,7 +522,7 @@ class TemplateProcessor:
             result_str = join_str.join(items)
         else:
             # Single result - use first record
-            record = graph_single(result) or {}
+            record = graph_single(records) or {}
             result_str = str(record.get("result", ""))
 
         # Substitute {result} in success template
@@ -493,10 +550,12 @@ class TemplateProcessor:
         for key, value in write_data.get("params", {}).items():
             params[key] = self._substitute_variables(str(value), context)
 
-        # Execute write
-        result = context["graph_fn"](query, params)
-
-        if result is None or not result["success"]:
+        # Execute write. The graph layer raises if the write cannot be applied
+        # (unreachable host or query failure); a write must not be reported as
+        # success when it did not land.
+        try:
+            context["graph_fn"](query, params)
+        except Exception:
             output = self.process(write_data.get("on_failure", ""), context)
             return output
 
@@ -515,10 +574,11 @@ class TemplateProcessor:
         for key, value in delete_data.get("params", {}).items():
             params[key] = self._substitute_variables(str(value), context)
 
-        # Execute delete
-        result = context["graph_fn"](query, params)
-
-        if result is None or not result["success"]:
+        # Execute delete. The graph layer raises if it cannot be applied; a
+        # delete must not be reported as success when it did not land.
+        try:
+            context["graph_fn"](query, params)
+        except Exception:
             output = self.process(delete_data.get("on_failure", ""), context)
             return output
 
@@ -538,15 +598,24 @@ class TemplateProcessor:
         if not subject or not predicate or not obj:
             return ""
 
-        # Build standard triple query
-        query = """
-            MERGE (s:Entity {name: $subject})
-            MERGE (o:Entity {name: $object})
-            MERGE (s)-[:$predicate]->(o)
-        """
-        params = {"subject": subject, "predicate": predicate.upper(), "object": obj}
+        # Store the triple as a canonical Claim: Entity/Predicate nodes linked by
+        # HAS_SUBJECT / USES_PREDICATE / HAS_OBJECT edges, plus the denormalized
+        # surface projection on the Claim node.
+        params = {
+            "subject": subject,
+            "predicate": predicate,
+            "object": obj,
+            "subject_cid": canonical_slug(subject),
+            "predicate_cid": canonical_slug(predicate),
+            "object_cid": canonical_slug(obj),
+            "claim_id": str(uuid4()),
+            "normalized": f"{subject} {predicate} {obj}".lower(),
+        }
 
-        context["graph_fn"](query, params)
+        try:
+            context["graph_fn"](TRIPLE_ADD_QUERY, params)
+        except Exception:
+            return ""
         return ""
 
     def _process_triple_query(self, triple_data: dict, context: dict) -> str:
@@ -558,27 +627,24 @@ class TemplateProcessor:
         predicate = triple_data.get("predicate", "")
         obj = triple_data.get("object", "")
 
-        # Determine query direction based on which is "?"
+        # Determine query direction based on which slot is "?". The predicate
+        # resolves to a canonical Predicate node; the known slot resolves to a
+        # canonical Entity; the unknown slot is read from the edge surface form.
         if obj == "?":
-            # Query for object: (subject)-[predicate]->(?)
-            query = """
-                MATCH (s:Entity {name: $subject})-[:$predicate]->(o:Entity)
-                RETURN o.name as result
-            """
+            query = TRIPLE_QUERY_OBJECT
             params = {"subject": subject, "predicate": predicate}
         elif subject == "?":
-            # Query for subject: (?)-[predicate]->(object)
-            query = """
-                MATCH (s:Entity)-[:$predicate]->(o:Entity {name: $object})
-                RETURN s.name as result
-            """
-            params = {"predicate": predicate, "object": obj}
+            query = TRIPLE_QUERY_SUBJECT
+            params = {"object": obj, "predicate": predicate}
         else:
             return ""
 
-        result = context["graph_fn"](query, params)
-        if result and result["success"] and graph_single(result):
-            value = str(graph_single(result).get("result", ""))
+        try:
+            records = context["graph_fn"](query, params)
+        except Exception:
+            records = []
+        if records and graph_single(records):
+            value = str(graph_single(records).get("result", ""))
             return value
         return ""
 

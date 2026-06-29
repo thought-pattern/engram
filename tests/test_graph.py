@@ -1,110 +1,105 @@
-"""Tests for Knowledge Graph integration."""
+"""Tests for Knowledge Graph integration.
 
-from engram.graph import GraphClient, graph_is_empty, graph_result, graph_single
+The graph layer mirrors the Tapestry connection interface: queries return a list
+of row dicts (not a status wrapper), reads degrade to an empty list, and writes
+raise on failure. Triples are stored as canonical Claim nodes linked by
+HAS_SUBJECT / USES_PREDICATE / HAS_OBJECT edges. MockGraphClient is an in-memory
+stand-in keyed on query parameters (the real Cypher is exercised by the live
+smoke test, not by the mock).
+"""
+
+from engram.graph import graph_is_empty, graph_single
 from engram.template import TemplateProcessor, template_context
 
 
-class MockGraphClient(GraphClient):
-    """In-memory mock graph client for tests.
+def same(a, b) -> bool:
+    """Case-insensitive surface comparison, matching the canonical queries."""
+    return bool(a) and bool(b) and str(a).lower() == str(b).lower()
 
-    Stores data in memory using a simple dict structure.
+
+class MockGraphClient:
+    """In-memory canonical graph stand-in.
+
+    Stores claims as (subject, predicate, object) triples and resolves the
+    canonical triple/entity queries by their parameters. Returns list[dict] and
+    never raises (the connection's raise-on-failure path is exercised by the
+    live smoke test).
     """
 
     def __init__(self) -> None:
-        """Initialize mock client."""
-        self._nodes: dict[str, dict] = {}  # name -> properties
-        self._relationships: list[tuple[str, str, str]] = []  # (from, type, to)
+        """Initialize the mock store."""
+        self.claims: list[dict] = []  # {"subject","predicate","object"}
+        self.entities: set[str] = set()
 
-    def execute(self, query: str, params=None) -> dict:
-        """Execute a mock query (basic MERGE, CREATE, MATCH, DELETE)."""
+    def execute(self, query: str, params=None) -> list:
+        """Execute a mock query, returning a list of row dicts."""
         params = params or {}
         query_upper = query.upper()
 
-        try:
-            # Handle CREATE/MERGE for nodes
-            if "MERGE" in query_upper or "CREATE" in query_upper:
-                if ":Entity" in query or ":Person" in query:
-                    name = params.get("name") or params.get("subject") or params.get("object")
-                    if name:
-                        self._nodes[name] = {"name": name}
+        subject = params.get("subject")
+        predicate = params.get("predicate")
+        obj = params.get("object")
+        name = params.get("name")
+        keyword = params.get("keyword")
 
-                # Handle relationship creation
-                if "->(" in query or ")->" in query:
-                    subject = params.get("subject")
-                    predicate = params.get("predicate", "RELATED_TO")
-                    obj = params.get("object")
-                    if subject and obj:
-                        self._nodes[subject] = {"name": subject}
-                        self._nodes[obj] = {"name": obj}
-                        self._relationships.append((subject, predicate, obj))
+        if "CREATE" in query_upper or "MERGE" in query_upper:
+            # Triple write (canonical Claim or a generic relationship create).
+            if subject and predicate and obj:
+                self.claims.append({"subject": subject, "predicate": predicate, "object": obj})
+                self.entities.update({subject, obj})
+            elif name:
+                self.entities.add(name)
+            return []
 
-                return graph_result(success=True, records=[])
+        if "MATCH" in query_upper and "RETURN" in query_upper:
+            # Triple query, object unknown: subject + predicate -> object.
+            if subject and predicate and not obj:
+                for claim in self.claims:
+                    if same(claim["subject"], subject) and same(claim["predicate"], predicate):
+                        return [{"result": claim["object"]}]
+                return []
+            # Triple query / graph_query, subject unknown: predicate + object -> subject.
+            if obj and predicate and not subject:
+                return [{"result": claim["subject"]} for claim in self.claims if same(claim["predicate"], predicate) and same(claim["object"], obj)]
+            # Facts by entity name (list-format graph_query and entity recall).
+            if name:
+                rows = []
+                for claim in self.claims:
+                    if same(claim["subject"], name):
+                        rows.append({"relation": claim["predicate"], "target": claim["object"], **claim})
+                    elif same(claim["object"], name):
+                        rows.append({"relation": claim["predicate"], "target": claim["subject"], **claim})
+                return rows
+            # Keyword fallback: entity whose label contains the keyword.
+            if keyword:
+                return [dict(claim) for claim in self.claims if keyword.lower() in claim["subject"].lower()]
+            return []
 
-            # Handle MATCH queries
-            if "MATCH" in query_upper and "RETURN" in query_upper:
-                records = []
+        if "DELETE" in query_upper:
+            if name:
+                self.claims = [claim for claim in self.claims if not (same(claim["subject"], name) or same(claim["object"], name))]
+                self.entities.discard(name)
+            return []
 
-                if params.get("predicate") and params.get("object"):
-                    predicate = params.get("predicate")
-                    obj = params.get("object")
-                    for s, p, o in self._relationships:
-                        if p == predicate and o == obj:
-                            records.append({"result": s})
-
-                elif params.get("subject") and params.get("predicate"):
-                    subject = params.get("subject")
-                    predicate = params.get("predicate")
-                    for s, p, o in self._relationships:
-                        if s == subject and p == predicate:
-                            records.append({"result": o})
-
-                elif params.get("name"):
-                    name = params.get("name")
-                    for s, p, o in self._relationships:
-                        if s == name:
-                            records.append({"relation": p, "target": o})
-                        elif o == name:
-                            records.append({"relation": p, "target": s})
-
-                return graph_result(success=True, records=records)
-
-            # Handle DELETE
-            if "DELETE" in query_upper:
-                name = params.get("name")
-                if name:
-                    self._nodes.pop(name, None)
-                    self._relationships = [(s, p, o) for s, p, o in self._relationships if s != name and o != name]
-                return graph_result(success=True, records=[])
-
-            return graph_result(success=True, records=[])
-
-        except Exception as e:
-            return graph_result(success=False, records=[], error=str(e))
+        return []
 
     def close(self) -> None:
         """Close the mock connection."""
         pass
 
 
-class TestGraphResult:
-    """Tests for GraphResult."""
+class TestGraphHelpers:
+    """Tests for the list-row helpers."""
 
-    def test_success_with_records(self):
-        result = graph_result(success=True, records=[{"name": "Alice"}])
-        assert result["success"]
-        assert not graph_is_empty(result)
-        assert graph_single(result) == {"name": "Alice"}
+    def test_non_empty(self):
+        records = [{"name": "Alice"}]
+        assert not graph_is_empty(records)
+        assert graph_single(records) == {"name": "Alice"}
 
-    def test_success_empty(self):
-        result = graph_result(success=True, records=[])
-        assert result["success"]
-        assert graph_is_empty(result)
-        assert not graph_single(result)
-
-    def test_failure(self):
-        result = graph_result(success=False, records=[], error="Connection failed")
-        assert not result["success"]
-        assert result["error"] == "Connection failed"
+    def test_empty(self):
+        records = []
+        assert graph_is_empty(records)
+        assert graph_single(records) == {}
 
 
 class TestMockGraphClient:
@@ -112,54 +107,47 @@ class TestMockGraphClient:
 
     def test_create_node(self):
         client = MockGraphClient()
-        result = client.execute("CREATE (p:Person {name: $name})", {"name": "Alice"})
-        assert result["success"]
+        result = client.execute("CREATE (p:Entity {primary_label: $name})", {"name": "Alice"})
+        assert result == []
+        assert "Alice" in client.entities
 
     def test_create_relationship(self):
         client = MockGraphClient()
-        result = client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+        client.execute(
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)-[:HAS_SUBJECT]->(s)",
             {"subject": "Alice", "predicate": "KNOWS", "object": "Bob"},
         )
-        assert result["success"]
-        assert len(client._relationships) == 1
+        assert len(client.claims) == 1
 
     def test_query_relationship(self):
         client = MockGraphClient()
-        # Add relationship
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
         )
-
-        # Query
         result = client.execute(
-            "MATCH (a:Entity)-[:$predicate]->(b:Entity {name: $object}) RETURN a.name as result",
+            "MATCH (c:Claim)-[:USES_PREDICATE]->(p:Predicate) RETURN hs.surface_form as result",
             {"predicate": "CAPITAL_OF", "object": "France"},
         )
-        assert result["success"]
-        assert len(result["records"]) == 1
-        assert result["records"][0]["result"] == "Paris"
+        assert len(result) == 1
+        assert result[0]["result"] == "Paris"
 
     def test_query_not_found(self):
         client = MockGraphClient()
         result = client.execute(
-            "MATCH (a:Entity)-[:$predicate]->(b:Entity {name: $object}) RETURN a.name as result",
+            "MATCH (c:Claim) RETURN hs.surface_form as result",
             {"predicate": "CAPITAL_OF", "object": "Unknown"},
         )
-        assert result["success"]
         assert graph_is_empty(result)
 
     def test_delete_node(self):
         client = MockGraphClient()
-        # Add node
-        client.execute("CREATE (p:Person {name: $name})", {"name": "Alice"})
-        assert "Alice" in client._nodes
+        client.execute("CREATE (e:Entity {primary_label: $name})", {"name": "Alice"})
+        assert "Alice" in client.entities
 
-        # Delete
-        result = client.execute("MATCH (a:Entity {name: $name}) DETACH DELETE a", {"name": "Alice"})
-        assert result["success"]
-        assert "Alice" not in client._nodes
+        result = client.execute("MATCH (e:Entity {primary_label: $name}) DETACH DELETE e", {"name": "Alice"})
+        assert result == []
+        assert "Alice" not in client.entities
 
 
 class TestTemplateGraphOperations:
@@ -175,9 +163,8 @@ class TestTemplateGraphOperations:
 
     def test_graph_query_success(self):
         client = MockGraphClient()
-        # Add data
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
         )
 
@@ -186,7 +173,7 @@ class TestTemplateGraphOperations:
 
         template = {
             "graph_query": {
-                "query": "MATCH (a:Entity)-[:$predicate]->(b:Entity {name: $object}) RETURN a.name as result",
+                "query": "MATCH (c:Claim) RETURN hs.surface_form as result",
                 "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
                 "on_success": {"text": "{result} is the capital of {star2}."},
                 "on_failure": {"text": "I don't know."},
@@ -204,7 +191,7 @@ class TestTemplateGraphOperations:
 
         template = {
             "graph_query": {
-                "query": "MATCH (a:Entity)-[:$predicate]->(b:Entity {name: $object}) RETURN a.name as result",
+                "query": "MATCH (c:Claim) RETURN hs.surface_form as result",
                 "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
                 "on_success": {"text": "{result} is the capital."},
                 "on_failure": {"text": "I don't know."},
@@ -236,7 +223,7 @@ class TestTemplateGraphOperations:
 
         template = {
             "graph_write": {
-                "query": "CREATE (p:Person {name: $name})",
+                "query": "CREATE (e:Entity {primary_label: $name})",
                 "params": {"name": "{star1}"},
                 "on_success": {"text": "I'll remember {star1}."},
                 "on_failure": {"text": "Could not save."},
@@ -247,17 +234,37 @@ class TestTemplateGraphOperations:
         assert "remember" in result
         assert "Alice" in result
 
+    def test_graph_write_failure(self):
+        """A write that raises is reported via on_failure, not on_success."""
+
+        def failing_graph_fn(query, params):
+            raise RuntimeError("Write query failed: MemGraph unreachable")
+
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["Alice"], graph_fn=failing_graph_fn)
+
+        template = {
+            "graph_write": {
+                "query": "CREATE (e:Entity {primary_label: $name})",
+                "params": {"name": "{star1}"},
+                "on_success": {"text": "I'll remember {star1}."},
+                "on_failure": {"text": "Could not save."},
+            }
+        }
+
+        result = processor.process(template, ctx)
+        assert result == "Could not save."
+
     def test_graph_delete(self):
         client = MockGraphClient()
-        # Add node first
-        client.execute("CREATE (p:Person {name: $name})", {"name": "Alice"})
+        client.execute("CREATE (e:Entity {primary_label: $name})", {"name": "Alice"})
 
         processor = TemplateProcessor()
         ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
 
         template = {
             "graph_delete": {
-                "query": "MATCH (a:Entity {name: $name}) DETACH DELETE a",
+                "query": "MATCH (e:Entity {primary_label: $name}) DETACH DELETE e",
                 "params": {"name": "{star1}"},
                 "on_success": {"text": "Forgotten."},
                 "on_failure": {"text": "Could not delete."},
@@ -275,18 +282,17 @@ class TestTemplateGraphOperations:
         template = {"triple_add": {"subject": "{star1}", "predicate": "{star2}", "object": "{star3}"}}
 
         processor.process(template, ctx)
-        # Verify relationship was added
-        assert len(client._relationships) == 1
-        s, p, o = client._relationships[0]
-        assert s == "Alice"
-        assert p == "FRIEND"
-        assert o == "Bob"
+        # The triple is stored as a canonical claim with its surface projection.
+        assert len(client.claims) == 1
+        claim = client.claims[0]
+        assert claim["subject"] == "Alice"
+        assert claim["predicate"] == "friend"
+        assert claim["object"] == "Bob"
 
     def test_triple_query_object(self):
         client = MockGraphClient()
-        # Add relationship
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
         )
 
@@ -300,9 +306,8 @@ class TestTemplateGraphOperations:
 
     def test_triple_query_subject(self):
         client = MockGraphClient()
-        # Add relationship
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
         )
 
@@ -316,13 +321,12 @@ class TestTemplateGraphOperations:
 
     def test_graph_query_list_format(self):
         client = MockGraphClient()
-        # Add multiple relationships
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Alice", "predicate": "KNOWS", "object": "Bob"},
         )
         client.execute(
-            "MERGE (a:Entity {name: $subject}) MERGE (b:Entity {name: $object}) CREATE (a)-[:$predicate]->(b)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
             {"subject": "Alice", "predicate": "LIKES", "object": "Pizza"},
         )
 
@@ -331,7 +335,7 @@ class TestTemplateGraphOperations:
 
         template = {
             "graph_query": {
-                "query": "MATCH (a:Entity {name: $name})-[r]->(b) RETURN type(r) as relation, b.name as target",
+                "query": "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity {primary_label: $name}) RETURN c.predicate as relation, c.object as target",
                 "params": {"name": "{star1}"},
                 "format": "list",
                 "item_template": "{star1} {relation} {target}",

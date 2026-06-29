@@ -352,6 +352,51 @@ intent matching - shared question/greeting frames dominate, so paraphrases
 mis-route even at high thresholds. It would need sentence embeddings, not word
 vectors, to be worthwhile.)
 
+## Knowledge Graph (optional)
+
+ENGRAM can recall facts from a MemGraph knowledge graph in addition to its
+statement store. The graph layer is off by default (`graph.enabled: false`) and
+uses the same interface as Tapestry: the pymgclient driver over a host/port,
+with `execute` / `execute_read` / `execute_write` returning lists of row dicts,
+graceful degradation when the host is unreachable, and a reconnect cooldown.
+ENGRAM's role is recall — it reads the canonical graph; a standalone deployment
+can also author triples through `<triple_add>` templates.
+
+Facts use the canonical-first model shared with Tapestry: a `Claim` node links
+by edge to canonical `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
+`USES_PREDICATE` / `HAS_OBJECT`), and the surface triple is also kept as a
+denormalized projection on the Claim so a reader sees it without joining edges.
+Lookups resolve through the canonical edges (by `primary_label`, `aliases`, or
+the edge `surface_form`), never by matching a stored string.
+
+Apply the sample schema (`schema.cypher`) before enabling the graph:
+
+```bash
+python scripts/setup_schema.py            # uses config.yml graph.host / graph.port
+python scripts/setup_schema.py --check    # print the statements without running them
+```
+
+Configure the connection in `config.yml`:
+
+```yaml
+graph:
+  host: localhost
+  port: 7687
+  username: ""
+  password: ""
+  enabled: true
+```
+
+Template operations once the graph is enabled:
+
+- `<triple_add>` — store a `(subject, predicate, object)` triple as a canonical Claim.
+- `<triple_query>` — resolve the unknown slot of a triple (`"?"` for subject or object).
+- `<graph_query>` / `<graph_write>` / `<graph_delete>` — run author-supplied Cypher.
+
+`schema.cypher` is the recall-relevant subset of the Tapestry canonical schema;
+the full store (Passage, Document, Event, Proof, Source, Inquiry nodes and the
+vector indexes) is a superset ENGRAM does not own.
+
 ## Evaluation
 
 `eval/run_eval.py` cycles a corpus of prompts (`eval/corpus.json`) through a

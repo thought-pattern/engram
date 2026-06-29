@@ -1,12 +1,13 @@
 """Core ENGRAM implementation."""
 
+import logging
 import threading
 
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import VERSION, Tier
-from engram.graph import create_graph_client, graph_result
+from engram.graph import create_graph_client
 from engram.models import (
     keyword_entry,
     query_result,
@@ -25,6 +26,28 @@ from engram.text import (
     extract_keywords,
     extract_keywords_spacy,
     normalize,
+)
+
+logger = logging.getLogger(__name__)
+
+# Canonical-graph recall queries. Claims link to canonical Entity/Predicate
+# nodes by edge; the surface triple is read from the denormalized projection on
+# the Claim node (subject/predicate/object), never matched on. See schema.cypher.
+GRAPH_ENTITY_FACTS_QUERY = (
+    "MATCH (c:Claim)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
+    "WHERE (toLower(e.primary_label) = toLower($name) "
+    "OR toLower($name) IN [a IN e.aliases | toLower(a)] "
+    "OR toLower(rel.surface_form) = toLower($name)) "
+    "AND c.invalidated_at IS NULL "
+    "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "LIMIT 5"
+)
+GRAPH_KEYWORD_FACTS_QUERY = (
+    "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) "
+    "WHERE toLower(e.primary_label) CONTAINS toLower($keyword) "
+    "AND c.invalidated_at IS NULL "
+    "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "LIMIT 3"
 )
 
 
@@ -93,14 +116,14 @@ class Engram:
             graph_config = self.config["graph"]
             if isinstance(graph_config, dict) and graph_config["enabled"]:
                 self._graph_client = create_graph_client(
-                    uri=graph_config["uri"],
+                    host=graph_config["host"],
+                    port=graph_config["port"],
                     username=graph_config["username"],
                     password=graph_config["password"],
-                    database=graph_config["database"],
                 )
         return self._graph_client
 
-    def graph_query(self, cypher: str, params=None) -> dict:
+    def graph_query(self, cypher: str, params=None) -> list:
         """Execute a Cypher query against the knowledge graph.
 
         Args:
@@ -108,14 +131,19 @@ class Engram:
             params: Optional query parameters.
 
         Returns:
-            GraphResult with success status and records.
+            List of row dicts. Empty list when the graph is not configured,
+            unreachable, or the query fails -- recall degrades gracefully rather
+            than raising into the template/response path.
         """
         client = self.graph_client
         if client is None:
-            not_configured = graph_result(success=False, records=[], error="Graph not configured")
-            return not_configured
-        response = client.execute(cypher, params)
-        return response
+            return []
+        try:
+            records = client.execute_read(cypher, params)
+            return records
+        except RuntimeError as err:
+            logger.debug("Graph query failed: %s", err)
+            return []
 
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
@@ -136,74 +164,45 @@ class Engram:
         # Extract entities from the input
         entities = extract_entities(text)
         if not entities:
-            # Try keyword-based lookup
+            # Keyword fallback: match a canonical Entity whose primary label
+            # contains a query keyword, then return the surface triples of the
+            # claims it is the subject of.
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             if not keywords:
                 return ""
-            # Query for any node matching keywords
+            facts = []
             for kw in keywords[:3]:  # Limit to top 3 keywords
-                result = client.execute(
-                    "MATCH (n) WHERE toLower(n.name) CONTAINS toLower($keyword) "
-                    "RETURN n.name as name, labels(n) as labels, properties(n) as props LIMIT 3",
-                    {"keyword": kw},
-                )
-                if result["success"] and result["records"]:
-                    # Format response from graph data in natural language
-                    responses = []
-                    for record in result["records"]:
-                        name = record.get("name", "")
-                        props = record.get("props", {})
-                        if name and props:
-                            # Build human-readable property descriptions
-                            prop_parts = []
-                            for k, v in props.items():
-                                if k != "name" and v:
-                                    # Convert property names to readable format
-                                    readable_key = k.replace("_", " ")
-                                    prop_parts.append(f"its {readable_key} is {v}")
-                            if prop_parts:
-                                responses.append(f"{name}: {', '.join(prop_parts)}")
-                    if responses:
-                        joined = " ".join(responses)
-                        return joined
+                records = self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": kw})
+                facts.extend(self._records_to_facts(records))
+            if facts:
+                formatted = self._format_graph_facts(facts)
+                return formatted
             return ""
 
-        # Query graph for each entity
+        # Query the canonical graph for each entity. The Claim node carries the
+        # rendered subject/predicate/object projection, so one query covers the
+        # entity in either the subject or object role.
         facts = []
         for entity in entities:
-            # Query for relationships involving this entity
-            result = client.execute(
-                "MATCH (n)-[r]->(m) WHERE toLower(n.name) = toLower($name) "
-                "RETURN n.name as subject, type(r) as relation, m.name as object LIMIT 5",
-                {"name": entity["text"]},
-            )
-            if result["success"] and result["records"]:
-                for record in result["records"]:
-                    subj = record.get("subject", "")
-                    rel = record.get("relation", "").replace("_", " ").lower()
-                    obj = record.get("object", "")
-                    if subj and rel and obj:
-                        facts.append((subj, rel, obj))
-
-            # Also try reverse relationships
-            result = client.execute(
-                "MATCH (n)<-[r]-(m) WHERE toLower(n.name) = toLower($name) "
-                "RETURN m.name as subject, type(r) as relation, n.name as object LIMIT 5",
-                {"name": entity["text"]},
-            )
-            if result["success"] and result["records"]:
-                for record in result["records"]:
-                    subj = record.get("subject", "")
-                    rel = record.get("relation", "").replace("_", " ").lower()
-                    obj = record.get("object", "")
-                    if subj and rel and obj:
-                        facts.append((subj, rel, obj))
+            records = self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]})
+            facts.extend(self._records_to_facts(records))
 
         if facts:
             # Format facts as natural language
             formatted = self._format_graph_facts(facts)
             return formatted
         return ""
+
+    def _records_to_facts(self, records: list) -> list:
+        """Turn canonical claim-projection rows into (subject, predicate, object) tuples."""
+        facts = []
+        for record in records:
+            subj = record.get("subject", "")
+            pred = record.get("predicate", "")
+            obj = record.get("object", "")
+            if subj and pred and obj:
+                facts.append((subj, pred, obj))
+        return facts
 
     def _format_graph_facts(self, facts: list[tuple[str, str, str]]) -> str:
         """Format graph facts as natural human-readable text.
