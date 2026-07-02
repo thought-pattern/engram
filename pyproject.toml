@@ -26,14 +26,14 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "black>=24.0",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.1.0",
+    "black>=26.5.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.20",
 ]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
