@@ -11,7 +11,7 @@ from engram.config import engram_config
 from engram.constants import SessionOverflow, Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
-from engram.sessions import SessionLimitExceeded, SessionNotFound
+from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
 class TestEngramStore:
@@ -421,7 +421,7 @@ class TestEngramSessions:
     def test_update_session_context_not_found(self) -> None:
         engram = Engram()
 
-        with pytest.raises(SessionNotFound):
+        with pytest.raises(SessionNotFoundError):
             sessions.update_session_context(engram, "nonexistent", "Response")
 
     def test_delete_session(self) -> None:
@@ -495,7 +495,7 @@ class TestEngramSessions:
         sessions.create_session(engram, session_id="first")
         sessions.create_session(engram, session_id="second")
 
-        with pytest.raises(SessionLimitExceeded):
+        with pytest.raises(SessionLimitExceededError):
             sessions.create_session(engram, session_id="third")
 
 
@@ -836,7 +836,7 @@ class TestEngramSpecExamples:
         engram.store("France has a population of 67 million", tier=Tier.STATIC)
 
         # Session 1
-        session_a = sessions.create_session(engram, session_id="user_a")
+        sessions.create_session(engram, session_id="user_a")
 
         # First query
         result1 = engram.query("What is the capital of France?", session_id="user_a")
@@ -960,7 +960,7 @@ class TestEngramContextMatching:
         # Verify context is preserved
         patterns = engram2.pattern_matcher.get_patterns_with_context()
         found = False
-        for pattern, response, that, topic in patterns:
+        for pattern, _response, that, topic in patterns:
             if pattern == "INFO":
                 assert that == "ASK ME"
                 assert topic == "WEATHER"

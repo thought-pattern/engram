@@ -8,7 +8,10 @@ stand-in keyed on query parameters (the real Cypher is exercised by the live
 smoke test, not by the mock).
 """
 
-from engram.graph import graph_is_empty, graph_single
+from engram.config import engram_config, graph_config
+from engram.constants import Tier
+from engram.core import Engram
+from engram.graph import graph_is_empty, graph_single, is_write_cypher
 from engram.template import TemplateProcessor, template_context
 
 
@@ -82,6 +85,10 @@ class MockGraphClient:
             return []
 
         return []
+
+    def execute_read(self, query: str, params=None) -> list:
+        """Read alias, matching the real connection's execute_read."""
+        return self.execute(query, params)
 
     def close(self) -> None:
         """Close the mock connection."""
@@ -347,3 +354,76 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert "KNOWS" in result or "LIKES" in result
+
+
+class TestReadOnlyGraphWiring:
+    """ENGRAM wires template graph ops to a read-only function in its recall role.
+
+    Read ops (`<triple_query>`, a read `<graph_query>`) resolve against the
+    graph; authoring ops (`<triple_add>`, `<graph_write>`, `<graph_delete>`) are
+    refused and leave the graph unchanged. This closes the gap where core never
+    set `context['graph_fn']`, leaving the ops dormant through the response path.
+    """
+
+    def engram_with_graph(self, client):
+        """An ENGRAM with the graph enabled and a mock client injected."""
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+        engram._graph_client = client
+        return engram
+
+    def test_is_write_cypher_detects_mutations(self):
+        assert is_write_cypher("MATCH (c:Claim) CREATE (x:Claim) RETURN x")
+        assert is_write_cypher("MERGE (n:Entity {primary_label: 'X'})")
+        assert is_write_cypher("MATCH (n) DETACH DELETE n")
+        assert is_write_cypher("MATCH (c) SET c.x = 1")
+        assert not is_write_cypher("MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) RETURN c LIMIT 1")
+        assert not is_write_cypher("")
+
+    def test_graph_read_fn_passes_reads(self):
+        client = MockGraphClient()
+        client.claims.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
+        engram = self.engram_with_graph(client)
+        rows = engram.graph_read_fn(
+            "MATCH (c:Claim) RETURN c.object AS result",
+            {"subject": "Athens", "predicate": "located in"},
+        )
+        assert rows == [{"result": "Greece"}]
+
+    def test_graph_read_fn_refuses_writes(self):
+        client = MockGraphClient()
+        engram = self.engram_with_graph(client)
+        before = len(client.claims)
+        result = engram.graph_read_fn(
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+            {"subject": "Paris", "predicate": "located in", "object": "France"},
+        )
+        assert result == []
+        assert len(client.claims) == before  # the write never reached the graph
+
+    def test_triple_query_wired_through_response_path(self):
+        """A stored `<triple_query>` statement resolves through pattern_query."""
+        client = MockGraphClient()
+        client.claims.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
+        engram = self.engram_with_graph(client)
+        engram.store(
+            text="",
+            pattern="WHERE IS ATHENS",
+            template={"triple_query": {"subject": "Athens", "predicate": "located in", "object": "?"}},
+            tier=Tier.STATIC,
+        )
+        result = engram.pattern_query("where is athens")
+        assert result and result[2] == "Greece"
+
+    def test_triple_add_inert_through_response_path(self):
+        """A stored `<triple_add>` statement does not author on the recall path."""
+        client = MockGraphClient()
+        engram = self.engram_with_graph(client)
+        engram.store(
+            text="",
+            pattern="ADD PARIS",
+            template={"triple_add": {"subject": "Paris", "predicate": "located in", "object": "France"}},
+            tier=Tier.STATIC,
+        )
+        before = len(client.claims)
+        engram.pattern_query("add paris")
+        assert len(client.claims) == before  # authoring refused on the recall path

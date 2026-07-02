@@ -7,7 +7,7 @@ from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import VERSION, Tier
-from engram.graph import create_graph_client
+from engram.graph import create_graph_client, is_write_cypher
 from engram.models import (
     keyword_entry,
     query_result,
@@ -17,6 +17,7 @@ from engram.models import (
 )
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper
 from engram.pattern import PatternMatcher
+from engram.phrasing import phrase_facts
 from engram.scoring import score_statement
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
 from engram.template import TemplateProcessor, template_context
@@ -145,6 +146,22 @@ class Engram:
             logger.debug("Graph query failed: %s", err)
             return []
 
+    def graph_read_fn(self, cypher: str, params=None) -> list:
+        """Read-only graph callback for template operations.
+
+        ENGRAM's graph role is recall, so the template graph operations are
+        wired to reads only: `<triple_query>` and a read `<graph_query>` pass
+        through, while a mutating query -- `<triple_add>`, `<graph_write>`,
+        `<graph_delete>` -- is refused and returns an empty result rather than
+        author into the graph. A standalone deployment that wants authoring
+        wires `graph_query` (or its own writer) as the template graph function
+        instead.
+        """
+        if is_write_cypher(cypher):
+            logger.debug("Refused write query on the recall-only graph path")
+            return []
+        return self.graph_query(cypher, params)
+
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
 
@@ -205,46 +222,27 @@ class Engram:
         return facts
 
     def _format_graph_facts(self, facts: list[tuple[str, str, str]]) -> str:
-        """Format graph facts as natural human-readable text.
+        """Phrase graph facts as friendly natural-language sentences.
+
+        Delegates to `phrasing.phrase_facts`, which picks a grammatical
+        frame per predicate (copula / passive / possessive / active) from
+        spaCy morphology, so a recalled triple reads as a sentence rather
+        than the wooden `subject slug object` projection.
 
         Args:
-            facts: List of (subject, relation, object) tuples.
+            facts: List of (subject, predicate, object) tuples.
 
         Returns:
-            Natural language string.
+            Natural language string ("" when there are no facts).
         """
-        if not facts:
-            return ""
-
-        # Group facts by subject for more natural responses
-        by_subject: dict[str, list[tuple[str, str]]] = {}
-        for subj, rel, obj in facts:
-            if subj not in by_subject:
-                by_subject[subj] = []
-            by_subject[subj].append((rel, obj))
-
-        sentences = []
-        for subj, relations in by_subject.items():
-            if len(relations) == 1:
-                rel, obj = relations[0]
-                sentences.append(f"{subj} {rel} {obj}")
-            else:
-                # Combine multiple facts about same subject
-                parts = [f"{rel} {obj}" for rel, obj in relations]
-                if len(parts) == 2:
-                    sentences.append(f"{subj} {parts[0]} and {parts[1]}")
-                else:
-                    last = parts.pop()
-                    sentences.append(f"{subj} {', '.join(parts)}, and {last}")
-
-        result = ". ".join(sentences) + "."
-        return result
+        return phrase_facts(facts)
 
     def learn_from_response(
         self,
         query: str,
         response: str,
         tier: Tier = Tier.DYNAMIC,
+        template=None,
     ) -> str:
         """Learn from an LLM response by storing it for future retrieval.
 
@@ -256,6 +254,9 @@ class Engram:
             query: The original user query.
             response: The LLM's response to cache.
             tier: Storage tier (default DYNAMIC for evictable).
+            template: Optional structured metadata to carry on the stored entry
+                (an opaque dict Engram does not interpret), for callers that attach
+                their own provenance to a cached conclusion.
 
         Returns:
             Statement ID of the stored response.
@@ -266,18 +267,15 @@ class Engram:
         # Create a pattern that will match similar queries
         # Use the full normalized query as the pattern with wildcards for flexibility
         words = normalized.split()
-        if len(words) > 5:
-            # For longer queries, create a more flexible pattern
-            # Keep first few significant words + wildcard
-            pattern = " ".join(words[:4]) + " *"
-        else:
-            # For shorter queries, use exact match
-            pattern = normalized.upper()
+        # Longer queries keep the first few significant words plus a wildcard;
+        # shorter queries match exactly.
+        pattern = " ".join(words[:4]) + " *" if len(words) > 5 else normalized.upper()
 
         stmt_id = self.store(
             text=response,
             pattern=pattern,
             tier=tier,
+            template=template,
         )
         return stmt_id
 
@@ -615,6 +613,7 @@ class Engram:
             person2_subs=self.substitution_maps["person2"],
             gender_subs=self.substitution_maps["gender"],
             category_count=len(self.statements),
+            graph_fn=self.graph_read_fn,
         )
 
         # Add session context
@@ -661,6 +660,7 @@ class Engram:
                                 category_count=context["category_count"],
                                 redirect_fn=redirect_fn,
                                 learn_fn=context["learn_fn"],
+                                graph_fn=self.graph_read_fn,
                             )
                             template_to_process = s["template"] or s["text"]
                             redirect_response = self.template_processor.process(template_to_process, new_context)
@@ -775,6 +775,30 @@ class Engram:
             if idx is not None:
                 return self.statements[idx]
         return {}
+
+    def retire_statement(self, statement_id: str) -> bool:
+        """Remove a statement from the store by id.
+
+        Unlike capacity eviction, this is a deliberate removal of a specific entry --
+        a caller retiring a cached response it has decided is no longer valid. Cleans
+        the pattern map alongside the keyword and statement indices that
+        evict_statement_at maintains. Returns False when no statement carries the id.
+
+        Args:
+            statement_id: The id of the statement to remove.
+
+        Returns:
+            True if a statement was removed, False if the id was not present.
+        """
+        with self.statement_lock:
+            idx = self.statement_index.get(statement_id)
+            if idx is None:
+                return False
+            stmt = self.statements[idx]
+            pattern = stmt.get("pattern", "")
+            if pattern and self.pattern_to_statement.get(pattern) == statement_id:
+                del self.pattern_to_statement[pattern]
+            return eviction_mod.evict_statement_at(self, idx)
 
     # =========================================================================
     # Initialization Patterns

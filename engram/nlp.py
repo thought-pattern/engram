@@ -87,10 +87,7 @@ def _is_question(text: str) -> bool:
 
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
-    if len(words) >= 2 and words[0] in COPULAS:
-        return True
-
-    return False
+    return len(words) >= 2 and words[0] in COPULAS
 
 
 def _is_command(text: str) -> bool:

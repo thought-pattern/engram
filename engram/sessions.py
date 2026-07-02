@@ -10,13 +10,13 @@ from engram.constants import SessionOverflow
 from engram.models import session, session_update_context
 
 
-class SessionLimitExceeded(Exception):
+class SessionLimitExceededError(Exception):
     """Raised when session limit is reached and overflow is REJECT."""
 
     pass
 
 
-class SessionNotFound(Exception):
+class SessionNotFoundError(Exception):
     """Raised when a session is not found."""
 
     pass
@@ -34,14 +34,14 @@ def create_session(engram, session_id=None, metadata=None) -> str:
         Session ID of the created session.
 
     Raises:
-        SessionLimitExceeded: If at maximum sessions and overflow policy is REJECT.
+        SessionLimitExceededError: If at maximum sessions and overflow policy is REJECT.
     """
 
     with engram.session_lock:
         # Check session limit
         if len(engram.sessions) >= engram.config["max_sessions"]:
             if engram.config["session_overflow"] == SessionOverflow.REJECT:
-                raise SessionLimitExceeded("Maximum sessions reached")
+                raise SessionLimitExceededError("Maximum sessions reached")
             elif engram.config["session_overflow"] == SessionOverflow.EXPIRE_OLDEST:
                 _expire_oldest_session(engram)
             else:  # LRU
@@ -80,13 +80,13 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
         previous_response: Response text to add to context.
 
     Raises:
-        SessionNotFound: If session does not exist.
+        SessionNotFoundError: If session does not exist.
     """
 
     with engram.session_lock:
         session = engram.sessions.get(session_id)
         if session is None:
-            raise SessionNotFound(f"Session not found: {session_id}")
+            raise SessionNotFoundError(f"Session not found: {session_id}")
         session_update_context(session, previous_response)
 
 

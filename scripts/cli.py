@@ -16,7 +16,7 @@ from engram import metrics, persistence, sessions
 from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
-from engram.sessions import SessionLimitExceeded, SessionNotFound
+from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -371,7 +371,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             session_id = sessions.create_session(engram, session_id=args.id)
             print(f"Created session: {session_id}")
             modified = True
-        except SessionLimitExceeded as e:
+        except SessionLimitExceededError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
@@ -406,7 +406,7 @@ def cmd_session(args: argparse.Namespace) -> int:
             sessions.update_session_context(engram, args.id, args.response)
             print(f"Updated session: {args.id}")
             modified = True
-        except SessionNotFound:
+        except SessionNotFoundError:
             print(f"Session not found: {args.id}", file=sys.stderr)
             return 1
 

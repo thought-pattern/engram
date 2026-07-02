@@ -51,6 +51,12 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Runnable entrypoints put the repo root on sys.path before importing the
+# package, so their package imports are intentionally not at the top of file.
+"scripts/*" = ["E402"]
+"eval/*" = ["E402"]
+
 # Black is the formatter of record: `black -l 132 -t py311`. The code targets
 # 3.12+ (see requires-python and ruff target-version), but the py311 formatting
 # style is preferred over py312's.

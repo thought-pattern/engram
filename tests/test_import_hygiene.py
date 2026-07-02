@@ -31,10 +31,10 @@ def test_no_dynamic_imports() -> None:
     for path in _engram_files():
         tree = _parse(path)
         for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             for node in ast.walk(func):
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import | ast.ImportFrom):
                     offenders.add(f"{os.path.basename(path)}:{node.lineno}")
     assert not offenders, "Dynamic (function-local) imports are forbidden: " + ", ".join(sorted(offenders))
 

@@ -288,9 +288,8 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
     for pattern, response in patterns:
         result = match_pattern(pattern, text)
 
-        if result["matched"]:
-            if not best_match or result["score"] > best_match[3]:
-                best_match = (pattern, response, result["captured"], result["score"])
+        if result["matched"] and (not best_match or result["score"] > best_match[3]):
+            best_match = (pattern, response, result["captured"], result["score"])
 
     if best_match:
         best = (best_match[0], best_match[1], best_match[2])

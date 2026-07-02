@@ -369,6 +369,19 @@ denormalized projection on the Claim so a reader sees it without joining edges.
 Lookups resolve through the canonical edges (by `primary_label`, `aliases`, or
 the edge `surface_form`), never by matching a stored string.
 
+Recalled facts are phrased into natural sentences rather than the wooden
+`subject slug object` projection (`engram/phrasing.py`). The connector — copula,
+passive, possessive, or bare active — is a grammatical property of each
+predicate, and spaCy's morphology picks it (`VerbForm=Fin` → active `owns`,
+`Part` behind a preposition → stative `is located in`, a nominal head → the noun
+role `'s performer is`), with an article inserted where a noun head needs one
+(`is a member of`). So `located_in` reads as "is located in" and `owned_by` as
+"was owned by". A small override map keyed by predicate slug corrects spaCy's
+few single-token misreads and gives the temporal predicates an idiom
+(`date_of_birth` → "was born on"). The frame is derived once per predicate and
+memoized; if the spaCy model is unavailable, phrasing degrades to a bare active
+frame rather than breaking recall.
+
 Apply the sample schema (`schema.cypher`) before enabling the graph:
 
 ```bash
@@ -387,11 +400,20 @@ graph:
   enabled: true
 ```
 
-Template operations once the graph is enabled:
+Template operations once the graph is enabled. In its recall role ENGRAM wires
+these to a **read-only** graph function, so the read operations resolve against
+the graph while the authoring operations are refused — a mutating query returns
+an empty result rather than writing:
 
-- `<triple_add>` — store a `(subject, predicate, object)` triple as a canonical Claim.
-- `<triple_query>` — resolve the unknown slot of a triple (`"?"` for subject or object).
-- `<graph_query>` / `<graph_write>` / `<graph_delete>` — run author-supplied Cypher.
+- `<triple_query>` — resolve the unknown slot of a triple (`"?"` for subject or
+  object). Read; active.
+- `<graph_query>` — run an author-supplied read Cypher. Active; a query carrying
+  a write clause (`CREATE` / `MERGE` / `DELETE` / `SET` / `REMOVE` / …) is
+  refused.
+- `<triple_add>` / `<graph_write>` / `<graph_delete>` — author into the graph.
+  Inert on the recall path. A standalone deployment that wants authoring wires
+  `graph_query` (or its own writer) as the template graph function in place of
+  the read-only default.
 
 `schema.cypher` is the recall-relevant subset of the Tapestry canonical schema;
 the full store (Passage, Document, Event, Proof, Source, Inquiry nodes and the

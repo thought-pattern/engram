@@ -13,6 +13,7 @@ method names — duck typing is the contract, so there is no abstract base class
 """
 
 import logging
+import re
 import time
 from uuid import UUID
 
@@ -52,6 +53,22 @@ def is_connection_error(err: Exception) -> bool:
         err_str = str(err).lower()
         return any(marker in err_str for marker in CONNECTION_LOST_MARKERS)
     return False
+
+
+# Cypher clauses that mutate the graph. ENGRAM's graph role is recall, so the
+# read-only template path refuses any query carrying one of these.
+WRITE_CLAUSE = re.compile(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH)\b", re.IGNORECASE)
+
+
+def is_write_cypher(cypher: str) -> bool:
+    """Return True if the Cypher mutates the graph.
+
+    Detects the write clauses (CREATE / MERGE / DELETE / SET / REMOVE / ...)
+    as whole words, case-insensitively. Conservative: an ambiguous query is
+    treated as a write, so the recall-only path refuses it rather than risk a
+    silent mutation.
+    """
+    return bool(WRITE_CLAUSE.search(cypher or ""))
 
 
 def coerce_params(parameters):
