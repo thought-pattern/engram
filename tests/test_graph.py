@@ -63,7 +63,11 @@ class MockGraphClient:
                 return []
             # Triple query / graph_query, subject unknown: predicate + object -> subject.
             if obj and predicate and not subject:
-                return [{"result": claim["subject"]} for claim in self.claims if same(claim["predicate"], predicate) and same(claim["object"], obj)]
+                return [
+                    {"result": claim["subject"]}
+                    for claim in self.claims
+                    if same(claim["predicate"], predicate) and same(claim["object"], obj)
+                ]
             # Facts by entity name (list-format graph_query and entity recall).
             if name:
                 rows = []
