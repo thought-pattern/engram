@@ -3,7 +3,7 @@
 PyYAML==6.0.3
 
 # Natural Language Processing
-nltk==3.9.4
+nltk==3.10.0
 
 # NLTK corpora/models are NOT pip packages. After installing the above, run:
 #   python -m engram.nltk_data
