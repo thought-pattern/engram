@@ -17,7 +17,7 @@ from enum import Enum
 # Canonical package version. pyproject.toml derives the distribution version
 # from this via setuptools' dynamic ``attr``, so the version lives in exactly one
 # place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # =============================================================================
 # Enumerations
@@ -180,10 +180,51 @@ SPELL_LONG_TOKEN_LENGTH = 6  # Tokens this long or longer allow distance 2 (else
 # Conjunctions stripped from the end of a clause cut ("tired and" -> "tired")
 CLAUSE_BOUNDARY_TRAILERS = {"and", "but", "or", "because", "so", "then"}
 
+# Question words that also open a new clause mid-capture when followed by a
+# verb ("the sky | what is the moon"). Relative pronouns (who / which / whose)
+# are excluded: "the man who is tall" is one phrase, not two clauses.
+CLAUSE_QUESTION_BOUNDARIES = {"what", "where", "when", "why", "how"}
+
+# Name extraction from self-introduction captures ("still jason by the way").
+# Leading fillers are skipped; a stop marker ends the name span.
+NAME_LEADING_FILLERS = {"still", "actually", "really", "just", "now", "officially", "basically", "technically"}
+NAME_STOP_MARKERS = {"by", "the", "way", "though", "btw", "anyway", "and", "but", "because", "for", "if", "these", "days"}
+MAX_NAME_TOKENS = 3
+
 # Personal subject pronouns that mark the start of a new clause when followed
 # by a verb. Matched by word, not POS tag: NLTK tags a lowercase "i" as a
 # noun or adjective, never PRP.
 SUBJECT_PRONOUNS = {"i", "you", "he", "she", "it", "we", "they"}
+
+# Tokens shorter than this are never Porter-stemmed: they are already near
+# their root, and stemming mangles them into false matches ("his" -> "hi"
+# would greet a possessive).
+MIN_STEM_TOKEN_LENGTH = 4
+
+# Acknowledgments rotated when a fact is learned from conversation, so a
+# teaching session does not answer with the same phrase every turn.
+LEARNED_ACKNOWLEDGMENTS = (
+    "I see.",
+    "Noted.",
+    "Got it - I'll remember that.",
+    "Understood.",
+    "Okay, I'll keep that in mind.",
+)
+
+# Responses when a stated fact matches what is already stored ({existing} is
+# replaced with the stored statement text).
+KNOWN_FACT_RESPONSES = (
+    "Yes - {existing}",
+    "Right, that matches what I have: {existing}",
+)
+
+# Responses when a stated fact contradicts what is already stored. The stored
+# belief is protected (no overwrite), but silence would read as agreement, so
+# the conflict is surfaced.
+CONFLICTING_FACT_RESPONSES = (
+    "Hmm, I have it differently: {existing}",
+    "That differs from what I know: {existing}",
+)
 
 # Output polish: the pronoun I and its contractions are always capitalized
 STANDALONE_I_FORMS = {"i": "I", "i'm": "I'm", "i've": "I've", "i'll": "I'll", "i'd": "I'd"}
@@ -230,6 +271,29 @@ COMMAND_WORDS = {"learn", "remember", "forget", "tell", "say", "repeat", "echo"}
 
 # Personal pronouns excluded as relational-triple subjects or objects
 PRONOUNS = {"i", "you", "he", "she", "it", "we", "they", "this", "that", "these", "those"}
+
+# Pronouns that refer back to earlier conversation ("what is ITS population").
+# Session context expansion only fires when the query carries one -- expanding
+# every query would flood unrelated follow-ups with the previous response's
+# nouns.
+REFERRING_PRONOUNS = {
+    "it",
+    "its",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    "he",
+    "she",
+    "him",
+    "her",
+    "his",
+    "hers",
+    "this",
+    "that",
+    "these",
+    "those",
+}
 
 # Guardrails for copula fact extraction: a subject longer than this, one that
 # contains a verb or modal, or one led by a possessive pronoun is conversation

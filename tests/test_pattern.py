@@ -936,3 +936,22 @@ class TestLemmatizationSupport:
         pm.add_pattern("I SAW *", "You saw {star1}!")
         result = pm.match("i saw dogs")
         assert result
+
+
+class TestStemmingFalsePositives:
+    """Short tokens are not stemmed: 'his' must not become the greeting 'hi'."""
+
+    def test_possessive_does_not_match_greeting(self):
+        pm = PatternMatcher(use_stemming=True)
+        pm.add_pattern("HI *", "Hi there!")
+        assert not pm.match("his name is rex")
+
+    def test_greeting_still_matches(self):
+        pm = PatternMatcher(use_stemming=True)
+        pm.add_pattern("HI *", "Hi there!")
+        assert pm.match("hi everyone")[0] == "Hi there!"
+
+    def test_stemming_fallback_still_works_for_real_inflections(self):
+        pm = PatternMatcher(use_stemming=True, use_lemmatization=False)
+        pm.add_pattern("CATS ARE GREAT", "Indeed")
+        assert pm.match("cats are great")

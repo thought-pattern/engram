@@ -89,7 +89,9 @@ class TestFactLearningIntegration:
         # Should acknowledge learning (via catch-all with learning)
         assert result1
         stmt, captured, response = result1
-        assert response == "I see."  # Acknowledgment
+        from engram.constants import LEARNED_ACKNOWLEDGMENTS
+
+        assert response in LEARNED_ACKNOWLEDGMENTS  # Acknowledgment
 
         # Retrieve the fact
         result2 = engram.pattern_query("What are dogs")
@@ -201,3 +203,53 @@ class TestInputKind:
         from engram.nlp import input_kind
 
         assert input_kind("I lost my hat yesterday") == "statement"
+
+
+class TestFactExtractionSoakRegressions:
+    """Junk-fact families the 100-turn conversation soak surfaced."""
+
+    def test_reject_pronoun_anywhere_in_subject(self):
+        # "y'all" expands to "you all"; "lol that" carries a demonstrative.
+        assert not extract_fact("you all are pretty helpful")
+        assert not extract_fact("lol that was funny")
+
+    def test_reject_demonstrative_subject(self):
+        assert not extract_fact("That is not true at all")
+
+    def test_reject_possessive_anywhere_in_subject(self):
+        assert not extract_fact("sorry my typing is terrible today")
+
+    def test_reject_possessive_object(self):
+        # A typo'd question word reads as a statement; the possessive object
+        # ("your name") marks it as a personal exchange, not a world fact.
+        assert not extract_fact("waht is your name")
+        assert not extract_fact("The password is my birthday")
+
+    def test_legitimate_facts_still_learn(self):
+        assert extract_fact("Honey is made by bees")["subject"] == "Honey"
+        assert extract_fact("Rex is a golden retriever")["subject"] == "Rex"
+
+
+class TestTypoQuestionDetection:
+    """A leading near-miss of a question word is a typo'd question."""
+
+    def test_typo_question_words_detected(self):
+        from engram.nlp import is_question
+
+        assert is_question("waht is the ocean")
+        assert is_question("whta is gravity")
+        assert is_question("waht is your name")
+
+    def test_real_words_near_question_words_unaffected(self):
+        from engram.nlp import is_question
+
+        # "hat" and "cow" are one edit from question words but are real words.
+        assert not is_question("hat is my favorite word")
+        assert not is_question("cow tipping is not real")
+
+    def test_typo_questions_never_learned_as_facts(self):
+        assert not extract_fact("waht is the ocean")
+        assert not extract_fact("whta is gravity")
+
+    def test_real_word_subjects_still_learn(self):
+        assert extract_fact("The cow is a farm animal")["subject"] == "cow"

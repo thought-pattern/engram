@@ -1,12 +1,20 @@
 """Core ENGRAM implementation."""
 
 import logging
+import random
 import threading
 
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
 from engram.config import engram_config
-from engram.constants import VERSION, Tier
+from engram.constants import (
+    CONFLICTING_FACT_RESPONSES,
+    KIND_STATEMENT,
+    KNOWN_FACT_RESPONSES,
+    LEARNED_ACKNOWLEDGMENTS,
+    VERSION,
+    Tier,
+)
 from engram.facts_spacy import extract_facts
 from engram.graph import create_graph_client, is_write_cypher
 from engram.models import (
@@ -18,7 +26,7 @@ from engram.models import (
     session_update_context,
     statement,
 )
-from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper
+from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.pattern import PatternMatcher
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
@@ -263,9 +271,11 @@ class Engram:
 
         The response is indexed under the query's keywords (not its own), so
         future phrasings of the same question retrieve it through the keyword
-        path -- no brittle prefix pattern is generated. Re-learning a query
-        with the same keyword set replaces the cached response in place and
-        resets its hit statistics, since the new content is unproven.
+        path -- no brittle prefix pattern is generated. The query gets the
+        same spelling correction retrieval applies, so a typo'd learn and a
+        clean retrieval key the same entry. Re-learning a query with the same
+        keyword set replaces the cached response in place and resets its hit
+        statistics, since the new content is unproven.
 
         Args:
             query: The original user query.
@@ -279,6 +289,10 @@ class Engram:
             Statement ID of the stored (or updated) response.
         """
         normalized = normalize(query)
+        if self.config["use_spell_correction"]:
+            with self.keyword_lock:
+                vocabulary = set(self.keywords)
+            normalized = correct_spelling(normalized, vocabulary)
         keywords = self._extract_keywords(normalized)
         keyword_set = set(keywords)
 
@@ -307,7 +321,7 @@ class Engram:
             text=response,
             tier=tier,
             template=template,
-            keyword_source=query,
+            keyword_source=normalized,
         )
         return stmt_id
 
@@ -427,12 +441,14 @@ class Engram:
         with self.count_lock:
             self.query_count += 1
 
-        # Get session context if provided
+        # Get session context if provided. The session is created when missing,
+        # matching pattern_query -- a fresh session id must not silently skip
+        # context tracking.
         expanded_text = text
         if session_id:
-            with self.session_lock:
-                session = self.sessions.get(session_id)
-                if session:
+            session = sessions_mod.get_session(self, session_id, create_if_missing=True)
+            if session:
+                with self.session_lock:
                     session_touch(session)
                     expanded_text = expand_query(text, session["previous_response"])
 
@@ -608,9 +624,29 @@ class Engram:
                 else:
                     fact = extract_fact(sentence)
                     facts = [fact] if fact else []
+                # Gate on the match text's intent too: a typo can defeat the
+                # raw-text question gate ("waht is your name" reads as a
+                # statement), and the spell-corrected text reveals it.
+                if facts and input_kind(match_text) != KIND_STATEMENT:
+                    facts = []
                 learned = False
+                known_response = ""
                 for fact in facts:
-                    learned = self.learn_fact(fact) or learned
+                    if self.learn_fact(fact):
+                        learned = True
+                        continue
+                    # Already known. Surface the stored belief instead of a
+                    # generic deflection: the no-overwrite rule protects the
+                    # stored fact, but staying silent about a contradiction
+                    # would read as agreement.
+                    existing_id = self.pattern_to_statement.get(fact_subject_upper(fact), "")
+                    existing = self.get_statement(existing_id)
+                    if existing and existing["text"]:
+                        if normalize(existing["text"]) == normalize(fact["original"]):
+                            reply = random.choice(KNOWN_FACT_RESPONSES)
+                        else:
+                            reply = random.choice(CONFLICTING_FACT_RESPONSES)
+                        known_response = reply.replace("{existing}", existing["text"])
 
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
@@ -631,9 +667,14 @@ class Engram:
                         record_statement_query(selected)
                         record_statement_hit(selected)
 
-                        # If we learned a fact and matched catch-all, acknowledge instead
+                        # If we learned a fact and matched catch-all, acknowledge
+                        # instead -- rotating the phrasing so a teaching session
+                        # does not answer identically every turn. A restated or
+                        # contradicted known fact surfaces the stored belief.
                         if learned and matched_pattern == "*":
-                            final_response = "I see."
+                            final_response = random.choice(LEARNED_ACKNOWLEDGMENTS)
+                        elif known_response and matched_pattern == "*":
+                            final_response = known_response
                         else:
                             # Process template if present
                             final_response = self._process_statement_template(
@@ -809,9 +850,17 @@ class Engram:
         template_to_process = stmt["template"] or stmt["text"]
         response = self.template_processor.process(template_to_process, context)
 
-        # Update session predicates from context
+        # Update session predicates from context. Underscore-prefixed
+        # predicates (e.g. _mood, _kind) are template-local scratch: they
+        # never persist into the session, and any that leaked in previously
+        # are purged.
         if session:
-            session["predicates"].update(context["predicates"])
+            for name, value in context["predicates"].items():
+                if not name.startswith("_"):
+                    session["predicates"][name] = value
+            leaked_scratch = [name for name in session["predicates"] if name.startswith("_")]
+            for name in leaked_scratch:
+                del session["predicates"][name]
 
         return response
 
@@ -861,11 +910,14 @@ class Engram:
         # The response is the full original sentence
         response = fact["original"]
 
-        # Store primary pattern (just the subject)
+        # Store primary pattern (just the subject). Keyword-index it under the
+        # full original sentence, so keyword retrieval sees the fact's content
+        # ("Is the sky blue?" needs [sky, blue], not just [sky]).
         self.store(
             text=response,
             pattern=subject_pattern,
             tier=Tier.DYNAMIC,
+            keyword_source=fact["original"],
         )
 
         # Store question patterns
@@ -941,7 +993,7 @@ class Engram:
         count = len(statements)
         return count
 
-    def sync_corpus(self, pairs: list, tier: Tier = Tier.STATIC) -> dict:
+    def sync_corpus(self, pairs: list, tier: Tier = Tier.STATIC, prune: bool = False) -> dict:
         """Upsert pattern/template pairs into the store (seed refresh).
 
         A store is seeded once at creation; without this, later improvements
@@ -952,13 +1004,20 @@ class Engram:
         existing statement are stored new. Statements of other tiers are never
         touched, so learned DYNAMIC content survives a refresh.
 
+        With prune, statements of the tier that no pair accounts for are
+        retired, making the store's tier mirror the corpus: entries deleted
+        from the seed stop lingering. Prune only with the complete corpus --
+        syncing a partial pair list with prune would retire everything the
+        list omits.
+
         Args:
             pairs: List of pair dicts (pattern, response/text, template, that,
                 topic), the shape of data/seed.json's "pairs".
             tier: Tier to sync into (default STATIC, the seeded tier).
+            prune: Retire statements of the tier absent from pairs.
 
         Returns:
-            Dict with "added", "updated", and "unchanged" counts.
+            Dict with "added", "updated", "unchanged", and "pruned" counts.
         """
         added = 0
         updated = 0
@@ -1004,7 +1063,31 @@ class Engram:
                 )
                 added += 1
 
-        result = {"added": added, "updated": updated, "unchanged": unchanged}
+        pruned = 0
+        if prune:
+            desired_triples = set()
+            desired_texts = set()
+            for pair in pairs:
+                pattern = pair.get("pattern", "")
+                if pattern:
+                    desired_triples.add((pattern, pair.get("that", ""), pair.get("topic", "")))
+                else:
+                    desired_texts.add(pair.get("response") or pair.get("text") or "")
+            with self.statement_lock:
+                stale_ids = []
+                for stmt in self.statements:
+                    if stmt["tier"] != tier:
+                        continue
+                    if stmt["pattern"]:
+                        if (stmt["pattern"], stmt["that"], stmt["topic"]) not in desired_triples:
+                            stale_ids.append(stmt["id"])
+                    elif stmt["text"] not in desired_texts:
+                        stale_ids.append(stmt["id"])
+                for stmt_id in stale_ids:
+                    if self.retire_statement(stmt_id):
+                        pruned += 1
+
+        result = {"added": added, "updated": updated, "unchanged": unchanged, "pruned": pruned}
         return result
 
     @classmethod

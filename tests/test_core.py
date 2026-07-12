@@ -1393,7 +1393,7 @@ class TestSyncCorpus:
 
         counts = engram.sync_corpus([{"pattern": "I AM *", "response": "Nice to know.", "template": {"text": "new {star1}."}}])
 
-        assert counts == {"added": 0, "updated": 1, "unchanged": 0}
+        assert counts == {"added": 0, "updated": 1, "unchanged": 0, "pruned": 0}
         refreshed = engram.get_statement(stmt_id)
         assert refreshed["template"] == {"text": "new {star1}."}
         assert refreshed["hit_count"] == 1  # statistics preserved
@@ -1403,7 +1403,7 @@ class TestSyncCorpus:
 
         counts = engram.sync_corpus([{"pattern": "HELLO", "response": "Hi there!"}])
 
-        assert counts == {"added": 1, "updated": 0, "unchanged": 0}
+        assert counts == {"added": 1, "updated": 0, "unchanged": 0, "pruned": 0}
         assert engram.pattern_query("hello")[2] == "Hi there!"
 
     def test_unchanged_pairs_counted(self) -> None:
@@ -1413,7 +1413,7 @@ class TestSyncCorpus:
 
         counts = engram.sync_corpus(pairs)
 
-        assert counts == {"added": 0, "updated": 0, "unchanged": 1}
+        assert counts == {"added": 0, "updated": 0, "unchanged": 1, "pruned": 0}
         assert metrics.get_statement_count(engram) == 1
 
     def test_dynamic_content_untouched(self) -> None:
@@ -1434,7 +1434,7 @@ class TestSyncCorpus:
 
         counts = engram.sync_corpus([{"response": "Plain fact statement"}])
 
-        assert counts == {"added": 0, "updated": 0, "unchanged": 1}
+        assert counts == {"added": 0, "updated": 0, "unchanged": 1, "pruned": 0}
 
 
 class TestInputOutputCleanup:
@@ -1546,3 +1546,180 @@ class TestQuestionAwareCatchall:
         engram = self._engram_with_intent_catchall()
         result = engram.pattern_query("The coffee here tastes burnt")
         assert result[2] == "Tell me more about that."
+
+
+class TestScratchPredicates:
+    """Underscore-prefixed predicates are template-local, never session state."""
+
+    def test_scratch_predicate_does_not_persist(self) -> None:
+        engram = Engram()
+        engram.store(
+            "Noted.",
+            pattern="I AM *",
+            template={
+                "sequence": [
+                    {"set": {"name": "_mood", "value": "{sentiment:{star1}}"}},
+                    {"set": {"name": "last_feeling", "value": "{clause:{star1}}"}},
+                    {"text": "Noted."},
+                ]
+            },
+        )
+        session_id = sessions.create_session(engram, session_id="scratch")
+
+        engram.pattern_query("I am delighted", session_id=session_id)
+
+        predicates = engram.sessions["scratch"]["predicates"]
+        assert "_mood" not in predicates
+        assert predicates["last_feeling"] == "delighted"
+
+    def test_leaked_scratch_purged_from_existing_sessions(self) -> None:
+        engram = Engram()
+        engram.store("Okay.", pattern="HELLO")
+        session_id = sessions.create_session(engram, session_id="legacy")
+        engram.sessions["legacy"]["predicates"]["_mood"] = "stale"
+
+        engram.pattern_query("hello", session_id=session_id)
+
+        assert "_mood" not in engram.sessions["legacy"]["predicates"]
+
+
+class TestQuerySessionSymmetry:
+    def test_query_creates_missing_session(self) -> None:
+        """query() creates the session like pattern_query does."""
+        engram = Engram()
+        engram.store("Paris is the capital of France")
+
+        engram.query("capital of France", session_id="fresh_session")
+
+        assert "fresh_session" in engram.sessions
+
+
+class TestLearnSpellCorrection:
+    def test_typo_learn_and_clean_query_share_an_entry(self) -> None:
+        """learn_from_response normalizes spelling like query() does."""
+        engram = Engram()
+        # Seed the vocabulary so the typo has something to correct toward
+        engram.store("The boiling point of water is 100 Celsius.")
+
+        learned_id = engram.learn_from_response("boilng point of water", "It boils at 100 C.")
+
+        stmt = engram.get_statement(learned_id)
+        assert "boiling" in stmt["keywords"]
+        texts = [m[0]["text"] for m in engram.query("boiling point of water")["matches"]]
+        assert "It boils at 100 C." in texts
+
+
+class TestSyncCorpusPrune:
+    def test_prune_retires_entries_absent_from_corpus(self) -> None:
+        engram = Engram()
+        engram.sync_corpus([{"pattern": "KEEP ME", "response": "Kept."}, {"pattern": "DROP ME", "response": "Dropped."}])
+        learned_id = engram.learn_from_response("some cached question", "Cached answer.")
+
+        counts = engram.sync_corpus([{"pattern": "KEEP ME", "response": "Kept."}], prune=True)
+
+        assert counts["pruned"] == 1
+        assert engram.pattern_query("keep me")[2] == "Kept."
+        assert engram.pattern_query("drop me") == ()
+        # DYNAMIC learned content is never pruned
+        assert engram.get_statement(learned_id)
+
+    def test_prune_off_by_default(self) -> None:
+        engram = Engram()
+        engram.sync_corpus([{"pattern": "OLD ENTRY", "response": "Still here."}])
+
+        counts = engram.sync_corpus([{"pattern": "NEW ENTRY", "response": "Added."}])
+
+        assert counts["pruned"] == 0
+        assert engram.pattern_query("old entry")[2] == "Still here."
+
+
+class TestSoakRegressions:
+    """Engine-level regressions from the 100-turn conversation soak."""
+
+    def test_typo_question_not_learned_as_fact(self) -> None:
+        """Spelling correction reveals a typo'd question before fact learning."""
+        engram = Engram()
+        engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
+        engram.store("It is time.", pattern="WHAT TIME IS IT", tier=Tier.STATIC)
+
+        engram.pattern_query("waht is rust")
+
+        patterns = [s["pattern"] for s in engram.statements]
+        assert "WAHT" not in patterns
+
+    def test_possessive_sentence_not_greeted(self) -> None:
+        """'His name is Rex.' must not stem-match a greeting pattern."""
+        engram = Engram()
+        engram.store("Hi there!", pattern="HI *", tier=Tier.STATIC)
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        result = engram.pattern_query("His name is Rex.")
+
+        assert result[2] != "Hi there!"
+
+    def test_learn_acknowledgment_rotates(self) -> None:
+        from engram.constants import LEARNED_ACKNOWLEDGMENTS
+
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        responses = set()
+        for i in range(12):
+            result = engram.pattern_query(f"Gadget{i} is a useful tool")
+            responses.add(result[2])
+
+        assert responses <= set(LEARNED_ACKNOWLEDGMENTS)
+        assert len(responses) >= 2
+
+
+class TestKnownFactResponses:
+    """Restating or contradicting a known fact surfaces the stored belief."""
+
+    def _taught_engram(self) -> Engram:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+        engram.pattern_query("The sky is blue.")
+        return engram
+
+    def test_contradiction_surfaces_stored_fact(self) -> None:
+        from engram.constants import CONFLICTING_FACT_RESPONSES
+
+        engram = self._taught_engram()
+        result = engram.pattern_query("The sky is green.")
+
+        expected = {r.replace("{existing}", "The sky is blue.") for r in CONFLICTING_FACT_RESPONSES}
+        assert result[2] in expected
+        # The stored fact is untouched
+        assert engram.pattern_query("What is the sky?")[2] == "The sky is blue."
+
+    def test_restatement_confirms_stored_fact(self) -> None:
+        from engram.constants import KNOWN_FACT_RESPONSES
+
+        engram = self._taught_engram()
+        result = engram.pattern_query("The sky is blue.")
+
+        expected = {r.replace("{existing}", "The sky is blue.") for r in KNOWN_FACT_RESPONSES}
+        assert result[2] in expected
+
+
+class TestFactContentRetrieval:
+    """Learned facts are keyword-indexed under their full content."""
+
+    def test_yes_no_question_reaches_cache(self) -> None:
+        from engram import pipeline
+
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+        engram.pattern_query("The sky is blue.")
+
+        result = pipeline.respond(engram, "Is the sky blue?")
+
+        assert result["source"] == "cache"
+        assert result["response"] == "The sky is blue."
+
+    def test_who_is_pattern_generated(self) -> None:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+        engram.pattern_query("Rex is a golden retriever.")
+
+        assert engram.pattern_query("Who is rex?")[2] == "Rex is a golden retriever."

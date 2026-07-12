@@ -8,6 +8,7 @@ relationships for dynamic learning.
 from functools import lru_cache
 
 from nltk import ne_chunk
+from nltk.metrics.distance import edit_distance
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
@@ -19,9 +20,11 @@ from engram.constants import (
     KIND_STATEMENT,
     MAX_FACT_SUBJECT_TOKENS,
     POSSESSIVE_PRONOUNS,
+    PRONOUNS,
     QUESTION_WORDS,
 )
 from engram.nltk_data import ensure_resource
+from engram.text import is_known_word
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +77,7 @@ def fact_query_patterns(fact: dict) -> list[str]:
         patterns.append(f"WHAT IS {subj}")
         patterns.append(f"WHAT IS THE {subj}")
         patterns.append(f"WHAT IS A {subj}")
+        patterns.append(f"WHO IS {subj}")
         patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
 
     # Add "TELL ME ABOUT X" form
@@ -97,6 +101,15 @@ def is_question(text: str) -> bool:
     first_word = text.split()[0].lower() if text.split() else ""
     if first_word in QUESTION_WORDS:
         return True
+
+    # Starts with a typo'd question word: a leading token that is not a real
+    # word but sits one edit from a question word ("waht", "whta") reads as a
+    # question even though it defeats the exact check -- without this, typo'd
+    # questions get statement deflections and are learned as junk facts.
+    if first_word and not is_known_word(first_word):
+        for question_word in QUESTION_WORDS:
+            if edit_distance(first_word, question_word, transpositions=True) <= 1:
+                return True
 
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
@@ -186,14 +199,18 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     if len(subject_words) > MAX_FACT_SUBJECT_TOKENS:
         return {}
 
-    # Guardrail: possessive-led subjects ("your ...", "my ...") are
-    # conversational references, not shared knowledge.
-    if subject_words[0].lower() in POSSESSIVE_PRONOUNS:
-        return {}
+    # Guardrail: a pronoun or possessive anywhere in the subject means it is
+    # conversational reference, not the name of a thing -- "you all",
+    # "lol that", "sorry my typing", or a bare "that".
+    for word in subject_words:
+        if word.lower() in PRONOUNS or word.lower() in POSSESSIVE_PRONOUNS:
+            return {}
 
-    # Skip if subject is just a pronoun (I, you, he, she, it, they, we)
-    if subject.lower() in ("i", "you", "he", "she", "it", "they", "we"):
-        return {}
+    # Guardrail: a possessive in the object ("waht is your name") marks a
+    # personal exchange, not a world fact worth retrieval patterns.
+    for word in obj.split():
+        if word.lower() in POSSESSIVE_PRONOUNS:
+            return {}
 
     normalized_original = original.rstrip(".") + "."  # Normalize punctuation
     fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)

@@ -21,6 +21,7 @@ Usage:
 """
 
 from engram import sessions as sessions_mod
+from engram.constants import QUESTION_WORDS
 from engram.nlp import is_question
 from engram.pattern import is_pure_wildcard
 
@@ -31,13 +32,16 @@ def pipeline_result(
     score: float = 0.0,
     matches=None,
     keywords=None,
+    pattern: str = "",
+    captured=None,
 ) -> dict:
     """Build a pipeline response dict.
 
     source is "pattern" (scripted match), "cache" (confident keyword
     retrieval), "llm" (generated via llm_fn), or "none" (nothing confident and
     no llm_fn). matches and keywords carry the keyword retrieval outcome so a
-    "none" caller can still inspect what was found.
+    "none" caller can still inspect what was found; pattern and captured carry
+    the pattern-match outcome for debugging ("" / [] off the pattern path).
     """
     result = {
         "response": response,
@@ -45,8 +49,35 @@ def pipeline_result(
         "score": score,
         "matches": matches if matches is not None else [],
         "keywords": keywords if keywords is not None else [],
+        "pattern": pattern,
+        "captured": captured if captured is not None else [],
     }
     return result
+
+
+def _retract_response(engram, session_id: str, response: str) -> None:
+    """Remove a deferred, not-yet-shown response from the session.
+
+    pattern_query records its response into the session before the pipeline
+    decides whether a better tier answers. Left in place, the held response
+    poisons the retrieval tier (previous_response feeds session context
+    expansion) and lingers as a phantom history entry. Retraction restores
+    previous_response to the prior turn's answer; if the held response does
+    end up being shown, the caller re-records it.
+    """
+    if not session_id or not response:
+        return
+    with engram.session_lock:
+        session = engram.sessions.get(session_id)
+        if not session:
+            return
+        if session["response_history"] and session["response_history"][0] == response:
+            session["response_history"].pop(0)
+            if session["that_history"]:
+                session["that_history"].pop(0)
+        if session["previous_response"] == response:
+            restored = session["response_history"][0] if session["response_history"] else ""
+            session["previous_response"] = restored
 
 
 def _update_session(engram, session_id: str, response: str) -> None:
@@ -104,23 +135,34 @@ def respond(
     # A catch-all deflection answering a question is held back: confident
     # retrieval (or the LLM) should speak before a shrug does.
     deferred_shrug = ""
+    matched_pattern = ""
+    matched_captured: list = []
     pattern_result = engram.pattern_query(text, session_id=session_id)
     if pattern_result:
-        stmt, _, response = pattern_result
+        stmt, captured, response = pattern_result
+        matched_pattern = stmt["pattern"] if stmt else ""
+        matched_captured = captured
         is_fallback = not stmt and response == engram.config["fallback_response"]
         if response and not is_fallback:
             is_catchall_question = bool(stmt) and is_pure_wildcard(stmt["pattern"]) and is_question(text)
             if is_catchall_question:
+                # Retract immediately: the shrug must not contaminate the
+                # retrieval tier's session context expansion. It is
+                # re-recorded if it actually ends up being shown.
                 deferred_shrug = response
+                _retract_response(engram, session_id, deferred_shrug)
             else:
-                tier1 = pipeline_result(response, "pattern", score=1.0)
+                tier1 = pipeline_result(response, "pattern", score=1.0, pattern=matched_pattern, captured=matched_captured)
                 return tier1
 
-    # Tier 2: confident cached answer via keyword retrieval.
+    # Tier 2: confident cached answer via keyword retrieval. Question words
+    # carry intent, not content -- a keyword set with no content words ("why
+    # why why") is no evidence, however perfectly it overlaps something.
     retrieval = engram.query(text, session_id=session_id, limit=max(context_limit, 1))
     matches = retrieval["matches"]
     keywords = retrieval["keywords"]
-    if matches:
+    content_keywords = [kw for kw in keywords if kw not in QUESTION_WORDS]
+    if matches and content_keywords:
         top_stmt, top_score = matches[0]
         if top_score >= high_confidence:
             engram.record_hit(keywords, statement_id=top_stmt["id"])
@@ -140,9 +182,19 @@ def respond(
             return tier3
 
     # Tier 4: nothing confident. A held catch-all response still beats
-    # silence; otherwise hand the retrieval back to the caller.
+    # silence -- re-record it into the session since it is actually shown --
+    # otherwise hand the retrieval back to the caller.
     if deferred_shrug:
-        deferred = pipeline_result(deferred_shrug, "pattern", score=1.0, matches=matches, keywords=keywords)
+        _update_session(engram, session_id, deferred_shrug)
+        deferred = pipeline_result(
+            deferred_shrug,
+            "pattern",
+            score=1.0,
+            matches=matches,
+            keywords=keywords,
+            pattern=matched_pattern,
+            captured=matched_captured,
+        )
         return deferred
     top_score = matches[0][1] if matches else 0.0
     tier4 = pipeline_result("", "none", score=top_score, matches=matches, keywords=keywords)

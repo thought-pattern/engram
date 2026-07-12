@@ -156,6 +156,11 @@ def create_parser() -> argparse.ArgumentParser:
         default="",
         help="Seed file to sync from (default: data/seed.json)",
     )
+    sync_parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Retire STATIC statements absent from the seed (mirror, not just upsert)",
+    )
 
     # metrics command
     subparsers.add_parser("metrics", help="Show store metrics")
@@ -326,9 +331,12 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
         print(f"No seed pairs found: {source}", file=sys.stderr)
         return 1
 
-    counts = engram.sync_corpus(pairs)
+    counts = engram.sync_corpus(pairs, prune=args.prune)
     save_engram(engram, args.store)
-    print(f"Seed sync: {counts['added']} added, {counts['updated']} updated, {counts['unchanged']} unchanged")
+    summary = f"Seed sync: {counts['added']} added, {counts['updated']} updated, {counts['unchanged']} unchanged"
+    if args.prune:
+        summary += f", {counts['pruned']} pruned"
+    print(summary)
     return 0
 
 
@@ -697,7 +705,10 @@ class InteractiveChat:
         result = pipeline.respond(self.engram, user_input, session_id=self.session_id)
 
         if self.debug_mode:
-            print(f"     [Source: {result['source']} | Score: {result['score']:.2f}]")
+            detail = f"Source: {result['source']} | Score: {result['score']:.2f}"
+            if result["pattern"]:
+                detail += f" | Pattern: '{result['pattern']}' | Captured: {result['captured']}"
+            print(f"     [{detail}]")
 
         return result["response"] or "Tell me more about that."
 

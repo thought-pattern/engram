@@ -179,3 +179,68 @@ class TestQuestionRouting:
 
         assert result["source"] == "pattern"
         assert result["response"] == "I am ENGRAM."
+
+
+class TestPipelineResultDetail:
+    def test_pattern_tier_carries_pattern_and_captures(self) -> None:
+        engram = Engram()
+        engram.store("Nice to meet you, {star1}!", pattern="MY NAME IS *", tier=Tier.STATIC)
+
+        result = pipeline.respond(engram, "my name is alice")
+
+        assert result["pattern"] == "MY NAME IS *"
+        assert result["captured"] == ["alice"]
+
+    def test_cache_tier_has_empty_pattern_fields(self) -> None:
+        engram = Engram()
+        engram.store("Paris is the capital of France.")
+
+        result = pipeline.respond(engram, "paris capital france")
+
+        assert result["source"] == "cache"
+        assert result["pattern"] == ""
+        assert result["captured"] == []
+
+
+class TestDeferredShrugRetraction:
+    def test_phantom_shrug_removed_when_cache_answers(self) -> None:
+        engram = Engram()
+        engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
+        engram.store("Python is a versatile programming language.")
+
+        result = pipeline.respond(engram, "python programming language?", session_id="s1")
+
+        assert result["source"] == "cache"
+        session = engram.sessions["s1"]
+        # Only the answer the user actually saw is in the history
+        assert session["response_history"] == ["Python is a versatile programming language."]
+        assert session["previous_response"] == "Python is a versatile programming language."
+
+    def test_shrug_stays_in_history_when_actually_shown(self) -> None:
+        engram = Engram()
+        engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
+
+        result = pipeline.respond(engram, "What is the meaning of life?", session_id="s2")
+
+        assert result["source"] == "pattern"
+        assert engram.sessions["s2"]["response_history"] == ["Tell me more."]
+
+
+class TestContentKeywordGate:
+    def test_question_words_alone_are_no_evidence(self) -> None:
+        """A keyword set of only question words must not clear the cache bar."""
+        engram = Engram()
+        engram.store("Alright!", pattern="WHY NOT", tier=Tier.STATIC)
+
+        result = pipeline.respond(engram, "why why why why why")
+
+        assert result["source"] != "cache"
+
+    def test_single_content_keyword_still_caches(self) -> None:
+        engram = Engram()
+        engram.learn_from_response("boiling point of water", "It boils at 100 C.")
+
+        result = pipeline.respond(engram, "water?")
+
+        assert result["source"] == "cache"
+        assert result["response"] == "It boils at 100 C."

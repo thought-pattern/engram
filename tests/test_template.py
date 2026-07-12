@@ -748,3 +748,47 @@ class TestQtypeTransform:
         processor = TemplateProcessor()
         ctx = template_context(request_text="tell me a story")
         assert processor.process("{qtype:{request}}", ctx) == "command"
+
+
+class TestInputVariable:
+    """Bare {input} is the current input; {input:N} reads history."""
+
+    def test_bare_input_is_current_input(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words", input_history=["previous turn words"])
+        assert processor.process("{input}", ctx) == "current words"
+
+    def test_indexed_input_reads_history(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words", input_history=["previous turn words", "older words"])
+        assert processor.process("{input:1}", ctx) == "previous turn words"
+        assert processor.process("{input:2}", ctx) == "older words"
+
+    def test_bare_input_without_history(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words")
+        assert processor.process("{input}", ctx) == "current words"
+
+
+class TestNestedPersonClause:
+    def test_person_wraps_clause(self):
+        """{person:{clause:{star1}}} echoes captures from the bot's point of view."""
+        processor = TemplateProcessor()
+        ctx = template_context(
+            stars=["thrilled about my new project"],
+            person_subs={"my": "your", "i": "you", "am": "are"},
+        )
+        result = processor.process("You're {person:{clause:{star1}}}!", ctx)
+        assert result == "You're thrilled about your new project!"
+
+
+class TestNameTransform:
+    def test_name_extracts_from_capture(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["still jason by the way"])
+        assert processor.process("{name:{star1}}", ctx) == "jason"
+
+    def test_name_keeps_plain_names(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["mary jane"])
+        assert processor.process("Hello, {name:{star1}}!", ctx) == "Hello, mary jane!"

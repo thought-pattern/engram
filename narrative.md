@@ -573,6 +573,14 @@ Engram inherits AIML's pattern-template architecture but extends it for modern L
 - **Two-tier storage**: STATIC/DYNAMIC distinction for cache management
 - **Keyword indexing**: Fast retrieval without pattern enumeration
 - **Session expansion**: Context-aware query enhancement
+- **Input cleanup**: Typos corrected toward the store's own vocabulary before matching
+- **Output polish**: Casing repair and clause trimming of echoed wildcard captures
+- **Intent-aware routing**: Question/statement classification (`{qtype:...}`) drives
+  the catch-all's tone, and unanswered questions consult keyword retrieval
+  before falling back
+- **Semantic transforms**: `{sentiment:...}` (VADER tone), `{clause:...}` (first
+  clause of a capture), and `{qtype:...}` (intent) let one pattern respond
+  appropriately to many inputs
 - **LLM integration**: Designed as a complement to, not replacement for, neural models
 - **JSON persistence**: Modern serialization replacing XML
 

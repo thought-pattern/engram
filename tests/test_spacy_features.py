@@ -73,7 +73,9 @@ class TestSpacyFactLearning:
         # No copula: the default NLTK extractor cannot learn from this.
         result = engram.pattern_query("Einstein developed the theory of relativity")
 
-        assert result[2] == "I see."
+        from engram.constants import LEARNED_ACKNOWLEDGMENTS
+
+        assert result[2] in LEARNED_ACKNOWLEDGMENTS
         patterns = [s["pattern"] for s in engram.statements]
         assert "EINSTEIN" in patterns
 

@@ -77,6 +77,10 @@ sessions.update_session_context(engram, session_id, stmt["text"])
 result = engram.query("What is its population?", session_id=session_id)
 ```
 
+Expansion only fires when the query carries a referring pronoun ("its",
+"they", "that", ...); a self-contained follow-up keeps its own keywords
+undiluted.
+
 ## Configuration
 
 ```python
@@ -309,7 +313,13 @@ never touched.
 ```bash
 engram sync-seed
 engram sync-seed --file custom_seed.json
+engram sync-seed --prune   # also retire STATIC entries removed from the seed
 ```
+
+Without `--prune`, sync is an upsert: entries deleted from the seed linger in
+the store. With it, the store's STATIC tier mirrors the seed exactly -- only
+use it when syncing the complete corpus, since anything the file omits is
+retired.
 
 ### Store Statements
 
@@ -423,10 +433,12 @@ contractions) is capitalized. No punctuation is inserted and no grammar is
 rewritten.
 
 Relatedly, the `{clause:...}` template transform trims a capture to its first
-clause -- a personal pronoun followed by a verb marks the start of a new
-clause -- so a compound input ("I am tired, I have been working really hard")
-echoes back as "tired" instead of the whole tail. The seed's sentiment
-pattern uses `{clause:{star1}}` for exactly this.
+clause -- a personal pronoun or non-relative question word followed by a verb
+marks the start of a new clause -- so a compound input ("I am tired, I have
+been working really hard") echoes back as "tired" instead of the whole tail.
+The seed's sentiment pattern uses `{clause:{star1}}` for exactly this, and
+`{name:...}` similarly extracts the person name from a self-introduction
+capture ("still jason by the way" -> "jason") for the name predicates.
 
 ### Question-aware responses
 
@@ -464,14 +476,22 @@ instead of enumerating every emotion word:
 So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
 with no per-emotion patterns.
 
+Predicates with an underscore prefix (like `_mood` above) are template-local
+scratch: they are readable within the template that set them but never
+persist into the session.
+
 ### Relational fact extraction (spaCy)
 
 NLTK has no dependency parser, so the built-in fact extractor
 (`engram.nlp.extract_fact`) only handles copula sentences ("X is/are Y"). It is
 deliberately conservative: the span before the copula must look like a plain
 noun phrase, so subjects longer than four words, subjects containing a verb or
-modal ("X should inform that Y is ..."), and possessive-led subjects
-("your ...", "my ...") are rejected rather than learned as junk facts. With
+modal ("X should inform that Y is ..."), and subjects or objects carrying
+pronouns or possessives are rejected rather than learned as junk facts. A
+learned fact is protected from overwrites; restating it earns a confirmation
+("Yes - The sky is blue.") and contradicting it surfaces the stored belief
+("Hmm, I have it differently: The sky is blue.") instead of a silent
+deflection. With
 spaCy enabled, `engram.facts_spacy.extract_facts` uses the dependency parse to
 pull subject-predicate-object triples from arbitrary declaratives:
 

@@ -11,9 +11,15 @@ from nltk.tokenize import word_tokenize
 
 from engram.constants import (
     CLAUSE_BOUNDARY_TRAILERS,
+    CLAUSE_QUESTION_BOUNDARIES,
     CONTENT_POS_TAGS,
+    MAX_NAME_TOKENS,
     MIN_SPELL_TOKEN_LENGTH,
+    MIN_STEM_TOKEN_LENGTH,
+    NAME_LEADING_FILLERS,
+    NAME_STOP_MARKERS,
     NOUN_POS_TAGS,
+    REFERRING_PRONOUNS,
     SPELL_LONG_TOKEN_LENGTH,
     SUBJECT_PRONOUNS,
 )
@@ -227,10 +233,15 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
 def expand_query(query: str, previous_response: str) -> str:
     """Expand query with referents from the previous response.
 
-    Appends the previous response's nouns and proper nouns -- the things a
-    follow-up's pronouns can refer to -- rather than the full response text,
-    so expansion adds referents without drowning the query's own keywords.
-    Falls back to appending the full response when no nouns can be extracted.
+    Expansion exists to resolve pronouns, so it only fires when the query
+    carries a referring pronoun ("its", "they", "that", ...). A query without
+    one is self-contained; appending the previous response's nouns to it would
+    dilute its own keywords and let the bot's last answer distort unrelated
+    retrieval.
+
+    When it fires, the previous response's nouns and proper nouns are appended
+    -- the things a pronoun can refer to -- falling back to the full response
+    when no nouns can be extracted.
 
     Args:
         query: Current query text.
@@ -245,6 +256,11 @@ def expand_query(query: str, previous_response: str) -> str:
     """
     if not previous_response:
         return query
+
+    query_words = {word.strip(".,!?;:'\"").lower() for word in query.split()}
+    if not query_words & REFERRING_PRONOUNS:
+        return query
+
     terms = extract_context_terms(previous_response)
     if not terms:
         expanded = f"{query} {previous_response}"
@@ -308,15 +324,25 @@ def lemmatize_word(word: str, pos: str = "n") -> str:
 def stem_text(text: str) -> str:
     """Apply Porter stemming to all words in text.
 
+    Tokens shorter than MIN_STEM_TOKEN_LENGTH are lowercased but left
+    unstemmed: they are already near their root, and Porter mangles them into
+    false matches -- "his" stems to "hi", turning a possessive into a greeting
+    in the stemmed matcher fallback.
+
     Args:
         text: Input text.
 
     Returns:
         Text with all words stemmed.
     """
-    words = text.split()
     stemmer = get_stemmer()
-    stemmed = " ".join(stemmer.stem(w) for w in words)
+    out = []
+    for word in text.split():
+        if len(word) < MIN_STEM_TOKEN_LENGTH:
+            out.append(word.lower())
+        else:
+            out.append(stemmer.stem(word))
+    stemmed = " ".join(out)
     return stemmed
 
 
@@ -402,19 +428,36 @@ def _known_words() -> set:
     return word_set
 
 
+def is_known_word(word: str) -> bool:
+    """True when the word or its lemma is in the English word list.
+
+    The words corpus carries base forms but few inflections ("work" but not
+    "tests" or "died"), so a bare membership test reads real inflected words
+    as typos. Checking the verb and noun lemmas closes that gap.
+    """
+    lowered = word.lower()
+    if lowered in _known_words():
+        return True
+    if lemmatize_word(lowered, "v") in _known_words():
+        return True
+    known = lemmatize_word(lowered, "n") in _known_words()
+    return known
+
+
 def _correct_token(token: str, vocabulary: set) -> str:
     """Correct one out-of-vocabulary token toward the vocabulary, or keep it.
 
     Conservative by design: short tokens, vocabulary tokens, and real English
-    words are kept as-is, and a replacement happens only when exactly one
-    vocabulary word is nearest within the allowed Damerau-Levenshtein distance
-    (a transposition like "abotu" -> "about" counts as one edit).
+    words (including inflections, via is_known_word) are kept as-is, and a
+    replacement happens only when exactly one vocabulary word is nearest
+    within the allowed Damerau-Levenshtein distance (a transposition like
+    "abotu" -> "about" counts as one edit).
     """
     if len(token) < MIN_SPELL_TOKEN_LENGTH:
         return token
     if token in vocabulary:
         return token
-    if token in _known_words():
+    if is_known_word(token):
         return token
 
     max_distance = 2 if len(token) >= SPELL_LONG_TOKEN_LENGTH else 1
@@ -470,7 +513,11 @@ def first_clause(text: str) -> str:
     first word marks a new clause -- everything from there on is dropped,
     along with any dangling conjunction ("tired and" -> "tired"). The pronoun
     is matched by word rather than POS tag, since the tagger misreads a
-    lowercase "i". Text without such a boundary is returned unchanged.
+    lowercase "i".
+
+    A pronoun directly after a noun is a relative clause modifying that noun
+    ("a friend you can trust", "the movie i saw") -- those stay intact rather
+    than being cut mid-phrase. Text without a boundary is returned unchanged.
 
     Args:
         text: Input text (typically a wildcard capture).
@@ -490,8 +537,19 @@ def first_clause(text: str) -> str:
 
     for i in range(1, len(tagged) - 1):
         word, _ = tagged[i]
+        prev_tag = tagged[i - 1][1]
         next_tag = tagged[i + 1][1]
-        if word.lower() in SUBJECT_PRONOUNS and (next_tag.startswith("VB") or next_tag == "MD"):
+        lowered = word.lower()
+        verb_follows = next_tag.startswith("VB") or next_tag == "MD"
+        if not verb_follows:
+            continue
+        # A subject pronoun opens a new clause -- unless it trails a noun,
+        # which reads as a relative clause ("a friend you can trust"). A
+        # non-relative question word opens one even after a noun ("the sky
+        # what is the moon").
+        pronoun_boundary = lowered in SUBJECT_PRONOUNS and not prev_tag.startswith("NN")
+        question_boundary = lowered in CLAUSE_QUESTION_BOUNDARIES
+        if pronoun_boundary or question_boundary:
             clause_tokens = tokens[:i]
             while clause_tokens and clause_tokens[-1].lower() in CLAUSE_BOUNDARY_TRAILERS:
                 clause_tokens.pop()
@@ -500,6 +558,44 @@ def first_clause(text: str) -> str:
                 return clause
             return text
     return text
+
+
+def extract_name(text: str) -> str:
+    """Extract the person name from a self-introduction capture.
+
+    "still jason by the way" -> "jason"; "mary jane" -> "mary jane". This is a
+    heuristic, not NER (captures arrive lowercased, which starves NER of its
+    casing signal): leading filler adverbs are skipped, then name tokens are
+    collected until a stop marker, a non-word token, or the length cap.
+    Returns the original text when nothing name-like is found, so the caller
+    degrades to today's behavior rather than storing an empty name.
+
+    Args:
+        text: The captured introduction span.
+
+    Returns:
+        The extracted name span, or the input text unchanged.
+    """
+    if not text or not text.strip():
+        return text
+
+    tokens = text.split()
+    index = 0
+    while index < len(tokens) and tokens[index].lower() in NAME_LEADING_FILLERS:
+        index += 1
+
+    name_tokens: list[str] = []
+    while index < len(tokens) and len(name_tokens) < MAX_NAME_TOKENS:
+        token = tokens[index].strip(".,!?;:'\"")
+        if not token.isalpha() or token.lower() in NAME_STOP_MARKERS:
+            break
+        name_tokens.append(token)
+        index += 1
+
+    if not name_tokens:
+        return text
+    name = " ".join(name_tokens)
+    return name
 
 
 @lru_cache(maxsize=1)
