@@ -208,22 +208,8 @@ def pattern_to_regex(
             can_be_empty.append(False)
             specificity += 100  # High specificity for exact matches
 
-    # Build full regex with proper spacing
-    # For parts that can be empty (# and ^), make surrounding spaces optional
-    result_parts = []
-    for i, part in enumerate(regex_parts):
-        if i == 0:
-            result_parts.append(part)
-        else:
-            # Check if previous part or current part can be empty
-            if can_be_empty[i] or can_be_empty[i - 1]:
-                # Use optional space for 0+ wildcards
-                result_parts.append(r"(?:\s+" + part + r"|\s*" + part + r")")
-            else:
-                result_parts.append(r"\s+" + part)
-
-    # Simplified approach: join with flexible spacing
-    # This handles edge cases better
+    # Join with flexible spacing: parts that can be empty (# and ^) get
+    # optional surrounding whitespace, everything else requires a separator.
     regex_str = r"^\s*"
     for i, part in enumerate(regex_parts):
         if i > 0:
@@ -326,7 +312,7 @@ def pattern_entry(
     return entry
 
 
-def _is_pure_wildcard(pattern: str) -> bool:
+def is_pure_wildcard(pattern: str) -> bool:
     """Return True if a pattern is only wildcard tokens (e.g. '*' or '* *')."""
     words = pattern.split()
     is_wildcard = bool(words) and all(word.lstrip("$") in WILDCARD_TOKENS for word in words)
@@ -415,38 +401,83 @@ class PatternMatcher:
 
         idx = len(self._patterns)
         self._patterns.append(entry)
+        self._index_pattern(idx, pattern)
 
-        # Index by first word for faster lookup
+    def _index_pattern(self, idx: int, pattern: str) -> None:
+        """Index a pattern by its first word for faster candidate lookup.
+
+        Args:
+            idx: Index of the pattern entry in _patterns.
+            pattern: The AIML-style pattern to index.
+        """
         normalized = normalize_pattern(pattern)
         words = normalized.split()
-        if words:
-            first = words[0]
-            # Strip $ prefix for indexing ($ is priority operator, not part of the word)
-            index_word = first.lstrip("$")
-            # Treat wildcards and variable references as "any first word"
-            # since they can match multiple possible inputs
-            if first in ("*", "_", "#", "^") or first.startswith("{set:") or first.startswith("{bot:"):
-                self._wildcard_patterns.append(idx)
-            else:
-                if index_word not in self._first_word_index:
-                    self._first_word_index[index_word] = []
-                self._first_word_index[index_word].append(idx)
+        if not words:
+            return
 
-                # Also index by stemmed first word for flexible matching
-                if self._use_stemming:
-                    stemmed_first = stem_text(index_word)
-                    if stemmed_first not in self._stemmed_first_word_index:
-                        self._stemmed_first_word_index[stemmed_first] = []
-                    if idx not in self._stemmed_first_word_index[stemmed_first]:
-                        self._stemmed_first_word_index[stemmed_first].append(idx)
+        first = words[0]
+        # Strip $ prefix for indexing ($ is priority operator, not part of the word)
+        index_word = first.lstrip("$")
+        # Treat wildcards and variable references as "any first word"
+        # since they can match multiple possible inputs
+        if first in ("*", "_", "#", "^") or first.startswith("{set:") or first.startswith("{bot:"):
+            self._wildcard_patterns.append(idx)
+            return
 
-                # Also index by lemmatized first word for precise flexible matching
-                if self._use_lemmatization:
-                    lemma_first = self._lemmatize(index_word)
-                    if lemma_first not in self._lemmatized_first_word_index:
-                        self._lemmatized_first_word_index[lemma_first] = []
-                    if idx not in self._lemmatized_first_word_index[lemma_first]:
-                        self._lemmatized_first_word_index[lemma_first].append(idx)
+        if index_word not in self._first_word_index:
+            self._first_word_index[index_word] = []
+        self._first_word_index[index_word].append(idx)
+
+        # Also index by stemmed first word for flexible matching
+        if self._use_stemming:
+            stemmed_first = stem_text(index_word)
+            if stemmed_first not in self._stemmed_first_word_index:
+                self._stemmed_first_word_index[stemmed_first] = []
+            if idx not in self._stemmed_first_word_index[stemmed_first]:
+                self._stemmed_first_word_index[stemmed_first].append(idx)
+
+        # Also index by lemmatized first word for precise flexible matching
+        if self._use_lemmatization:
+            lemma_first = self._lemmatize(index_word)
+            if lemma_first not in self._lemmatized_first_word_index:
+                self._lemmatized_first_word_index[lemma_first] = []
+            if idx not in self._lemmatized_first_word_index[lemma_first]:
+                self._lemmatized_first_word_index[lemma_first].append(idx)
+
+    def _rebuild_indexes(self) -> None:
+        """Rebuild every first-word index from the current pattern list.
+
+        Entry indices shift when a pattern is removed, so all index buckets are
+        rebuilt from scratch rather than patched in place.
+        """
+        self._first_word_index.clear()
+        self._stemmed_first_word_index.clear()
+        self._lemmatized_first_word_index.clear()
+        self._wildcard_patterns.clear()
+        for idx, entry in enumerate(self._patterns):
+            self._index_pattern(idx, entry["pattern"])
+
+    def remove_pattern(self, pattern: str, that: str = "", topic: str = "") -> bool:
+        """Remove the first entry matching (pattern, that, topic).
+
+        Called when the statement backing a pattern is evicted or retired, so a
+        dead pattern cannot keep matching (and shadowing live patterns) after
+        its statement is gone.
+
+        Args:
+            pattern: AIML-style pattern to remove.
+            that: The entry's that-context ("" when none).
+            topic: The entry's topic scope ("" when none).
+
+        Returns:
+            True if an entry was removed, False if no entry matched.
+        """
+        for i, entry in enumerate(self._patterns):
+            if entry["pattern"] == pattern and entry["that"] == that and entry["topic"] == topic:
+                del self._patterns[i]
+                self._rebuild_indexes()
+                return True
+        return False
 
     def match(
         self,
@@ -483,7 +514,7 @@ class PatternMatcher:
         # fallback stages ignore pure-wildcard results (via _specific) so they
         # don't simply re-return the catch-all.
         catchall = ()
-        if result and _is_pure_wildcard(result[4]):
+        if result and is_pure_wildcard(result[4]):
             catchall, result = result, ()
 
         # If no specific match and lemmatization enabled, try lemmatized matching
@@ -514,7 +545,7 @@ class PatternMatcher:
     @staticmethod
     def _specific(result: tuple) -> tuple:
         """Return result unless it is a pure-wildcard (catch-all) match, then ()."""
-        if result and _is_pure_wildcard(result[4]):
+        if result and is_pure_wildcard(result[4]):
             return ()
         return result
 
@@ -653,6 +684,7 @@ class PatternMatcher:
         self._patterns.clear()
         self._first_word_index.clear()
         self._stemmed_first_word_index.clear()
+        self._lemmatized_first_word_index.clear()
         self._wildcard_patterns.clear()
 
     def __len__(self) -> int:

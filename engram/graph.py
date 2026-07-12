@@ -55,18 +55,23 @@ def is_connection_error(err: Exception) -> bool:
     return False
 
 
-# Cypher clauses that mutate the graph. ENGRAM's graph role is recall, so the
-# read-only template path refuses any query carrying one of these.
-WRITE_CLAUSE = re.compile(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH)\b", re.IGNORECASE)
+# Cypher clauses that can mutate the graph. ENGRAM's graph role is recall, so
+# the read-only template path refuses any query carrying one of these. CALL is
+# included because stored procedures can write regardless of the surrounding
+# query's shape, and LOAD because LOAD CSV imports data; a read-only path that
+# allowed either would not be read-only.
+WRITE_CLAUSE = re.compile(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD)\b", re.IGNORECASE)
 
 
 def is_write_cypher(cypher: str) -> bool:
-    """Return True if the Cypher mutates the graph.
+    """Return True if the Cypher can mutate the graph.
 
     Detects the write clauses (CREATE / MERGE / DELETE / SET / REMOVE / ...)
-    as whole words, case-insensitively. Conservative: an ambiguous query is
-    treated as a write, so the recall-only path refuses it rather than risk a
-    silent mutation.
+    plus procedure invocation (CALL) and data import (LOAD) as whole words,
+    case-insensitively. Conservative: an ambiguous query is treated as a
+    write, so the recall-only path refuses it rather than risk a silent
+    mutation -- this also refuses read-only procedures, which is the accepted
+    cost of a blocklist that cannot inspect procedure bodies.
     """
     return bool(WRITE_CLAUSE.search(cypher or ""))
 

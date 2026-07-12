@@ -11,7 +11,16 @@ from nltk import ne_chunk
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from engram.constants import COMMAND_WORDS, COPULAS, QUESTION_WORDS
+from engram.constants import (
+    COMMAND_WORDS,
+    COPULAS,
+    KIND_COMMAND,
+    KIND_QUESTION,
+    KIND_STATEMENT,
+    MAX_FACT_SUBJECT_TOKENS,
+    POSSESSIVE_PRONOUNS,
+    QUESTION_WORDS,
+)
 from engram.nltk_data import ensure_resource
 
 
@@ -74,8 +83,12 @@ def fact_query_patterns(fact: dict) -> list[str]:
     return patterns
 
 
-def _is_question(text: str) -> bool:
-    """Check if text is a question."""
+def is_question(text: str) -> bool:
+    """Check if text is a question.
+
+    Three detectors: a trailing question mark, a question-word lead
+    (what/who/where/...), or an inverted copula ("Is it ...").
+    """
     # Ends with question mark
     if text.rstrip().endswith("?"):
         return True
@@ -88,6 +101,22 @@ def _is_question(text: str) -> bool:
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
     return len(words) >= 2 and words[0] in COPULAS
+
+
+def input_kind(text: str) -> str:
+    """Classify input as a question, command, or statement.
+
+    This is the routing signal for intent-aware responses: a catch-all
+    deflection authored for statements ("Why do you say that?") reads absurd
+    after a question, so templates branch on this via the {qtype:...}
+    transform, and the pipeline routes unanswered questions through keyword
+    retrieval before falling back.
+    """
+    if is_question(text):
+        return KIND_QUESTION
+    if _is_command(text):
+        return KIND_COMMAND
+    return KIND_STATEMENT
 
 
 def _is_command(text: str) -> bool:
@@ -111,7 +140,14 @@ def _clean_subject(tokens: list[str]) -> str:
 
 
 def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], original: str) -> dict:
-    """Extract fact from a copula sentence (X is/are Y)."""
+    """Extract fact from a copula sentence (X is/are Y).
+
+    The span before the copula must look like a plain noun phrase; anything
+    else is conversation about something rather than a definitional statement,
+    and learning it would store junk facts with unusable retrieval patterns
+    (e.g. "Your sentiment analysis should inform that tired is not nice"
+    splitting at "is").
+    """
     # Find the copula
     copula_idx = -1
     copula = ""
@@ -125,6 +161,12 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     if copula_idx <= 0:
         return {}
 
+    # Guardrail: a verb or modal before the copula means the copula belongs to
+    # an embedded clause, not "subject is object".
+    for _, pos in tagged[:copula_idx]:
+        if pos.startswith("VB") or pos == "MD":
+            return {}
+
     # Extract subject (everything before copula)
     subject_tokens = tokens[:copula_idx]
 
@@ -136,6 +178,17 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     obj = " ".join(obj_tokens).rstrip(".")
 
     if not subject or not obj:
+        return {}
+
+    subject_words = subject.split()
+
+    # Guardrail: long subjects are clauses, not names of things.
+    if len(subject_words) > MAX_FACT_SUBJECT_TOKENS:
+        return {}
+
+    # Guardrail: possessive-led subjects ("your ...", "my ...") are
+    # conversational references, not shared knowledge.
+    if subject_words[0].lower() in POSSESSIVE_PRONOUNS:
         return {}
 
     # Skip if subject is just a pronoun (I, you, he, she, it, they, we)
@@ -164,7 +217,7 @@ def extract_fact(text: str) -> dict:
         return {}
 
     # Skip questions
-    if _is_question(text):
+    if is_question(text):
         return {}
 
     # Skip commands

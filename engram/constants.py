@@ -17,7 +17,7 @@ from enum import Enum
 # Canonical package version. pyproject.toml derives the distribution version
 # from this via setuptools' dynamic ``attr``, so the version lives in exactly one
 # place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # =============================================================================
 # Enumerations
@@ -166,6 +166,28 @@ MODEL_NAME = "en_core_web_sm"
 # Text processing
 # =============================================================================
 
+# POS tags for nouns and proper nouns (the referents a follow-up query's
+# pronouns can point back to; used for session context expansion)
+NOUN_POS_TAGS = {"NN", "NNS", "NNP", "NNPS"}
+
+# Spelling correction (input cleanup). Correction is deliberately timid: only
+# tokens at least MIN_SPELL_TOKEN_LENGTH long that are neither in the target
+# vocabulary nor real English words are candidates, and only a unique nearest
+# neighbor within the allowed Damerau-Levenshtein distance replaces them.
+MIN_SPELL_TOKEN_LENGTH = 4
+SPELL_LONG_TOKEN_LENGTH = 6  # Tokens this long or longer allow distance 2 (else 1)
+
+# Conjunctions stripped from the end of a clause cut ("tired and" -> "tired")
+CLAUSE_BOUNDARY_TRAILERS = {"and", "but", "or", "because", "so", "then"}
+
+# Personal subject pronouns that mark the start of a new clause when followed
+# by a verb. Matched by word, not POS tag: NLTK tags a lowercase "i" as a
+# noun or adjective, never PRP.
+SUBJECT_PRONOUNS = {"i", "you", "he", "she", "it", "we", "they"}
+
+# Output polish: the pronoun I and its contractions are always capitalized
+STANDALONE_I_FORMS = {"i": "I", "i'm": "I'm", "i've": "I've", "i'll": "I'll", "i'd": "I'd"}
+
 # POS tags that indicate content words (nouns, verbs, adjectives, adverbs)
 CONTENT_POS_TAGS = {
     "NN",
@@ -197,11 +219,23 @@ COPULAS = {"is", "are", "was", "were"}
 # Words that indicate a question (should not extract facts)
 QUESTION_WORDS = {"what", "who", "where", "when", "why", "how", "which", "whose"}
 
+# Input kinds: the intent classification templates branch on via {qtype:...}
+# and the pipeline routes on (questions get retrieval before a shrug).
+KIND_QUESTION = "question"
+KIND_COMMAND = "command"
+KIND_STATEMENT = "statement"
+
 # Words that indicate a command (should not extract facts)
 COMMAND_WORDS = {"learn", "remember", "forget", "tell", "say", "repeat", "echo"}
 
 # Personal pronouns excluded as relational-triple subjects or objects
 PRONOUNS = {"i", "you", "he", "she", "it", "we", "they", "this", "that", "these", "those"}
+
+# Guardrails for copula fact extraction: a subject longer than this, one that
+# contains a verb or modal, or one led by a possessive pronoun is conversation
+# about something, not a definitional statement worth learning.
+MAX_FACT_SUBJECT_TOKENS = 4
+POSSESSIVE_PRONOUNS = {"my", "your", "our", "their", "his", "her", "its"}
 
 # spaCy dependency labels marking subjects and objects
 SUBJECT_DEPS = {"nsubj", "nsubjpass"}
@@ -373,6 +407,15 @@ DEFAULT_GENDER: dict[str, str] = {
     "himself": "themself",
     "herself": "themself",
 }
+
+
+# =============================================================================
+# Scoring
+# =============================================================================
+
+# Overlap credit for a query keyword matched only through a WordNet synonym,
+# relative to the 1.0 credit of an exact keyword match.
+SYNONYM_OVERLAP_WEIGHT = 0.5
 
 
 # =============================================================================

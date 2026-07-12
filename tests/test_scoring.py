@@ -1,60 +1,137 @@
-"""Tests for scoring algorithm."""
+"""Tests for the calibrated scoring algorithm."""
+
+import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from engram.constants import SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry, statement
 from engram.scoring import (
     calculate_average_hit_rate,
     calculate_overlap,
     calculate_recency,
+    keyword_idf,
+    keyword_match_weights,
     score_statement,
 )
 
 
+class TestKeywordIdf:
+    """Tests for inverse document frequency weighting."""
+
+    def test_rare_keyword_outweighs_common(self) -> None:
+        keyword_index = {
+            "rare": keyword_entry(keyword="rare", statement_ids=["s1"]),
+            "common": keyword_entry(keyword="common", statement_ids=[f"s{i}" for i in range(100)]),
+        }
+        assert keyword_idf("rare", keyword_index, 100) > keyword_idf("common", keyword_index, 100)
+
+    def test_unindexed_keyword_gets_maximum_weight(self) -> None:
+        keyword_index = {
+            "known": keyword_entry(keyword="known", statement_ids=["s1", "s2"]),
+        }
+        assert keyword_idf("unknown", keyword_index, 100) == pytest.approx(math.log(1 + 100))
+        assert keyword_idf("unknown", keyword_index, 100) > keyword_idf("known", keyword_index, 100)
+
+    def test_empty_store_is_positive(self) -> None:
+        assert keyword_idf("anything", {}, 0) > 0
+
+
+class TestKeywordMatchWeights:
+    """Tests for per-keyword match weighting."""
+
+    def test_exact_match_full_weight(self) -> None:
+        weights = keyword_match_weights(["alpha", "beta"], ["alpha", "gamma"])
+        assert weights == {"alpha": 1.0, "beta": 0.0}
+
+    def test_synonym_match_discounted(self) -> None:
+        weights = keyword_match_weights(
+            ["car"],
+            ["automobile", "fast"],
+            synonyms={"car": ("automobile", "auto")},
+        )
+        assert weights == {"car": SYNONYM_OVERLAP_WEIGHT}
+
+    def test_exact_match_beats_synonym(self) -> None:
+        weights = keyword_match_weights(
+            ["car"],
+            ["car", "automobile"],
+            synonyms={"car": ("automobile",)},
+        )
+        assert weights == {"car": 1.0}
+
+    def test_no_synonym_map_no_synonym_credit(self) -> None:
+        weights = keyword_match_weights(["car"], ["automobile"])
+        assert weights == {"car": 0.0}
+
+
 class TestCalculateOverlap:
-    """Tests for overlap calculation."""
+    """Tests for the IDF-weighted overlap fraction."""
 
-    def test_full_overlap(self) -> None:
-        query = ["alpha", "beta", "gamma"]
-        statement = ["alpha", "beta", "gamma"]
-        assert calculate_overlap(query, statement) == 3
+    def test_full_overlap_is_one(self) -> None:
+        match = {"alpha": 1.0, "beta": 1.0}
+        assert calculate_overlap(match, {}, 1) == pytest.approx(1.0)
 
-    def test_partial_overlap(self) -> None:
-        query = ["alpha", "beta", "gamma"]
-        statement = ["alpha", "delta"]
-        assert calculate_overlap(query, statement) == 1
+    def test_no_overlap_is_zero(self) -> None:
+        match = {"alpha": 0.0, "beta": 0.0}
+        assert calculate_overlap(match, {}, 1) == 0.0
 
-    def test_no_overlap(self) -> None:
-        query = ["alpha", "beta"]
-        statement = ["gamma", "delta"]
-        assert calculate_overlap(query, statement) == 0
+    def test_uniform_idf_reduces_to_fraction(self) -> None:
+        # With no index, every keyword has the same IDF, so overlap is the
+        # plain matched fraction.
+        match = {"alpha": 1.0, "beta": 0.0}
+        assert calculate_overlap(match, {}, 1) == pytest.approx(0.5)
+
+    def test_rare_match_outscores_common_match(self) -> None:
+        keyword_index = {
+            "rare": keyword_entry(keyword="rare", statement_ids=["s1"]),
+            "common": keyword_entry(keyword="common", statement_ids=[f"s{i}" for i in range(50)]),
+        }
+        rare_match = calculate_overlap({"rare": 1.0, "common": 0.0}, keyword_index, 50)
+        common_match = calculate_overlap({"rare": 0.0, "common": 1.0}, keyword_index, 50)
+        assert rare_match > common_match
+
+    def test_synonym_weight_scales_contribution(self) -> None:
+        exact = calculate_overlap({"car": 1.0}, {}, 1)
+        via_synonym = calculate_overlap({"car": SYNONYM_OVERLAP_WEIGHT}, {}, 1)
+        assert via_synonym == pytest.approx(exact * SYNONYM_OVERLAP_WEIGHT)
 
     def test_empty_query(self) -> None:
-        assert calculate_overlap([], ["alpha"]) == 0
-
-    def test_empty_statement(self) -> None:
-        assert calculate_overlap(["alpha"], []) == 0
+        assert calculate_overlap({}, {}, 1) == 0.0
 
 
 class TestCalculateRecency:
-    """Tests for recency calculation."""
+    """Tests for time-decay recency."""
 
-    def test_first_statement(self) -> None:
-        assert calculate_recency(0, 10) == 0.0
+    def test_fresh_statement_is_one(self) -> None:
+        stmt = statement("fresh")
+        assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(1.0, abs=0.01)
 
-    def test_last_statement(self) -> None:
-        assert calculate_recency(9, 10) == 1.0
+    def test_one_half_life_is_half(self) -> None:
+        stmt = statement("aging")
+        stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=3600)
+        assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(0.5, abs=0.01)
 
-    def test_middle_statement(self) -> None:
-        # Index 5 of 11 = 5/10 = 0.5
-        assert calculate_recency(5, 11) == 0.5
+    def test_two_half_lives_is_quarter(self) -> None:
+        stmt = statement("old")
+        stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
+        assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(0.25, abs=0.01)
 
-    def test_single_statement(self) -> None:
-        assert calculate_recency(0, 1) == 1.0
+    def test_hit_refreshes_recency(self) -> None:
+        stmt = statement("revived")
+        stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
+        stmt["last_hit"] = datetime.now(UTC)
+        assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(1.0, abs=0.01)
 
-    def test_two_statements(self) -> None:
-        assert calculate_recency(0, 2) == 0.0
-        assert calculate_recency(1, 2) == 1.0
+    def test_stable_under_store_changes(self) -> None:
+        # Recency depends only on the statement's own timestamps, so it does
+        # not shift when other statements are stored or evicted.
+        stmt = statement("stable")
+        stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=1800)
+        first = calculate_recency(stmt, half_life_seconds=3600.0)
+        second = calculate_recency(stmt, half_life_seconds=3600.0)
+        assert first == pytest.approx(second, abs=0.01)
 
 
 class TestCalculateAverageHitRate:
@@ -64,7 +141,7 @@ class TestCalculateAverageHitRate:
         keyword_index = {
             "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
         }
-        result = calculate_average_hit_rate(["paris"], ["paris"], keyword_index)
+        result = calculate_average_hit_rate(["paris"], keyword_index)
         assert result == 0.9
 
     def test_multiple_keywords(self) -> None:
@@ -72,100 +149,93 @@ class TestCalculateAverageHitRate:
             "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
             "france": keyword_entry(keyword="france", query_count=100, hit_count=80),
         }
-        result = calculate_average_hit_rate(["paris", "france"], ["paris", "france"], keyword_index)
+        result = calculate_average_hit_rate(["paris", "france"], keyword_index)
         assert result == pytest.approx(0.85)  # (0.9 + 0.8) / 2
 
-    def test_partial_match(self) -> None:
-        keyword_index = {
-            "paris": keyword_entry(keyword="paris", query_count=100, hit_count=90),
-        }
-        # Only "paris" matches between query and statement
-        result = calculate_average_hit_rate(["paris", "capital"], ["paris", "city"], keyword_index)
-        assert result == 0.9
-
     def test_no_matches(self) -> None:
-        keyword_index = {}
-        result = calculate_average_hit_rate(["alpha"], ["beta"], keyword_index)
+        result = calculate_average_hit_rate([], {})
         assert result == 0.5  # Default
 
     def test_missing_keyword_entry(self) -> None:
-        keyword_index = {}  # Empty index
-        result = calculate_average_hit_rate(["paris"], ["paris"], keyword_index)
+        result = calculate_average_hit_rate(["paris"], {})
         assert result == 0.5  # Default for unknown keywords
 
 
 class TestScoreStatement:
-    """Tests for statement scoring."""
+    """Tests for calibrated statement scoring."""
 
-    def test_spec_example(self) -> None:
-        # Example from spec: "population of france" query
-        stmt = statement(
-            "France has a population of 67 million",
-            keywords=["france", "population", "67", "million"],
-        )
-
-        keyword_index = {
-            "population": keyword_entry(keyword="population", query_count=50, hit_count=45),
-            "france": keyword_entry(keyword="france", query_count=150, hit_count=140),
-        }
-
-        # Statement is index 2 of 3 total
-        score = score_statement(
+    def _score(self, stmt, query_keywords, keyword_index=None, synonyms=None, total=1):
+        return score_statement(
             statement=stmt,
-            statement_index=2,
-            total_statements=3,
-            query_keywords=["population", "france"],
-            keyword_index=keyword_index,
+            query_keywords=query_keywords,
+            keyword_index=keyword_index if keyword_index is not None else {},
+            total_statements=total,
             weight_base=0.5,
             weight_recency=0.3,
             weight_hit_rate=0.2,
+            recency_half_life_seconds=604800.0,
+            synonyms=synonyms,
         )
 
-        # Expected:
-        # overlap = 2
-        # recency = 2/2 = 1.0
-        # hit_rate(population) = 45/50 = 0.90
-        # hit_rate(france) = 140/150 = 0.9333...
-        # avg_hit_rate = (0.90 + 0.9333) / 2 = 0.9167
-        # score = 2 * (0.5 + 0.3 * 1.0 + 0.2 * 0.9167)
-        #       = 2 * (0.5 + 0.3 + 0.1833)
-        #       = 2 * 0.9833
-        #       = 1.9667
+    def test_perfect_fresh_match_bounds(self) -> None:
+        stmt = statement("France has a population of 67 million", keywords=["france", "population"])
+        keyword_index = {
+            "population": keyword_entry(keyword="population", statement_ids=[stmt["id"]], query_count=50, hit_count=45),
+            "france": keyword_entry(keyword="france", statement_ids=[stmt["id"]], query_count=150, hit_count=140),
+        }
+        score = self._score(stmt, ["population", "france"], keyword_index, total=3)
+        # Full overlap, fresh recency, high hit rates: close to 1.0, never above.
+        assert 0.9 < score <= 1.0
 
-        assert 1.9 < score < 2.0
+    def test_score_is_calibrated_to_unit_interval(self) -> None:
+        stmt = statement("Test statement", keywords=["test", "statement"])
+        score = self._score(stmt, ["test"])
+        assert 0.0 < score <= 1.0
 
     def test_zero_overlap(self) -> None:
         stmt = statement("Hello world", keywords=["hello", "world"])
+        assert self._score(stmt, ["goodbye"]) == 0.0
 
-        score = score_statement(
-            statement=stmt,
-            statement_index=0,
-            total_statements=1,
-            query_keywords=["goodbye"],
-            keyword_index={},
-            weight_base=0.5,
-            weight_recency=0.3,
-            weight_hit_rate=0.2,
-        )
-
-        assert score == 0.0
-
-    def test_default_weights(self) -> None:
+    def test_partial_match_scores_below_full_match(self) -> None:
         stmt = statement("Test statement", keywords=["test", "statement"])
+        partial = self._score(stmt, ["test", "missing"])
+        full = self._score(stmt, ["test", "statement"])
+        assert 0.0 < partial < full <= 1.0
 
+    def test_synonym_only_match_scores_positive(self) -> None:
+        stmt = statement("The automobile is fast", keywords=["automobile", "fast"])
+        without = self._score(stmt, ["car"])
+        with_synonyms = self._score(stmt, ["car"], synonyms={"car": ("automobile", "auto")})
+        assert without == 0.0
+        assert 0.0 < with_synonyms < 1.0
+
+    def test_older_statement_scores_lower(self) -> None:
+        fresh = statement("fresh entry", keywords=["shared", "topic"])
+        stale = statement("stale entry", keywords=["shared", "topic"])
+        stale["created_at"] = datetime.now(UTC) - timedelta(days=30)
+        assert self._score(fresh, ["shared", "topic"]) > self._score(stale, ["shared", "topic"])
+
+    def test_priority_added_to_matching_statement(self) -> None:
+        plain = statement("plain answer", keywords=["alpha"])
+        boosted = statement("boosted answer", keywords=["alpha"], priority=1)
+        assert self._score(boosted, ["alpha"]) == pytest.approx(self._score(plain, ["alpha"]) + 1)
+        assert self._score(boosted, ["alpha"]) > 1.0
+
+    def test_priority_ignored_without_overlap(self) -> None:
+        boosted = statement("boosted answer", keywords=["alpha"], priority=5)
+        assert self._score(boosted, ["unrelated"]) == 0.0
+
+    def test_custom_weights_still_calibrated(self) -> None:
+        # Weights that do not sum to 1.0 are normalized by the formula.
+        stmt = statement("Test statement", keywords=["test"])
         score = score_statement(
             statement=stmt,
-            statement_index=0,
-            total_statements=1,
             query_keywords=["test"],
             keyword_index={},
-            weight_base=0.5,
-            weight_recency=0.3,
-            weight_hit_rate=0.2,
+            total_statements=1,
+            weight_base=2.0,
+            weight_recency=1.0,
+            weight_hit_rate=1.0,
+            recency_half_life_seconds=604800.0,
         )
-
-        # overlap = 1
-        # recency = 1.0 (single statement)
-        # hit_rate = 0.5 (default)
-        # score = 1 * (0.5 + 0.3 * 1.0 + 0.2 * 0.5) = 1 * 0.9 = 0.9
-        assert score == pytest.approx(0.9)
+        assert 0.0 < score <= 1.0

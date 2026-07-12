@@ -71,6 +71,48 @@ def get_metrics(engram) -> dict:
     return metrics
 
 
+def decay_statistics(engram, factor: float = 0.5) -> int:
+    """Age keyword and statement hit statistics by a multiplicative factor.
+
+    Hit statistics are otherwise immortal: an entry that earned a strong hit
+    rate long ago keeps it forever after it stops being used, and min_hit_rate
+    would protect it indefinitely. Calling this periodically (like
+    expire_sessions) ages the evidence -- counts shrink proportionally, so
+    rates are preserved while confidence decays, and an entry that stops
+    re-earning its statistics eventually returns to zero query history and
+    becomes evictable again.
+
+    Args:
+        engram: Engram instance.
+        factor: Multiplier applied to every count, 0.0 <= factor < 1.0
+            (0.5 halves everything; 0.0 resets all statistics).
+
+    Returns:
+        Number of records (keyword entries plus statements) whose counts changed.
+    """
+    if factor < 0.0 or factor >= 1.0:
+        raise ValueError("factor must be at least 0.0 and below 1.0")
+
+    changed = 0
+    with engram.keyword_lock:
+        for entry in engram.keywords.values():
+            new_queries = int(entry["query_count"] * factor)
+            new_hits = int(entry["hit_count"] * factor)
+            if new_queries != entry["query_count"] or new_hits != entry["hit_count"]:
+                entry["query_count"] = new_queries
+                entry["hit_count"] = new_hits
+                changed += 1
+    with engram.statement_lock:
+        for stmt in engram.statements:
+            new_queries = int(stmt["query_count"] * factor)
+            new_hits = int(stmt["hit_count"] * factor)
+            if new_queries != stmt["query_count"] or new_hits != stmt["hit_count"]:
+                stmt["query_count"] = new_queries
+                stmt["hit_count"] = new_hits
+                changed += 1
+    return changed
+
+
 def get_low_hit_keywords(
     engram,
     min_queries: int = 10,

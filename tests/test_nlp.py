@@ -135,3 +135,69 @@ class TestFactLearningIntegration:
         assert result
         stmt, captured, response = result
         assert response == "Custom response"
+
+
+class TestFactExtractionGuardrails:
+    """The pre-copula span must look like a plain noun phrase."""
+
+    def test_reject_embedded_clause_copula(self):
+        # The copula belongs to an embedded clause; splitting at "is" would
+        # store a junk fact with an unusable retrieval pattern.
+        assert not extract_fact("Your sentiment analysis should inform that tired is not nice.")
+        assert not extract_fact("The report we wrote is finished")
+
+    def test_reject_possessive_led_subject(self):
+        assert not extract_fact("My dog is friendly")
+        assert not extract_fact("Your car is fast")
+
+    def test_reject_long_subject(self):
+        assert not extract_fact("The old lighthouse keeper of the northern coast is retired")
+
+    def test_accept_plain_noun_phrase_subjects(self):
+        fact = extract_fact("The capital of France is Paris")
+        assert fact["subject"] == "capital of France"
+        fact = extract_fact("The sky is blue")
+        assert fact["subject"] == "sky"
+
+
+class TestQuestionDetection:
+    """Tests for the public question/intent detection."""
+
+    def test_trailing_question_mark(self):
+        from engram.nlp import is_question
+
+        assert is_question("This works?")
+
+    def test_question_word_lead(self):
+        from engram.nlp import is_question
+
+        assert is_question("what do you think about python")
+
+    def test_inverted_copula(self):
+        from engram.nlp import is_question
+
+        assert is_question("Is it working")
+
+    def test_statement_is_not_question(self):
+        from engram.nlp import is_question
+
+        assert not is_question("The sky is blue")
+
+
+class TestInputKind:
+    """Tests for input intent classification."""
+
+    def test_question(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("Where is my hat?") == "question"
+
+    def test_command(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("tell me a story") == "command"
+
+    def test_statement(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("I lost my hat yesterday") == "statement"

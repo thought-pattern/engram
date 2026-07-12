@@ -35,7 +35,7 @@ from engram.constants import Tier
 from engram.core import Engram
 
 CATCHALL = "*"
-WEAK_SCORE = 1.0  # keyword top-score at or below this is a weak retrieval
+WEAK_SCORE = 0.5  # calibrated keyword top-score at or below this is a weak retrieval
 
 
 def build_seeded_engram() -> Engram:

@@ -87,9 +87,24 @@ class TestExtractKeywords:
 class TestExpandQuery:
     """Tests for query expansion."""
 
-    def test_basic_expansion(self) -> None:
+    def test_expands_with_nouns_only(self) -> None:
+        # Only the previous response's nouns are appended -- the referents a
+        # pronoun can point back to -- not its stopwords and verbs.
         result = expand_query("What is its population?", "Paris is the capital of France")
-        assert result == "What is its population? Paris is the capital of France"
+        assert result == "What is its population? Paris capital France"
+
+    def test_expansion_skips_non_referents(self) -> None:
+        result = expand_query("Why?", "The tower was built quickly in Paris")
+        assert "Paris" in result
+        assert "tower" in result
+        assert "quickly" not in result
+        assert "built" not in result
+
+    def test_expansion_falls_back_when_no_nouns(self) -> None:
+        # A response with nothing taggable as a noun falls back to appending
+        # the full response rather than dropping context entirely.
+        result = expand_query("What?", "Very quickly")
+        assert result.startswith("What? ")
 
     def test_empty_previous_response(self) -> None:
         assert expand_query("Hello world", "") == "Hello world"
@@ -164,3 +179,69 @@ class TestLemmatization:
     def test_lemmatize_default_noun(self) -> None:
         """Test default POS is noun."""
         assert lemmatize_word("cats") == "cat"
+
+
+class TestCorrectSpelling:
+    """Tests for store-vocabulary spelling correction."""
+
+    def test_corrects_transposition_typo(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"about", "capital", "france"}
+        assert correct_spelling("tell me abotu france", vocabulary) == "tell me about france"
+
+    def test_never_corrects_real_english_words(self) -> None:
+        from engram.text import correct_spelling
+
+        # "abort" is not in the store, but it is a real word -- leave it alone.
+        vocabulary = {"about"}
+        assert correct_spelling("abort", vocabulary) == "abort"
+
+    def test_never_corrects_short_tokens(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"cat"}
+        assert correct_spelling("cta", vocabulary) == "cta"
+
+    def test_keeps_vocabulary_tokens(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"about", "capital"}
+        assert correct_spelling("about capital", vocabulary) == "about capital"
+
+    def test_ambiguous_candidates_left_alone(self) -> None:
+        from engram.text import correct_spelling
+
+        # Two vocabulary words at the same distance: do not guess.
+        vocabulary = {"gramx", "gramy"}
+        assert correct_spelling("gramz", vocabulary) == "gramz"
+
+    def test_empty_vocabulary_is_no_op(self) -> None:
+        from engram.text import correct_spelling
+
+        assert correct_spelling("abotu anything", set()) == "abotu anything"
+
+
+class TestFirstClause:
+    """Tests for clause trimming."""
+
+    def test_cuts_new_subject_verb_clause(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("tired i have been working really hard") == "tired"
+
+    def test_strips_dangling_conjunction(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("exhausted and i want to sleep") == "exhausted"
+
+    def test_single_clause_unchanged(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("really happy about the results") == "really happy about the results"
+
+    def test_short_capture_unchanged(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("alice") == "alice"
+        assert first_clause("") == ""

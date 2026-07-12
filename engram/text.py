@@ -3,12 +3,20 @@
 import re
 from functools import lru_cache
 
-from nltk.corpus import wordnet
+from nltk.corpus import wordnet, words
+from nltk.metrics.distance import edit_distance
 from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from engram.constants import CONTENT_POS_TAGS
+from engram.constants import (
+    CLAUSE_BOUNDARY_TRAILERS,
+    CONTENT_POS_TAGS,
+    MIN_SPELL_TOKEN_LENGTH,
+    NOUN_POS_TAGS,
+    SPELL_LONG_TOKEN_LENGTH,
+    SUBJECT_PRONOUNS,
+)
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
 
@@ -167,8 +175,62 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     return keywords
 
 
+@lru_cache(maxsize=1)
+def _ensure_tagger() -> None:
+    """Ensure the POS tagger data is available, fetching into the local data dir."""
+
+    ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
+    ensure_resource("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
+
+
+def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
+    """Extract the nouns and proper nouns from text, order preserved.
+
+    These are the referents a follow-up query's pronouns can point back to
+    ("its" -> Paris / France), which is what session context expansion needs --
+    appending every word of the previous response would flood the query with
+    noise keywords instead.
+
+    Args:
+        text: Input text (typically the previous response).
+        max_terms: Maximum terms to return.
+
+    Returns:
+        Deduplicated nouns/proper nouns in order of appearance, [] if tagging
+        is unavailable or nothing qualifies.
+    """
+    if not text or not text.strip():
+        return []
+
+    _ensure_tagger()
+    try:
+        tokens = word_tokenize(text)
+        tagged = pos_tag(tokens)
+    except Exception:
+        return []
+
+    seen: set[str] = set()
+    terms: list[str] = []
+    for word, tag in tagged:
+        if tag not in NOUN_POS_TAGS or not word.isalnum():
+            continue
+        lower = word.lower()
+        if lower in seen:
+            continue
+        seen.add(lower)
+        terms.append(word)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
 def expand_query(query: str, previous_response: str) -> str:
-    """Expand query with previous response context.
+    """Expand query with referents from the previous response.
+
+    Appends the previous response's nouns and proper nouns -- the things a
+    follow-up's pronouns can refer to -- rather than the full response text,
+    so expansion adds referents without drowning the query's own keywords.
+    Falls back to appending the full response when no nouns can be extracted.
 
     Args:
         query: Current query text.
@@ -179,11 +241,15 @@ def expand_query(query: str, previous_response: str) -> str:
 
     Example:
         >>> expand_query("What is its population?", "Paris is the capital of France")
-        'What is its population? Paris is the capital of France'
+        'What is its population? Paris capital France'
     """
     if not previous_response:
         return query
-    expanded = f"{query} {previous_response}"
+    terms = extract_context_terms(previous_response)
+    if not terms:
+        expanded = f"{query} {previous_response}"
+        return expanded
+    expanded = f"{query} {' '.join(terms)}"
     return expanded
 
 
@@ -322,6 +388,118 @@ def normalize_with_stemming(text: str) -> str:
     normalized = normalize(text)
     stemmed = stem_text(normalized)
     return stemmed
+
+
+@lru_cache(maxsize=1)
+def _known_words() -> set:
+    """English word set used to gate spelling correction.
+
+    A token found here is a real word and is never "corrected" -- unknown real
+    words are the lemma/stem fallbacks' job, not the spell corrector's.
+    """
+    ensure_resource("corpora/words", "words")
+    word_set = {w.lower() for w in words.words()}
+    return word_set
+
+
+def _correct_token(token: str, vocabulary: set) -> str:
+    """Correct one out-of-vocabulary token toward the vocabulary, or keep it.
+
+    Conservative by design: short tokens, vocabulary tokens, and real English
+    words are kept as-is, and a replacement happens only when exactly one
+    vocabulary word is nearest within the allowed Damerau-Levenshtein distance
+    (a transposition like "abotu" -> "about" counts as one edit).
+    """
+    if len(token) < MIN_SPELL_TOKEN_LENGTH:
+        return token
+    if token in vocabulary:
+        return token
+    if token in _known_words():
+        return token
+
+    max_distance = 2 if len(token) >= SPELL_LONG_TOKEN_LENGTH else 1
+
+    best_distance = max_distance + 1
+    best_candidates: list[str] = []
+    for candidate in vocabulary:
+        if abs(len(candidate) - len(token)) > max_distance:
+            continue
+        distance = edit_distance(token, candidate, transpositions=True)
+        if distance < best_distance:
+            best_distance = distance
+            best_candidates = [candidate]
+        elif distance == best_distance:
+            best_candidates.append(candidate)
+
+    if best_distance <= max_distance and len(best_candidates) == 1:
+        corrected = best_candidates[0]
+        return corrected
+    return token
+
+
+def correct_spelling(text: str, vocabulary) -> str:
+    """Correct out-of-vocabulary typos in text toward a target vocabulary.
+
+    ENGRAM does not need general English spelling correction -- it needs
+    queries to hit the store. The vocabulary is therefore the store's own
+    indexed terms, so a typo is only ever corrected into a word that can
+    actually match something ("abotu" -> "about" when a pattern carries
+    "about"). See _correct_token for the guardrails.
+
+    Args:
+        text: Normalized (lowercase) input text.
+        vocabulary: Set of vocabulary words to correct toward.
+
+    Returns:
+        Text with unambiguous typos corrected, otherwise unchanged.
+    """
+    if not text or not vocabulary:
+        return text
+
+    corrected = [_correct_token(token, vocabulary) for token in text.split()]
+    result = " ".join(corrected)
+    return result
+
+
+def first_clause(text: str) -> str:
+    """Truncate text at the start of a new subject-verb clause.
+
+    A wildcard capture often swallows a whole compound sentence; echoing it
+    back verbatim reads badly ("you're tired i have been working really
+    hard"). A personal subject pronoun followed by a verb or modal after the
+    first word marks a new clause -- everything from there on is dropped,
+    along with any dangling conjunction ("tired and" -> "tired"). The pronoun
+    is matched by word rather than POS tag, since the tagger misreads a
+    lowercase "i". Text without such a boundary is returned unchanged.
+
+    Args:
+        text: Input text (typically a wildcard capture).
+
+    Returns:
+        The first clause of the text.
+    """
+    if not text or not text.strip():
+        return text
+
+    _ensure_tagger()
+    try:
+        tokens = word_tokenize(text)
+        tagged = pos_tag(tokens)
+    except Exception:
+        return text
+
+    for i in range(1, len(tagged) - 1):
+        word, _ = tagged[i]
+        next_tag = tagged[i + 1][1]
+        if word.lower() in SUBJECT_PRONOUNS and (next_tag.startswith("VB") or next_tag == "MD"):
+            clause_tokens = tokens[:i]
+            while clause_tokens and clause_tokens[-1].lower() in CLAUSE_BOUNDARY_TRAILERS:
+                clause_tokens.pop()
+            clause = " ".join(clause_tokens).strip(" ,;")
+            if clause:
+                return clause
+            return text
+    return text
 
 
 @lru_cache(maxsize=1)

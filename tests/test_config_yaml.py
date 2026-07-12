@@ -63,9 +63,15 @@ class TestLoadConfigValues:
         assert cfg["graph"]["enabled"] is True
 
     def test_unknown_key_raises(self, tmp_path):
-        # A config typo should fail loudly, not be silently dropped.
-        with pytest.raises(TypeError):
+        # A config typo should fail loudly, with the key and file named.
+        with pytest.raises(ValueError, match="capcity"):
             load_config(_write(tmp_path, "capcity: 500\n"))
+
+    def test_unknown_graph_key_raises(self, tmp_path):
+        # A stale graph section (e.g. the pre-pymgclient uri/database form)
+        # should name the offending keys, even when the graph is disabled.
+        with pytest.raises(ValueError, match="uri"):
+            load_config(_write(tmp_path, "graph:\n  uri: bolt://localhost:7687\n  enabled: false\n"))
 
     def test_validation_applies(self, tmp_path):
         with pytest.raises(ValueError):

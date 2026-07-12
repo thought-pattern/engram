@@ -173,7 +173,7 @@
     {"pattern": "STOP *", "response": "Okay, stopping."},
 
     {"pattern": "I AM BORED", "response": "Let's fix that - want to hear a joke or play a quick game?"},
-    {"pattern": "I AM *", "response": "Nice to know.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "That's great that you're {star1}!"}}, {"then": {"text": "Nice to know you're {star1}."}}]}}]}},
+    {"pattern": "I AM *", "response": "Nice to know.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry to hear you're {clause:{star1}}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "That's great that you're {clause:{star1}}!"}}, {"then": {"text": "Nice to know you're {clause:{star1}}."}}]}}]}},
     {"pattern": "I LIKE *", "response": "That's great!", "template": {"text": "That's great that you like {star1}!"}},
     {"pattern": "I LOVE *", "response": "That sounds wonderful!", "template": {"text": "{star1} sounds wonderful!"}},
     {"pattern": "I HATE *", "response": "I'm sorry to hear that.", "template": {"text": "I'm sorry to hear that about {star1}."}},
@@ -353,21 +353,45 @@
     {"pattern": "WHAT DID YOU SAY", "response": "Want me to repeat that?"},
     {"pattern": "WHAT DID YOU SAY *", "response": "Want me to repeat that?"},
 
-    {"pattern": "*", "response": "Go on.", "template": {"random": [
-      {"text": "Hmm, tell me more about that."},
-      {"text": "What made you think of that?"},
-      {"text": "Go on."},
-      {"text": "Why do you say that?"},
-      {"text": "Can you elaborate?"},
-      {"text": "Interesting. And what else?"},
-      {"text": "How so?"},
-      {"text": "What do you mean exactly?"},
-      {"text": "Tell me more."},
-      {"text": "I see. What brings that up?"},
-      {"text": "That's an interesting way to put it."},
-      {"text": "And how does that make you feel?"},
-      {"text": "Why is that important to you?"},
-      {"text": "What makes you say that?"}
+    {"pattern": "WHAT DO YOU THINK ABOUT *", "response": "I'm still forming a view.", "template": {"random": [
+      {"text": "I don't have a strong view on {clause:{star1}} yet. What do you think?"},
+      {"text": "I'm still forming an opinion about {clause:{star1}}. Tell me yours?"},
+      {"text": "I know less about {clause:{star1}} than you do, I suspect. What's your take?"}
+    ]}},
+    {"pattern": "WHAT DO YOU THINK OF *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
+    {"pattern": "WHAT IS YOUR OPINION ON *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
+    {"pattern": "DO YOU LIKE *", "response": "I'm not sure yet.", "template": {"random": [
+      {"text": "I don't have feelings about {clause:{star1}} yet. Do you like it?"},
+      {"text": "I can't say I like or dislike {clause:{star1}}. What draws you to it?"}
+    ]}},
+
+    {"pattern": "*", "response": "Go on.", "template": {"sequence": [
+      {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
+      {"condition": {"name": "_kind", "branches": [
+        {"value": "question", "then": {"random": [
+          {"text": "Good question - I don't have an answer for that yet."},
+          {"text": "I don't know that one yet."},
+          {"text": "I'm not sure. What do you think?"},
+          {"text": "I don't have an answer for that. Teach me?"},
+          {"text": "That's beyond what I know so far."}
+        ]}},
+        {"then": {"random": [
+          {"text": "Hmm, tell me more about that."},
+          {"text": "What made you think of that?"},
+          {"text": "Go on."},
+          {"text": "Why do you say that?"},
+          {"text": "Can you elaborate?"},
+          {"text": "Interesting. And what else?"},
+          {"text": "How so?"},
+          {"text": "What do you mean exactly?"},
+          {"text": "Tell me more."},
+          {"text": "I see. What brings that up?"},
+          {"text": "That's an interesting way to put it."},
+          {"text": "And how does that make you feel?"},
+          {"text": "Why is that important to you?"},
+          {"text": "What makes you say that?"}
+        ]}}
+      ]}}
     ]}}
   ]
 }

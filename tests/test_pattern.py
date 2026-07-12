@@ -351,6 +351,55 @@ class TestPatternMatcher:
         assert len(pm) == 0
         assert not pm.match("hello")
 
+    def test_clear_resets_lemmatized_index(self):
+        """clear() must reset the lemmatized index too, or stale buckets point at recycled indices."""
+        pm = PatternMatcher(use_lemmatization=True)
+        pm.add_pattern("CATS ARE NICE", "old response")
+        pm.clear()
+        pm.add_pattern("DOGS BARK", "new response")
+
+        # A stale 'cat' bucket would route this to the recycled index 0
+        # (now DOGS BARK) or raise; a clean index simply finds no match.
+        assert not pm.match("cats are nice")
+        assert pm.match("dogs bark")[0] == "new response"
+
+    def test_remove_pattern(self):
+        pm = PatternMatcher()
+        pm.add_pattern("HELLO", "greeting")
+        pm.add_pattern("GOODBYE", "farewell")
+
+        assert pm.remove_pattern("HELLO")
+        assert len(pm) == 1
+        assert not pm.match("hello")
+        # The surviving pattern still matches through the rebuilt index
+        assert pm.match("goodbye")[0] == "farewell"
+
+    def test_remove_pattern_not_found(self):
+        pm = PatternMatcher()
+        pm.add_pattern("HELLO", "greeting")
+        assert not pm.remove_pattern("MISSING")
+        assert len(pm) == 1
+
+    def test_remove_pattern_respects_context(self):
+        """Entries are keyed by (pattern, that, topic); removal must not take a sibling."""
+        pm = PatternMatcher()
+        pm.add_pattern("YES", "plain yes")
+        pm.add_pattern("YES", "contextual yes", that="DO YOU AGREE")
+
+        assert pm.remove_pattern("YES", that="DO YOU AGREE")
+        assert len(pm) == 1
+        # The context-free entry survives and still matches
+        assert pm.match("yes")[0] == "plain yes"
+
+    def test_remove_pattern_rebuilds_wildcard_index(self):
+        pm = PatternMatcher()
+        pm.add_pattern("*", "catchall")
+        pm.add_pattern("HELLO", "greeting")
+
+        assert pm.remove_pattern("HELLO")
+        # Wildcard entry survives at a shifted index and still matches
+        assert pm.match("anything at all")[0] == "catchall"
+
     def test_get_patterns(self):
         pm = PatternMatcher()
         pm.add_pattern("HELLO", "response1")

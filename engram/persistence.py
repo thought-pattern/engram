@@ -5,8 +5,9 @@ deserializing ENGRAM state to/from JSON files and strings.
 """
 
 import json
+import os
 
-from engram.config import engram_config
+from engram.config import config_from_dict, config_to_dict, engram_config
 from engram.constants import PERSISTENCE_VERSION
 from engram.core import Engram
 from engram.models import (
@@ -20,16 +21,27 @@ from engram.models import (
 )
 
 
+def _write_json_atomic(path, state: dict) -> None:
+    """Write JSON to path atomically via a temp file and rename.
+
+    A crash mid-write leaves the previous file intact instead of a truncated
+    store; os.replace is atomic on POSIX and Windows.
+    """
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp_path, path)
+
+
 def save(engram, path) -> None:
-    """Save complete state to JSON file.
+    """Save complete state to JSON file (atomically).
 
     Args:
         engram: Engram instance.
         path: File path to write.
     """
     state = to_dict(engram)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    _write_json_atomic(path, state)
 
 
 def save_json(engram) -> str:
@@ -58,6 +70,10 @@ def to_dict(engram) -> dict:
     with engram.statement_lock, engram.keyword_lock, engram.session_lock:
         state = {
             "version": PERSISTENCE_VERSION,
+            # Full configuration, so weights, eviction policy, and feature
+            # flags survive a save/load cycle. The top-level "capacity" key is
+            # kept alongside for files read by older loaders.
+            "config": config_to_dict(engram.config),
             "capacity": engram.config["capacity"],
             "query_count": engram.query_count,
             "hit_count": engram.hit_count,
@@ -94,8 +110,7 @@ def save_sessions(engram, path) -> None:
             "version": PERSISTENCE_VERSION,
             "sessions": [session_to_dict(s) for s in engram.sessions.values()],
         }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _write_json_atomic(path, data)
 
 
 def load_sessions(engram, path) -> int:
@@ -195,7 +210,10 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
     if version != PERSISTENCE_VERSION:
         raise ValueError(f"Unsupported persistence version: {version}")
 
-    # Create instance with config
+    # Create instance with config: an explicit override wins, then the config
+    # stored with the state, then defaults (older files carried only capacity).
+    if config is None and "config" in data:
+        config = config_from_dict(data["config"])
     if config is None:
         config = engram_config(capacity=data.get("capacity", 10000))
     instance = engram_class(config=config)

@@ -104,9 +104,20 @@ class TestEngramQuery:
         engram = Engram()
         engram.store("Hello world")
 
-        result = engram.query("Goodbye universe")
+        result = engram.query("quantum tensor")
 
         assert len(result["matches"]) == 0
+
+    def test_query_synonym_match_scores_discounted(self) -> None:
+        """A synonym-only match surfaces with less than exact-match credit."""
+        engram = Engram()
+        engram.store("The automobile is fast")
+
+        with_synonym = engram.query("car")
+
+        assert len(with_synonym["matches"]) == 1
+        _, score = with_synonym["matches"][0]
+        assert 0.0 < score < 0.5  # discounted below a same-shape exact match
 
     def test_query_stopwords_only(self) -> None:
         engram = Engram()
@@ -162,6 +173,51 @@ class TestEngramRecordHit:
         engram.record_hit(["paris", "france"])
 
         assert engram.hit_count == 1
+
+    def test_query_records_statement_candidacy(self) -> None:
+        """Each returned match counts as a query against that statement."""
+        engram = Engram()
+        stmt_id = engram.store("Paris is the capital of France")
+
+        engram.query("capital of France")
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["query_count"] == 1
+        assert stmt["hit_count"] == 0
+
+    def test_record_hit_with_statement_id(self) -> None:
+        """record_hit credits the answering statement when its id is given."""
+        engram = Engram()
+        stmt_id = engram.store("Paris is the capital of France")
+
+        result = engram.query("capital of France")
+        engram.record_hit(result["keywords"], statement_id=stmt_id)
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["hit_count"] == 1
+        assert stmt["last_hit"]
+
+    def test_record_hit_unknown_statement_id(self) -> None:
+        """An unknown statement id updates keyword stats and nothing else."""
+        engram = Engram()
+        engram.store("Paris is the capital of France")
+
+        engram.query("capital of France")
+        engram.record_hit(["capital"], statement_id="stmt_missing")
+
+        assert engram.hit_count == 1
+
+    def test_pattern_query_records_statement_usage(self) -> None:
+        """Pattern selection records both a query and a hit on the statement."""
+        engram = Engram()
+        stmt_id = engram.store("Hello there", pattern="HELLO")
+
+        engram.pattern_query("hello")
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["query_count"] == 1
+        assert stmt["hit_count"] == 1
+        assert stmt["last_hit"]
 
 
 class TestEngramEviction:
@@ -556,6 +612,51 @@ class TestEngramPersistence:
         # Keywords should have statistics preserved
         assert metrics.get_keyword_count(loaded) > 0
 
+    def test_persistence_preserves_config(self) -> None:
+        """The full config survives a save/load cycle, not just capacity."""
+        from engram.constants import EvictionPolicy
+
+        config = engram_config(
+            capacity=123,
+            weight_base=0.7,
+            weight_recency=0.2,
+            weight_hit_rate=0.1,
+            eviction_policy=EvictionPolicy.HIT_RATE,
+            session_overflow=SessionOverflow.REJECT,
+            use_synonyms=False,
+            fallback_response="Tell me more.",
+        )
+        engram = Engram(config=config)
+        engram.store("Paris France")
+
+        json_str = persistence.save_json(engram)
+        loaded = persistence.load_engram_json(json_str)
+
+        assert loaded.config == config
+
+    def test_persistence_config_override_wins(self) -> None:
+        """An explicit config passed to the loader beats the stored one."""
+        engram = Engram(config=engram_config(capacity=123))
+        engram.store("Paris France")
+
+        json_str = persistence.save_json(engram)
+        override = engram_config(capacity=456)
+        loaded = persistence.load_engram_json(json_str, config=override)
+
+        assert loaded.config["capacity"] == 456
+
+    def test_load_legacy_state_without_config(self) -> None:
+        """Files written before the config block still load, keeping capacity."""
+        engram = Engram(config=engram_config(capacity=123))
+        engram.store("Paris France")
+
+        data = persistence.to_dict(engram)
+        del data["config"]
+        loaded = persistence.load_engram_from_dict(data)
+
+        assert loaded.config["capacity"] == 123
+        assert metrics.get_statement_count(loaded) == 1
+
     def test_save_load_sessions_only(self) -> None:
         engram = Engram()
         engram.store("Statement")
@@ -693,6 +794,16 @@ class TestEngramInitialization:
         assert metrics.get_dynamic_count(child) == 1
         # Should NOT have parent sessions
         assert metrics.get_session_count(child) == 0
+
+    def test_fork_copies_dynamic_patterns(self) -> None:
+        """Scripted DYNAMIC statements survive the fork with their patterns."""
+        parent = Engram()
+        parent.store("Dynamic greeting", pattern="HI THERE", tier=Tier.DYNAMIC)
+
+        child = Engram.fork(parent)
+
+        result = child.pattern_query("hi there")
+        assert result[2] == "Dynamic greeting"
 
 
 class TestEngramMetrics:
@@ -1181,3 +1292,257 @@ class TestMultiSentenceInput:
 
         result = engram.pattern_query("   ")
         assert not result
+
+
+class TestStatementPriority:
+    """Priority prefers a statement among equals (keyword and pattern paths)."""
+
+    def test_pattern_query_prefers_priority(self) -> None:
+        engram = Engram()
+        engram.store("Standard answer", pattern="PRICING")
+        engram.store("Priority answer", pattern="PRICING", priority=5)
+
+        result = engram.pattern_query("pricing")
+
+        assert result[2] == "Priority answer"
+
+    def test_query_priority_outranks_recency(self) -> None:
+        engram = Engram()
+        engram.store("shared topic boosted", priority=1)
+        engram.store("shared topic plain")
+
+        result = engram.query("shared topic")
+
+        assert result["matches"][0][0]["text"] == "shared topic boosted"
+        assert result["matches"][0][1] > 1.0  # priority added on top of the calibrated score
+
+    def test_priority_requires_a_match(self) -> None:
+        engram = Engram()
+        engram.store("boosted but unrelated", priority=5)
+
+        result = engram.query("quantum tensor")
+
+        assert result["matches"] == []
+
+
+class TestDecayStatistics:
+    """Tests for aging hit statistics."""
+
+    def _engram_with_stats(self) -> tuple:
+        engram = Engram()
+        stmt_id = engram.store("Paris is the capital of France")
+        result = {}
+        for _ in range(4):
+            result = engram.query("capital of France")
+        engram.record_hit(result["keywords"], statement_id=stmt_id)
+        engram.record_hit(result["keywords"], statement_id=stmt_id)
+        return engram, stmt_id
+
+    def test_decay_halves_counts(self) -> None:
+        engram, stmt_id = self._engram_with_stats()
+
+        changed = metrics.decay_statistics(engram, factor=0.5)
+
+        assert changed > 0
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["query_count"] == 2
+        assert stmt["hit_count"] == 1
+        assert engram.keywords["capital"]["query_count"] == 2
+        assert engram.keywords["capital"]["hit_count"] == 1
+
+    def test_repeated_decay_returns_entry_to_no_history(self) -> None:
+        """An entry that stops re-earning statistics eventually loses protection."""
+        engram, stmt_id = self._engram_with_stats()
+
+        for _ in range(4):
+            metrics.decay_statistics(engram, factor=0.5)
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["query_count"] == 0
+        assert stmt["hit_count"] == 0
+        # With no query history it is evictable again despite min_hit_rate.
+        engram.config["min_hit_rate"] = 0.3
+        candidates = eviction.get_eviction_candidates(engram)
+        assert any(s["id"] == stmt_id for _, s in candidates)
+
+    def test_decay_zero_resets_everything(self) -> None:
+        engram, stmt_id = self._engram_with_stats()
+
+        metrics.decay_statistics(engram, factor=0.0)
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["query_count"] == 0
+        assert all(e["query_count"] == 0 and e["hit_count"] == 0 for e in engram.keywords.values())
+
+    def test_decay_validates_factor(self) -> None:
+        engram = Engram()
+        with pytest.raises(ValueError):
+            metrics.decay_statistics(engram, factor=1.0)
+        with pytest.raises(ValueError):
+            metrics.decay_statistics(engram, factor=-0.1)
+
+
+class TestSyncCorpus:
+    """Tests for seed refresh (upserting pairs into an existing store)."""
+
+    def test_updates_stale_template_in_place(self) -> None:
+        engram = Engram()
+        stmt_id = engram.store("Nice to know.", pattern="I AM *", template={"text": "old {star1}!"}, tier=Tier.STATIC)
+        stmt = engram.get_statement(stmt_id)
+        record_statement_hit(stmt)
+
+        counts = engram.sync_corpus([{"pattern": "I AM *", "response": "Nice to know.", "template": {"text": "new {star1}."}}])
+
+        assert counts == {"added": 0, "updated": 1, "unchanged": 0}
+        refreshed = engram.get_statement(stmt_id)
+        assert refreshed["template"] == {"text": "new {star1}."}
+        assert refreshed["hit_count"] == 1  # statistics preserved
+
+    def test_adds_missing_pairs(self) -> None:
+        engram = Engram()
+
+        counts = engram.sync_corpus([{"pattern": "HELLO", "response": "Hi there!"}])
+
+        assert counts == {"added": 1, "updated": 0, "unchanged": 0}
+        assert engram.pattern_query("hello")[2] == "Hi there!"
+
+    def test_unchanged_pairs_counted(self) -> None:
+        engram = Engram()
+        pairs = [{"pattern": "HELLO", "response": "Hi there!"}]
+        engram.sync_corpus(pairs)
+
+        counts = engram.sync_corpus(pairs)
+
+        assert counts == {"added": 0, "updated": 0, "unchanged": 1}
+        assert metrics.get_statement_count(engram) == 1
+
+    def test_dynamic_content_untouched(self) -> None:
+        engram = Engram()
+        learned_id = engram.learn_from_response("who acquired github", "Microsoft acquired GitHub.")
+        # A DYNAMIC statement sharing a seed pattern is not the seed's entry
+        dynamic_id = engram.store("Dynamic hello", pattern="HELLO", tier=Tier.DYNAMIC)
+
+        counts = engram.sync_corpus([{"pattern": "HELLO", "response": "Hi there!"}])
+
+        assert counts["added"] == 1  # synced as a separate STATIC statement
+        assert engram.get_statement(learned_id)["text"] == "Microsoft acquired GitHub."
+        assert engram.get_statement(dynamic_id)["text"] == "Dynamic hello"
+
+    def test_plain_text_pairs_dedup_by_text(self) -> None:
+        engram = Engram()
+        engram.store("Plain fact statement", tier=Tier.STATIC)
+
+        counts = engram.sync_corpus([{"response": "Plain fact statement"}])
+
+        assert counts == {"added": 0, "updated": 0, "unchanged": 1}
+
+
+class TestInputOutputCleanup:
+    """Integration tests for spelling correction and response polish."""
+
+    def test_pattern_query_corrects_typo(self) -> None:
+        engram = Engram()
+        engram.store("Cats are small felines.", pattern="TELL ME ABOUT CATS")
+
+        result = engram.pattern_query("tell me abotu cats")
+
+        assert result[2] == "Cats are small felines."
+
+    def test_query_corrects_typo(self) -> None:
+        engram = Engram()
+        engram.store("The capital of France is Paris.")
+
+        result = engram.query("capitla of france")
+
+        assert result["matches"]
+        assert "capital" in result["keywords"]
+
+    def test_spell_correction_disabled(self) -> None:
+        config = engram_config(use_spell_correction=False)
+        engram = Engram(config=config)
+        engram.store("Cats are small felines.", pattern="TELL ME ABOUT CATS")
+
+        assert engram.pattern_query("tell me abotu cats") == ()
+
+    def test_response_polish_repairs_casing(self) -> None:
+        engram = Engram()
+        engram.store("you said {star1}. i heard you.", pattern="ECHO *")
+
+        result = engram.pattern_query("echo something loud")
+
+        assert result[2] == "You said something loud. I heard you."
+
+    def test_response_polish_disabled(self) -> None:
+        config = engram_config(polish_responses=False)
+        engram = Engram(config=config)
+        engram.store("you said {star1}.", pattern="ECHO *")
+
+        result = engram.pattern_query("echo something")
+
+        assert result[2] == "you said something."
+
+    def test_sentiment_clause_flow_end_to_end(self) -> None:
+        """The transcript scenario: compound 'I am' input gets a clean, trimmed reply."""
+        engram = Engram()
+        engram.store(
+            "Nice to know.",
+            pattern="I AM *",
+            template={
+                "sequence": [
+                    {"set": {"name": "_mood", "value": "{sentiment:{star1}}"}},
+                    {
+                        "condition": {
+                            "name": "_mood",
+                            "branches": [
+                                {
+                                    "value": "negative",
+                                    "then": {"text": "i'm sorry to hear you're {clause:{star1}}. Want to talk about it?"},
+                                },
+                                {"then": {"text": "Nice to know you're {clause:{star1}}."}},
+                            ],
+                        }
+                    },
+                ]
+            },
+        )
+
+        result = engram.pattern_query("I'm tired, I have been working really hard.")
+
+        assert result[2] == "I'm sorry to hear you're tired. Want to talk about it?"
+
+
+class TestQuestionAwareCatchall:
+    """The catch-all template can branch on input intent via {qtype:...}."""
+
+    def _engram_with_intent_catchall(self) -> Engram:
+        engram = Engram()
+        engram.store(
+            "Go on.",
+            pattern="*",
+            tier=Tier.STATIC,
+            template={
+                "sequence": [
+                    {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
+                    {
+                        "condition": {
+                            "name": "_kind",
+                            "branches": [
+                                {"value": "question", "then": {"text": "I don't know that one yet."}},
+                                {"then": {"text": "Tell me more about that."}},
+                            ],
+                        }
+                    },
+                ]
+            },
+        )
+        return engram
+
+    def test_question_gets_question_fallback(self) -> None:
+        engram = self._engram_with_intent_catchall()
+        result = engram.pattern_query("Where is the nearest coffee shop?")
+        assert result[2] == "I don't know that one yet."
+
+    def test_statement_gets_statement_fallback(self) -> None:
+        engram = self._engram_with_intent_catchall()
+        result = engram.pattern_query("The coffee here tastes burnt")
+        assert result[2] == "Tell me more about that."
