@@ -57,3 +57,37 @@ class TestSpacyLemmatization:
         result = pm.match("i saw a movie")
         assert result
         assert result[0] == "You see {star1}"
+
+
+@requires_model
+class TestSpacyFactLearning:
+    """use_spacy_facts routes pattern_query fact learning through the dependency parser."""
+
+    def test_learns_relational_fact(self):
+        from engram.core import Engram
+
+        config = engram_config(use_spacy_facts=True)
+        engram = Engram(config=config)
+        engram.store("Tell me more.", pattern="*")
+
+        # No copula: the default NLTK extractor cannot learn from this.
+        result = engram.pattern_query("Einstein developed the theory of relativity")
+
+        from engram.constants import LEARNED_ACKNOWLEDGMENTS
+
+        assert result[2] in LEARNED_ACKNOWLEDGMENTS
+        patterns = [s["pattern"] for s in engram.statements]
+        assert "EINSTEIN" in patterns
+
+    def test_default_extractor_skips_relational_fact(self):
+        from engram.core import Engram
+
+        engram = Engram()
+        engram.store("Tell me more.", pattern="*")
+
+        result = engram.pattern_query("Einstein developed the theory of relativity")
+
+        # Nothing learned, so the catch-all answers normally.
+        assert result[2] == "Tell me more."
+        patterns = [s["pattern"] for s in engram.statements]
+        assert "EINSTEIN" not in patterns

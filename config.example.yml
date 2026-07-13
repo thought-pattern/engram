@@ -13,6 +13,7 @@ session_ttl_seconds: 86400   # Session time-to-live in seconds (24 hours)
 weight_base: 0.5
 weight_recency: 0.3
 weight_hit_rate: 0.2
+recency_half_life_seconds: 604800   # Recency decay half-life (7 days)
 
 # --- Sessions ---
 session_overflow: lru        # reject | expire_oldest | lru
@@ -31,9 +32,13 @@ use_stemming: true              # Porter-stemmed fallback matching
 use_lemmatization: true         # WordNet-lemmatized fallback matching
 use_synonyms: true              # WordNet synonym expansion on keyword queries
 max_synonyms_per_word: 3
+use_spell_correction: true      # Correct input typos toward the store vocabulary
 use_spacy_facts: false          # spaCy dependency-parse fact extraction (needs en_core_web_sm)
 use_spacy_lemmatization: false  # spaCy context-aware lemmas in the matcher
 use_phrase_keywords: false      # spaCy noun-chunk phrase keywords for retrieval
+
+# --- Output processing ---
+polish_responses: true          # Repair casing in pattern-path responses
 
 # --- Fallback ---
 fallback_response: ""        # Response when nothing matches ("" = no fallback)

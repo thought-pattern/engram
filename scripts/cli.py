@@ -12,7 +12,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from engram import metrics, persistence, sessions
+from engram import metrics, persistence, pipeline, sessions
 from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
@@ -145,8 +145,34 @@ def create_parser() -> argparse.ArgumentParser:
     session_topic.add_argument("id", help="Session ID")
     session_topic.add_argument("topic", help="Topic name")
 
+    # sync-seed command
+    sync_parser = subparsers.add_parser(
+        "sync-seed",
+        help="Upsert the bundled seed corpus into the store (refresh stale templates)",
+    )
+    sync_parser.add_argument(
+        "--file",
+        type=str,
+        default="",
+        help="Seed file to sync from (default: data/seed.json)",
+    )
+    sync_parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Retire STATIC statements absent from the seed (mirror, not just upsert)",
+    )
+
     # metrics command
     subparsers.add_parser("metrics", help="Show store metrics")
+
+    # decay command
+    decay_parser = subparsers.add_parser("decay", help="Age hit statistics (run periodically)")
+    decay_parser.add_argument(
+        "--factor",
+        type=float,
+        default=0.5,
+        help="Multiplier applied to every hit/query count (default: 0.5)",
+    )
 
     # keywords command
     keywords_parser = subparsers.add_parser("keywords", help="Keyword analysis")
@@ -259,8 +285,22 @@ def save_engram(engram: Engram, store_path: str) -> None:
     persistence.save(engram, store_path)
 
 
+def load_seed_pairs(path: str = "") -> list:
+    """Read seed pairs from a file (default: the bundled data/seed.json).
+
+    Returns [] when the file does not exist.
+    """
+    seed_file = Path(path) if path else Path(_REPO_ROOT) / "data" / "seed.json"
+    if not seed_file.exists():
+        return []
+    with open(seed_file, encoding="utf-8") as f:
+        seed_data = json.load(f)
+    pairs = seed_data.get("pairs", [])
+    return pairs
+
+
 def cmd_init(args: argparse.Namespace) -> int:
-    """Initialize a new engram store."""
+    """Initialize a new engram store, seeded from the bundled corpus."""
     path = Path(args.store)
     if path.exists() and not args.force:
         print(f"Store already exists: {args.store}", file=sys.stderr)
@@ -268,8 +308,35 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
 
     engram = Engram(config=args.engram_config)
+    pairs = load_seed_pairs()
+    counts = engram.sync_corpus(pairs)
     save_engram(engram, args.store)
-    print(f"Initialized engram store: {args.store}")
+    print(f"Initialized engram store: {args.store} ({counts['added']} seed statements)")
+    return 0
+
+
+def cmd_sync_seed(args: argparse.Namespace) -> int:
+    """Upsert the seed corpus into an existing store.
+
+    Refreshes stale STATIC templates in place (preserving ids and hit
+    statistics) and adds new seed entries; DYNAMIC learned content is never
+    touched. Run after updating data/seed.json so existing stores pick up the
+    changes.
+    """
+    engram = load_engram_instance(args)
+
+    pairs = load_seed_pairs(args.file)
+    if not pairs:
+        source = args.file or "data/seed.json"
+        print(f"No seed pairs found: {source}", file=sys.stderr)
+        return 1
+
+    counts = engram.sync_corpus(pairs, prune=args.prune)
+    save_engram(engram, args.store)
+    summary = f"Seed sync: {counts['added']} added, {counts['updated']} updated, {counts['unchanged']} unchanged"
+    if args.prune:
+        summary += f", {counts['pruned']} pruned"
+    print(summary)
     return 0
 
 
@@ -477,6 +544,21 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decay(args: argparse.Namespace) -> int:
+    """Age hit statistics so old evidence loses standing over time."""
+    engram = load_engram_instance(args)
+
+    try:
+        changed = metrics.decay_statistics(engram, factor=args.factor)
+    except ValueError as err:
+        print(f"Error: {err}", file=sys.stderr)
+        return 1
+
+    save_engram(engram, args.store)
+    print(f"Decayed statistics on {changed} records (factor {args.factor})")
+    return 0
+
+
 def cmd_keywords(args: argparse.Namespace) -> int:
     """Keyword analysis."""
     engram = load_engram_instance(args)
@@ -598,8 +680,10 @@ class InteractiveChat:
         engram: Engram,
         session_id=None,
         enable_graph: bool = False,
+        store_path: str = "",
     ):
         self.engram = engram
+        self.store_path = store_path
         self.debug_mode = False
         self.session_id = session_id or sessions.create_session(
             engram,
@@ -613,24 +697,25 @@ class InteractiveChat:
             print("Note: Graph client support is a future feature")
 
     def process_input(self, user_input: str) -> str:
-        """Process user input and return response."""
-        result = self.engram.pattern_query(user_input, session_id=self.session_id)
+        """Process user input through the tiered pipeline and return a response.
 
-        if not result:
-            return "Tell me more about that."
-
-        stmt, captured, response = result
+        Pattern match first; a question that only hits the catch-all consults
+        keyword retrieval before settling for the deflection.
+        """
+        result = pipeline.respond(self.engram, user_input, session_id=self.session_id)
 
         if self.debug_mode:
-            print(f"     [Pattern: '{stmt['pattern']}' | Captured: {captured}]")
+            detail = f"Source: {result['source']} | Score: {result['score']:.2f}"
+            if result["pattern"]:
+                detail += f" | Pattern: '{result['pattern']}' | Captured: {result['captured']}"
+            print(f"     [{detail}]")
 
-        # pattern_query already processes templates and updates session context
-        return response or "..."
+        return result["response"] or "Tell me more about that."
 
     def run(self) -> None:
         """Run the interactive chat loop."""
         print("ENGRAM Chat")
-        print("Commands: /debug, /metrics, /topic <name>, /set <name> <value>, /save, /quit")
+        print("Commands: /debug, /metrics, /topic <name>, /set <name> <value>, /get <name>, /save, /quit")
         print()
 
         while True:
@@ -688,7 +773,11 @@ class InteractiveChat:
                 print(f"{parts[1]} = {value}")
 
         elif cmd == "save":
-            print("Saved.")
+            if self.store_path:
+                save_engram(self.engram, self.store_path)
+                print(f"Saved: {self.store_path}")
+            else:
+                print("No store path configured; state will be saved on exit.")
 
         elif cmd == "help":
             print("Commands:")
@@ -714,6 +803,7 @@ def cmd_interactive(args: argparse.Namespace) -> int:
         engram,
         session_id=args.session,
         enable_graph=args.graph,
+        store_path=args.store,
     )
 
     chat.run()
@@ -723,10 +813,15 @@ def cmd_interactive(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    """Main entry point."""
+def main(argv=None) -> int:
+    """Main entry point.
+
+    Args:
+        argv: Optional argument list (defaults to sys.argv), so tests can
+            drive the CLI in-process.
+    """
     parser = create_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command is None:
         args.command = "interactive"
@@ -740,16 +835,7 @@ def main() -> int:
     # Auto-init if store doesn't exist
     if args.command != "init" and not Path(args.store).exists():
         engram = Engram(config=args.engram_config)
-        # Load seed responses from seed.json if available
-        seed_file = Path(_REPO_ROOT) / "data" / "seed.json"
-        if seed_file.exists():
-            with open(seed_file, encoding="utf-8") as f:
-                seed_data = json.load(f)
-            for pair in seed_data.get("pairs", []):
-                pattern = pair.get("pattern", "")
-                response = pair.get("response", "")
-                template = pair.get("template", {})
-                engram.store(response, tier=Tier.STATIC, pattern=pattern, template=template)
+        engram.sync_corpus(load_seed_pairs())
         save_engram(engram, args.store)
         print(f"Initialized engram store: {args.store}")
 
@@ -760,6 +846,8 @@ def main() -> int:
         "query": cmd_query,
         "session": cmd_session,
         "metrics": cmd_metrics,
+        "sync-seed": cmd_sync_seed,
+        "decay": cmd_decay,
         "keywords": cmd_keywords,
         "coverage": cmd_coverage,
         "export": cmd_export,

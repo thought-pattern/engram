@@ -209,19 +209,29 @@ Querying reverses this: extract keywords from the query, find statements sharing
 
 ### The Scoring Algorithm
 
-Candidates are scored using:
+Candidates are scored on a calibrated 0.0 - 1.0 scale:
 
 ```
 score = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate)
+        / (weight_base + weight_recency + weight_hit_rate)
+        + priority
 ```
 
-- **Overlap**: How many query keywords appear in the statement
-- **Recency**: Normalized position (newer statements score higher)
-- **Hit rate**: Average success rate of matched keywords
+- **Overlap**: The IDF-weighted fraction of query keywords the statement
+  carries. Rare keywords count for more than common ones, and a keyword
+  matched only through a WordNet synonym earns half credit.
+- **Recency**: Exponential time decay of the statement's last activity (its
+  last hit, falling back to its creation time), with a configurable half-life
+  (default 7 days). Being hit refreshes a statement's recency.
+- **Hit rate**: Average success rate of the matched keywords.
+- **Priority**: A per-statement override added on top; since calibrated scores
+  never exceed 1.0, priority 1 or more outranks every unprioritized match.
 
 The weights are configurable. By default: base=0.5, recency=0.3, hit_rate=0.2.
 
-This means a statement matching more keywords wins, but among ties, recently added statements with high hit rates are preferred.
+Because scores are calibrated, thresholds are portable: a full-overlap, fresh,
+unproven statement scores 0.9, so 0.7 works as a "answer directly without the
+LLM" confidence threshold regardless of query length.
 
 ### Hit-Rate Tracking
 
@@ -229,11 +239,22 @@ The learning signal comes from `record_hit()`. When a retrieval successfully ans
 
 ```python
 result = engram.query("capital of France")
-if user_satisfied(result.top_match):
-    engram.record_hit(result.keywords)
+if result["matches"]:
+    statement, score = result["matches"][0]
+    if user_satisfied(statement):
+        engram.record_hit(result["keywords"], statement_id=statement["id"])
 ```
 
-This increments hit counts on the keywords that led to success. Over time, high-hit-rate keywords contribute more to scoring, surfacing content that historically works well.
+This increments hit counts on the keywords that led to success, and credits the
+statement itself when its id is passed. Over time, high-hit-rate keywords
+contribute more to scoring, and the statement-level statistics drive the
+hit-rate-aware eviction policies.
+
+Statistics can also be aged: `metrics.decay_statistics(engram, factor=0.5)`
+multiplies every hit/query count by the factor, preserving rates while
+shrinking confidence. Run it periodically so entries that stop earning their
+statistics eventually lose protection and standing, instead of coasting
+forever on old evidence.
 
 ### Two-Tier Storage
 
@@ -253,20 +274,27 @@ This increments hit counts on the keywords that led to success. Over time, high-
 
 Eviction policies for DYNAMIC content:
 - **FIFO**: Oldest statement evicted first
-- **LRU**: Least recently accessed evicted
-- **LFU**: Least frequently accessed evicted
-- **HIT_RATE**: Lowest success rate evicted
+- **LRU**: Least recently hit evicted (never-hit statements go first)
+- **LFU**: Least frequently hit evicted
+- **HIT_RATE**: Lowest success rate (hits/queries) evicted
+
+A `min_hit_rate` threshold can protect proven performers: a DYNAMIC statement
+with query history and a hit rate at or above the threshold is skipped by
+eviction. Statements with no query history are always evictable.
 
 ### Sessions
 
 Sessions enable multi-turn conversations with state:
 
 ```python
-session_id = engram.create_session()
+from engram import sessions
+
+session_id = sessions.create_session(engram)
 
 # First turn
 result = engram.query("Tell me about machine learning", session_id=session_id)
-engram.update_session_context(session_id, result.top_match.text)
+statement, score = result["matches"][0]
+sessions.update_session_context(engram, session_id, statement["text"])
 
 # Second turn - "it" refers to machine learning
 result = engram.query("What are its applications?", session_id=session_id)
@@ -282,12 +310,17 @@ Sessions track:
 
 ## Practical Integration Patterns
 
+The patterns below show the moving parts explicitly. If you just want the
+standard tiered flow -- scripted pattern, then confident cache hit, then LLM
+with retrieved context -- `engram.pipeline.respond(engram, text, session_id,
+llm_fn)` packages Patterns 1, 2, and 5 in one call.
+
 ### Pattern 1: The Cache-Aside Pattern
 
 The simplest integration. Query Engram first; if no good match, call the LLM and cache the result.
 
 ```python
-from engram import Engram, Tier
+from engram.core import Engram
 
 engram = Engram()
 CONFIDENCE_THRESHOLD = 0.7
@@ -296,11 +329,11 @@ def answer_question(query: str) -> str:
     # Check cache first
     result = engram.query(query)
 
-    if result.top_match:
-        statement, score = result.top_match
+    if result["matches"]:
+        statement, score = result["matches"][0]
         if score >= CONFIDENCE_THRESHOLD:
-            engram.record_hit(result.keywords)
-            return statement.text
+            engram.record_hit(result["keywords"], statement_id=statement["id"])
+            return statement["text"]
 
     # Cache miss - call LLM
     response = call_llm(query)
@@ -313,19 +346,25 @@ def answer_question(query: str) -> str:
 
 **Benefits**: Immediate cost savings on repeated queries. The cache warms up organically through usage.
 
-**Tuning**: Adjust `CONFIDENCE_THRESHOLD` based on your tolerance for incorrect cache hits vs. LLM calls.
+`learn_from_response` indexes the response under the *query's* keywords, so
+future phrasings of the same question retrieve it even when the answer shares
+no words with the question. Re-learning a question with the same keyword set
+replaces the cached entry in place (with fresh, unproven statistics) instead
+of accumulating duplicates.
+
+**Tuning**: Adjust `CONFIDENCE_THRESHOLD` based on your tolerance for incorrect cache hits vs. LLM calls. Scores are calibrated 0.0 - 1.0; 0.7 is a sound default.
 
 ### Pattern 2: Context Injection
 
 Use Engram to assemble relevant context for the LLM prompt.
 
 ```python
-def build_prompt(query: str, session_id: str = None) -> str:
+def build_prompt(query: str, session_id: str = "") -> str:
     # Retrieve relevant knowledge
     result = engram.query(query, session_id=session_id, limit=5)
 
     context_statements = [
-        stmt.text for stmt, score in result.matches
+        stmt["text"] for stmt, score in result["matches"]
         if score > 0.3  # Include moderately relevant content
     ]
 
@@ -352,14 +391,16 @@ Answer:"""
 Use pattern matching for predictable queries, LLM for everything else.
 
 ```python
+from engram import sessions
+
 def respond(user_input: str, session_id: str) -> str:
-    # Try pattern matching first (scripted responses)
+    # Try pattern matching first (scripted responses). Returns () when nothing
+    # matched; on a match it updates the session context itself.
     result = engram.pattern_query(user_input, session_id=session_id)
 
     if result:
         statement, captured, response = result
-        if statement:  # Matched a defined pattern
-            return response
+        return response
 
     # No pattern match - use LLM with context
     context = engram.query(user_input, session_id=session_id, limit=3)
@@ -367,8 +408,8 @@ def respond(user_input: str, session_id: str) -> str:
 
     response = call_llm(prompt)
 
-    # Update session with the response
-    engram.update_session_context(session_id, response)
+    # Update session with the LLM response
+    sessions.update_session_context(engram, session_id, response)
 
     return response
 ```
@@ -383,7 +424,7 @@ Automatically extract and store facts from conversations.
 from engram.nlp import extract_fact
 
 def process_user_statement(user_input: str, session_id: str) -> str:
-    # Check if user is stating a fact
+    # Check if user is stating a fact ({} when no fact was extracted)
     fact = extract_fact(user_input)
 
     if fact:
@@ -404,11 +445,11 @@ def validate_llm_response(response: str) -> tuple[bool, str]:
 
     if fact:
         # Query for existing knowledge about this subject
-        result = engram.query(fact.subject, limit=3)
+        result = engram.query(fact["subject"], limit=3)
 
-        for stmt, score in result.matches:
-            if contradicts(stmt.text, response):
-                return False, f"Conflicts with known fact: {stmt.text}"
+        for stmt, score in result["matches"]:
+            if contradicts(stmt["text"], response):
+                return False, f"Conflicts with known fact: {stmt['text']}"
 
     return True, ""
 ```
@@ -423,17 +464,17 @@ Different confidence levels trigger different strategies.
 def tiered_response(query: str, session_id: str) -> str:
     result = engram.query(query, session_id=session_id)
 
-    if result.top_match:
-        statement, score = result.top_match
+    if result["matches"]:
+        statement, score = result["matches"][0]
 
         if score >= 0.9:
             # Very high confidence - return directly
-            engram.record_hit(result.keywords)
-            return statement.text
+            engram.record_hit(result["keywords"], statement_id=statement["id"])
+            return statement["text"]
 
         elif score >= 0.6:
             # Medium confidence - use as context, let LLM refine
-            prompt = f"""Based on this information: "{statement.text}"
+            prompt = f"""Based on this information: "{statement['text']}"
 
 Answer the following question: {query}
 
@@ -442,7 +483,7 @@ Provide a clear, direct answer."""
 
         elif score >= 0.3:
             # Low confidence - include as one of several context items
-            return call_llm_with_context(query, result.matches)
+            return call_llm_with_context(query, result["matches"])
 
     # No relevant context - pure LLM
     return call_llm(query)
@@ -532,6 +573,14 @@ Engram inherits AIML's pattern-template architecture but extends it for modern L
 - **Two-tier storage**: STATIC/DYNAMIC distinction for cache management
 - **Keyword indexing**: Fast retrieval without pattern enumeration
 - **Session expansion**: Context-aware query enhancement
+- **Input cleanup**: Typos corrected toward the store's own vocabulary before matching
+- **Output polish**: Casing repair and clause trimming of echoed wildcard captures
+- **Intent-aware routing**: Question/statement classification (`{qtype:...}`) drives
+  the catch-all's tone, and unanswered questions consult keyword retrieval
+  before falling back
+- **Semantic transforms**: `{sentiment:...}` (VADER tone), `{clause:...}` (first
+  clause of a capture), and `{qtype:...}` (intent) let one pattern respond
+  appropriately to many inputs
 - **LLM integration**: Designed as a complement to, not replacement for, neural models
 - **JSON persistence**: Modern serialization replacing XML
 
@@ -575,10 +624,10 @@ Templates enable dynamic responses:
 ```python
 # Simple wildcard reference
 engram.store(
-    text="Nice to meet you, <star/>!",
+    text="Nice to meet you, {star1}!",
     pattern="MY NAME IS *"
 )
-# Input: "My name is Alice" -> Output: "Nice to meet you, Alice!"
+# Input: "My name is Alice" -> Output: "Nice to meet you, alice!"
 
 # Random selection
 engram.store(
@@ -601,10 +650,10 @@ engram.store(
     template={
         "condition": {
             "name": "mood",
-            "items": [
-                {"value": "happy", "text": "I'm great, thanks!"},
-                {"value": "sad", "text": "I've been better."},
-                {"text": "I'm doing well."}  # default
+            "branches": [
+                {"value": "happy", "then": {"text": "I'm great, thanks!"}},
+                {"value": "sad", "then": {"text": "I've been better."}},
+                {"then": {"text": "I'm doing well."}}  # default
             ]
         }
     }
@@ -614,7 +663,7 @@ engram.store(
 engram.store(
     text="",
     pattern="BONJOUR",
-    template={"srai": "HELLO"}  # Redirect French greeting to English handler
+    template={"redirect": "HELLO"}  # Redirect French greeting to English handler
 )
 ```
 
@@ -625,7 +674,7 @@ Patterns can match based on conversational context:
 ```python
 # Only match if bot just asked "What is your name?"
 engram.store(
-    text="Hello, <star/>!",
+    text="Hello, {star1}!",
     pattern="*",
     that="WHAT IS YOUR NAME"
 )
@@ -652,15 +701,18 @@ Engram persists its complete state to JSON, enabling:
 - **Analysis**: Inspect the store contents for debugging
 
 ```python
+from engram import persistence
+from engram.core import Engram
+
 # Save to file
-engram.save("knowledge_base.json")
+persistence.save(engram, "knowledge_base.json")
 
 # Load from file
-engram = Engram.load("knowledge_base.json")
+engram = persistence.load_engram("knowledge_base.json")
 
 # Save/load as JSON strings (for database storage)
-json_str = engram.save_json()
-engram = Engram.load_json(json_str)
+json_str = persistence.save_json(engram)
+engram = persistence.load_engram_json(json_str)
 ```
 
 The persisted state includes:
@@ -679,9 +731,11 @@ The persisted state includes:
 Configure capacity based on your expected knowledge base size:
 
 ```python
-from engram import Engram, EngramConfig, EvictionPolicy
+from engram.config import engram_config
+from engram.constants import EvictionPolicy
+from engram.core import Engram
 
-config = EngramConfig(
+config = engram_config(
     capacity=50000,  # Max DYNAMIC statements
     eviction_policy=EvictionPolicy.HIT_RATE,  # Evict lowest-performing content
     max_sessions=10000,  # Concurrent user sessions
@@ -698,15 +752,18 @@ STATIC statements don't count toward capacity and are never evicted.
 Track key metrics to understand system behavior:
 
 ```python
-print(f"Statements: {engram.statement_count}")
-print(f"  Static: {engram.static_count}")
-print(f"  Dynamic: {engram.dynamic_count}")
-print(f"Keywords indexed: {engram.keyword_count}")
-print(f"Active sessions: {engram.session_count}")
-print(f"Total queries: {engram.total_queries}")
-print(f"Cache hits: {engram.total_hits}")
-print(f"Hit rate: {engram.overall_hit_rate:.1%}")
-print(f"Evictions: {engram.eviction_count}")
+from engram import metrics
+
+data = metrics.get_metrics(engram)
+print(f"Statements: {data['statement_count']}")
+print(f"  Static: {data['static_count']}")
+print(f"  Dynamic: {data['dynamic_count']}")
+print(f"Keywords indexed: {data['keyword_count']}")
+print(f"Active sessions: {data['session_count']}")
+print(f"Total queries: {data['query_count']}")
+print(f"Cache hits: {data['hit_count']}")
+print(f"Hit rate: {data['hit_rate']:.1%}")
+print(f"Evictions: {data['eviction_count']}")
 ```
 
 A healthy system shows:
@@ -716,12 +773,18 @@ A healthy system shows:
 
 ### Thread Safety
 
-Engram uses `RLock` instances for thread-safe access to:
-- Statement storage and indexing
+Engram guards its core structures with locks:
+- Statement storage, indexing, the pattern matcher, and the pattern map
+  (one lock, so matching never sees a half-updated matcher)
 - Keyword index and statistics
 - Session registry
+- Top-level metrics counters
 
-Multiple threads can safely query and update the store concurrently.
+The documented flows -- store, query, pattern_query, record_hit, retire,
+session operations -- are safe to call from multiple threads; a concurrency
+test hammers them in parallel and asserts the index and counter invariants.
+Heavy write concurrency serializes on the statement lock rather than running
+in parallel.
 
 ---
 
@@ -758,13 +821,21 @@ Multiple threads can safely query and update the store concurrently.
 ### Installation
 
 ```bash
-pip install engram
+git clone https://github.com/thought-pattern/engram.git
+cd engram
+pip install -r requirements.txt
+
+# One-time data setup (local, gitignored data/nltk_data)
+python -m engram.nltk_data
+python -m spacy download en_core_web_sm
 ```
 
 ### Minimal Example
 
 ```python
-from engram import Engram, Tier
+from engram import persistence
+from engram.constants import Tier
+from engram.core import Engram
 
 # Create instance
 engram = Engram()
@@ -776,20 +847,22 @@ engram.store("France is a country in Europe.", tier=Tier.STATIC)
 
 # Query
 result = engram.query("What is the capital of France?")
-print(result.top_match[0].text)
+statement, score = result["matches"][0]
+print(statement["text"])
 # Output: "Paris is the capital of France."
 
 # Record successful retrieval
-engram.record_hit(result.keywords)
+engram.record_hit(result["keywords"], statement_id=statement["id"])
 
 # Save state
-engram.save("my_knowledge.json")
+persistence.save(engram, "my_knowledge.json")
 ```
 
 ### LLM Integration Example
 
 ```python
-from engram import Engram, Tier
+from engram.constants import Tier
+from engram.core import Engram
 
 engram = Engram()
 engram.load_corpus(load_faq_from_file("faq.txt"), tier=Tier.STATIC)
@@ -797,12 +870,14 @@ engram.load_corpus(load_faq_from_file("faq.txt"), tier=Tier.STATIC)
 def smart_respond(query: str) -> str:
     result = engram.query(query)
 
-    if result.top_match and result.top_match[1] > 0.7:
-        engram.record_hit(result.keywords)
-        return result.top_match[0].text
+    if result["matches"]:
+        statement, score = result["matches"][0]
+        if score > 0.7:
+            engram.record_hit(result["keywords"], statement_id=statement["id"])
+            return statement["text"]
 
     # Assemble context for LLM
-    context = "\n".join(s.text for s, _ in result.matches[:3])
+    context = "\n".join(s["text"] for s, _ in result["matches"][:3])
 
     response = call_your_llm(
         system="Use this context to help answer: " + context,

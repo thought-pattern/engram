@@ -89,7 +89,9 @@ class TestFactLearningIntegration:
         # Should acknowledge learning (via catch-all with learning)
         assert result1
         stmt, captured, response = result1
-        assert response == "I see."  # Acknowledgment
+        from engram.constants import LEARNED_ACKNOWLEDGMENTS
+
+        assert response in LEARNED_ACKNOWLEDGMENTS  # Acknowledgment
 
         # Retrieve the fact
         result2 = engram.pattern_query("What are dogs")
@@ -135,3 +137,119 @@ class TestFactLearningIntegration:
         assert result
         stmt, captured, response = result
         assert response == "Custom response"
+
+
+class TestFactExtractionGuardrails:
+    """The pre-copula span must look like a plain noun phrase."""
+
+    def test_reject_embedded_clause_copula(self):
+        # The copula belongs to an embedded clause; splitting at "is" would
+        # store a junk fact with an unusable retrieval pattern.
+        assert not extract_fact("Your sentiment analysis should inform that tired is not nice.")
+        assert not extract_fact("The report we wrote is finished")
+
+    def test_reject_possessive_led_subject(self):
+        assert not extract_fact("My dog is friendly")
+        assert not extract_fact("Your car is fast")
+
+    def test_reject_long_subject(self):
+        assert not extract_fact("The old lighthouse keeper of the northern coast is retired")
+
+    def test_accept_plain_noun_phrase_subjects(self):
+        fact = extract_fact("The capital of France is Paris")
+        assert fact["subject"] == "capital of France"
+        fact = extract_fact("The sky is blue")
+        assert fact["subject"] == "sky"
+
+
+class TestQuestionDetection:
+    """Tests for the public question/intent detection."""
+
+    def test_trailing_question_mark(self):
+        from engram.nlp import is_question
+
+        assert is_question("This works?")
+
+    def test_question_word_lead(self):
+        from engram.nlp import is_question
+
+        assert is_question("what do you think about python")
+
+    def test_inverted_copula(self):
+        from engram.nlp import is_question
+
+        assert is_question("Is it working")
+
+    def test_statement_is_not_question(self):
+        from engram.nlp import is_question
+
+        assert not is_question("The sky is blue")
+
+
+class TestInputKind:
+    """Tests for input intent classification."""
+
+    def test_question(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("Where is my hat?") == "question"
+
+    def test_command(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("tell me a story") == "command"
+
+    def test_statement(self):
+        from engram.nlp import input_kind
+
+        assert input_kind("I lost my hat yesterday") == "statement"
+
+
+class TestFactExtractionSoakRegressions:
+    """Junk-fact families the 100-turn conversation soak surfaced."""
+
+    def test_reject_pronoun_anywhere_in_subject(self):
+        # "y'all" expands to "you all"; "lol that" carries a demonstrative.
+        assert not extract_fact("you all are pretty helpful")
+        assert not extract_fact("lol that was funny")
+
+    def test_reject_demonstrative_subject(self):
+        assert not extract_fact("That is not true at all")
+
+    def test_reject_possessive_anywhere_in_subject(self):
+        assert not extract_fact("sorry my typing is terrible today")
+
+    def test_reject_possessive_object(self):
+        # A typo'd question word reads as a statement; the possessive object
+        # ("your name") marks it as a personal exchange, not a world fact.
+        assert not extract_fact("waht is your name")
+        assert not extract_fact("The password is my birthday")
+
+    def test_legitimate_facts_still_learn(self):
+        assert extract_fact("Honey is made by bees")["subject"] == "Honey"
+        assert extract_fact("Rex is a golden retriever")["subject"] == "Rex"
+
+
+class TestTypoQuestionDetection:
+    """A leading near-miss of a question word is a typo'd question."""
+
+    def test_typo_question_words_detected(self):
+        from engram.nlp import is_question
+
+        assert is_question("waht is the ocean")
+        assert is_question("whta is gravity")
+        assert is_question("waht is your name")
+
+    def test_real_words_near_question_words_unaffected(self):
+        from engram.nlp import is_question
+
+        # "hat" and "cow" are one edit from question words but are real words.
+        assert not is_question("hat is my favorite word")
+        assert not is_question("cow tipping is not real")
+
+    def test_typo_questions_never_learned_as_facts(self):
+        assert not extract_fact("waht is the ocean")
+        assert not extract_fact("whta is gravity")
+
+    def test_real_word_subjects_still_learn(self):
+        assert extract_fact("The cow is a farm animal")["subject"] == "cow"

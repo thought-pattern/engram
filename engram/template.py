@@ -12,8 +12,11 @@ import re
 from datetime import datetime
 from uuid import uuid4
 
+from engram.constants import VERSION
 from engram.graph import graph_is_empty, graph_single
+from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
+from engram.text import extract_name, first_clause
 
 # Canonical-graph triple operations. A triple is stored as a Claim node linked by
 # edge to canonical Entity/Predicate nodes, mirroring the Tapestry schema; the
@@ -200,12 +203,15 @@ class TemplateProcessor:
     GET_PATTERN = re.compile(r"\{get:([^:}]+)(?::([^}]*))?\}")
     BOT_PATTERN = re.compile(r"\{bot:([^}]+)\}")
     MAP_PATTERN = re.compile(r"\{map:([^:}]+):([^:}]+)(?::([^}]*))?\}")
-    INPUT_PATTERN = re.compile(r"\{input(?::(\d+))?\}")
+    # Bare {input} is the CURRENT input (a simple variable); only the indexed
+    # form {input:N} reads history. A bare-form match here would shadow the
+    # simple variable and return the PREVIOUS turn's input instead.
+    INPUT_PATTERN = re.compile(r"\{input:(\d+)\}")
     RESPONSE_PATTERN = re.compile(r"\{response(?::(\d+))?\}")
     THAT_PATTERN = re.compile(r"\{that(?::(\d+)(?::(\d+))?)?\}")
     # Match transforms with content that doesn't contain braces - processes innermost first
     TRANSFORM_PATTERN = re.compile(
-        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount|sentiment):([^{}]*)\}"
+        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount|sentiment|clause|qtype|name):([^{}]*)\}"
     )
 
     # Simple variable patterns
@@ -219,7 +225,7 @@ class TemplateProcessor:
         "{date}": lambda ctx: datetime.now().strftime("%B %d, %Y"),
         "{time}": lambda ctx: datetime.now().strftime("%H:%M:%S"),
         "{program}": lambda ctx: ctx["bot"].get("name", "ENGRAM"),
-        "{version}": lambda ctx: ctx["bot"].get("version", "0.1.5"),
+        "{version}": lambda ctx: ctx["bot"].get("version", VERSION),
     }
 
     # Pattern for formatted date: {date:format}
@@ -229,10 +235,13 @@ class TemplateProcessor:
         """Initialize processor.
 
         Args:
-            srai_limit: Maximum redirect recursion depth.
+            srai_limit: Maximum redirect recursion depth. Also caps condition
+                loop re-evaluation, so a loop whose predicate never changes
+                terminates instead of recursing without bound.
         """
         self.srai_limit = srai_limit
         self._srai_depth = 0
+        self._loop_depth = 0
 
     def process(self, template, context: dict) -> str:
         """Process a template and return the output string.
@@ -388,18 +397,27 @@ class TemplateProcessor:
                         # Support both "template" and "then" for the result
                         result_template = case.get("template", case.get("then", ""))
                         result = self.process(result_template, context)
-                        # Check for loop
-                        if isinstance(result_template, dict) and "loop" in result_template:
-                            combined = result + self._process_condition(condition, context)
+                        # Check for loop (bounded so a predicate that never
+                        # changes cannot recurse forever)
+                        if isinstance(result_template, dict) and "loop" in result_template and self._loop_depth < self.srai_limit:
+                            self._loop_depth += 1
+                            try:
+                                combined = result + self._process_condition(condition, context)
+                            finally:
+                                self._loop_depth -= 1
                             return combined
                         return result
                 elif "default" in case or "then" in case:
                     # Default case (no value specified)
                     result_template = case.get("default", case.get("then", case.get("template", "")))
                     result = self.process(result_template, context)
-                    # Check for loop in default
-                    if isinstance(result_template, dict) and "loop" in result_template:
-                        combined = result + self._process_condition(condition, context)
+                    # Check for loop in default (same bound as above)
+                    if isinstance(result_template, dict) and "loop" in result_template and self._loop_depth < self.srai_limit:
+                        self._loop_depth += 1
+                        try:
+                            combined = result + self._process_condition(condition, context)
+                        finally:
+                            self._loop_depth -= 1
                         return combined
                     return result
 
@@ -670,8 +688,8 @@ class TemplateProcessor:
         # Map lookups: {map:name:key} or {map:name:key:default}
         result = self.MAP_PATTERN.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
 
-        # Input history: {input} or {input:N}
-        result = self.INPUT_PATTERN.sub(lambda m: get_input(context, int(m.group(1)) if m.group(1) else 1), result)
+        # Input history: {input:N} (bare {input} is the current input, below)
+        result = self.INPUT_PATTERN.sub(lambda m: get_input(context, int(m.group(1))), result)
 
         # Response history: {response} or {response:N}
         result = self.RESPONSE_PATTERN.sub(lambda m: get_response(context, int(m.group(1)) if m.group(1) else 1), result)
@@ -777,6 +795,15 @@ class TemplateProcessor:
                 return transformed
             elif fn_name == "sentiment":
                 transformed = sentiment_label(resolved)
+                return transformed
+            elif fn_name == "clause":
+                transformed = first_clause(resolved)
+                return transformed
+            elif fn_name == "qtype":
+                transformed = input_kind(resolved)
+                return transformed
+            elif fn_name == "name":
+                transformed = extract_name(resolved)
                 return transformed
             return resolved
 

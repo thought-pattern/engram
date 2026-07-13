@@ -53,8 +53,9 @@ result = engram.query("What is the capital of France?")
 stmt, score = result["matches"][0]
 print(stmt["text"])  # "Paris is the capital of France"
 
-# Record successful retrieval
-engram.record_hit(result["keywords"])
+# Record successful retrieval. Passing the statement id credits the statement
+# itself, which feeds the hit-rate-aware eviction policies.
+engram.record_hit(result["keywords"], statement_id=stmt["id"])
 ```
 
 ## Sessions
@@ -76,11 +77,15 @@ sessions.update_session_context(engram, session_id, stmt["text"])
 result = engram.query("What is its population?", session_id=session_id)
 ```
 
+Expansion only fires when the query carries a referring pronoun ("its",
+"they", "that", ...); a self-contained follow-up keeps its own keywords
+undiluted.
+
 ## Configuration
 
 ```python
 from engram.config import engram_config
-from engram.constants import SessionOverflow
+from engram.constants import EvictionPolicy, SessionOverflow
 from engram.core import Engram
 
 config = engram_config(
@@ -90,10 +95,15 @@ config = engram_config(
     weight_base=0.5,             # Scoring weight: base
     weight_recency=0.3,          # Scoring weight: recency
     weight_hit_rate=0.2,         # Scoring weight: hit rate
+    recency_half_life_seconds=604800.0,  # Recency decay half-life (7 days)
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
+    eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
+    min_hit_rate=0.0,            # Protect proven statements above this hit rate
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
+    use_spell_correction=True,   # Correct input typos toward the store vocabulary
+    polish_responses=True,       # Repair casing in pattern-path responses
 )
 
 engram = Engram(config=config)
@@ -115,18 +125,74 @@ json_str = persistence.save_json(engram)
 engram = persistence.load_engram_json(json_str)
 ```
 
+The saved state includes statements, the keyword index with its statistics,
+sessions, bot properties, substitution maps, and the full configuration
+(weights, eviction policy, feature flags). Loading restores the stored
+configuration unless a `config` override is passed to the loader. Files
+written by older versions (which stored only `capacity`) still load, with
+defaults for the rest.
+
 ## Scoring Algorithm
 
-Statements are scored using:
+Statements are scored on a calibrated 0.0 to 1.0 scale, so confidence
+thresholds mean the same thing for every query:
 
 ```
 score = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate)
+        / (weight_base + weight_recency + weight_hit_rate)
+        + priority
 ```
 
 Where:
-- `overlap` - Count of query keywords present in statement
-- `recency` - Normalized position (0.0 to 1.0, higher = more recent)
-- `hit_rate` - Average hit rate of matched keywords
+- `overlap` - IDF-weighted fraction of query keywords present in the statement
+  (0.0 to 1.0). Rare keywords count for more than common ones, and a keyword
+  matched only through a WordNet synonym earns half credit.
+- `recency` - Exponential time decay of the statement's last activity
+  (`last_hit`, falling back to `created_at`), with half-life
+  `recency_half_life_seconds` (default 7 days). Recency depends only on the
+  statement's own timestamps, so it is stable under eviction.
+- `hit_rate` - Average hit rate of the matched keywords (0.0 to 1.0).
+- `priority` - The statement's priority field, added on top. Since calibrated
+  scores never exceed 1.0, a priority of 1 or more is an absolute override
+  among matching statements (it never applies without a keyword match).
+  Priority also breaks ties between statements sharing the same pattern.
+
+A full-overlap, fresh, unproven statement scores 0.9 with the default weights;
+0.7 is a reasonable "answer directly without the LLM" threshold.
+
+## Eviction and Hit Tracking
+
+DYNAMIC statements are evicted when `capacity` is reached, ordered by the
+configured `eviction_policy`:
+
+- `FIFO` - oldest statement first (default)
+- `LRU` - least recently hit first; never-hit statements go before hit ones
+- `LFU` - lowest hit count first
+- `HIT_RATE` - lowest hits/queries ratio first
+
+The statistics behind LRU, LFU, and HIT_RATE accumulate through normal use:
+
+- `query()` counts each returned match as a candidacy on that statement
+- `record_hit(keywords, statement_id=...)` credits the statement that answered
+- a `pattern_query()` selection records a candidacy and a hit in one step
+
+`min_hit_rate` protects proven performers: a DYNAMIC statement with query
+history and a hit rate at or above the threshold is skipped by eviction.
+Statements with no query history are always evictable. If every DYNAMIC
+statement is protected, a new statement is admitted over capacity rather than
+dropped.
+
+Hit statistics can be aged so old evidence loses standing:
+`metrics.decay_statistics(engram, factor=0.5)` (or `engram decay` from the
+CLI) multiplies every hit/query count by the factor. Rates are preserved while
+confidence decays; an entry that stops re-earning its statistics eventually
+returns to zero query history and loses `min_hit_rate` protection. Run it
+periodically, like `expire_sessions`.
+
+STATIC statements never count toward capacity and are never evicted. Evicting
+or retiring a statement also removes its pattern from the matcher (unless
+another statement still carries the same pattern), so dead patterns cannot
+shadow live ones.
 
 ## API Reference
 
@@ -137,10 +203,12 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 
 | Method | Description |
 |--------|-------------|
-| `store(text, tier, pattern, template)` | Add a statement |
+| `store(text, tier, pattern, template, priority, keyword_source)` | Add a statement; `keyword_source` indexes it under different text (e.g. the question a response answers) |
 | `query(text, session_id, limit)` | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords` |
 | `pattern_query(text, session_id)` | AIML-style match; returns `(statement, captured, response)` or `()` |
-| `record_hit(keywords)` | Update hit statistics after a successful retrieval |
+| `record_hit(keywords, statement_id)` | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement |
+| `learn_from_response(query, response)` | Cache an LLM response, indexed under the query's keywords; re-learning the same question replaces the entry in place |
+| `retire_statement(statement_id)` | Deliberately remove a statement (and its pattern) by id |
 | `learn_fact(fact)` | Learn an extracted fact |
 | `get_statement(statement_id)` | Fetch a statement dict by id (`{}` if absent) |
 | `load_corpus(statements, tier)` | Bulk-add statements |
@@ -166,6 +234,34 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 | `save_json(engram)` | Serialize to JSON string |
 | `load_engram_json(json_str)` | Deserialize from JSON string |
 
+### Pipeline (`from engram import pipeline`)
+
+`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn)`
+packages the tiered strategy: scripted pattern match first, then a
+high-confidence cached answer, then the caller's LLM with retrieved context
+(whose response is learned for next time). Returns a dict with `response`,
+`source` (`pattern` / `cache` / `llm` / `none`), `score`, `matches`, and
+`keywords`.
+
+```python
+from engram import pipeline
+
+def my_llm(text, context_statements):
+    prompt = "\n".join(context_statements) + "\n\n" + text
+    return call_llm(prompt)
+
+result = pipeline.respond(engram, "What are the support hours?",
+                          session_id=session_id, llm_fn=my_llm)
+print(result["source"], result["response"])
+```
+
+The first ask goes to the LLM and is cached; the same question later answers
+from the cache (`source == "cache"`) without an LLM call.
+
+A catch-all (pure-wildcard) pattern match answering a question is treated as
+a shrug, not an answer: the pipeline holds it back, lets retrieval and the
+LLM speak first, and returns it only when neither does.
+
 ### Metrics (`from engram import metrics`)
 
 `metrics.get_metrics(engram)` returns a dict with these keys:
@@ -181,6 +277,9 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 | `hit_count` | Hits recorded |
 | `eviction_count` | Evictions |
 | `hit_rate` | Hit rate (0.0 to 1.0) |
+
+`metrics.decay_statistics(engram, factor=0.5)` ages every hit/query count by
+the factor (see Eviction and Hit Tracking above).
 
 ## Command Line Interface
 
@@ -199,6 +298,28 @@ shell alias if you like: `alias engram='python scripts/cli.py'`).
 engram init
 engram -s mystore.json init
 ```
+
+`init` seeds the new store from the bundled corpus (`data/seed.json`), as does
+the automatic initialization that runs when the store file is missing.
+
+### Keep a Store in Sync with the Seed
+
+A store is seeded once at creation; when `data/seed.json` improves afterward,
+existing stores keep their old templates. `sync-seed` upserts the current seed
+into the store: stale STATIC entries are updated in place (ids and hit
+statistics preserved), new entries are added, and learned DYNAMIC content is
+never touched.
+
+```bash
+engram sync-seed
+engram sync-seed --file custom_seed.json
+engram sync-seed --prune   # also retire STATIC entries removed from the seed
+```
+
+Without `--prune`, sync is an upsert: entries deleted from the seed linger in
+the store. With it, the store's STATIC tier mirrors the seed exactly -- only
+use it when syncing the complete corpus, since anything the file omits is
+retired.
 
 ### Store Statements
 
@@ -240,6 +361,7 @@ engram session expire --hours 24
 engram metrics
 engram keywords --low-hit --min-queries 10
 engram keywords --zero-hit
+engram decay --factor 0.5   # Age hit statistics (run periodically)
 ```
 
 ### Export
@@ -255,8 +377,10 @@ engram export --dynamic-only
 engram interactive
 ```
 
-Interactive mode is a chat loop (pattern matching, not keyword search). Type a
-message to get a response, or use a slash command:
+Interactive mode is a chat loop routed through the tiered pipeline: pattern
+matching first, with questions the patterns cannot answer consulting keyword
+retrieval before falling back. Type a message to get a response, or use a
+slash command:
 - `/debug` - Toggle debug output
 - `/metrics` - Show metrics
 - `/topic <name>` - Set the conversation topic
@@ -286,6 +410,51 @@ stemming fallback.
 Contraction expansion also normalizes input before matching, including
 apostrophe-less forms (`whats` -> `what is`, `im` -> `i am`).
 
+### Input spelling correction
+
+Typos miss patterns and keywords (`abotu` matches nothing). With
+`use_spell_correction` (default on), out-of-vocabulary input tokens are
+corrected toward the store's own vocabulary before matching, using NLTK's
+Damerau-Levenshtein distance (a transposition like `abotu` -> `about` is one
+edit). Correction is deliberately timid: only tokens of four or more
+characters that are neither store vocabulary nor real English words are
+candidates, and only a unique nearest neighbor within distance 1 (2 for
+tokens of six or more characters) replaces them. Correcting toward the store
+rather than general English means a typo is only ever corrected into a word
+that can actually match something.
+
+### Response polish
+
+Template substitution splices lowercase wildcard captures into authored text
+("nice to know you're tired i have been working"). With `polish_responses`
+(default on), pattern-path responses get mechanical casing repairs: each
+sentence starts with a capital letter and the pronoun I (and its
+contractions) is capitalized. No punctuation is inserted and no grammar is
+rewritten.
+
+Relatedly, the `{clause:...}` template transform trims a capture to its first
+clause -- a personal pronoun or non-relative question word followed by a verb
+marks the start of a new clause -- so a compound input ("I am tired, I have
+been working really hard") echoes back as "tired" instead of the whole tail.
+The seed's sentiment pattern uses `{clause:{star1}}` for exactly this, and
+`{name:...}` similarly extracts the person name from a self-introduction
+capture ("still jason by the way" -> "jason") for the name predicates.
+
+### Question-aware responses
+
+`engram.nlp.is_question` detects questions three ways (trailing `?`, a
+question-word lead, an inverted copula) and `input_kind` classifies input as
+`question` / `command` / `statement`. Templates branch on the classification
+via the `{qtype:...}` transform -- the seed's catch-all uses it to give
+questions an honest "I don't have an answer for that yet" instead of a
+statement deflection like "Why do you say that?".
+
+The pipeline routes on it too: a question that matches only the catch-all
+pattern holds that shrug back, consults keyword retrieval (and the LLM, if
+one is wired), and returns the deflection only when nothing better answers.
+The interactive CLI chat runs through this routing, so questions consult the
+knowledge base before the bot admits it does not know.
+
 ### Sentiment-aware responses
 
 Templates can branch on the sentiment of captured input using the
@@ -307,10 +476,22 @@ instead of enumerating every emotion word:
 So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
 with no per-emotion patterns.
 
+Predicates with an underscore prefix (like `_mood` above) are template-local
+scratch: they are readable within the template that set them but never
+persist into the session.
+
 ### Relational fact extraction (spaCy)
 
 NLTK has no dependency parser, so the built-in fact extractor
-(`engram.nlp.extract_fact`) only handles copula sentences ("X is/are Y"). With
+(`engram.nlp.extract_fact`) only handles copula sentences ("X is/are Y"). It is
+deliberately conservative: the span before the copula must look like a plain
+noun phrase, so subjects longer than four words, subjects containing a verb or
+modal ("X should inform that Y is ..."), and subjects or objects carrying
+pronouns or possessives are rejected rather than learned as junk facts. A
+learned fact is protected from overwrites; restating it earns a confirmation
+("Yes - The sky is blue.") and contradicting it surfaces the stored belief
+("Hmm, I have it differently: The sky is blue.") instead of a silent
+deflection. With
 spaCy enabled, `engram.facts_spacy.extract_facts` uses the dependency parse to
 pull subject-predicate-object triples from arbitrary declaratives:
 
@@ -409,7 +590,9 @@ an empty result rather than writing:
   object). Read; active.
 - `<graph_query>` — run an author-supplied read Cypher. Active; a query carrying
   a write clause (`CREATE` / `MERGE` / `DELETE` / `SET` / `REMOVE` / …) is
-  refused.
+  refused, as are `CALL` (stored procedures can mutate) and `LOAD` (data
+  import) — the blocklist is conservative, so read-only procedures are refused
+  too.
 - `<triple_add>` / `<graph_write>` / `<graph_delete>` — author into the graph.
   Inert on the recall path. A standalone deployment that wants authoring wires
   `graph_query` (or its own writer) as the template graph function in place of

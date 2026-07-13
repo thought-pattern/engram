@@ -26,8 +26,15 @@ def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
     candidates = []
     for idx, stmt in enumerate(engram.statements):
         if stmt["tier"] == Tier.DYNAMIC:
-            # Check min_hit_rate protection
-            if engram.config["min_hit_rate"] > 0 and statement_hit_rate(stmt) >= engram.config["min_hit_rate"]:
+            # min_hit_rate protects proven performers only. A statement with no
+            # query history has no evidence either way (its hit rate defaults to
+            # 0.5) and stays evictable -- otherwise any threshold below 0.5
+            # would protect every untouched statement and disable eviction.
+            if (
+                engram.config["min_hit_rate"] > 0
+                and stmt["query_count"] > 0
+                and statement_hit_rate(stmt) >= engram.config["min_hit_rate"]
+            ):
                 continue
             candidates.append((idx, stmt))
     return candidates
@@ -58,6 +65,25 @@ def evict_statement_at(engram, idx: int) -> bool:
                 # Prune empty keyword entries
                 if not engram.keywords[kw]["statement_ids"]:
                     del engram.keywords[kw]
+
+    # Remove the statement's pattern from the matcher, unless another statement
+    # still carries the same (pattern, that, topic) -- a dead pattern that keeps
+    # matching would shadow live patterns and silently produce no response.
+    pattern = stmt["pattern"]
+    if pattern:
+        shared = any(
+            s["id"] != stmt["id"] and s["pattern"] == pattern and s["that"] == stmt["that"] and s["topic"] == stmt["topic"]
+            for s in engram.statements
+        )
+        if not shared:
+            engram.pattern_matcher.remove_pattern(pattern, that=stmt["that"], topic=stmt["topic"])
+        if engram.pattern_to_statement.get(pattern) == stmt["id"]:
+            del engram.pattern_to_statement[pattern]
+            # Remap to a surviving statement with the same pattern, if any
+            for s in engram.statements:
+                if s["id"] != stmt["id"] and s["pattern"] == pattern:
+                    engram.pattern_to_statement[pattern] = s["id"]
+                    break
 
     # Remove from statement list and update index
     del engram.statement_index[stmt["id"]]
@@ -96,11 +122,15 @@ def evict_dynamic(engram) -> bool:
         target_idx = candidates[0][0]
 
     elif policy == EvictionPolicy.LRU:
-        # Least recently used: evict statement with oldest last_hit
-        # Statements never hit use created_at as fallback
-        def lru_key(item: tuple[int, dict]) -> datetime:
+        # Least recently used: evict statement with oldest last_hit.
+        # Statements never hit use created_at as fallback, and lose timestamp
+        # ties to statements that were actually used -- clock resolution can
+        # make a hit land in the same tick as another statement's creation.
+        def lru_key(item: tuple[int, dict]) -> tuple[datetime, int]:
             _, stmt = item
-            key = stmt["last_hit"] or stmt["created_at"]
+            last_used = stmt["last_hit"] or stmt["created_at"]
+            was_hit = 1 if stmt["last_hit"] else 0
+            key = (last_used, was_hit)
             return key
 
         target_idx = min(candidates, key=lru_key)[0]

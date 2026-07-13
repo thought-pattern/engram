@@ -1,5 +1,6 @@
 """Tests for template processing."""
 
+from engram.constants import VERSION
 from engram.template import (
     TemplateProcessor,
     get_input,
@@ -231,6 +232,38 @@ class TestTemplateProcessorCondition:
 
         ctx2 = template_context(predicates={"age": "twenty"})
         assert processor.process(template, ctx2) == "Invalid age."
+
+    def test_condition_loop_counts_down(self):
+        """A loop whose predicate changes each pass runs until the terminal case."""
+        processor = TemplateProcessor()
+        ctx = template_context(predicates={"count": "3"})
+        template = {
+            "condition": {
+                "var": "count",
+                "cases": [
+                    {"value": "3", "then": {"sequence": [{"set": {"name": "count", "value": "2"}}, {"text": "3"}], "loop": True}},
+                    {"value": "2", "then": {"sequence": [{"set": {"name": "count", "value": "1"}}, {"text": "2"}], "loop": True}},
+                    {"value": "1", "then": {"text": "liftoff"}},
+                ],
+            }
+        }
+        result = processor.process(template, ctx)
+        assert result == "3" "2" "liftoff"
+
+    def test_condition_loop_never_changing_terminates(self):
+        """A loop whose predicate never changes stops at the depth cap instead of recursing forever."""
+        processor = TemplateProcessor(srai_limit=10)
+        ctx = template_context(predicates={"stuck": "yes"})
+        template = {
+            "condition": {
+                "var": "stuck",
+                "cases": [
+                    {"value": "yes", "then": {"text": "again", "loop": True}},
+                ],
+            }
+        }
+        result = processor.process(template, ctx)
+        assert result.startswith("again")
 
 
 class TestTemplateProcessorSequence:
@@ -625,11 +658,11 @@ class TestSystemVariables:
         assert result == "ENGRAM"
 
     def test_version_default(self):
-        """Test {version} returns default when bot version not set."""
+        """Test {version} falls back to the package version when bot version not set."""
         processor = TemplateProcessor()
         ctx = template_context(bot={})
         result = processor.process("{version}", ctx)
-        assert result == "0.1.5"
+        assert result == VERSION
 
     def test_id_variable(self):
         """Test {id} returns session ID."""
@@ -680,3 +713,82 @@ class TestSystemVariables:
         ctx = template_context(vocabulary_count=1000)
         result = processor.process("My vocabulary is {vocabulary} words", ctx)
         assert result == "My vocabulary is 1000 words"
+
+
+class TestClauseTransform:
+    """Tests for the {clause:...} transform."""
+
+    def test_clause_trims_capture(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["tired i have been working really hard"])
+        result = processor.process("You're {clause:{star1}}.", ctx)
+        assert result == "You're tired."
+
+    def test_clause_keeps_single_clause(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["really happy about the results"])
+        result = processor.process("You're {clause:{star1}}.", ctx)
+        assert result == "You're really happy about the results."
+
+
+class TestQtypeTransform:
+    """Tests for the {qtype:...} intent transform."""
+
+    def test_question(self):
+        processor = TemplateProcessor()
+        ctx = template_context(request_text="What is this?")
+        assert processor.process("{qtype:{request}}", ctx) == "question"
+
+    def test_statement(self):
+        processor = TemplateProcessor()
+        ctx = template_context(request_text="I like turtles")
+        assert processor.process("{qtype:{request}}", ctx) == "statement"
+
+    def test_command(self):
+        processor = TemplateProcessor()
+        ctx = template_context(request_text="tell me a story")
+        assert processor.process("{qtype:{request}}", ctx) == "command"
+
+
+class TestInputVariable:
+    """Bare {input} is the current input; {input:N} reads history."""
+
+    def test_bare_input_is_current_input(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words", input_history=["previous turn words"])
+        assert processor.process("{input}", ctx) == "current words"
+
+    def test_indexed_input_reads_history(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words", input_history=["previous turn words", "older words"])
+        assert processor.process("{input:1}", ctx) == "previous turn words"
+        assert processor.process("{input:2}", ctx) == "older words"
+
+    def test_bare_input_without_history(self):
+        processor = TemplateProcessor()
+        ctx = template_context(input_text="current words")
+        assert processor.process("{input}", ctx) == "current words"
+
+
+class TestNestedPersonClause:
+    def test_person_wraps_clause(self):
+        """{person:{clause:{star1}}} echoes captures from the bot's point of view."""
+        processor = TemplateProcessor()
+        ctx = template_context(
+            stars=["thrilled about my new project"],
+            person_subs={"my": "your", "i": "you", "am": "are"},
+        )
+        result = processor.process("You're {person:{clause:{star1}}}!", ctx)
+        assert result == "You're thrilled about your new project!"
+
+
+class TestNameTransform:
+    def test_name_extracts_from_capture(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["still jason by the way"])
+        assert processor.process("{name:{star1}}", ctx) == "jason"
+
+    def test_name_keeps_plain_names(self):
+        processor = TemplateProcessor()
+        ctx = template_context(stars=["mary jane"])
+        assert processor.process("Hello, {name:{star1}}!", ctx) == "Hello, mary jane!"

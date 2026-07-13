@@ -118,8 +118,8 @@
     {"pattern": "HELP *", "response": "I'll do my best to help with that!"},
     {"pattern": "HELP ME *", "response": "I'll try to help!", "template": {"text": "I'll try to help you with {star1}!"}},
 
-    {"pattern": "MY NAME IS *", "response": "Nice to meet you, {star1}!", "template": {"sequence": [{"set": {"name": "username", "value": "{star1}"}}, {"text": "Nice to meet you, {star1}! I'll remember that."}]}},
-    {"pattern": "CALL ME *", "response": "OK, I'll call you {star1}.", "template": {"sequence": [{"set": {"name": "username", "value": "{star1}"}}, {"text": "OK, I'll call you {star1} from now on."}]}},
+    {"pattern": "MY NAME IS *", "response": "Nice to meet you, {star1}!", "template": {"sequence": [{"set": {"name": "username", "value": "{name:{star1}}"}}, {"text": "Nice to meet you, {name:{star1}}! I'll remember that."}]}},
+    {"pattern": "CALL ME *", "response": "OK, I'll call you {star1}.", "template": {"sequence": [{"set": {"name": "username", "value": "{name:{star1}}"}}, {"text": "OK, I'll call you {name:{star1}} from now on."}]}},
     {"pattern": "NICE TO MEET YOU", "response": "Nice to meet you too!"},
     {"pattern": "NICE TO MEET YOU *", "response": "Nice to meet you too!"},
     {"pattern": "PLEASED TO MEET YOU", "response": "Pleased to meet you as well!"},
@@ -136,11 +136,11 @@
 
     {"pattern": "WHAT SHOULD I DO", "response": "That depends on what you're after. Want to talk it through?"},
     {"pattern": "WHAT SHOULD I *", "response": "Let's think it through. What are your options?"},
-    {"pattern": "WHAT IS *", "response": "What do you think it is?", "template": {"random": [{"text": "What do you think {star1} is?"}, {"text": "Hmm, {star1}? What comes to mind when you think about it?"}, {"text": "That's a good question. What's your take on {star1}?"}]}},
-    {"pattern": "WHO IS *", "response": "Who do you think?", "template": {"random": [{"text": "Who do you think {star1} is?"}, {"text": "Tell me what you know about {star1}."}, {"text": "What have you heard about {star1}?"}]}},
+    {"pattern": "WHAT IS *", "response": "What do you think it is?", "template": {"random": [{"text": "What do you think {clause:{star1}} is?"}, {"text": "Hmm, {clause:{star1}}? What comes to mind when you think about it?"}, {"text": "That's a good question. What's your take on {clause:{star1}}?"}]}},
+    {"pattern": "WHO IS *", "response": "Who do you think?", "template": {"random": [{"text": "Who do you think {clause:{star1}} is?"}, {"text": "Tell me what you know about {clause:{star1}}."}, {"text": "What have you heard about {clause:{star1}}?"}]}},
     {"pattern": "WHERE IS *", "response": "Where do you think?", "template": {"random": [{"text": "Where do you think {star1} is?"}, {"text": "Have you looked for {star1}?"}, {"text": "Where would you expect to find {star1}?"}]}},
     {"pattern": "WHEN IS *", "response": "When do you think?", "template": {"random": [{"text": "When do you think {star1} is?"}, {"text": "What time frame are you thinking?"}, {"text": "Does the timing of {star1} matter to you?"}]}},
-    {"pattern": "WHY IS *", "response": "Why do you ask?", "template": {"random": [{"text": "Why do you think {star1} is that way?"}, {"text": "What's your theory?"}, {"text": "Why do you suppose?"}]}},
+    {"pattern": "WHY IS *", "response": "Why do you ask?", "template": {"random": [{"text": "That's a good question. What do you think the reason is?"}, {"text": "What's your theory?"}, {"text": "I don't know the why of it yet. Any ideas?"}]}},
     {"pattern": "HOW IS *", "response": "How do you think?", "template": {"random": [{"text": "How do you think {star1} is?"}, {"text": "What's your sense of it?"}, {"text": "How would you describe {star1}?"}]}},
     {"pattern": "HOW DO I *", "response": "I'm not sure I can walk you through that.", "template": {"random": [{"text": "I can't walk you through {star1} step by step, but breaking it into smaller steps usually helps. What part are you stuck on?"}, {"text": "Good question. What have you tried so far with {star1}?"}]}},
     {"pattern": "HOW DO YOU *", "response": "That's a good question.", "template": {"text": "I'm not certain how to {star1}, honestly. What's your thinking?"}},
@@ -153,7 +153,7 @@
     {"pattern": "DO YOU LIKE ME", "response": "Of course! You're great to talk to."},
     {"pattern": "DO NOT WORRY", "response": "Thanks, I appreciate that. No worries here!"},
     {"pattern": "DO NOT WORRY *", "response": "Thanks, I appreciate that!"},
-    {"pattern": "CAN YOU *", "response": "I can try to help.", "template": {"text": "I can try to help with {star1}!"}},
+    {"pattern": "CAN YOU *", "response": "I can try to help.", "template": {"random": [{"text": "I can try! What would that involve?"}, {"text": "Within my limits - tell me more about what you need."}]}},
     {"pattern": "WILL YOU *", "response": "I'll do my best!"},
 
     {"pattern": "YOU ARE STUPID", "response": "That's not very kind, but I'll try to do better."},
@@ -173,7 +173,7 @@
     {"pattern": "STOP *", "response": "Okay, stopping."},
 
     {"pattern": "I AM BORED", "response": "Let's fix that - want to hear a joke or play a quick game?"},
-    {"pattern": "I AM *", "response": "Nice to know.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "That's great that you're {star1}!"}}, {"then": {"text": "Nice to know you're {star1}."}}]}}]}},
+    {"pattern": "I AM *", "response": "Nice to know.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry to hear you're {person:{clause:{star1}}}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "That's great that you're {person:{clause:{star1}}}!"}}, {"then": {"text": "Nice to know you're {person:{clause:{star1}}}."}}]}}]}},
     {"pattern": "I LIKE *", "response": "That's great!", "template": {"text": "That's great that you like {star1}!"}},
     {"pattern": "I LOVE *", "response": "That sounds wonderful!", "template": {"text": "{star1} sounds wonderful!"}},
     {"pattern": "I HATE *", "response": "I'm sorry to hear that.", "template": {"text": "I'm sorry to hear that about {star1}."}},
@@ -353,21 +353,54 @@
     {"pattern": "WHAT DID YOU SAY", "response": "Want me to repeat that?"},
     {"pattern": "WHAT DID YOU SAY *", "response": "Want me to repeat that?"},
 
-    {"pattern": "*", "response": "Go on.", "template": {"random": [
-      {"text": "Hmm, tell me more about that."},
-      {"text": "What made you think of that?"},
-      {"text": "Go on."},
-      {"text": "Why do you say that?"},
-      {"text": "Can you elaborate?"},
-      {"text": "Interesting. And what else?"},
-      {"text": "How so?"},
-      {"text": "What do you mean exactly?"},
-      {"text": "Tell me more."},
-      {"text": "I see. What brings that up?"},
-      {"text": "That's an interesting way to put it."},
-      {"text": "And how does that make you feel?"},
-      {"text": "Why is that important to you?"},
-      {"text": "What makes you say that?"}
+    {"pattern": "WHAT DO YOU THINK ABOUT *", "response": "I'm still forming a view.", "template": {"random": [
+      {"text": "I don't have a strong view on {person:{clause:{star1}}} yet. What do you think?"},
+      {"text": "I'm still forming an opinion about {person:{clause:{star1}}}. Tell me yours?"},
+      {"text": "I know less about {person:{clause:{star1}}} than you do, I suspect. What's your take?"}
+    ]}},
+    {"pattern": "WHAT DO YOU THINK OF *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
+    {"pattern": "WHAT IS YOUR OPINION ON *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
+    {"pattern": "DO YOU LIKE *", "response": "I'm not sure yet.", "template": {"random": [
+      {"text": "I don't have feelings about {person:{clause:{star1}}} yet. Do you like it?"},
+      {"text": "I can't say I like or dislike {person:{clause:{star1}}}. What draws you to it?"}
+    ]}},
+    {"pattern": "DO YOU REMEMBER MY NAME", "response": "", "template": {"condition": {"name": "username",
+      "exists": {"text": "Of course - your name is {get:username}!"},
+      "missing": {"text": "I don't think you've told me your name yet. What is it?"}}}},
+    {"pattern": "I LIVE IN *", "response": "Good to know!", "template": {"sequence": [
+      {"set": {"name": "location", "value": "{clause:{star1}}"}},
+      {"text": "Good to know - I'll remember you live in {get:location}."}]}},
+    {"pattern": "WHERE DO I LIVE", "response": "", "template": {"condition": {"name": "location",
+      "exists": {"text": "You told me you live in {get:location}."},
+      "missing": {"text": "You haven't told me where you live yet."}}}},
+
+    {"pattern": "*", "response": "Go on.", "template": {"sequence": [
+      {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
+      {"condition": {"name": "_kind", "branches": [
+        {"value": "question", "then": {"random": [
+          {"text": "Good question - I don't have an answer for that yet."},
+          {"text": "I don't know that one yet."},
+          {"text": "I'm not sure. What do you think?"},
+          {"text": "I don't have an answer for that. Teach me?"},
+          {"text": "That's beyond what I know so far."}
+        ]}},
+        {"then": {"random": [
+          {"text": "Hmm, tell me more about that."},
+          {"text": "What made you think of that?"},
+          {"text": "Go on."},
+          {"text": "Why do you say that?"},
+          {"text": "Can you elaborate?"},
+          {"text": "Interesting. And what else?"},
+          {"text": "How so?"},
+          {"text": "What do you mean exactly?"},
+          {"text": "Tell me more."},
+          {"text": "I see. What brings that up?"},
+          {"text": "That's an interesting way to put it."},
+          {"text": "And how does that make you feel?"},
+          {"text": "Why is that important to you?"},
+          {"text": "What makes you say that?"}
+        ]}}
+      ]}}
     ]}}
   ]
 }

@@ -383,6 +383,16 @@ class TestReadOnlyGraphWiring:
         assert not is_write_cypher("MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) RETURN c LIMIT 1")
         assert not is_write_cypher("")
 
+    def test_is_write_cypher_refuses_procedures_and_imports(self):
+        # Stored procedures can mutate regardless of the query's shape, and
+        # LOAD CSV imports data -- both are refused on the recall-only path.
+        assert is_write_cypher("CALL mg.load_all()")
+        assert is_write_cypher("call db.labels() YIELD label RETURN label")
+        assert is_write_cypher("LOAD CSV FROM 'file:///x.csv' AS row RETURN row")
+        # 'called'/'loading' as plain words in string literals do not trip the
+        # whole-word guard.
+        assert not is_write_cypher("MATCH (c:Claim) WHERE c.subject = 'so-called expert' RETURN c")
+
     def test_graph_read_fn_passes_reads(self):
         client = MockGraphClient()
         client.claims.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})

@@ -87,9 +87,31 @@ class TestExtractKeywords:
 class TestExpandQuery:
     """Tests for query expansion."""
 
-    def test_basic_expansion(self) -> None:
+    def test_expands_with_nouns_only(self) -> None:
+        # Only the previous response's nouns are appended -- the referents a
+        # pronoun can point back to -- not its stopwords and verbs.
         result = expand_query("What is its population?", "Paris is the capital of France")
-        assert result == "What is its population? Paris is the capital of France"
+        assert result == "What is its population? Paris capital France"
+
+    def test_expansion_skips_non_referents(self) -> None:
+        result = expand_query("Why is that?", "The tower was built quickly in Paris")
+        assert "Paris" in result
+        assert "tower" in result
+        assert "quickly" not in result
+        assert "built" not in result
+
+    def test_expansion_falls_back_when_no_nouns(self) -> None:
+        # A response with nothing taggable as a noun falls back to appending
+        # the full response rather than dropping context entirely.
+        result = expand_query("What is that?", "Very quickly")
+        assert result.startswith("What is that? ")
+
+    def test_no_expansion_without_referring_pronoun(self) -> None:
+        # A self-contained query must not inherit the previous response's
+        # nouns -- they would dilute its own keywords.
+        result = expand_query("Is the sky blue?", "Cats are mammals")
+        assert result == "Is the sky blue?"
+        assert expand_query("why why why", "Alright then") == "why why why"
 
     def test_empty_previous_response(self) -> None:
         assert expand_query("Hello world", "") == "Hello world"
@@ -164,3 +186,157 @@ class TestLemmatization:
     def test_lemmatize_default_noun(self) -> None:
         """Test default POS is noun."""
         assert lemmatize_word("cats") == "cat"
+
+
+class TestCorrectSpelling:
+    """Tests for store-vocabulary spelling correction."""
+
+    def test_corrects_transposition_typo(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"about", "capital", "france"}
+        assert correct_spelling("tell me abotu france", vocabulary) == "tell me about france"
+
+    def test_never_corrects_real_english_words(self) -> None:
+        from engram.text import correct_spelling
+
+        # "abort" is not in the store, but it is a real word -- leave it alone.
+        vocabulary = {"about"}
+        assert correct_spelling("abort", vocabulary) == "abort"
+
+    def test_never_corrects_short_tokens(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"cat"}
+        assert correct_spelling("cta", vocabulary) == "cta"
+
+    def test_keeps_vocabulary_tokens(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"about", "capital"}
+        assert correct_spelling("about capital", vocabulary) == "about capital"
+
+    def test_ambiguous_candidates_left_alone(self) -> None:
+        from engram.text import correct_spelling
+
+        # Two vocabulary words at the same distance: do not guess.
+        vocabulary = {"gramx", "gramy"}
+        assert correct_spelling("gramz", vocabulary) == "gramz"
+
+    def test_empty_vocabulary_is_no_op(self) -> None:
+        from engram.text import correct_spelling
+
+        assert correct_spelling("abotu anything", set()) == "abotu anything"
+
+
+class TestFirstClause:
+    """Tests for clause trimming."""
+
+    def test_cuts_new_subject_verb_clause(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("tired i have been working really hard") == "tired"
+
+    def test_strips_dangling_conjunction(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("exhausted and i want to sleep") == "exhausted"
+
+    def test_single_clause_unchanged(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("really happy about the results") == "really happy about the results"
+
+    def test_short_capture_unchanged(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("alice") == "alice"
+        assert first_clause("") == ""
+
+
+class TestFirstClauseRelativeClauses:
+    """A pronoun right after a noun is a relative clause, not a new sentence."""
+
+    def test_keeps_relative_clause_after_noun(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("a friend you can trust") == "a friend you can trust"
+        assert first_clause("the movie i saw yesterday") == "the movie i saw yesterday"
+
+    def test_still_cuts_after_non_noun(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("tired i have been working really hard") == "tired"
+
+
+class TestStemShortTokens:
+    def test_short_tokens_not_stemmed(self) -> None:
+        assert stem_text("his") == "his"
+        assert stem_text("was") == "was"
+
+    def test_longer_tokens_still_stem(self) -> None:
+        assert "run" in stem_text("running quickly")
+        assert "cat" in stem_text("cats everywhere")
+
+
+class TestSpellCorrectionInflections:
+    """The English-word gate must recognize inflections the words corpus lacks."""
+
+    def test_inflected_real_words_never_corrected(self) -> None:
+        from engram.text import correct_spelling
+
+        # "died", "asking", "notes" are absent from the words corpus but are
+        # real inflections; correcting them corrupts valid input.
+        vocabulary = {"die", "sing", "note", "ask"}
+        assert correct_spelling("my hard drive died", vocabulary) == "my hard drive died"
+        assert correct_spelling("thanks for asking", vocabulary) == "thanks for asking"
+        assert correct_spelling("i lost my notes", vocabulary) == "i lost my notes"
+
+    def test_genuine_typos_still_corrected(self) -> None:
+        from engram.text import correct_spelling
+
+        vocabulary = {"gravity", "about"}
+        assert correct_spelling("gravty is strong", vocabulary) == "gravity is strong"
+
+    def test_is_known_word_covers_lemmas(self) -> None:
+        from engram.text import is_known_word
+
+        assert is_known_word("died")
+        assert is_known_word("tests")
+        assert is_known_word("working")
+        assert not is_known_word("waht")
+        assert not is_known_word("gravty")
+
+
+class TestExtractName:
+    """Tests for name extraction from self-introduction captures."""
+
+    def test_strips_filler_and_trailing_markers(self) -> None:
+        from engram.text import extract_name
+
+        assert extract_name("still jason by the way") == "jason"
+        assert extract_name("actually bob") == "bob"
+
+    def test_plain_and_multiword_names_kept(self) -> None:
+        from engram.text import extract_name
+
+        assert extract_name("jason") == "jason"
+        assert extract_name("mary jane") == "mary jane"
+
+    def test_falls_back_to_input_when_nothing_namelike(self) -> None:
+        from engram.text import extract_name
+
+        assert extract_name("12345") == "12345"
+        assert extract_name("") == ""
+
+
+class TestFirstClauseQuestionBoundary:
+    def test_cuts_at_embedded_question(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("the sky what is the moon") == "the sky"
+
+    def test_relative_pronoun_after_noun_kept(self) -> None:
+        from engram.text import first_clause
+
+        assert first_clause("the man who is tall") == "the man who is tall"

@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # pymgclient builds from source and needs OpenSSL headers and CMake.
+      - name: Install build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev cmake
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e ".[dev]"
+
+      - name: Fetch NLTK data
+        run: python -m engram.nltk_data
+
+      - name: Fetch spaCy model
+        run: python -m spacy download en_core_web_sm
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: black --check .
+
+      - name: Test
+        run: pytest
+
+      - name: Learning-loop eval
+        run: python eval/run_learning_eval.py

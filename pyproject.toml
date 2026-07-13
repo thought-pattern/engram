@@ -18,7 +18,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-dependencies = []
+# Runtime dependencies are hard requirements (no lazy/optional degradation):
+# every module imports its dependencies at the top. Keep in step with
+# requirements.txt, which carries the pinned versions.
+dependencies = [
+    "PyYAML>=6.0",
+    "nltk>=3.9",
+    "spacy>=3.8",
+    "pymgclient>=1.5",
+]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
 # packaged console entry point; scripts/ is intentionally outside the engram
