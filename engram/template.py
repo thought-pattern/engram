@@ -12,11 +12,11 @@ import re
 from datetime import datetime
 from uuid import uuid4
 
-from engram.constants import VERSION
-from engram.graph import graph_is_empty, graph_single
-from engram.nlp import input_kind
-from engram.sentiment import sentiment_label
-from engram.text import extract_name, first_clause
+from .constants import VERSION
+from .graph import graph_is_empty, graph_single
+from .nlp import input_kind
+from .sentiment import sentiment_label
+from .text import extract_name, first_clause
 
 # Canonical-graph triple operations. A triple is stored as a Claim node linked by
 # edge to canonical Entity/Predicate nodes, mirroring the Tapestry schema; the

@@ -6,8 +6,8 @@ retrieval, updates, expiration, and cleanup of user sessions.
 
 from datetime import UTC, datetime, timedelta
 
-from engram.constants import SessionOverflow
-from engram.models import session, session_update_context
+from .constants import SessionOverflow
+from .models import session, session_update_context
 
 
 class SessionLimitExceededError(Exception):

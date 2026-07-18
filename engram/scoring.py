@@ -21,8 +21,8 @@ portable across queries:
 import math
 from datetime import UTC, datetime
 
-from engram.constants import SYNONYM_OVERLAP_WEIGHT
-from engram.models import keyword_entry_hit_rate
+from .constants import SYNONYM_OVERLAP_WEIGHT
+from .models import keyword_entry_hit_rate
 
 
 def keyword_idf(keyword: str, keyword_index: dict[str, dict], total_statements: int) -> float:

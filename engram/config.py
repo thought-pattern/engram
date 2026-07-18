@@ -7,7 +7,7 @@ import os
 
 import yaml
 
-from engram.constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
+from .constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
 
 
 def graph_config(

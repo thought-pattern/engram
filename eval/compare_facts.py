@@ -9,18 +9,17 @@ Usage:
     python eval/compare_facts.py
 """
 
-import os
 import sys
 import warnings
 
+try:
+    from engram.engram.facts_spacy import extract_facts
+    from engram.engram.nlp import extract_fact
+except ImportError:
+    from engram.facts_spacy import extract_facts
+    from engram.nlp import extract_fact
+
 warnings.filterwarnings("ignore")
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
-from engram.facts_spacy import extract_facts
-from engram.nlp import extract_fact
 
 CORPUS = [
     "The sky is blue.",

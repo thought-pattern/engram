@@ -2,21 +2,24 @@
 
 import argparse
 import json
-import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
-# Allow running as `python scripts/cli.py` without installing the package: put
-# the repo root (this file's parent's parent) on the import path.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+try:
+    from engram.engram import metrics, persistence, pipeline, sessions
+    from engram.engram.config import load_config
+    from engram.engram.constants import EvictionPolicy, Tier
+    from engram.engram.core import Engram
+    from engram.engram.sessions import SessionLimitExceededError, SessionNotFoundError
+except ImportError:
+    from engram import metrics, persistence, pipeline, sessions
+    from engram.config import load_config
+    from engram.constants import EvictionPolicy, Tier
+    from engram.core import Engram
+    from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
-from engram import metrics, persistence, pipeline, sessions
-from engram.config import load_config
-from engram.constants import EvictionPolicy, Tier
-from engram.core import Engram
-from engram.sessions import SessionLimitExceededError, SessionNotFoundError
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -486,8 +489,6 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "expire":
-        from datetime import timedelta
-
         threshold = timedelta(hours=args.hours)
         count = sessions.expire_sessions(engram, inactive_threshold=threshold)
         print(f"Expired {count} sessions")

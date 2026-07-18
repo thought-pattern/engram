@@ -29,14 +29,18 @@ import os
 import sys
 import time
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+try:
+    from engram.engram import metrics, pipeline, sessions
+    from engram.engram.config import engram_config
+    from engram.engram.constants import Tier
+    from engram.engram.core import Engram
+except ImportError:
+    from engram import metrics, pipeline, sessions
+    from engram.config import engram_config
+    from engram.constants import Tier
+    from engram.core import Engram
 
-from engram import metrics, pipeline, sessions
-from engram.config import engram_config
-from engram.constants import Tier
-from engram.core import Engram
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SESSION_ID = "soak"
 SLOW_TURN_SECONDS = 1.0

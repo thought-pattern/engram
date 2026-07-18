@@ -7,28 +7,28 @@ configuration is the user's to tune, so the source of truth for defaults is
 ``engram_config()`` itself, not a hardcoded literal or the example template.
 """
 
-import os
+from pathlib import Path
 
 import pytest
 
 from engram.config import engram_config, load_config
 from engram.constants import EvictionPolicy, SessionOverflow
 
-SCRATCH = os.environ.get("CLAUDE_SCRATCH", os.path.dirname(__file__))
+SCRATCH = Path(__file__).resolve().parent
 
 
 def _write(tmp_path, text: str) -> str:
-    path = os.path.join(str(tmp_path), "config.yml")
+    path = Path(tmp_path) / "config.yml"
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    return path
+    return str(path)
 
 
 class TestLoadConfigDefaults:
     """A missing or empty file falls back to the built-in EngramConfig defaults."""
 
     def test_missing_file_returns_defaults(self):
-        cfg = load_config(os.path.join(str(SCRATCH), "does_not_exist_xyz.yml"))
+        cfg = load_config(str(SCRATCH / "does_not_exist_xyz.yml"))
         assert cfg == engram_config()
 
     def test_empty_file_returns_defaults(self, tmp_path):
@@ -87,7 +87,6 @@ class TestExampleTemplate:
     """
 
     def test_example_parses(self):
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        example = os.path.join(repo_root, "config.example.yml")
-        cfg = load_config(example)
+        repo_root = Path(__file__).resolve().parents[1]
+        cfg = load_config(str(repo_root / "config.example.yml"))
         assert isinstance(cfg, dict)

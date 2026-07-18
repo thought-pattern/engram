@@ -16,9 +16,9 @@ Copulas keep their surface form (is/are); prepositional links use the
 preposition; action verbs use the verb lemma so relations are normalized.
 """
 
-from engram.constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
-from engram.nlp import extracted_fact
-from engram.spacy_setup import get_nlp
+from .constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
+from .nlp import extracted_fact
+from .spacy_setup import get_nlp
 
 
 def _clean_span(tokens) -> str:

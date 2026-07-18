@@ -7,8 +7,8 @@ various policies (FIFO, LRU, LFU, HIT_RATE).
 
 from datetime import datetime
 
-from engram.constants import EvictionPolicy, Tier
-from engram.models import statement_hit_rate
+from .constants import EvictionPolicy, Tier
+from .models import statement_hit_rate
 
 
 def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
