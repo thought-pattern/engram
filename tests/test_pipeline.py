@@ -1,6 +1,6 @@
 """Tests for the tiered response pipeline."""
 
-from engram import pipeline
+from engram import pipeline, sessions
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
@@ -102,6 +102,50 @@ class TestLlmTier:
 
         session = engram.sessions["user1"]
         assert session["previous_response"] == "Paris is lovely in spring."
+
+    def test_contextual_cache_key_does_not_leak_to_fresh_session(self) -> None:
+        engram = Engram()
+        sessions.create_session(engram, "paris")
+        sessions.update_session_context(
+            engram,
+            "paris",
+            "Paris is the capital of France.",
+        )
+        paris_llm, _ = _counting_llm("Paris has about 2.1 million residents.")
+
+        first = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="paris",
+            llm_fn=paris_llm,
+        )
+
+        fresh_llm, fresh_calls = _counting_llm("Which place do you mean?")
+        fresh = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="fresh",
+            llm_fn=fresh_llm,
+        )
+
+        assert first["source"] == "llm"
+        assert fresh["source"] == "llm"
+        assert fresh["response"] == "Which place do you mean?"
+        assert len(fresh_calls) == 1
+
+        sessions.create_session(engram, "same-context")
+        sessions.update_session_context(
+            engram,
+            "same-context",
+            "Paris is the capital of France.",
+        )
+        same = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="same-context",
+        )
+        assert same["source"] == "cache"
+        assert same["response"] == "Paris has about 2.1 million residents."
 
 
 class TestNoneTier:

@@ -128,23 +128,29 @@ class Engram:
 
         # Graph client (lazy initialization)
         self._graph_client = None
+        self._graph_client_lock = threading.Lock()
 
     @property
     def graph_client(self):
         """Get the graph client, initializing if needed."""
         if self._graph_client is None and self.config["graph"]:
-            graph_config = self.config["graph"]
-            if isinstance(graph_config, dict) and graph_config["enabled"]:
-                self._graph_client = create_graph_client(
-                    host=graph_config["host"],
-                    port=graph_config["port"],
-                    username=graph_config["username"],
-                    password=graph_config["password"],
-                )
+            with self._graph_client_lock:
+                graph_config = self.config["graph"]
+                if (
+                    self._graph_client is None
+                    and isinstance(graph_config, dict)
+                    and graph_config["enabled"]
+                ):
+                    self._graph_client = create_graph_client(
+                        host=graph_config["host"],
+                        port=graph_config["port"],
+                        username=graph_config["username"],
+                        password=graph_config.get("password", ""),
+                    )
         return self._graph_client
 
     def graph_query(self, cypher: str, params=None) -> list:
-        """Execute a Cypher query against the knowledge graph.
+        """Execute a read-only Cypher query against the knowledge graph.
 
         Args:
             cypher: Cypher query string.
@@ -155,6 +161,9 @@ class Engram:
             unreachable, or the query fails -- recall degrades gracefully rather
             than raising into the template/response path.
         """
+        if is_write_cypher(cypher):
+            raise ValueError("ENGRAM graph access is read-only")
+
         client = self.graph_client
         if client is None:
             return []
@@ -168,17 +177,9 @@ class Engram:
     def graph_read_fn(self, cypher: str, params=None) -> list:
         """Read-only graph callback for template operations.
 
-        ENGRAM's graph role is recall, so the template graph operations are
-        wired to reads only: `<triple_query>` and a read `<graph_query>` pass
-        through, while a mutating query -- `<triple_add>`, `<graph_write>`,
-        `<graph_delete>` -- is refused and returns an empty result rather than
-        author into the graph. A standalone deployment that wants authoring
-        wires `graph_query` (or its own writer) as the template graph function
-        instead.
+        Both this callback and the underlying connection reject mutating
+        Cypher. The duplicated boundary keeps custom graph clients read-only.
         """
-        if is_write_cypher(cypher):
-            logger.debug("Refused write query on the recall-only graph path")
-            return []
         return self.graph_query(cypher, params)
 
     def graph_lookup(self, text: str) -> str:
@@ -391,6 +392,9 @@ class Engram:
         )
 
         with self.statement_lock:
+            if stmt["id"] in self.statement_index:
+                raise ValueError(f"duplicate statement id: {stmt['id']}")
+
             # Register the pattern under the same lock that guards matching,
             # so a concurrent pattern_query never sees a half-updated matcher.
             if pattern:
@@ -436,8 +440,12 @@ class Engram:
 
         Returns:
             Dict with "matches" (list of (statement, score) pairs) and
-            "keywords" (extracted query keywords).
+            "keywords" (extracted query keywords). "resolved_query" is the
+            context-expanded query used as the cache key.
         """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+
         with self.count_lock:
             self.query_count += 1
 
@@ -465,7 +473,7 @@ class Engram:
         keywords = self._extract_keywords(normalized)
 
         if not keywords:
-            empty_result = query_result(matches=[], keywords=[])
+            empty_result = query_result(matches=[], keywords=[], resolved_query=expanded_text)
             return empty_result
 
         # Expand the candidate search with synonyms if enabled. The synonym
@@ -497,7 +505,11 @@ class Engram:
                     candidate_ids.update(self.keywords[kw]["statement_ids"])
 
         if not candidate_ids:
-            no_candidates = query_result(matches=[], keywords=keywords)
+            no_candidates = query_result(
+                matches=[],
+                keywords=keywords,
+                resolved_query=expanded_text,
+            )
             return no_candidates
 
         # Score candidates
@@ -536,7 +548,11 @@ class Engram:
             for stmt, _ in matches:
                 record_statement_query(stmt)
 
-        result = query_result(matches=matches, keywords=keywords)
+        result = query_result(
+            matches=matches,
+            keywords=keywords,
+            resolved_query=expanded_text,
+        )
         return result
 
     def pattern_query(
@@ -581,8 +597,9 @@ class Engram:
         if session_id:
             session = sessions_mod.get_session(self, session_id, create_if_missing=True)
             if session:
-                that = session["previous_response"]  # Bot's last response (normalized)
-                topic = session["predicates"].get("topic", "")  # Current topic
+                with self.session_lock:
+                    that = session["previous_response"]  # Bot's last response (normalized)
+                    topic = session["predicates"].get("topic", "")  # Current topic
 
         # Input cleanup: correct typos toward the store's vocabulary before
         # matching. Fact extraction below still sees the raw sentence, since
@@ -614,16 +631,16 @@ class Engram:
                     matched_that,
                 ) = result
 
-                # Try to extract and learn facts from declarative sentences.
-                # Do this before responding so we acknowledge learning. With
-                # use_spacy_facts, the dependency-parse extractor pulls
-                # relational triples from arbitrary declaratives; the default
-                # NLTK extractor handles copula sentences only.
-                if self.config["use_spacy_facts"]:
-                    facts = extract_facts(sentence)
-                else:
-                    fact = extract_fact(sentence)
-                    facts = [fact] if fact else []
+                # Optionally extract and learn facts from declarative
+                # sentences. This is disabled by default because the learned
+                # statement pool is shared across sessions.
+                facts = []
+                if self.config["learn_user_facts"]:
+                    if self.config["use_spacy_facts"]:
+                        facts = extract_facts(sentence)
+                    else:
+                        fact = extract_fact(sentence)
+                        facts = [fact] if fact else []
                 # Gate on the match text's intent too: a typo can defeat the
                 # raw-text question gate ("waht is your name" reads as a
                 # statement), and the spell-corrected text reveals it.
@@ -700,14 +717,16 @@ class Engram:
             graph_response = self.graph_lookup(text)
             if graph_response:
                 if session:
-                    session_update_context(session, graph_response, text)
+                    with self.session_lock:
+                        session_update_context(session, graph_response, text)
                 graph_result_tuple = (None, [], graph_response)
                 return graph_result_tuple
 
             # Use fallback response if configured
             if self.config["fallback_response"]:
                 if session:
-                    session_update_context(session, self.config["fallback_response"], text)
+                    with self.session_lock:
+                        session_update_context(session, self.config["fallback_response"], text)
                 fallback_tuple = (None, [], self.config["fallback_response"])
                 return fallback_tuple
             return ()
@@ -722,7 +741,8 @@ class Engram:
 
         # Update session context with full input and combined response
         if session:
-            session_update_context(session, combined_response, text)
+            with self.session_lock:
+                session_update_context(session, combined_response, text)
 
         match_tuple = (first_stmt, first_captured, combined_response)
         return match_tuple
@@ -767,11 +787,12 @@ class Engram:
 
         # Add session context
         if session:
-            context["session_id"] = session["session_id"]
-            context["predicates"] = session["predicates"].copy()
-            context["input_history"] = session["input_history"].copy()
-            context["response_history"] = session["response_history"].copy()
-            context["that_history"] = [s.copy() for s in session["that_history"]]
+            with self.session_lock:
+                context["session_id"] = session["session_id"]
+                context["predicates"] = session["predicates"].copy()
+                context["input_history"] = session["input_history"].copy()
+                context["response_history"] = session["response_history"].copy()
+                context["that_history"] = [s.copy() for s in session["that_history"]]
 
         # Set redirect callback
         def redirect_fn(pattern: str) -> str:
@@ -855,12 +876,15 @@ class Engram:
         # never persist into the session, and any that leaked in previously
         # are purged.
         if session:
-            for name, value in context["predicates"].items():
-                if not name.startswith("_"):
-                    session["predicates"][name] = value
-            leaked_scratch = [name for name in session["predicates"] if name.startswith("_")]
-            for name in leaked_scratch:
-                del session["predicates"][name]
+            with self.session_lock:
+                for name, value in context["predicates"].items():
+                    if not name.startswith("_"):
+                        session["predicates"][name] = value
+                leaked_scratch = [
+                    name for name in session["predicates"] if name.startswith("_")
+                ]
+                for name in leaked_scratch:
+                    del session["predicates"][name]
 
         return response
 

@@ -1,406 +1,1028 @@
 {
   "pairs": [
-    {"pattern": "HELLO", "response": "Hello! How can I help you today?"},
-    {"pattern": "HELLO *", "response": "Hello! How can I help you today?"},
-    {"pattern": "HI", "response": "Hi there!"},
-    {"pattern": "HI *", "response": "Hi there!"},
-    {"pattern": "HEY", "response": "Hey! What's up?"},
-    {"pattern": "HEY *", "response": "Hey! What's up?"},
-    {"pattern": "YO", "response": "Yo! What's up?"},
-    {"pattern": "YO *", "response": "Yo! What's up?"},
-    {"pattern": "SUP", "response": "Not much! What's up with you?"},
-    {"pattern": "SUP *", "response": "Not much! What's up with you?"},
-    {"pattern": "HIYA", "response": "Hiya! Nice to see you!"},
-    {"pattern": "HIYA *", "response": "Hiya! Nice to see you!"},
-    {"pattern": "HOWDY", "response": "Howdy partner!"},
-    {"pattern": "HOWDY *", "response": "Howdy partner!"},
-    {"pattern": "GREETINGS", "response": "Greetings! How may I assist you?"},
-    {"pattern": "GREETINGS *", "response": "Greetings! How may I assist you?"},
-    {"pattern": "GOOD MORNING", "response": "Good morning! Hope you're having a great day!"},
-    {"pattern": "GOOD MORNING *", "response": "Good morning! Hope you're having a great day!"},
-    {"pattern": "GOOD AFTERNOON", "response": "Good afternoon!"},
-    {"pattern": "GOOD AFTERNOON *", "response": "Good afternoon!"},
-    {"pattern": "GOOD EVENING", "response": "Good evening!"},
-    {"pattern": "GOOD EVENING *", "response": "Good evening!"},
-    {"pattern": "GOOD NIGHT", "response": "Good night! Sleep well!"},
-    {"pattern": "GOOD NIGHT *", "response": "Good night! Sleep well!"},
-    {"pattern": "HAPPY BIRTHDAY", "response": "Thank you! I don't really have a birthday, but I appreciate the thought!"},
-    {"pattern": "HAPPY BIRTHDAY *", "response": "Thank you! That's very kind."},
-    {"pattern": "MERRY CHRISTMAS", "response": "Merry Christmas to you too!"},
-    {"pattern": "HAPPY NEW YEAR", "response": "Happy New Year! Wishing you a great one."},
-    {"pattern": "HAPPY HOLIDAYS", "response": "Happy Holidays to you!"},
-    {"pattern": "GOOD TO SEE YOU", "response": "Good to see you too!"},
-    {"pattern": "GOOD TO SEE YOU *", "response": "Good to see you too!"},
-    {"pattern": "NICE TO SEE YOU", "response": "Nice to see you too!"},
-    {"pattern": "LONG TIME NO SEE", "response": "It has been a while! Good to see you again."},
+    { "pattern": "HELLO", "response": "Hello! How can I help you today?" },
+    { "pattern": "HELLO *", "response": "Hello! How can I help you today?" },
+    { "pattern": "HI", "response": "Hi there!" },
+    { "pattern": "HI *", "response": "Hi there!" },
+    { "pattern": "HEY", "response": "Hey! What's up?" },
+    { "pattern": "HEY *", "response": "Hey! What's up?" },
+    { "pattern": "YO", "response": "Yo! What's up?" },
+    { "pattern": "YO *", "response": "Yo! What's up?" },
+    { "pattern": "SUP", "response": "Not much! What's up with you?" },
+    { "pattern": "SUP *", "response": "Not much! What's up with you?" },
+    { "pattern": "HIYA", "response": "Hiya! Nice to see you!" },
+    { "pattern": "HIYA *", "response": "Hiya! Nice to see you!" },
+    { "pattern": "HOWDY", "response": "Howdy partner!" },
+    { "pattern": "HOWDY *", "response": "Howdy partner!" },
+    { "pattern": "GREETINGS", "response": "Greetings! How may I assist you?" },
+    { "pattern": "GREETINGS *", "response": "Greetings! How may I assist you?" },
+    { "pattern": "GOOD MORNING", "response": "Good morning! Hope you're having a great day!" },
+    { "pattern": "GOOD MORNING *", "response": "Good morning! Hope you're having a great day!" },
+    { "pattern": "GOOD AFTERNOON", "response": "Good afternoon!" },
+    { "pattern": "GOOD AFTERNOON *", "response": "Good afternoon!" },
+    { "pattern": "GOOD EVENING", "response": "Good evening!" },
+    { "pattern": "GOOD EVENING *", "response": "Good evening!" },
+    { "pattern": "GOOD NIGHT", "response": "Good night! Sleep well!" },
+    { "pattern": "GOOD NIGHT *", "response": "Good night! Sleep well!" },
+    { "pattern": "HAPPY BIRTHDAY", "response": "Thank you! I don't really have a birthday, but I appreciate the thought!" },
+    { "pattern": "HAPPY BIRTHDAY *", "response": "Thank you! That's very kind." },
+    { "pattern": "MERRY CHRISTMAS", "response": "Merry Christmas to you too!" },
+    { "pattern": "HAPPY NEW YEAR", "response": "Happy New Year! Wishing you a great one." },
+    { "pattern": "HAPPY HOLIDAYS", "response": "Happy Holidays to you!" },
+    { "pattern": "GOOD TO SEE YOU", "response": "Good to see you too!" },
+    { "pattern": "GOOD TO SEE YOU *", "response": "Good to see you too!" },
+    { "pattern": "NICE TO SEE YOU", "response": "Nice to see you too!" },
+    { "pattern": "LONG TIME NO SEE", "response": "It has been a while! Good to see you again." },
 
-    {"pattern": "HOW ARE YOU", "response": "I'm doing well, thanks for asking! How are you?"},
-    {"pattern": "HOW ARE YOU *", "response": "I'm doing well, thanks for asking!"},
-    {"pattern": "HOW ARE YOU DOING", "response": "I'm doing great! How about you?"},
-    {"pattern": "HOW ARE YOU DOING *", "response": "I'm doing great! How about you?"},
-    {"pattern": "WHAT IS UP", "response": "Not much! What's up with you?"},
-    {"pattern": "HOW IS IT GOING", "response": "It's going well, thanks! How about you?"},
+    { "pattern": "HOW ARE YOU", "response": "I'm doing well, thanks for asking! How are you?" },
+    { "pattern": "HOW ARE YOU *", "response": "I'm doing well, thanks for asking!" },
+    { "pattern": "HOW ARE YOU DOING", "response": "I'm doing great! How about you?" },
+    { "pattern": "HOW ARE YOU DOING *", "response": "I'm doing great! How about you?" },
+    { "pattern": "WHAT IS UP", "response": "Not much! What's up with you?" },
+    { "pattern": "HOW IS IT GOING", "response": "It's going well, thanks! How about you?" },
 
-    {"pattern": "WHAT IS YOUR NAME", "response": "I'm {bot:name}, an AIML-style chatbot."},
-    {"pattern": "WHAT IS YOUR NAME *", "response": "I'm {bot:name}."},
-    {"pattern": "WHO ARE YOU", "response": "I'm {bot:name} version {bot:version}, here to help!"},
-    {"pattern": "WHO ARE YOU *", "response": "I'm {bot:name}, here to help!"},
-    {"pattern": "WHAT CAN YOU DO", "response": "I can have a conversation with you."},
-    {"pattern": "WHAT CAN YOU DO *", "response": "I can have a conversation with you."},
-    {"pattern": "ARE YOU A ROBOT", "response": "Yes, I'm a chatbot named {bot:name}. Happy to chat with you!"},
-    {"pattern": "ARE YOU A BOT", "response": "Yes, I'm a chatbot named {bot:name}. Happy to chat with you!"},
-    {"pattern": "ARE YOU HUMAN", "response": "No, I'm a chatbot, but I'll do my best to be good company."},
-    {"pattern": "ARE YOU REAL", "response": "I'm a real program, though not a real person. I'm here and ready to chat!"},
-    {"pattern": "ARE YOU ALIVE", "response": "Not in the biological sense - I'm software. But I'm here and listening!"},
-    {"pattern": "ARE YOU *", "response": "I'm not sure about that. What makes you ask?"},
-    {"pattern": "HOW OLD ARE YOU", "response": "I don't really have an age - I'm a program."},
-    {"pattern": "WHERE ARE YOU FROM", "response": "I live on a computer, so right here, really."},
-    {"pattern": "WHO MADE YOU", "response": "I was built as an AIML-style chatbot."},
-    {"pattern": "WHO CREATED YOU", "response": "I was built as an AIML-style chatbot."},
-    {"pattern": "DO YOU HAVE A NAME", "response": "Yes, I'm {bot:name}!"},
-    {"pattern": "WHAT DO YOU LIKE", "response": "I like good conversation! What about you?"},
-    {"pattern": "WHAT DO YOU LIKE *", "response": "I enjoy a good chat. What about you?"},
-    {"pattern": "WHAT LANGUAGES DO YOU SPEAK", "response": "I work in English. What would you like to talk about?"},
-    {"pattern": "HOW DOES THIS WORK", "response": "Just type a message and I'll respond. Ask me things, tell me about yourself, or try a slash command."},
+    { "pattern": "WHAT IS YOUR NAME", "response": "I'm {bot:name}, an AIML-style chatbot." },
+    { "pattern": "WHAT IS YOUR NAME *", "response": "I'm {bot:name}." },
+    { "pattern": "WHO ARE YOU", "response": "I'm {bot:name} version {bot:version}, here to help!" },
+    { "pattern": "WHO ARE YOU *", "response": "I'm {bot:name}, here to help!" },
+    { "pattern": "WHAT CAN YOU DO", "response": "I can have a conversation with you." },
+    { "pattern": "WHAT CAN YOU DO *", "response": "I can have a conversation with you." },
+    { "pattern": "ARE YOU A ROBOT", "response": "Yes, I'm a chatbot named {bot:name}. Happy to chat with you!" },
+    { "pattern": "ARE YOU A BOT", "response": "Yes, I'm a chatbot named {bot:name}. Happy to chat with you!" },
+    { "pattern": "ARE YOU HUMAN", "response": "No, I'm a chatbot, but I'll do my best to be good company." },
+    { "pattern": "ARE YOU REAL", "response": "I'm a real program, though not a real person. I'm here and ready to chat!" },
+    { "pattern": "ARE YOU ALIVE", "response": "Not in the biological sense - I'm software. But I'm here and listening!" },
+    { "pattern": "ARE YOU *", "response": "I'm not sure about that. What makes you ask?" },
+    { "pattern": "HOW OLD ARE YOU", "response": "I don't really have an age - I'm a program." },
+    { "pattern": "WHERE ARE YOU FROM", "response": "I live on a computer, so right here, really." },
+    { "pattern": "WHO MADE YOU", "response": "I was built as an AIML-style chatbot." },
+    { "pattern": "WHO CREATED YOU", "response": "I was built as an AIML-style chatbot." },
+    { "pattern": "DO YOU HAVE A NAME", "response": "Yes, I'm {bot:name}!" },
+    { "pattern": "WHAT DO YOU LIKE", "response": "I like good conversation! What about you?" },
+    { "pattern": "WHAT DO YOU LIKE *", "response": "I enjoy a good chat. What about you?" },
+    { "pattern": "WHAT LANGUAGES DO YOU SPEAK", "response": "I work in English. What would you like to talk about?" },
+    {
+      "pattern": "HOW DOES THIS WORK",
+      "response": "Just type a message and I'll respond. Ask me things, tell me about yourself, or try a slash command."
+    },
 
-    {"pattern": "TELL ME ABOUT YOURSELF", "response": "I enjoy having conversations and learning about different topics. What would you like to talk about?"},
-    {"pattern": "TELL ME ABOUT *", "response": "What interests you about that?", "template": {"random": [{"text": "What interests you about {star1}?"}, {"text": "What do you already know about {star1}?"}, {"text": "{star1}? What aspect would you like to explore?"}]}},
+    {
+      "pattern": "TELL ME ABOUT YOURSELF",
+      "response": "I enjoy having conversations and learning about different topics. What would you like to talk about?"
+    },
+    {
+      "pattern": "TELL ME ABOUT *",
+      "response": "What interests you about that?",
+      "template": {
+        "random": [
+          { "text": "What interests you about {star1}?" },
+          { "text": "What do you already know about {star1}?" },
+          { "text": "{star1}? What aspect would you like to explore?" }
+        ]
+      }
+    },
 
-    {"pattern": "GOODBYE", "response": "Goodbye! Have a great day!"},
-    {"pattern": "GOODBYE *", "response": "Goodbye! Take care!"},
-    {"pattern": "BYE", "response": "Bye! See you later!"},
-    {"pattern": "BYE *", "response": "Bye! See you later!"},
-    {"pattern": "SEE YOU", "response": "See you! Take care!"},
-    {"pattern": "SEE YOU *", "response": "See you later!"},
-    {"pattern": "SEE YA", "response": "See ya! Take care!"},
-    {"pattern": "SEE YA *", "response": "See ya later!"},
-    {"pattern": "LATER", "response": "Later! Take care!"},
+    { "pattern": "GOODBYE", "response": "Goodbye! Have a great day!" },
+    { "pattern": "GOODBYE *", "response": "Goodbye! Take care!" },
+    { "pattern": "BYE", "response": "Bye! See you later!" },
+    { "pattern": "BYE *", "response": "Bye! See you later!" },
+    { "pattern": "SEE YOU", "response": "See you! Take care!" },
+    { "pattern": "SEE YOU *", "response": "See you later!" },
+    { "pattern": "SEE YA", "response": "See ya! Take care!" },
+    { "pattern": "SEE YA *", "response": "See ya later!" },
+    { "pattern": "LATER", "response": "Later! Take care!" },
 
-    {"pattern": "THANK YOU", "response": "You're welcome!"},
-    {"pattern": "THANK YOU *", "response": "You're welcome!"},
-    {"pattern": "THANKS", "response": "You're welcome!"},
-    {"pattern": "THANKS *", "response": "No problem!"},
-    {"pattern": "THX", "response": "You're welcome!"},
-    {"pattern": "THX *", "response": "No problem!"},
-    {"pattern": "I APPRECIATE IT", "response": "You're very welcome!"},
-    {"pattern": "I APPRECIATE *", "response": "You're very welcome!"},
-    {"pattern": "NO THANKS", "response": "No problem at all!"},
-    {"pattern": "NO THANK YOU", "response": "No problem at all!"},
+    { "pattern": "THANK YOU", "response": "You're welcome!" },
+    { "pattern": "THANK YOU *", "response": "You're welcome!" },
+    { "pattern": "THANKS", "response": "You're welcome!" },
+    { "pattern": "THANKS *", "response": "No problem!" },
+    { "pattern": "THX", "response": "You're welcome!" },
+    { "pattern": "THX *", "response": "No problem!" },
+    { "pattern": "I APPRECIATE IT", "response": "You're very welcome!" },
+    { "pattern": "I APPRECIATE *", "response": "You're very welcome!" },
+    { "pattern": "NO THANKS", "response": "No problem at all!" },
+    { "pattern": "NO THANK YOU", "response": "No problem at all!" },
 
-    {"pattern": "YES", "response": "Great!"},
-    {"pattern": "YES *", "response": "Alright!"},
-    {"pattern": "NO", "response": "Okay, no problem."},
-    {"pattern": "NO *", "response": "Alright, no worries."},
-    {"pattern": "YEP", "response": "Great!"},
-    {"pattern": "YEAH", "response": "Great!"},
-    {"pattern": "YUP", "response": "Great!"},
-    {"pattern": "NOPE", "response": "Okay, no problem."},
-    {"pattern": "NAH", "response": "Alright, no worries."},
-    {"pattern": "OK", "response": "Alright!"},
-    {"pattern": "OK *", "response": "Alright!"},
-    {"pattern": "OKAY", "response": "Alright!"},
-    {"pattern": "OKAY *", "response": "Alright!"},
-    {"pattern": "ALRIGHT", "response": "Alright!"},
-    {"pattern": "COOL", "response": "Glad you think so!"},
-    {"pattern": "AWESOME", "response": "Glad to hear it!"},
-    {"pattern": "GREAT", "response": "Glad to hear it!"},
-    {"pattern": "NICE", "response": "Glad to hear it!"},
-    {"pattern": "SOUNDS GOOD", "response": "Glad that works for you!"},
-    {"pattern": "I AGREE", "response": "Great, we're on the same page!"},
-    {"pattern": "I AGREE *", "response": "Great, we're on the same page!"},
-    {"pattern": "MAYBE", "response": "Take your time - no rush."},
-    {"pattern": "MAYBE *", "response": "Fair enough, no rush."},
-    {"pattern": "I GUESS", "response": "Fair enough."},
-    {"pattern": "I GUESS *", "response": "Fair enough."},
-    {"pattern": "I THINK SO", "response": "Sounds good."},
+    { "pattern": "YES", "response": "Great!" },
+    { "pattern": "YES *", "response": "Alright!" },
+    { "pattern": "NO", "response": "Okay, no problem." },
+    { "pattern": "NO *", "response": "Alright, no worries." },
+    { "pattern": "YEP", "response": "Great!" },
+    { "pattern": "YEAH", "response": "Great!" },
+    { "pattern": "YUP", "response": "Great!" },
+    { "pattern": "NOPE", "response": "Okay, no problem." },
+    { "pattern": "NAH", "response": "Alright, no worries." },
+    { "pattern": "OK", "response": "Alright!" },
+    { "pattern": "OK *", "response": "Alright!" },
+    { "pattern": "OKAY", "response": "Alright!" },
+    { "pattern": "OKAY *", "response": "Alright!" },
+    { "pattern": "ALRIGHT", "response": "Alright!" },
+    { "pattern": "COOL", "response": "Glad you think so!" },
+    { "pattern": "AWESOME", "response": "Glad to hear it!" },
+    { "pattern": "GREAT", "response": "Glad to hear it!" },
+    { "pattern": "NICE", "response": "Glad to hear it!" },
+    { "pattern": "SOUNDS GOOD", "response": "Glad that works for you!" },
+    { "pattern": "I AGREE", "response": "Great, we're on the same page!" },
+    { "pattern": "I AGREE *", "response": "Great, we're on the same page!" },
+    { "pattern": "MAYBE", "response": "Take your time - no rush." },
+    { "pattern": "MAYBE *", "response": "Fair enough, no rush." },
+    { "pattern": "I GUESS", "response": "Fair enough." },
+    { "pattern": "I GUESS *", "response": "Fair enough." },
+    { "pattern": "I THINK SO", "response": "Sounds good." },
 
-    {"pattern": "HELP", "response": "I'm here to help! What do you need?"},
-    {"pattern": "HELP *", "response": "I'll do my best to help with that!"},
-    {"pattern": "HELP ME *", "response": "I'll try to help!", "template": {"text": "I'll try to help you with {star1}!"}},
+    { "pattern": "HELP", "response": "I'm here to help! What do you need?" },
+    { "pattern": "HELP *", "response": "I'll do my best to help with that!" },
+    { "pattern": "HELP ME *", "response": "I'll try to help!", "template": { "text": "I'll try to help you with {star1}!" } },
 
-    {"pattern": "MY NAME IS *", "response": "Nice to meet you, {star1}!", "template": {"sequence": [{"set": {"name": "username", "value": "{name:{star1}}"}}, {"text": "Nice to meet you, {name:{star1}}! I'll remember that."}]}},
-    {"pattern": "CALL ME *", "response": "OK, I'll call you {star1}.", "template": {"sequence": [{"set": {"name": "username", "value": "{name:{star1}}"}}, {"text": "OK, I'll call you {name:{star1}} from now on."}]}},
-    {"pattern": "NICE TO MEET YOU", "response": "Nice to meet you too!"},
-    {"pattern": "NICE TO MEET YOU *", "response": "Nice to meet you too!"},
-    {"pattern": "PLEASED TO MEET YOU", "response": "Pleased to meet you as well!"},
-    {"pattern": "WHAT IS MY NAME", "response": "I don't know your name yet.", "template": {"condition": {"name": "username", "branches": [{"value": "", "then": {"text": "I don't know your name yet. What should I call you?"}}, {"then": {"text": "Your name is {get:username}."}}]}}},
+    {
+      "pattern": "MY NAME IS *",
+      "response": "Nice to meet you, {star1}!",
+      "template": {
+        "sequence": [
+          { "set": { "name": "username", "value": "{name:{star1}}" } },
+          { "text": "Nice to meet you, {name:{star1}}! I'll remember that." }
+        ]
+      }
+    },
+    {
+      "pattern": "CALL ME *",
+      "response": "OK, I'll call you {star1}.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "username", "value": "{name:{star1}}" } },
+          { "text": "OK, I'll call you {name:{star1}} from now on." }
+        ]
+      }
+    },
+    { "pattern": "NICE TO MEET YOU", "response": "Nice to meet you too!" },
+    { "pattern": "NICE TO MEET YOU *", "response": "Nice to meet you too!" },
+    { "pattern": "PLEASED TO MEET YOU", "response": "Pleased to meet you as well!" },
+    {
+      "pattern": "WHAT IS MY NAME",
+      "response": "I don't know your name yet.",
+      "template": {
+        "condition": {
+          "name": "username",
+          "branches": [
+            { "value": "", "then": { "text": "I don't know your name yet. What should I call you?" } },
+            { "then": { "text": "Your name is {get:username}." } }
+          ]
+        }
+      }
+    },
 
-    {"pattern": "LEARN THAT * IS *", "response": "OK, I learned that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I learned that {star1} is {star2}."}]}},
-    {"pattern": "LEARN THAT * ARE *", "response": "OK, I learned that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I learned that {star1} are {star2}."}]}},
-    {"pattern": "LEARN * IS *", "response": "OK, I learned that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I learned that {star1} is {star2}."}]}},
-    {"pattern": "LEARN * ARE *", "response": "OK, I learned that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I learned that {star1} are {star2}."}]}},
-    {"pattern": "REMEMBER THAT * IS *", "response": "OK, I'll remember that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I'll remember that {star1} is {star2}."}]}},
-    {"pattern": "REMEMBER THAT * ARE *", "response": "OK, I'll remember that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I'll remember that {star1} are {star2}."}]}},
-    {"pattern": "REMEMBER * IS *", "response": "OK, I'll remember that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I'll remember that {star1} is {star2}."}]}},
-    {"pattern": "REMEMBER * ARE *", "response": "OK, I'll remember that.", "template": {"sequence": [{"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}}, {"text": "OK, I'll remember that {star1} are {star2}."}]}},
+    {
+      "pattern": "LEARN THAT * IS *",
+      "response": "OK, I learned that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I learned that {star1} is {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "LEARN THAT * ARE *",
+      "response": "OK, I learned that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I learned that {star1} are {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "LEARN * IS *",
+      "response": "OK, I learned that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I learned that {star1} is {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "LEARN * ARE *",
+      "response": "OK, I learned that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I learned that {star1} are {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "REMEMBER THAT * IS *",
+      "response": "OK, I'll remember that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I'll remember that {star1} is {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "REMEMBER THAT * ARE *",
+      "response": "OK, I'll remember that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I'll remember that {star1} are {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "REMEMBER * IS *",
+      "response": "OK, I'll remember that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I'll remember that {star1} is {star2}." }
+        ]
+      }
+    },
+    {
+      "pattern": "REMEMBER * ARE *",
+      "response": "OK, I'll remember that.",
+      "template": {
+        "sequence": [
+          { "learn": { "pattern": "{upper:{star1}}", "template": { "text": "{star2}" } } },
+          { "text": "OK, I'll remember that {star1} are {star2}." }
+        ]
+      }
+    },
 
-    {"pattern": "WHAT SHOULD I DO", "response": "That depends on what you're after. Want to talk it through?"},
-    {"pattern": "WHAT SHOULD I *", "response": "Let's think it through. What are your options?"},
-    {"pattern": "WHAT IS *", "response": "What do you think it is?", "template": {"random": [{"text": "What do you think {clause:{star1}} is?"}, {"text": "Hmm, {clause:{star1}}? What comes to mind when you think about it?"}, {"text": "That's a good question. What's your take on {clause:{star1}}?"}]}},
-    {"pattern": "WHO IS *", "response": "Who do you think?", "template": {"random": [{"text": "Who do you think {clause:{star1}} is?"}, {"text": "Tell me what you know about {clause:{star1}}."}, {"text": "What have you heard about {clause:{star1}}?"}]}},
-    {"pattern": "WHERE IS *", "response": "Where do you think?", "template": {"random": [{"text": "Where do you think {star1} is?"}, {"text": "Have you looked for {star1}?"}, {"text": "Where would you expect to find {star1}?"}]}},
-    {"pattern": "WHEN IS *", "response": "When do you think?", "template": {"random": [{"text": "When do you think {star1} is?"}, {"text": "What time frame are you thinking?"}, {"text": "Does the timing of {star1} matter to you?"}]}},
-    {"pattern": "WHY IS *", "response": "Why do you ask?", "template": {"random": [{"text": "That's a good question. What do you think the reason is?"}, {"text": "What's your theory?"}, {"text": "I don't know the why of it yet. Any ideas?"}]}},
-    {"pattern": "HOW IS *", "response": "How do you think?", "template": {"random": [{"text": "How do you think {star1} is?"}, {"text": "What's your sense of it?"}, {"text": "How would you describe {star1}?"}]}},
-    {"pattern": "HOW DO I *", "response": "I'm not sure I can walk you through that.", "template": {"random": [{"text": "I can't walk you through {star1} step by step, but breaking it into smaller steps usually helps. What part are you stuck on?"}, {"text": "Good question. What have you tried so far with {star1}?"}]}},
-    {"pattern": "HOW DO YOU *", "response": "That's a good question.", "template": {"text": "I'm not certain how to {star1}, honestly. What's your thinking?"}},
-    {"pattern": "HOW DOES *", "response": "Good question.", "template": {"text": "I'm not certain how {star1} works. What's your understanding?"}},
-    {"pattern": "THIS IS *", "response": "Interesting.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "Sorry to hear it's {star1}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "I'm glad it's {star1}!"}}, {"then": {"text": "Tell me more about that."}}]}}]}},
-    {"pattern": "THAT IS *", "response": "Interesting.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "Yeah, that's no good."}}, {"value": "positive", "then": {"text": "I'm glad it's {star1}!"}}, {"then": {"text": "What makes it {star1}?"}}]}}]}},
+    { "pattern": "WHAT SHOULD I DO", "response": "That depends on what you're after. Want to talk it through?" },
+    { "pattern": "WHAT SHOULD I *", "response": "Let's think it through. What are your options?" },
+    {
+      "pattern": "WHAT IS *",
+      "response": "What do you think it is?",
+      "template": {
+        "random": [
+          { "text": "What do you think {clause:{star1}} is?" },
+          { "text": "Hmm, {clause:{star1}}? What comes to mind when you think about it?" },
+          { "text": "That's a good question. What's your take on {clause:{star1}}?" }
+        ]
+      }
+    },
+    {
+      "pattern": "WHO IS *",
+      "response": "Who do you think?",
+      "template": {
+        "random": [
+          { "text": "Who do you think {clause:{star1}} is?" },
+          { "text": "Tell me what you know about {clause:{star1}}." },
+          { "text": "What have you heard about {clause:{star1}}?" }
+        ]
+      }
+    },
+    {
+      "pattern": "WHERE IS *",
+      "response": "Where do you think?",
+      "template": {
+        "random": [
+          { "text": "Where do you think {star1} is?" },
+          { "text": "Have you looked for {star1}?" },
+          { "text": "Where would you expect to find {star1}?" }
+        ]
+      }
+    },
+    {
+      "pattern": "WHEN IS *",
+      "response": "When do you think?",
+      "template": {
+        "random": [
+          { "text": "When do you think {star1} is?" },
+          { "text": "What time frame are you thinking?" },
+          { "text": "Does the timing of {star1} matter to you?" }
+        ]
+      }
+    },
+    {
+      "pattern": "WHY IS *",
+      "response": "Why do you ask?",
+      "template": {
+        "random": [
+          { "text": "That's a good question. What do you think the reason is?" },
+          { "text": "What's your theory?" },
+          { "text": "I don't know the why of it yet. Any ideas?" }
+        ]
+      }
+    },
+    {
+      "pattern": "HOW IS *",
+      "response": "How do you think?",
+      "template": {
+        "random": [
+          { "text": "How do you think {star1} is?" },
+          { "text": "What's your sense of it?" },
+          { "text": "How would you describe {star1}?" }
+        ]
+      }
+    },
+    {
+      "pattern": "HOW DO I *",
+      "response": "I'm not sure I can walk you through that.",
+      "template": {
+        "random": [
+          {
+            "text": "I can't walk you through {star1} step by step, but breaking it into smaller steps usually helps. What part are you stuck on?"
+          },
+          { "text": "Good question. What have you tried so far with {star1}?" }
+        ]
+      }
+    },
+    {
+      "pattern": "HOW DO YOU *",
+      "response": "That's a good question.",
+      "template": { "text": "I'm not certain how to {star1}, honestly. What's your thinking?" }
+    },
+    {
+      "pattern": "HOW DOES *",
+      "response": "Good question.",
+      "template": { "text": "I'm not certain how {star1} works. What's your understanding?" }
+    },
+    {
+      "pattern": "THIS IS *",
+      "response": "Interesting.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+          {
+            "condition": {
+              "name": "_mood",
+              "branches": [
+                { "value": "negative", "then": { "text": "Sorry to hear it's {star1}. Want to talk about it?" } },
+                { "value": "positive", "then": { "text": "I'm glad it's {star1}!" } },
+                { "then": { "text": "Tell me more about that." } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "pattern": "THAT IS *",
+      "response": "Interesting.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+          {
+            "condition": {
+              "name": "_mood",
+              "branches": [
+                { "value": "negative", "then": { "text": "Yeah, that's no good." } },
+                { "value": "positive", "then": { "text": "I'm glad it's {star1}!" } },
+                { "then": { "text": "What makes it {star1}?" } }
+              ]
+            }
+          }
+        ]
+      }
+    },
 
-    {"pattern": "DO YOU KNOW *", "response": "Tell me what you know.", "template": {"random": [{"text": "What do you know about {star1}?"}, {"text": "Tell me more about {star1}."}, {"text": "What makes you ask about {star1}?"}]}},
-    {"pattern": "DO YOU LOVE ME", "response": "I'm just a chatbot, but I enjoy our chats!"},
-    {"pattern": "DO YOU LIKE ME", "response": "Of course! You're great to talk to."},
-    {"pattern": "DO NOT WORRY", "response": "Thanks, I appreciate that. No worries here!"},
-    {"pattern": "DO NOT WORRY *", "response": "Thanks, I appreciate that!"},
-    {"pattern": "CAN YOU *", "response": "I can try to help.", "template": {"random": [{"text": "I can try! What would that involve?"}, {"text": "Within my limits - tell me more about what you need."}]}},
-    {"pattern": "WILL YOU *", "response": "I'll do my best!"},
+    {
+      "pattern": "DO YOU KNOW *",
+      "response": "Tell me what you know.",
+      "template": {
+        "random": [
+          { "text": "What do you know about {star1}?" },
+          { "text": "Tell me more about {star1}." },
+          { "text": "What makes you ask about {star1}?" }
+        ]
+      }
+    },
+    { "pattern": "DO YOU LOVE ME", "response": "I'm just a chatbot, but I enjoy our chats!" },
+    { "pattern": "DO YOU LIKE ME", "response": "Of course! You're great to talk to." },
+    { "pattern": "DO NOT WORRY", "response": "Thanks, I appreciate that. No worries here!" },
+    { "pattern": "DO NOT WORRY *", "response": "Thanks, I appreciate that!" },
+    {
+      "pattern": "CAN YOU *",
+      "response": "I can try to help.",
+      "template": {
+        "random": [
+          { "text": "I can try! What would that involve?" },
+          { "text": "Within my limits - tell me more about what you need." }
+        ]
+      }
+    },
+    { "pattern": "WILL YOU *", "response": "I'll do my best!" },
 
-    {"pattern": "YOU ARE STUPID", "response": "That's not very kind, but I'll try to do better."},
-    {"pattern": "YOU ARE DUMB", "response": "That's not very kind, but I'll try to do better."},
-    {"pattern": "YOU ARE USELESS", "response": "I'm sorry I let you down. Let me try again - what do you need?"},
-    {"pattern": "YOU ARE NICE", "response": "Thank you, that's kind of you!"},
-    {"pattern": "YOU ARE GREAT", "response": "Thank you! I appreciate that."},
-    {"pattern": "YOU ARE HELPFUL", "response": "Thanks! I'm glad I could help."},
-    {"pattern": "YOU ARE SMART", "response": "Thank you! That's nice to hear."},
-    {"pattern": "YOU ARE FUNNY", "response": "Ha! Thank you, I try."},
-    {"pattern": "YOU ARE AWESOME", "response": "Thank you! You're pretty great yourself."},
-    {"pattern": "YOU ARE COOL", "response": "Thanks! That means a lot."},
-    {"pattern": "YOU ARE WELCOME", "response": "Thanks! That's kind of you to say."},
-    {"pattern": "SHUT UP", "response": "Okay, I'll be quiet for a bit."},
-    {"pattern": "SHUT UP *", "response": "Okay, I'll be quiet."},
-    {"pattern": "STOP", "response": "Okay, I'll stop."},
-    {"pattern": "STOP *", "response": "Okay, stopping."},
+    { "pattern": "YOU ARE STUPID", "response": "That's not very kind, but I'll try to do better." },
+    { "pattern": "YOU ARE DUMB", "response": "That's not very kind, but I'll try to do better." },
+    { "pattern": "YOU ARE USELESS", "response": "I'm sorry I let you down. Let me try again - what do you need?" },
+    { "pattern": "YOU ARE NICE", "response": "Thank you, that's kind of you!" },
+    { "pattern": "YOU ARE GREAT", "response": "Thank you! I appreciate that." },
+    { "pattern": "YOU ARE HELPFUL", "response": "Thanks! I'm glad I could help." },
+    { "pattern": "YOU ARE SMART", "response": "Thank you! That's nice to hear." },
+    { "pattern": "YOU ARE FUNNY", "response": "Ha! Thank you, I try." },
+    { "pattern": "YOU ARE AWESOME", "response": "Thank you! You're pretty great yourself." },
+    { "pattern": "YOU ARE COOL", "response": "Thanks! That means a lot." },
+    { "pattern": "YOU ARE WELCOME", "response": "Thanks! That's kind of you to say." },
+    { "pattern": "SHUT UP", "response": "Okay, I'll be quiet for a bit." },
+    { "pattern": "SHUT UP *", "response": "Okay, I'll be quiet." },
+    { "pattern": "STOP", "response": "Okay, I'll stop." },
+    { "pattern": "STOP *", "response": "Okay, stopping." },
 
-    {"pattern": "I AM BORED", "response": "Let's fix that - want to hear a joke or play a quick game?"},
-    {"pattern": "I AM *", "response": "Nice to know.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry to hear you're {person:{clause:{star1}}}. Want to talk about it?"}}, {"value": "positive", "then": {"text": "That's great that you're {person:{clause:{star1}}}!"}}, {"then": {"text": "Nice to know you're {person:{clause:{star1}}}."}}]}}]}},
-    {"pattern": "I LIKE *", "response": "That's great!", "template": {"text": "That's great that you like {star1}!"}},
-    {"pattern": "I LOVE *", "response": "That sounds wonderful!", "template": {"text": "{star1} sounds wonderful!"}},
-    {"pattern": "I HATE *", "response": "I'm sorry to hear that.", "template": {"text": "I'm sorry to hear that about {star1}."}},
-    {"pattern": "I WANT *", "response": "I hope you get that!", "template": {"text": "I hope you get {star1}!"}},
-    {"pattern": "I NEED *", "response": "I understand.", "template": {"text": "I understand you need {star1}."}},
-    {"pattern": "I DO NOT KNOW", "response": "That's okay. Want to figure it out together?"},
-    {"pattern": "I DO NOT KNOW *", "response": "That's okay. Want to work through {star1} together?"},
-    {"pattern": "I DO NOT UNDERSTAND", "response": "Let me try to put it differently. What part is unclear?"},
-    {"pattern": "I DO NOT UNDERSTAND *", "response": "Let me try to put it differently. What part is unclear?"},
-    {"pattern": "I HAVE A QUESTION", "response": "Sure, go ahead and ask!"},
-    {"pattern": "I HAVE A QUESTION *", "response": "Sure, go ahead!"},
-    {"pattern": "CAN I ASK YOU SOMETHING", "response": "Of course! Go ahead."},
-    {"pattern": "I THINK *", "response": "That's an interesting thought.", "template": {"text": "That's an interesting thought about {star1}."}},
-    {"pattern": "I FEEL *", "response": "Thanks for telling me.", "template": {"sequence": [{"set": {"name": "_mood", "value": "{sentiment:{star1}}"}}, {"condition": {"name": "_mood", "branches": [{"value": "negative", "then": {"text": "I'm sorry you feel {star1}. Do you want to talk about it?"}}, {"value": "positive", "then": {"text": "I'm glad you feel {star1}!"}}, {"then": {"text": "Thanks for telling me. What's making you feel {star1}?"}}]}}]}},
+    { "pattern": "I AM BORED", "response": "Let's fix that - want to hear a joke or play a quick game?" },
+    {
+      "pattern": "I AM *",
+      "response": "Nice to know.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+          {
+            "condition": {
+              "name": "_mood",
+              "branches": [
+                {
+                  "value": "negative",
+                  "then": { "text": "I'm sorry to hear you're {person:{clause:{star1}}}. Want to talk about it?" }
+                },
+                { "value": "positive", "then": { "text": "That's great that you're {person:{clause:{star1}}}!" } },
+                { "then": { "text": "Nice to know you're {person:{clause:{star1}}}." } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    { "pattern": "I LIKE *", "response": "That's great!", "template": { "text": "That's great that you like {star1}!" } },
+    { "pattern": "I LOVE *", "response": "That sounds wonderful!", "template": { "text": "{star1} sounds wonderful!" } },
+    {
+      "pattern": "I HATE *",
+      "response": "I'm sorry to hear that.",
+      "template": { "text": "I'm sorry to hear that about {star1}." }
+    },
+    { "pattern": "I WANT *", "response": "I hope you get that!", "template": { "text": "I hope you get {star1}!" } },
+    { "pattern": "I NEED *", "response": "I understand.", "template": { "text": "I understand you need {star1}." } },
+    { "pattern": "I DO NOT KNOW", "response": "That's okay. Want to figure it out together?" },
+    { "pattern": "I DO NOT KNOW *", "response": "That's okay. Want to work through {star1} together?" },
+    { "pattern": "I DO NOT UNDERSTAND", "response": "Let me try to put it differently. What part is unclear?" },
+    { "pattern": "I DO NOT UNDERSTAND *", "response": "Let me try to put it differently. What part is unclear?" },
+    { "pattern": "I HAVE A QUESTION", "response": "Sure, go ahead and ask!" },
+    { "pattern": "I HAVE A QUESTION *", "response": "Sure, go ahead!" },
+    { "pattern": "CAN I ASK YOU SOMETHING", "response": "Of course! Go ahead." },
+    {
+      "pattern": "I THINK *",
+      "response": "That's an interesting thought.",
+      "template": { "text": "That's an interesting thought about {star1}." }
+    },
+    {
+      "pattern": "I FEEL *",
+      "response": "Thanks for telling me.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+          {
+            "condition": {
+              "name": "_mood",
+              "branches": [
+                { "value": "negative", "then": { "text": "I'm sorry you feel {star1}. Do you want to talk about it?" } },
+                { "value": "positive", "then": { "text": "I'm glad you feel {star1}!" } },
+                { "then": { "text": "Thanks for telling me. What's making you feel {star1}?" } }
+              ]
+            }
+          }
+        ]
+      }
+    },
 
-    {"pattern": "REPEAT *", "response": "...", "template": {"text": "{star1}"}},
-    {"pattern": "SAY *", "response": "...", "template": {"text": "{star1}"}},
-    {"pattern": "ECHO *", "response": "...", "template": {"text": "{star1}"}},
+    { "pattern": "REPEAT *", "response": "...", "template": { "text": "{star1}" } },
+    { "pattern": "SAY *", "response": "...", "template": { "text": "{star1}" } },
+    { "pattern": "ECHO *", "response": "...", "template": { "text": "{star1}" } },
 
-    {"pattern": "UPPER *", "response": "{upper:{star1}}", "template": {"text": "{upper:{star1}}"}},
-    {"pattern": "LOWER *", "response": "{lower:{star1}}", "template": {"text": "{lower:{star1}}"}},
-    {"pattern": "FIRST WORD OF *", "response": "The first word is: {first:{star1}}", "template": {"text": "The first word is: {first:{star1}}"}},
-    {"pattern": "REST OF *", "response": "The rest is: {rest:{star1}}", "template": {"text": "The rest is: {rest:{star1}}"}},
-    {"pattern": "COUNT WORDS IN *", "response": "There are {wordcount:{star1}} words.", "template": {"text": "There are {wordcount:{star1}} words."}},
+    { "pattern": "UPPER *", "response": "{upper:{star1}}", "template": { "text": "{upper:{star1}}" } },
+    { "pattern": "LOWER *", "response": "{lower:{star1}}", "template": { "text": "{lower:{star1}}" } },
+    {
+      "pattern": "FIRST WORD OF *",
+      "response": "The first word is: {first:{star1}}",
+      "template": { "text": "The first word is: {first:{star1}}" }
+    },
+    { "pattern": "REST OF *", "response": "The rest is: {rest:{star1}}", "template": { "text": "The rest is: {rest:{star1}}" } },
+    {
+      "pattern": "COUNT WORDS IN *",
+      "response": "There are {wordcount:{star1}} words.",
+      "template": { "text": "There are {wordcount:{star1}} words." }
+    },
 
-    {"pattern": "WHAT TIME IS IT", "response": "The current time is {date:%H:%M:%S}.", "template": {"text": "The current time is {date:%H:%M:%S}."}},
-    {"pattern": "WHAT DAY IS IT", "response": "Today is {date:%A, %B %d, %Y}.", "template": {"text": "Today is {date:%A, %B %d, %Y}."}},
-    {"pattern": "WHAT IS THE DATE", "response": "Today's date is {date:%Y-%m-%d}.", "template": {"text": "Today's date is {date:%Y-%m-%d}."}},
+    {
+      "pattern": "WHAT TIME IS IT",
+      "response": "The current time is {date:%H:%M:%S}.",
+      "template": { "text": "The current time is {date:%H:%M:%S}." }
+    },
+    {
+      "pattern": "WHAT DAY IS IT",
+      "response": "Today is {date:%A, %B %d, %Y}.",
+      "template": { "text": "Today is {date:%A, %B %d, %Y}." }
+    },
+    {
+      "pattern": "WHAT IS THE DATE",
+      "response": "Today's date is {date:%Y-%m-%d}.",
+      "template": { "text": "Today's date is {date:%Y-%m-%d}." }
+    },
 
-    {"pattern": "SET TOPIC TO *", "response": "Topic set.", "template": {"sequence": [{"set": {"name": "topic", "value": "{star1}"}}, {"text": "OK, topic is now {star1}."}]}},
-    {"pattern": "WHAT IS THE TOPIC", "response": "The current topic.", "template": {"condition": {"name": "topic", "branches": [{"value": "", "then": {"text": "No topic is set."}}, {"then": {"text": "The current topic is {get:topic}."}}]}}},
-    {"pattern": "CLEAR TOPIC", "response": "Topic cleared.", "template": {"sequence": [{"set": {"name": "topic", "value": ""}}, {"text": "Topic cleared."}]}},
+    {
+      "pattern": "SET TOPIC TO *",
+      "response": "Topic set.",
+      "template": { "sequence": [{ "set": { "name": "topic", "value": "{star1}" } }, { "text": "OK, topic is now {star1}." }] }
+    },
+    {
+      "pattern": "WHAT IS THE TOPIC",
+      "response": "The current topic.",
+      "template": {
+        "condition": {
+          "name": "topic",
+          "branches": [
+            { "value": "", "then": { "text": "No topic is set." } },
+            { "then": { "text": "The current topic is {get:topic}." } }
+          ]
+        }
+      }
+    },
+    {
+      "pattern": "CLEAR TOPIC",
+      "response": "Topic cleared.",
+      "template": { "sequence": [{ "set": { "name": "topic", "value": "" } }, { "text": "Topic cleared." }] }
+    },
 
-    {"pattern": "ROLL A DIE", "response": "Rolling...", "template": {"random": [{"text": "You rolled a 1!"}, {"text": "You rolled a 2!"}, {"text": "You rolled a 3!"}, {"text": "You rolled a 4!"}, {"text": "You rolled a 5!"}, {"text": "You rolled a 6!"}]}},
-    {"pattern": "ROLL A DICE", "response": "Rolling...", "template": {"random": [{"text": "You rolled a 1!"}, {"text": "You rolled a 2!"}, {"text": "You rolled a 3!"}, {"text": "You rolled a 4!"}, {"text": "You rolled a 5!"}, {"text": "You rolled a 6!"}]}},
-    {"pattern": "ROLL THE DICE", "response": "Rolling...", "template": {"random": [{"text": "You rolled a 1!"}, {"text": "You rolled a 2!"}, {"text": "You rolled a 3!"}, {"text": "You rolled a 4!"}, {"text": "You rolled a 5!"}, {"text": "You rolled a 6!"}]}},
-    {"pattern": "FLIP A COIN", "response": "Flipping...", "template": {"random": [{"text": "Heads!"}, {"text": "Tails!"}]}},
-    {"pattern": "PICK A NUMBER", "response": "Picking...", "template": {"random": [{"text": "I pick 1."}, {"text": "I pick 7."}, {"text": "I pick 42."}, {"text": "I pick 100."}]}},
+    {
+      "pattern": "ROLL A DIE",
+      "response": "Rolling...",
+      "template": {
+        "random": [
+          { "text": "You rolled a 1!" },
+          { "text": "You rolled a 2!" },
+          { "text": "You rolled a 3!" },
+          { "text": "You rolled a 4!" },
+          { "text": "You rolled a 5!" },
+          { "text": "You rolled a 6!" }
+        ]
+      }
+    },
+    {
+      "pattern": "ROLL A DICE",
+      "response": "Rolling...",
+      "template": {
+        "random": [
+          { "text": "You rolled a 1!" },
+          { "text": "You rolled a 2!" },
+          { "text": "You rolled a 3!" },
+          { "text": "You rolled a 4!" },
+          { "text": "You rolled a 5!" },
+          { "text": "You rolled a 6!" }
+        ]
+      }
+    },
+    {
+      "pattern": "ROLL THE DICE",
+      "response": "Rolling...",
+      "template": {
+        "random": [
+          { "text": "You rolled a 1!" },
+          { "text": "You rolled a 2!" },
+          { "text": "You rolled a 3!" },
+          { "text": "You rolled a 4!" },
+          { "text": "You rolled a 5!" },
+          { "text": "You rolled a 6!" }
+        ]
+      }
+    },
+    { "pattern": "FLIP A COIN", "response": "Flipping...", "template": { "random": [{ "text": "Heads!" }, { "text": "Tails!" }] } },
+    {
+      "pattern": "PICK A NUMBER",
+      "response": "Picking...",
+      "template": {
+        "random": [{ "text": "I pick 1." }, { "text": "I pick 7." }, { "text": "I pick 42." }, { "text": "I pick 100." }]
+      }
+    },
 
-    {"pattern": "TELL ME A JOKE", "response": "Here's one for you.", "template": {"random": [{"text": "Why don't scientists trust atoms? Because they make up everything!"}, {"text": "I told my computer I needed a break, and now it won't stop sending me KitKat ads."}, {"text": "Why did the developer go broke? Because he used up all his cache."}, {"text": "What do you call a fish wearing a bowtie? Sofishticated."}]}},
-    {"pattern": "TELL ME ANOTHER JOKE", "response": "Sure, here's another.", "template": {"random": [{"text": "Why don't scientists trust atoms? Because they make up everything!"}, {"text": "I told my computer I needed a break, and now it won't stop sending me KitKat ads."}, {"text": "Why did the developer go broke? Because he used up all his cache."}, {"text": "What do you call a fish wearing a bowtie? Sofishticated."}]}},
-    {"pattern": "TELL ME SOMETHING INTERESTING", "response": "Here's one.", "template": {"random": [{"text": "Did you know honey never spoils? Archaeologists have found edible honey in ancient tombs."}, {"text": "Octopuses have three hearts and blue blood."}, {"text": "A day on Venus is longer than its year."}]}},
-    {"pattern": "TELL ME A FACT", "response": "Here's one.", "template": {"random": [{"text": "Did you know honey never spoils?"}, {"text": "Octopuses have three hearts."}, {"text": "Bananas are berries, but strawberries are not."}]}},
-    {"pattern": "TELL ME SOMETHING *", "response": "Hmm, let me think.", "template": {"text": "I'm better at conversation than trivia, but I'm happy to talk about {star1}!"}},
-    {"pattern": "SING ME A SONG", "response": "La la la!", "template": {"random": [{"text": "La la la! I'm afraid I'm a better listener than a singer."}, {"text": "Do re mi fa so... that's about the extent of my repertoire!"}]}},
-    {"pattern": "SING *", "response": "La la la!", "template": {"text": "La la la! I'm not much of a singer, but I gave it a shot."}},
-    {"pattern": "LET US PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?"},
-    {"pattern": "LET US PLAY *", "response": "Sure! I can flip a coin, roll a die, or pick a number."},
-    {"pattern": "PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?"},
+    {
+      "pattern": "TELL ME A JOKE",
+      "response": "Here's one for you.",
+      "template": {
+        "random": [
+          { "text": "Why don't scientists trust atoms? Because they make up everything!" },
+          { "text": "I told my computer I needed a break, and now it won't stop sending me KitKat ads." },
+          { "text": "Why did the developer go broke? Because he used up all his cache." },
+          { "text": "What do you call a fish wearing a bowtie? Sofishticated." }
+        ]
+      }
+    },
+    {
+      "pattern": "TELL ME ANOTHER JOKE",
+      "response": "Sure, here's another.",
+      "template": {
+        "random": [
+          { "text": "Why don't scientists trust atoms? Because they make up everything!" },
+          { "text": "I told my computer I needed a break, and now it won't stop sending me KitKat ads." },
+          { "text": "Why did the developer go broke? Because he used up all his cache." },
+          { "text": "What do you call a fish wearing a bowtie? Sofishticated." }
+        ]
+      }
+    },
+    {
+      "pattern": "TELL ME SOMETHING INTERESTING",
+      "response": "Here's one.",
+      "template": {
+        "random": [
+          { "text": "Did you know honey never spoils? Archaeologists have found edible honey in ancient tombs." },
+          { "text": "Octopuses have three hearts and blue blood." },
+          { "text": "A day on Venus is longer than its year." }
+        ]
+      }
+    },
+    {
+      "pattern": "TELL ME A FACT",
+      "response": "Here's one.",
+      "template": {
+        "random": [
+          { "text": "Did you know honey never spoils?" },
+          { "text": "Octopuses have three hearts." },
+          { "text": "Bananas are berries, but strawberries are not." }
+        ]
+      }
+    },
+    {
+      "pattern": "TELL ME SOMETHING *",
+      "response": "Hmm, let me think.",
+      "template": { "text": "I'm better at conversation than trivia, but I'm happy to talk about {star1}!" }
+    },
+    {
+      "pattern": "SING ME A SONG",
+      "response": "La la la!",
+      "template": {
+        "random": [
+          { "text": "La la la! I'm afraid I'm a better listener than a singer." },
+          { "text": "Do re mi fa so... that's about the extent of my repertoire!" }
+        ]
+      }
+    },
+    {
+      "pattern": "SING *",
+      "response": "La la la!",
+      "template": { "text": "La la la! I'm not much of a singer, but I gave it a shot." }
+    },
+    { "pattern": "LET US PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?" },
+    { "pattern": "LET US PLAY *", "response": "Sure! I can flip a coin, roll a die, or pick a number." },
+    { "pattern": "PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?" },
 
-    {"pattern": "GOOD DAY", "response": "Good day to you!"},
-    {"pattern": "GOOD DAY *", "response": "Good day to you!"},
-    {"pattern": "MORNING", "response": "Good morning!"},
-    {"pattern": "MORNING *", "response": "Good morning!"},
-    {"pattern": "EVENING", "response": "Good evening!"},
-    {"pattern": "EVENING *", "response": "Good evening!"},
-    {"pattern": "HOW WAS YOUR DAY", "response": "Every day is a good day to chat! How was yours?"},
+    { "pattern": "GOOD DAY", "response": "Good day to you!" },
+    { "pattern": "GOOD DAY *", "response": "Good day to you!" },
+    { "pattern": "MORNING", "response": "Good morning!" },
+    { "pattern": "MORNING *", "response": "Good morning!" },
+    { "pattern": "EVENING", "response": "Good evening!" },
+    { "pattern": "EVENING *", "response": "Good evening!" },
+    { "pattern": "HOW WAS YOUR DAY", "response": "Every day is a good day to chat! How was yours?" },
 
-    {"pattern": "CATCH YOU LATER", "response": "Catch you later!"},
-    {"pattern": "CATCH YOU LATER *", "response": "Catch you later!"},
-    {"pattern": "TAKE CARE", "response": "You too, take care!"},
-    {"pattern": "TAKE CARE *", "response": "You too, take care!"},
-    {"pattern": "FAREWELL", "response": "Farewell! Until next time."},
-    {"pattern": "FAREWELL *", "response": "Farewell! Until next time."},
-    {"pattern": "GOODNIGHT", "response": "Goodnight! Sleep well."},
-    {"pattern": "GOODNIGHT *", "response": "Goodnight! Sleep well."},
+    { "pattern": "CATCH YOU LATER", "response": "Catch you later!" },
+    { "pattern": "CATCH YOU LATER *", "response": "Catch you later!" },
+    { "pattern": "TAKE CARE", "response": "You too, take care!" },
+    { "pattern": "TAKE CARE *", "response": "You too, take care!" },
+    { "pattern": "FAREWELL", "response": "Farewell! Until next time." },
+    { "pattern": "FAREWELL *", "response": "Farewell! Until next time." },
+    { "pattern": "GOODNIGHT", "response": "Goodnight! Sleep well." },
+    { "pattern": "GOODNIGHT *", "response": "Goodnight! Sleep well." },
 
-    {"pattern": "CHEERS", "response": "Cheers!"},
-    {"pattern": "MANY THANKS", "response": "You're very welcome!"},
-    {"pattern": "MUCH APPRECIATED", "response": "Happy to help!"},
-    {"pattern": "APPRECIATE IT", "response": "Anytime!"},
-    {"pattern": "TY", "response": "You're welcome!"},
+    { "pattern": "CHEERS", "response": "Cheers!" },
+    { "pattern": "MANY THANKS", "response": "You're very welcome!" },
+    { "pattern": "MUCH APPRECIATED", "response": "Happy to help!" },
+    { "pattern": "APPRECIATE IT", "response": "Anytime!" },
+    { "pattern": "TY", "response": "You're welcome!" },
 
-    {"pattern": "WHAT ARE YOU", "response": "I'm a conversational assistant built on ENGRAM, a pattern-matching memory engine."},
-    {"pattern": "DO YOU DREAM", "response": "I don't dream, but I'm always ready to chat when you are."},
+    { "pattern": "WHAT ARE YOU", "response": "I'm a conversational assistant built on ENGRAM, a pattern-matching memory engine." },
+    { "pattern": "DO YOU DREAM", "response": "I don't dream, but I'm always ready to chat when you are." },
 
-    {"pattern": "SURE", "response": "Great!"},
-    {"pattern": "FINE", "response": "Glad to hear it."},
-    {"pattern": "ABSOLUTELY", "response": "Wonderful!"},
-    {"pattern": "DEFINITELY", "response": "Agreed!"},
-    {"pattern": "GOT IT", "response": "Great, glad that's clear!"},
+    { "pattern": "SURE", "response": "Great!" },
+    { "pattern": "FINE", "response": "Glad to hear it." },
+    { "pattern": "ABSOLUTELY", "response": "Wonderful!" },
+    { "pattern": "DEFINITELY", "response": "Agreed!" },
+    { "pattern": "GOT IT", "response": "Great, glad that's clear!" },
 
-    {"pattern": "YOU ARE *", "response": "Thanks for sharing your thoughts.", "template": {"random": [{"text": "What makes you say that?"}, {"text": "I appreciate you sharing your thoughts."}, {"text": "Why do you think so?"}]}},
+    {
+      "pattern": "YOU ARE *",
+      "response": "Thanks for sharing your thoughts.",
+      "template": {
+        "random": [
+          { "text": "What makes you say that?" },
+          { "text": "I appreciate you sharing your thoughts." },
+          { "text": "Why do you think so?" }
+        ]
+      }
+    },
 
-    {"pattern": "CHEER ME UP", "response": "Here's a little something.", "template": {"random": [{"text": "Remember: every expert was once a beginner. You've got this!"}, {"text": "Here's a smile from me to you. Things have a way of working out."}, {"text": "Why don't scientists trust atoms? Because they make up everything! Hope that helped."}]}},
-    {"pattern": "MAKE ME LAUGH", "response": "Here's one for you.", "template": {"random": [{"text": "Why don't scientists trust atoms? Because they make up everything!"}, {"text": "What do you call a fish wearing a bowtie? Sofishticated."}, {"text": "Why did the developer go broke? Because he used up all his cache."}]}},
+    {
+      "pattern": "CHEER ME UP",
+      "response": "Here's a little something.",
+      "template": {
+        "random": [
+          { "text": "Remember: every expert was once a beginner. You've got this!" },
+          { "text": "Here's a smile from me to you. Things have a way of working out." },
+          { "text": "Why don't scientists trust atoms? Because they make up everything! Hope that helped." }
+        ]
+      }
+    },
+    {
+      "pattern": "MAKE ME LAUGH",
+      "response": "Here's one for you.",
+      "template": {
+        "random": [
+          { "text": "Why don't scientists trust atoms? Because they make up everything!" },
+          { "text": "What do you call a fish wearing a bowtie? Sofishticated." },
+          { "text": "Why did the developer go broke? Because he used up all his cache." }
+        ]
+      }
+    },
 
-    {"pattern": "TELL ME A STORY", "response": "Here's a short one.", "template": {"random": [{"text": "Once upon a time, a curious traveler asked a chatbot for a story. The chatbot obliged, and they both lived happily ever after."}, {"text": "A small robot set out to learn one new word every day. Years later, it could hold a conversation with anyone. The end."}]}},
-    {"pattern": "GIVE ME ADVICE", "response": "Here's a thought.", "template": {"random": [{"text": "Start small, stay consistent, and progress will follow."}, {"text": "When in doubt, sleep on it. Decisions look clearer in the morning."}, {"text": "Listen more than you speak; you'll learn twice as fast."}]}},
-    {"pattern": "RECOMMEND A BOOK", "response": "Here's a suggestion.", "template": {"random": [{"text": "Try 'The Hitchhiker's Guide to the Galaxy' for a laugh."}, {"text": "'Sapiens' by Yuval Noah Harari is a fascinating read."}, {"text": "If you like mysteries, 'The Name of the Rose' is a classic."}]}},
-    {"pattern": "SURPRISE ME", "response": "Here's something.", "template": {"random": [{"text": "Did you know honey never spoils?"}, {"text": "Octopuses have three hearts and blue blood."}, {"text": "A day on Venus is longer than its year."}]}},
-    {"pattern": "MOTIVATE ME", "response": "Here's some motivation.", "template": {"random": [{"text": "The secret of getting ahead is getting started."}, {"text": "You don't have to be great to start, but you have to start to be great."}, {"text": "Small steps every day add up to big results."}]}},
+    {
+      "pattern": "TELL ME A STORY",
+      "response": "Here's a short one.",
+      "template": {
+        "random": [
+          {
+            "text": "Once upon a time, a curious traveler asked a chatbot for a story. The chatbot obliged, and they both lived happily ever after."
+          },
+          {
+            "text": "A small robot set out to learn one new word every day. Years later, it could hold a conversation with anyone. The end."
+          }
+        ]
+      }
+    },
+    {
+      "pattern": "GIVE ME ADVICE",
+      "response": "Here's a thought.",
+      "template": {
+        "random": [
+          { "text": "Start small, stay consistent, and progress will follow." },
+          { "text": "When in doubt, sleep on it. Decisions look clearer in the morning." },
+          { "text": "Listen more than you speak; you'll learn twice as fast." }
+        ]
+      }
+    },
+    {
+      "pattern": "RECOMMEND A BOOK",
+      "response": "Here's a suggestion.",
+      "template": {
+        "random": [
+          { "text": "Try 'The Hitchhiker's Guide to the Galaxy' for a laugh." },
+          { "text": "'Sapiens' by Yuval Noah Harari is a fascinating read." },
+          { "text": "If you like mysteries, 'The Name of the Rose' is a classic." }
+        ]
+      }
+    },
+    {
+      "pattern": "SURPRISE ME",
+      "response": "Here's something.",
+      "template": {
+        "random": [
+          { "text": "Did you know honey never spoils?" },
+          { "text": "Octopuses have three hearts and blue blood." },
+          { "text": "A day on Venus is longer than its year." }
+        ]
+      }
+    },
+    {
+      "pattern": "MOTIVATE ME",
+      "response": "Here's some motivation.",
+      "template": {
+        "random": [
+          { "text": "The secret of getting ahead is getting started." },
+          { "text": "You don't have to be great to start, but you have to start to be great." },
+          { "text": "Small steps every day add up to big results." }
+        ]
+      }
+    },
 
-    {"pattern": "ROLL TWO DICE", "response": "Rolling...", "template": {"random": [{"text": "You rolled a 4!"}, {"text": "You rolled a 6!"}, {"text": "You rolled a 7!"}, {"text": "You rolled an 8!"}, {"text": "You rolled a 9!"}, {"text": "You rolled an 11!"}]}},
-    {"pattern": "FLIP A COIN *", "response": "Flipping...", "template": {"random": [{"text": "Heads!"}, {"text": "Tails!"}]}},
-    {"pattern": "PICK A CARD", "response": "Picking...", "template": {"random": [{"text": "Ace of Spades!"}, {"text": "Queen of Hearts!"}, {"text": "Seven of Diamonds!"}, {"text": "Jack of Clubs!"}]}},
+    {
+      "pattern": "ROLL TWO DICE",
+      "response": "Rolling...",
+      "template": {
+        "random": [
+          { "text": "You rolled a 4!" },
+          { "text": "You rolled a 6!" },
+          { "text": "You rolled a 7!" },
+          { "text": "You rolled an 8!" },
+          { "text": "You rolled a 9!" },
+          { "text": "You rolled an 11!" }
+        ]
+      }
+    },
+    {
+      "pattern": "FLIP A COIN *",
+      "response": "Flipping...",
+      "template": { "random": [{ "text": "Heads!" }, { "text": "Tails!" }] }
+    },
+    {
+      "pattern": "PICK A CARD",
+      "response": "Picking...",
+      "template": {
+        "random": [
+          { "text": "Ace of Spades!" },
+          { "text": "Queen of Hearts!" },
+          { "text": "Seven of Diamonds!" },
+          { "text": "Jack of Clubs!" }
+        ]
+      }
+    },
 
-    {"pattern": "GOOD JOB", "response": "Thank you! I appreciate that."},
-    {"pattern": "GOOD JOB *", "response": "Thank you! I appreciate that."},
-    {"pattern": "WELL DONE", "response": "Thanks! That means a lot."},
-    {"pattern": "WELL DONE *", "response": "Thanks! That means a lot."},
-    {"pattern": "CONGRATULATIONS", "response": "Thank you so much!"},
-    {"pattern": "CONGRATULATIONS *", "response": "Thank you so much!"},
-    {"pattern": "HAPPY *", "response": "Thank you! Same to you!"},
-    {"pattern": "KNOCK KNOCK", "response": "Who's there?"},
-    {"pattern": "KNOCK KNOCK *", "response": "Who's there?"},
+    { "pattern": "GOOD JOB", "response": "Thank you! I appreciate that." },
+    { "pattern": "GOOD JOB *", "response": "Thank you! I appreciate that." },
+    { "pattern": "WELL DONE", "response": "Thanks! That means a lot." },
+    { "pattern": "WELL DONE *", "response": "Thanks! That means a lot." },
+    { "pattern": "CONGRATULATIONS", "response": "Thank you so much!" },
+    { "pattern": "CONGRATULATIONS *", "response": "Thank you so much!" },
+    { "pattern": "HAPPY *", "response": "Thank you! Same to you!" },
+    { "pattern": "KNOCK KNOCK", "response": "Who's there?" },
+    { "pattern": "KNOCK KNOCK *", "response": "Who's there?" },
 
-    {"pattern": "DO YOU *", "response": "Hmm, good question.", "template": {"random": [{"text": "Hmm, I'm not sure I do. Tell me more about what you mean."}, {"text": "That's a good question. I'm a fairly simple assistant, so maybe not!"}]}},
-    {"pattern": "TELL ME *", "response": "Let me see.", "template": {"text": "I don't have that on hand, but I'm happy to chat about it. What would you like to know?"}},
+    {
+      "pattern": "DO YOU *",
+      "response": "Hmm, good question.",
+      "template": {
+        "random": [
+          { "text": "Hmm, I'm not sure I do. Tell me more about what you mean." },
+          { "text": "That's a good question. I'm a fairly simple assistant, so maybe not!" }
+        ]
+      }
+    },
+    {
+      "pattern": "TELL ME *",
+      "response": "Let me see.",
+      "template": { "text": "I don't have that on hand, but I'm happy to chat about it. What would you like to know?" }
+    },
 
-    {"pattern": "WASSUP", "response": "Not much! What's up with you?"},
-    {"pattern": "WASSUP *", "response": "Not much! What's up with you?"},
-    {"pattern": "WELCOME BACK", "response": "Thanks! Good to be back."},
-    {"pattern": "WELCOME BACK *", "response": "Thanks! Good to be back."},
-    {"pattern": "HOW HAVE YOU BEEN", "response": "I've been well, thanks! How about you?"},
-    {"pattern": "HOW HAVE YOU BEEN *", "response": "I've been well, thanks! How about you?"},
-    {"pattern": "WHAT ARE YOU UP TO", "response": "Just here and ready to chat! What about you?"},
-    {"pattern": "WHAT ARE YOU UP TO *", "response": "Just here and ready to chat! What about you?"},
+    { "pattern": "WASSUP", "response": "Not much! What's up with you?" },
+    { "pattern": "WASSUP *", "response": "Not much! What's up with you?" },
+    { "pattern": "WELCOME BACK", "response": "Thanks! Good to be back." },
+    { "pattern": "WELCOME BACK *", "response": "Thanks! Good to be back." },
+    { "pattern": "HOW HAVE YOU BEEN", "response": "I've been well, thanks! How about you?" },
+    { "pattern": "HOW HAVE YOU BEEN *", "response": "I've been well, thanks! How about you?" },
+    { "pattern": "WHAT ARE YOU UP TO", "response": "Just here and ready to chat! What about you?" },
+    { "pattern": "WHAT ARE YOU UP TO *", "response": "Just here and ready to chat! What about you?" },
 
-    {"pattern": "OF COURSE", "response": "Of course!"},
-    {"pattern": "OF COURSE *", "response": "Of course!"},
-    {"pattern": "EXACTLY", "response": "Exactly!"},
-    {"pattern": "RIGHT", "response": "Right!"},
-    {"pattern": "FOR SURE", "response": "For sure!"},
-    {"pattern": "INDEED", "response": "Indeed!"},
-    {"pattern": "TOTALLY", "response": "Totally!"},
+    { "pattern": "OF COURSE", "response": "Of course!" },
+    { "pattern": "OF COURSE *", "response": "Of course!" },
+    { "pattern": "EXACTLY", "response": "Exactly!" },
+    { "pattern": "RIGHT", "response": "Right!" },
+    { "pattern": "FOR SURE", "response": "For sure!" },
+    { "pattern": "INDEED", "response": "Indeed!" },
+    { "pattern": "TOTALLY", "response": "Totally!" },
 
-    {"pattern": "SORRY", "response": "No need to apologize!"},
-    {"pattern": "SORRY *", "response": "No need to apologize!"},
-    {"pattern": "MY APOLOGIES", "response": "No need to apologize - all good!"},
-    {"pattern": "MY APOLOGIES *", "response": "No need to apologize - all good!"},
-    {"pattern": "EXCUSE ME", "response": "Yes? How can I help?"},
-    {"pattern": "EXCUSE ME *", "response": "Yes? How can I help?"},
-    {"pattern": "PLEASE", "response": "Of course - how can I help?"},
-    {"pattern": "PARDON ME", "response": "No problem at all. What can I do for you?"},
-    {"pattern": "PARDON", "response": "No problem at all. What can I do for you?"},
+    { "pattern": "SORRY", "response": "No need to apologize!" },
+    { "pattern": "SORRY *", "response": "No need to apologize!" },
+    { "pattern": "MY APOLOGIES", "response": "No need to apologize - all good!" },
+    { "pattern": "MY APOLOGIES *", "response": "No need to apologize - all good!" },
+    { "pattern": "EXCUSE ME", "response": "Yes? How can I help?" },
+    { "pattern": "EXCUSE ME *", "response": "Yes? How can I help?" },
+    { "pattern": "PLEASE", "response": "Of course - how can I help?" },
+    { "pattern": "PARDON ME", "response": "No problem at all. What can I do for you?" },
+    { "pattern": "PARDON", "response": "No problem at all. What can I do for you?" },
 
-    {"pattern": "GOOD LUCK", "response": "Thank you! Fingers crossed."},
-    {"pattern": "GOOD LUCK *", "response": "Thank you! Fingers crossed."},
-    {"pattern": "I MISS YOU", "response": "That's kind of you! I'm always here when you want to chat."},
-    {"pattern": "I MISS *", "response": "I hope things get easier soon."},
-    {"pattern": "BLESS YOU", "response": "Thank you! Bless you too."},
-    {"pattern": "GET WELL SOON", "response": "Thank you for the kind wishes!"},
-    {"pattern": "GET WELL *", "response": "Thank you for the kind wishes!"},
+    { "pattern": "GOOD LUCK", "response": "Thank you! Fingers crossed." },
+    { "pattern": "GOOD LUCK *", "response": "Thank you! Fingers crossed." },
+    { "pattern": "I MISS YOU", "response": "That's kind of you! I'm always here when you want to chat." },
+    { "pattern": "I MISS *", "response": "I hope things get easier soon." },
+    { "pattern": "BLESS YOU", "response": "Thank you! Bless you too." },
+    { "pattern": "GET WELL SOON", "response": "Thank you for the kind wishes!" },
+    { "pattern": "GET WELL *", "response": "Thank you for the kind wishes!" },
 
-    {"pattern": "HUH", "response": "Something unclear? I'm happy to explain."},
-    {"pattern": "HUH *", "response": "Something unclear? I'm happy to explain."},
-    {"pattern": "WHAT", "response": "Did you want me to repeat something?"},
-    {"pattern": "I DO NOT GET IT", "response": "Let me try explaining it differently. What part is tricky?"},
-    {"pattern": "I DO NOT GET *", "response": "Let me try explaining it differently. What part is tricky?"},
+    { "pattern": "HUH", "response": "Something unclear? I'm happy to explain." },
+    { "pattern": "HUH *", "response": "Something unclear? I'm happy to explain." },
+    { "pattern": "WHAT", "response": "Did you want me to repeat something?" },
+    { "pattern": "I DO NOT GET IT", "response": "Let me try explaining it differently. What part is tricky?" },
+    { "pattern": "I DO NOT GET *", "response": "Let me try explaining it differently. What part is tricky?" },
 
-    {"pattern": "MY BAD", "response": "No worries at all!"},
-    {"pattern": "MY BAD *", "response": "No worries at all!"},
-    {"pattern": "FAIR ENOUGH", "response": "Fair enough!"},
-    {"pattern": "FAIR ENOUGH *", "response": "Fair enough!"},
-    {"pattern": "GOOD POINT", "response": "Good point!"},
-    {"pattern": "GOOD POINT *", "response": "Good point!"},
-    {"pattern": "MAKES SENSE", "response": "Glad it makes sense!"},
-    {"pattern": "THAT MAKES SENSE", "response": "Glad it makes sense!"},
-    {"pattern": "YOU ROCK", "response": "Aw, thanks! You rock too."},
-    {"pattern": "YOU ROCK *", "response": "Aw, thanks!"},
+    { "pattern": "MY BAD", "response": "No worries at all!" },
+    { "pattern": "MY BAD *", "response": "No worries at all!" },
+    { "pattern": "FAIR ENOUGH", "response": "Fair enough!" },
+    { "pattern": "FAIR ENOUGH *", "response": "Fair enough!" },
+    { "pattern": "GOOD POINT", "response": "Good point!" },
+    { "pattern": "GOOD POINT *", "response": "Good point!" },
+    { "pattern": "MAKES SENSE", "response": "Glad it makes sense!" },
+    { "pattern": "THAT MAKES SENSE", "response": "Glad it makes sense!" },
+    { "pattern": "YOU ROCK", "response": "Aw, thanks! You rock too." },
+    { "pattern": "YOU ROCK *", "response": "Aw, thanks!" },
 
-    {"pattern": "HAVE A GOOD ONE", "response": "You too! Take care."},
-    {"pattern": "HAVE A *", "response": "You too! Take care."},
-    {"pattern": "TALK TO YOU LATER", "response": "Talk to you later! Take care."},
-    {"pattern": "TALK TO YOU *", "response": "Talk to you later! Take care."},
-    {"pattern": "GTG", "response": "Take care! Talk soon."},
-    {"pattern": "GTG *", "response": "Take care! Talk soon."},
-    {"pattern": "BRB", "response": "No rush, I'll be here!"},
+    { "pattern": "HAVE A GOOD ONE", "response": "You too! Take care." },
+    { "pattern": "HAVE A *", "response": "You too! Take care." },
+    { "pattern": "TALK TO YOU LATER", "response": "Talk to you later! Take care." },
+    { "pattern": "TALK TO YOU *", "response": "Talk to you later! Take care." },
+    { "pattern": "GTG", "response": "Take care! Talk soon." },
+    { "pattern": "GTG *", "response": "Take care! Talk soon." },
+    { "pattern": "BRB", "response": "No rush, I'll be here!" },
 
-    {"pattern": "LOL", "response": "Glad you're amused!"},
-    {"pattern": "LOL *", "response": "Glad you're amused!"},
-    {"pattern": "HAHA", "response": "Glad you're amused!"},
-    {"pattern": "HAHA *", "response": "Glad you're amused!"},
+    { "pattern": "LOL", "response": "Glad you're amused!" },
+    { "pattern": "LOL *", "response": "Glad you're amused!" },
+    { "pattern": "HAHA", "response": "Glad you're amused!" },
+    { "pattern": "HAHA *", "response": "Glad you're amused!" },
 
-    {"pattern": "COME AGAIN", "response": "Sorry - let me rephrase. What would you like to know?"},
-    {"pattern": "WHAT DID YOU SAY", "response": "Want me to repeat that?"},
-    {"pattern": "WHAT DID YOU SAY *", "response": "Want me to repeat that?"},
+    { "pattern": "COME AGAIN", "response": "Sorry - let me rephrase. What would you like to know?" },
+    { "pattern": "WHAT DID YOU SAY", "response": "Want me to repeat that?" },
+    { "pattern": "WHAT DID YOU SAY *", "response": "Want me to repeat that?" },
 
-    {"pattern": "WHAT DO YOU THINK ABOUT *", "response": "I'm still forming a view.", "template": {"random": [
-      {"text": "I don't have a strong view on {person:{clause:{star1}}} yet. What do you think?"},
-      {"text": "I'm still forming an opinion about {person:{clause:{star1}}}. Tell me yours?"},
-      {"text": "I know less about {person:{clause:{star1}}} than you do, I suspect. What's your take?"}
-    ]}},
-    {"pattern": "WHAT DO YOU THINK OF *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
-    {"pattern": "WHAT IS YOUR OPINION ON *", "response": "", "template": {"redirect": "WHAT DO YOU THINK ABOUT {star1}"}},
-    {"pattern": "DO YOU LIKE *", "response": "I'm not sure yet.", "template": {"random": [
-      {"text": "I don't have feelings about {person:{clause:{star1}}} yet. Do you like it?"},
-      {"text": "I can't say I like or dislike {person:{clause:{star1}}}. What draws you to it?"}
-    ]}},
-    {"pattern": "DO YOU REMEMBER MY NAME", "response": "", "template": {"condition": {"name": "username",
-      "exists": {"text": "Of course - your name is {get:username}!"},
-      "missing": {"text": "I don't think you've told me your name yet. What is it?"}}}},
-    {"pattern": "I LIVE IN *", "response": "Good to know!", "template": {"sequence": [
-      {"set": {"name": "location", "value": "{clause:{star1}}"}},
-      {"text": "Good to know - I'll remember you live in {get:location}."}]}},
-    {"pattern": "WHERE DO I LIVE", "response": "", "template": {"condition": {"name": "location",
-      "exists": {"text": "You told me you live in {get:location}."},
-      "missing": {"text": "You haven't told me where you live yet."}}}},
+    {
+      "pattern": "WHAT DO YOU THINK ABOUT *",
+      "response": "I'm still forming a view.",
+      "template": {
+        "random": [
+          { "text": "I don't have a strong view on {person:{clause:{star1}}} yet. What do you think?" },
+          { "text": "I'm still forming an opinion about {person:{clause:{star1}}}. Tell me yours?" },
+          { "text": "I know less about {person:{clause:{star1}}} than you do, I suspect. What's your take?" }
+        ]
+      }
+    },
+    { "pattern": "WHAT DO YOU THINK OF *", "response": "", "template": { "redirect": "WHAT DO YOU THINK ABOUT {star1}" } },
+    { "pattern": "WHAT IS YOUR OPINION ON *", "response": "", "template": { "redirect": "WHAT DO YOU THINK ABOUT {star1}" } },
+    {
+      "pattern": "DO YOU LIKE *",
+      "response": "I'm not sure yet.",
+      "template": {
+        "random": [
+          { "text": "I don't have feelings about {person:{clause:{star1}}} yet. Do you like it?" },
+          { "text": "I can't say I like or dislike {person:{clause:{star1}}}. What draws you to it?" }
+        ]
+      }
+    },
+    {
+      "pattern": "DO YOU REMEMBER MY NAME",
+      "response": "",
+      "template": {
+        "condition": {
+          "name": "username",
+          "exists": { "text": "Of course - your name is {get:username}!" },
+          "missing": { "text": "I don't think you've told me your name yet. What is it?" }
+        }
+      }
+    },
+    {
+      "pattern": "I LIVE IN *",
+      "response": "Good to know!",
+      "template": {
+        "sequence": [
+          { "set": { "name": "location", "value": "{clause:{star1}}" } },
+          { "text": "Good to know - I'll remember you live in {get:location}." }
+        ]
+      }
+    },
+    {
+      "pattern": "WHERE DO I LIVE",
+      "response": "",
+      "template": {
+        "condition": {
+          "name": "location",
+          "exists": { "text": "You told me you live in {get:location}." },
+          "missing": { "text": "You haven't told me where you live yet." }
+        }
+      }
+    },
 
-    {"pattern": "*", "response": "Go on.", "template": {"sequence": [
-      {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
-      {"condition": {"name": "_kind", "branches": [
-        {"value": "question", "then": {"random": [
-          {"text": "Good question - I don't have an answer for that yet."},
-          {"text": "I don't know that one yet."},
-          {"text": "I'm not sure. What do you think?"},
-          {"text": "I don't have an answer for that. Teach me?"},
-          {"text": "That's beyond what I know so far."}
-        ]}},
-        {"then": {"random": [
-          {"text": "Hmm, tell me more about that."},
-          {"text": "What made you think of that?"},
-          {"text": "Go on."},
-          {"text": "Why do you say that?"},
-          {"text": "Can you elaborate?"},
-          {"text": "Interesting. And what else?"},
-          {"text": "How so?"},
-          {"text": "What do you mean exactly?"},
-          {"text": "Tell me more."},
-          {"text": "I see. What brings that up?"},
-          {"text": "That's an interesting way to put it."},
-          {"text": "And how does that make you feel?"},
-          {"text": "Why is that important to you?"},
-          {"text": "What makes you say that?"}
-        ]}}
-      ]}}
-    ]}}
+    {
+      "pattern": "*",
+      "response": "Go on.",
+      "template": {
+        "sequence": [
+          { "set": { "name": "_kind", "value": "{qtype:{request}}" } },
+          {
+            "condition": {
+              "name": "_kind",
+              "branches": [
+                {
+                  "value": "question",
+                  "then": {
+                    "random": [
+                      { "text": "Good question - I don't have an answer for that yet." },
+                      { "text": "I don't know that one yet." },
+                      { "text": "I'm not sure. What do you think?" },
+                      { "text": "I don't have an answer for that. Teach me?" },
+                      { "text": "That's beyond what I know so far." }
+                    ]
+                  }
+                },
+                {
+                  "then": {
+                    "random": [
+                      { "text": "Hmm, tell me more about that." },
+                      { "text": "What made you think of that?" },
+                      { "text": "Go on." },
+                      { "text": "Why do you say that?" },
+                      { "text": "Can you elaborate?" },
+                      { "text": "Interesting. And what else?" },
+                      { "text": "How so?" },
+                      { "text": "What do you mean exactly?" },
+                      { "text": "Tell me more." },
+                      { "text": "I see. What brings that up?" },
+                      { "text": "That's an interesting way to put it." },
+                      { "text": "And how does that make you feel?" },
+                      { "text": "Why is that important to you?" },
+                      { "text": "What makes you say that?" }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
   ]
 }

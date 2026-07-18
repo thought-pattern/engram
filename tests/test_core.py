@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from engram import eviction, metrics, persistence, sessions
-from engram.config import engram_config
+from engram.config import engram_config, graph_config
 from engram.constants import SessionOverflow, Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
@@ -67,6 +67,17 @@ class TestEngramStore:
 
         assert metrics.get_static_count(engram) == 1
         assert metrics.get_dynamic_count(engram) == 2
+
+    def test_duplicate_statement_id_is_rejected_without_mutation(self) -> None:
+        engram = Engram()
+        engram.store("First", statement_id="fixed", pattern="FIRST")
+
+        with pytest.raises(ValueError, match="duplicate statement id"):
+            engram.store("Second", statement_id="fixed", pattern="SECOND")
+
+        assert len(engram.statements) == 1
+        assert engram.pattern_query("first")[2] == "First"
+        assert not engram.pattern_query("second")
 
 
 class TestEngramQuery:
@@ -644,6 +655,27 @@ class TestEngramPersistence:
         loaded = persistence.load_engram_json(json_str, config=override)
 
         assert loaded.config["capacity"] == 456
+
+    def test_persistence_omits_graph_password(self) -> None:
+        config = engram_config(
+            graph=graph_config(enabled=True, username="reader", password="secret")
+        )
+        engram = Engram(config=config)
+
+        data = persistence.to_dict(engram)
+
+        assert "password" not in data["config"]["graph"]
+        loaded = persistence.load_engram_from_dict(data)
+        assert loaded.config["graph"]["password"] == ""
+
+    def test_duplicate_statement_id_in_persistence_is_rejected(self) -> None:
+        engram = Engram()
+        engram.store("First", statement_id="fixed")
+        data = persistence.to_dict(engram)
+        data["statements"].append(dict(data["statements"][0]))
+
+        with pytest.raises(ValueError, match="duplicate statement id"):
+            persistence.load_engram_from_dict(data)
 
     def test_load_legacy_state_without_config(self) -> None:
         """Files written before the config block still load, keeping capacity."""
@@ -1638,7 +1670,7 @@ class TestSoakRegressions:
 
     def test_typo_question_not_learned_as_fact(self) -> None:
         """Spelling correction reveals a typo'd question before fact learning."""
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
         engram.store("It is time.", pattern="WHAT TIME IS IT", tier=Tier.STATIC)
 
@@ -1649,7 +1681,7 @@ class TestSoakRegressions:
 
     def test_possessive_sentence_not_greeted(self) -> None:
         """'His name is Rex.' must not stem-match a greeting pattern."""
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Hi there!", pattern="HI *", tier=Tier.STATIC)
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
@@ -1660,7 +1692,7 @@ class TestSoakRegressions:
     def test_learn_acknowledgment_rotates(self) -> None:
         from engram.constants import LEARNED_ACKNOWLEDGMENTS
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
         responses = set()
@@ -1671,12 +1703,22 @@ class TestSoakRegressions:
         assert responses <= set(LEARNED_ACKNOWLEDGMENTS)
         assert len(responses) >= 2
 
+    def test_default_does_not_share_user_assertions_across_sessions(self) -> None:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        engram.pattern_query("The support code is 9999.", session_id="user-a")
+        result = engram.pattern_query("What is the support code?", session_id="user-b")
+
+        assert result[2] == "Go on."
+        assert all(stmt["text"] != "The support code is 9999." for stmt in engram.statements)
+
 
 class TestKnownFactResponses:
     """Restating or contradicting a known fact surfaces the stored belief."""
 
     def _taught_engram(self) -> Engram:
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("The sky is blue.")
         return engram
@@ -1708,7 +1750,7 @@ class TestFactContentRetrieval:
     def test_yes_no_question_reaches_cache(self) -> None:
         from engram import pipeline
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("The sky is blue.")
 
@@ -1718,7 +1760,7 @@ class TestFactContentRetrieval:
         assert result["response"] == "The sky is blue."
 
     def test_who_is_pattern_generated(self) -> None:
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("Rex is a golden retriever.")
 

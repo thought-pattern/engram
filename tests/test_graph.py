@@ -1,17 +1,16 @@
 """Tests for Knowledge Graph integration.
 
-The graph layer mirrors the Tapestry connection interface: queries return a list
-of row dicts (not a status wrapper), reads degrade to an empty list, and writes
-raise on failure. Triples are stored as canonical Claim nodes linked by
-HAS_SUBJECT / USES_PREDICATE / HAS_OBJECT edges. MockGraphClient is an in-memory
-stand-in keyed on query parameters (the real Cypher is exercised by the live
-smoke test, not by the mock).
+The runtime graph layer is read-only: queries return a list of row dicts, reads
+degrade to an empty list, and every public execution path rejects mutations.
+MockGraphClient is an in-memory stand-in keyed on query parameters.
 """
+
+import pytest
 
 from engram.config import engram_config, graph_config
 from engram.constants import Tier
 from engram.core import Engram
-from engram.graph import graph_is_empty, graph_single, is_write_cypher
+from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.template import TemplateProcessor, template_context
 
 
@@ -227,78 +226,39 @@ class TestTemplateGraphOperations:
         result = processor.process(template, ctx)
         assert result == "Graph not available."
 
-    def test_graph_write_success(self):
-        client = MockGraphClient()
-        processor = TemplateProcessor()
-        ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
+    def test_authoring_template_operations_are_not_supported(self):
+        calls = []
 
+        def graph_fn(query, params):
+            calls.append((query, params))
+            return []
+
+        processor = TemplateProcessor()
+        ctx = template_context(graph_fn=graph_fn)
+
+        for operation in ("graph_write", "graph_delete", "triple_add"):
+            assert processor.process({operation: {"query": "CREATE (n)"}}, ctx) == ""
+
+        assert calls == []
+
+    def test_graph_query_rejects_mutation_before_callback(self):
+        calls = []
+
+        def graph_fn(query, params):
+            calls.append((query, params))
+            return []
+
+        processor = TemplateProcessor()
+        ctx = template_context(graph_fn=graph_fn)
         template = {
-            "graph_write": {
-                "query": "CREATE (e:Entity {primary_label: $name})",
-                "params": {"name": "{star1}"},
-                "on_success": {"text": "I'll remember {star1}."},
-                "on_failure": {"text": "Could not save."},
+            "graph_query": {
+                "query": "MATCH (n) DETACH DELETE n",
+                "on_failure": {"text": "Read-only."},
             }
         }
 
-        result = processor.process(template, ctx)
-        assert "remember" in result
-        assert "Alice" in result
-
-    def test_graph_write_failure(self):
-        """A write that raises is reported via on_failure, not on_success."""
-
-        def failing_graph_fn(query, params):
-            raise RuntimeError("Write query failed: MemGraph unreachable")
-
-        processor = TemplateProcessor()
-        ctx = template_context(stars=["Alice"], graph_fn=failing_graph_fn)
-
-        template = {
-            "graph_write": {
-                "query": "CREATE (e:Entity {primary_label: $name})",
-                "params": {"name": "{star1}"},
-                "on_success": {"text": "I'll remember {star1}."},
-                "on_failure": {"text": "Could not save."},
-            }
-        }
-
-        result = processor.process(template, ctx)
-        assert result == "Could not save."
-
-    def test_graph_delete(self):
-        client = MockGraphClient()
-        client.execute("CREATE (e:Entity {primary_label: $name})", {"name": "Alice"})
-
-        processor = TemplateProcessor()
-        ctx = template_context(stars=["Alice"], graph_fn=self.make_graph_fn(client))
-
-        template = {
-            "graph_delete": {
-                "query": "MATCH (e:Entity {primary_label: $name}) DETACH DELETE e",
-                "params": {"name": "{star1}"},
-                "on_success": {"text": "Forgotten."},
-                "on_failure": {"text": "Could not delete."},
-            }
-        }
-
-        result = processor.process(template, ctx)
-        assert result == "Forgotten."
-
-    def test_triple_add(self):
-        client = MockGraphClient()
-        processor = TemplateProcessor()
-        ctx = template_context(stars=["Alice", "friend", "Bob"], graph_fn=self.make_graph_fn(client))
-
-        template = {"triple_add": {"subject": "{star1}", "predicate": "{star2}", "object": "{star3}"}}
-
-        processor.process(template, ctx)
-        # The triple is stored as a canonical claim with its surface projection.
-        assert len(client.claims) == 1
-        claim = client.claims[0]
-        assert claim["subject"] == "Alice"
-        assert claim["predicate"] == "friend"
-        assert claim["object"] == "Bob"
+        assert processor.process(template, ctx) == "Read-only."
+        assert calls == []
 
     def test_triple_query_object(self):
         client = MockGraphClient()
@@ -361,13 +321,7 @@ class TestTemplateGraphOperations:
 
 
 class TestReadOnlyGraphWiring:
-    """ENGRAM wires template graph ops to a read-only function in its recall role.
-
-    Read ops (`<triple_query>`, a read `<graph_query>`) resolve against the
-    graph; authoring ops (`<triple_add>`, `<graph_write>`, `<graph_delete>`) are
-    refused and leave the graph unchanged. This closes the gap where core never
-    set `context['graph_fn']`, leaving the ops dormant through the response path.
-    """
+    """ENGRAM exposes graph recall only through every runtime path."""
 
     def engram_with_graph(self, client):
         """An ENGRAM with the graph enabled and a mock client injected."""
@@ -407,12 +361,20 @@ class TestReadOnlyGraphWiring:
         client = MockGraphClient()
         engram = self.engram_with_graph(client)
         before = len(client.claims)
-        result = engram.graph_read_fn(
-            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
-            {"subject": "Paris", "predicate": "located in", "object": "France"},
-        )
-        assert result == []
+        with pytest.raises(ValueError, match="read-only"):
+            engram.graph_read_fn(
+                "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+                {"subject": "Paris", "predicate": "located in", "object": "France"},
+            )
         assert len(client.claims) == before  # the write never reached the graph
+
+    def test_connection_has_no_writer_and_rejects_before_connecting(self):
+        client = MemGraphConnection()
+
+        assert not hasattr(client, "execute_write")
+        with pytest.raises(ValueError, match="read-only"):
+            client.execute("CREATE (n)")
+        assert client.conn is None
 
     def test_triple_query_wired_through_response_path(self):
         """A stored `<triple_query>` statement resolves through pattern_query."""
@@ -428,8 +390,7 @@ class TestReadOnlyGraphWiring:
         result = engram.pattern_query("where is athens")
         assert result and result[2] == "Greece"
 
-    def test_triple_add_inert_through_response_path(self):
-        """A stored `<triple_add>` statement does not author on the recall path."""
+    def test_removed_authoring_template_is_inert_through_response_path(self):
         client = MockGraphClient()
         engram = self.engram_with_graph(client)
         engram.store(
@@ -440,4 +401,4 @@ class TestReadOnlyGraphWiring:
         )
         before = len(client.claims)
         engram.pattern_query("add paris")
-        assert len(client.claims) == before  # authoring refused on the recall path
+        assert len(client.claims) == before

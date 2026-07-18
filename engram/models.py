@@ -283,10 +283,15 @@ def session_from_dict(data: dict) -> dict:
 # =============================================================================
 
 
-def query_result(matches, keywords) -> dict:
+def query_result(matches, keywords, resolved_query: str = "") -> dict:
     """Build a query result dict.
 
-    matches: list of (statement, score) pairs. keywords: extracted query keywords.
+    matches: list of (statement, score) pairs. keywords: extracted query
+    keywords. resolved_query: context-expanded text used for retrieval.
     """
-    result = {"matches": matches, "keywords": keywords}
+    result = {
+        "matches": matches,
+        "keywords": keywords,
+        "resolved_query": resolved_query,
+    }
     return result

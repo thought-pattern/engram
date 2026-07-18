@@ -1,5 +1,6 @@
 """Tests for NLP fact extraction."""
 
+from engram.config import engram_config
 from engram.nlp import extract_fact, extracted_fact, fact_query_patterns
 
 
@@ -80,7 +81,7 @@ class TestFactLearningIntegration:
         from engram.core import Engram
         from engram.models import Tier
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         # Add catch-all pattern for learning to work
         engram.store("default", pattern="*", tier=Tier.STATIC)
 
@@ -104,7 +105,7 @@ class TestFactLearningIntegration:
         from engram.core import Engram
         from engram.models import Tier
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         # Add catch-all pattern for learning to work
         engram.store("default", pattern="*", tier=Tier.STATIC)
 

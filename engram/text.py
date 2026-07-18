@@ -239,9 +239,10 @@ def expand_query(query: str, previous_response: str) -> str:
     dilute its own keywords and let the bot's last answer distort unrelated
     retrieval.
 
-    When it fires, the previous response's nouns and proper nouns are appended
-    -- the things a pronoun can refer to -- falling back to the full response
-    when no nouns can be extracted.
+    When it fires, referring pronouns are removed and the previous response's
+    nouns and proper nouns are appended. Removing the unresolved pronoun makes
+    the resulting cache key context-specific instead of teaching a globally
+    reusable ambiguous query.
 
     Args:
         query: Current query text.
@@ -252,7 +253,7 @@ def expand_query(query: str, previous_response: str) -> str:
 
     Example:
         >>> expand_query("What is its population?", "Paris is the capital of France")
-        'What is its population? Paris capital France'
+        'What is population? Paris capital France'
     """
     if not previous_response:
         return query
@@ -261,11 +262,18 @@ def expand_query(query: str, previous_response: str) -> str:
     if not query_words & REFERRING_PRONOUNS:
         return query
 
+    resolved_tokens = [
+        token
+        for token in query.split()
+        if token.strip(".,!?;:'\"").lower() not in REFERRING_PRONOUNS
+    ]
+    resolved_query = " ".join(resolved_tokens).strip() or query
+
     terms = extract_context_terms(previous_response)
     if not terms:
-        expanded = f"{query} {previous_response}"
+        expanded = f"{resolved_query} {previous_response}"
         return expanded
-    expanded = f"{query} {' '.join(terms)}"
+    expanded = f"{resolved_query} {' '.join(terms)}"
     return expanded
 
 

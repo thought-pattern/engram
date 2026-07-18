@@ -5,47 +5,49 @@
 # you omit falls back to its built-in default (shown below).
 
 # --- Capacity ---
-capacity: 10000              # Maximum DYNAMIC statements
-max_sessions: 10000          # Maximum concurrent sessions
-session_ttl_seconds: 86400   # Session time-to-live in seconds (24 hours)
+capacity: 10000 # Maximum DYNAMIC statements
+max_sessions: 10000 # Maximum concurrent sessions
+session_ttl_seconds: 86400 # Session time-to-live in seconds (24 hours)
 
 # --- Scoring weights (keyword retrieval) ---
 weight_base: 0.5
 weight_recency: 0.3
 weight_hit_rate: 0.2
-recency_half_life_seconds: 604800   # Recency decay half-life (7 days)
+recency_half_life_seconds: 604800 # Recency decay half-life (7 days)
 
 # --- Sessions ---
-session_overflow: lru        # reject | expire_oldest | lru
+session_overflow: lru # reject | expire_oldest | lru
 
 # --- Input processing ---
 expand_contractions: true
+learn_user_facts: false # Opt in only for trusted, single-tenant input
 srai_depth_limit: 100
 
 # --- Eviction ---
-eviction_policy: lru        # fifo | lru | lfu | hit_rate
-protect_static: true         # Never evict STATIC statements
-min_hit_rate: 0.0            # Protect statements above this hit rate
+eviction_policy: fifo # fifo | lru | lfu | hit_rate
+min_hit_rate: 0.0 # Protect statements above this hit rate
 
 # --- Matching / NLP ---
-use_stemming: true              # Porter-stemmed fallback matching
-use_lemmatization: true         # WordNet-lemmatized fallback matching
-use_synonyms: true              # WordNet synonym expansion on keyword queries
+use_stemming: true # Porter-stemmed fallback matching
+use_lemmatization: true # WordNet-lemmatized fallback matching
+use_synonyms: true # WordNet synonym expansion on keyword queries
 max_synonyms_per_word: 3
-use_spell_correction: true      # Correct input typos toward the store vocabulary
-use_spacy_facts: false          # spaCy dependency-parse fact extraction (needs en_core_web_sm)
-use_spacy_lemmatization: false  # spaCy context-aware lemmas in the matcher
-use_phrase_keywords: false      # spaCy noun-chunk phrase keywords for retrieval
+use_spell_correction: true # Correct input typos toward the store vocabulary
+use_spacy_facts: false # spaCy dependency-parse fact extraction (needs en_core_web_sm)
+use_spacy_lemmatization: false # spaCy context-aware lemmas in the matcher
+use_phrase_keywords: false # spaCy noun-chunk phrase keywords for retrieval
 
 # --- Output processing ---
-polish_responses: true          # Repair casing in pattern-path responses
+polish_responses: true # Repair casing in pattern-path responses
 
 # --- Fallback ---
-fallback_response: ""        # Response when nothing matches ("" = no fallback)
+fallback_response: "" # Response when nothing matches ("" = no fallback)
 
 # --- Knowledge graph (optional) ---
 # MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
 # interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
+# Runtime queries are read-only. The password is never saved with cache state;
+# supply it through this external runtime configuration.
 graph:
   host: localhost
   port: 7687

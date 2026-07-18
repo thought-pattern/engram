@@ -130,6 +130,11 @@ def respond(
     Returns:
         Pipeline result dict (response, source, score, matches, keywords).
     """
+    if not 0 <= high_confidence <= 1:
+        raise ValueError("high_confidence must be between 0 and 1")
+    if context_limit < 0:
+        raise ValueError("context_limit must be non-negative")
+
     # Tier 1: scripted pattern. Accept a response backed by a matched
     # statement or by graph recall, but not the configured fallback text.
     # A catch-all deflection answering a question is held back: confident
@@ -176,7 +181,7 @@ def respond(
         response = llm_fn(text, context_statements)
         if response:
             if learn:
-                engram.learn_from_response(text, response)
+                engram.learn_from_response(retrieval["resolved_query"], response)
             _update_session(engram, session_id, response)
             tier3 = pipeline_result(response, "llm", matches=matches, keywords=keywords)
             return tier3

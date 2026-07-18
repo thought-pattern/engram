@@ -99,6 +99,7 @@ config = engram_config(
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
     eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
+    learn_user_facts=False,      # Opt in only for trusted, single-tenant input
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
@@ -126,11 +127,11 @@ engram = persistence.load_engram_json(json_str)
 ```
 
 The saved state includes statements, the keyword index with its statistics,
-sessions, bot properties, substitution maps, and the full configuration
-(weights, eviction policy, feature flags). Loading restores the stored
-configuration unless a `config` override is passed to the loader. Files
-written by older versions (which stored only `capacity`) still load, with
-defaults for the rest.
+sessions, bot properties, substitution maps, and non-secret configuration
+(weights, eviction policy, feature flags). Graph passwords are runtime-only and
+are never persisted. Loading restores the stored configuration unless a
+`config` override is passed to the loader. Files written by older versions
+(which stored only `capacity`) still load, with defaults for the rest.
 
 ## Scoring Algorithm
 
@@ -144,6 +145,7 @@ score = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hi
 ```
 
 Where:
+
 - `overlap` - IDF-weighted fraction of query keywords present in the statement
   (0.0 to 1.0). Rare keywords count for more than common ones, and a keyword
   matched only through a WordNet synonym earns half credit.
@@ -201,37 +203,37 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 
 ### Engram methods
 
-| Method | Description |
-|--------|-------------|
-| `store(text, tier, pattern, template, priority, keyword_source)` | Add a statement; `keyword_source` indexes it under different text (e.g. the question a response answers) |
-| `query(text, session_id, limit)` | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords` |
-| `pattern_query(text, session_id)` | AIML-style match; returns `(statement, captured, response)` or `()` |
-| `record_hit(keywords, statement_id)` | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement |
-| `learn_from_response(query, response)` | Cache an LLM response, indexed under the query's keywords; re-learning the same question replaces the entry in place |
-| `retire_statement(statement_id)` | Deliberately remove a statement (and its pattern) by id |
-| `learn_fact(fact)` | Learn an extracted fact |
-| `get_statement(statement_id)` | Fetch a statement dict by id (`{}` if absent) |
-| `load_corpus(statements, tier)` | Bulk-add statements |
-| `fork(...)` | Create a child instance sharing the knowledge base |
+| Method                                                           | Description                                                                                                          |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `store(text, tier, pattern, template, priority, keyword_source)` | Add a statement; `keyword_source` indexes it under different text (e.g. the question a response answers)             |
+| `query(text, session_id, limit)`                                 | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords`                       |
+| `pattern_query(text, session_id)`                                | AIML-style match; returns `(statement, captured, response)` or `()`                                                  |
+| `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
+| `learn_from_response(query, response)`                           | Cache an LLM response, indexed under the query's keywords; re-learning the same question replaces the entry in place |
+| `retire_statement(statement_id)`                                 | Deliberately remove a statement (and its pattern) by id                                                              |
+| `learn_fact(fact)`                                               | Learn an extracted fact                                                                                              |
+| `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
+| `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
+| `fork(...)`                                                      | Create a child instance sharing the knowledge base                                                                   |
 
 ### Sessions (`from engram import sessions`)
 
-| Function | Description |
-|----------|-------------|
-| `create_session(engram, session_id, metadata)` | Create a session, returns its id |
-| `get_session(engram, session_id, create_if_missing)` | Retrieve a session dict |
-| `update_session_context(engram, session_id, previous_response)` | Update session context |
-| `delete_session(engram, session_id)` | Remove a session |
-| `expire_sessions(engram, inactive_threshold)` | Remove inactive sessions |
-| `list_sessions(engram, active_since)` | List sessions |
+| Function                                                        | Description                      |
+| --------------------------------------------------------------- | -------------------------------- |
+| `create_session(engram, session_id, metadata)`                  | Create a session, returns its id |
+| `get_session(engram, session_id, create_if_missing)`            | Retrieve a session dict          |
+| `update_session_context(engram, session_id, previous_response)` | Update session context           |
+| `delete_session(engram, session_id)`                            | Remove a session                 |
+| `expire_sessions(engram, inactive_threshold)`                   | Remove inactive sessions         |
+| `list_sessions(engram, active_since)`                           | List sessions                    |
 
 ### Persistence (`from engram import persistence`)
 
-| Function | Description |
-|----------|-------------|
-| `save(engram, path)` | Save state to JSON file |
-| `load_engram(path)` | Load state from JSON file |
-| `save_json(engram)` | Serialize to JSON string |
+| Function                     | Description                  |
+| ---------------------------- | ---------------------------- |
+| `save(engram, path)`         | Save state to JSON file      |
+| `load_engram(path)`          | Load state from JSON file    |
+| `save_json(engram)`          | Serialize to JSON string     |
 | `load_engram_json(json_str)` | Deserialize from JSON string |
 
 ### Pipeline (`from engram import pipeline`)
@@ -266,17 +268,17 @@ LLM speak first, and returns it only when neither does.
 
 `metrics.get_metrics(engram)` returns a dict with these keys:
 
-| Key | Description |
-|-----|-------------|
-| `statement_count` | Total statements |
-| `static_count` | STATIC tier count |
-| `dynamic_count` | DYNAMIC tier count |
-| `keyword_count` | Distinct keywords |
-| `session_count` | Active sessions |
-| `query_count` | Queries performed |
-| `hit_count` | Hits recorded |
-| `eviction_count` | Evictions |
-| `hit_rate` | Hit rate (0.0 to 1.0) |
+| Key               | Description           |
+| ----------------- | --------------------- |
+| `statement_count` | Total statements      |
+| `static_count`    | STATIC tier count     |
+| `dynamic_count`   | DYNAMIC tier count    |
+| `keyword_count`   | Distinct keywords     |
+| `session_count`   | Active sessions       |
+| `query_count`     | Queries performed     |
+| `hit_count`       | Hits recorded         |
+| `eviction_count`  | Evictions             |
+| `hit_rate`        | Hit rate (0.0 to 1.0) |
 
 `metrics.decay_statistics(engram, factor=0.5)` ages every hit/query count by
 the factor (see Eviction and Hit Tracking above).
@@ -381,6 +383,7 @@ Interactive mode is a chat loop routed through the tiered pipeline: pattern
 matching first, with questions the patterns cannot answer consulting keyword
 retrieval before falling back. Type a message to get a response, or use a
 slash command:
+
 - `/debug` - Toggle debug output
 - `/metrics` - Show metrics
 - `/topic <name>` - Set the conversation topic
@@ -463,14 +466,24 @@ Templates can branch on the sentiment of captured input using the
 instead of enumerating every emotion word:
 
 ```json
-{"pattern": "I AM *", "template": {"sequence": [
-  {"set": {"name": "_mood", "value": "{sentiment:{star1}}"}},
-  {"condition": {"name": "_mood", "branches": [
-    {"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}. Want to talk about it?"}},
-    {"value": "positive", "then": {"text": "That's great that you're {star1}!"}},
-    {"then": {"text": "Nice to know you're {star1}."}}
-  ]}}
-]}}
+{
+  "pattern": "I AM *",
+  "template": {
+    "sequence": [
+      { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+      {
+        "condition": {
+          "name": "_mood",
+          "branches": [
+            { "value": "negative", "then": { "text": "I'm sorry to hear you're {star1}. Want to talk about it?" } },
+            { "value": "positive", "then": { "text": "That's great that you're {star1}!" } },
+            { "then": { "text": "Nice to know you're {star1}." } }
+          ]
+        }
+      }
+    ]
+  }
+}
 ```
 
 So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
@@ -495,18 +508,20 @@ deflection. With
 spaCy enabled, `engram.facts_spacy.extract_facts` uses the dependency parse to
 pull subject-predicate-object triples from arbitrary declaratives:
 
-| Sentence | Triple |
-|----------|--------|
-| Paris is the capital of France | `(Paris, is, capital of France)` |
-| Paris is in France | `(Paris, in, France)` |
+| Sentence                                    | Triple                                      |
+| ------------------------------------------- | ------------------------------------------- |
+| Paris is the capital of France              | `(Paris, is, capital of France)`            |
+| Paris is in France                          | `(Paris, in, France)`                       |
 | Einstein developed the theory of relativity | `(Einstein, develop, theory of relativity)` |
-| The book belongs to Mary | `(book, belong to, Mary)` |
+| The book belongs to Mary                    | `(book, belong to, Mary)`                   |
 
 Copulas keep their surface form, prepositional links use the preposition, and
 action verbs are normalized to the verb lemma. Each fact also carries
 `subject_type`/`obj_type` from NER (`PERSON`/`GPE`/`ORG`/`DATE`, `""` when not an
-entity), so triples can populate typed graph nodes. This is opt-in
-(`use_spacy_facts`, default off) and feeds the knowledge-graph triple layer.
+entity). Automatic learning from conversational input is separately opt-in
+(`learn_user_facts`, default off) because the learned statement pool is shared
+across sessions. When enabled, `use_spacy_facts` selects this relational
+extractor instead of the conservative copula extractor.
 Run `python eval/compare_facts.py` to see it next to the copula extractor.
 
 This is the deliberate spaCy/NLTK split: spaCy for dependency parsing, NLTK for
@@ -537,11 +552,11 @@ vectors, to be worthwhile.)
 
 ENGRAM can recall facts from a MemGraph knowledge graph in addition to its
 statement store. The graph layer is off by default (`graph.enabled: false`) and
-uses the same interface as Tapestry: the pymgclient driver over a host/port,
-with `execute` / `execute_read` / `execute_write` returning lists of row dicts,
-graceful degradation when the host is unreachable, and a reconnect cooldown.
-ENGRAM's role is recall — it reads the canonical graph; a standalone deployment
-can also author triples through `<triple_add>` templates.
+uses the pymgclient driver over a host/port. Runtime graph access is strictly
+read-only: `execute`, `execute_read`, `Engram.graph_query`, and template
+queries all reject mutating Cypher before opening a connection. There is no
+runtime writer method or authoring template. Reads degrade gracefully when the
+host is unreachable and use a reconnect cooldown.
 
 Facts use the canonical-first model shared with Tapestry: a `Claim` node links
 by edge to canonical `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
@@ -570,6 +585,9 @@ python scripts/setup_schema.py            # uses config.yml graph.host / graph.p
 python scripts/setup_schema.py --check    # print the statements without running them
 ```
 
+`scripts/setup_schema.py` is the explicit administrative schema utility and
+is intentionally separate from runtime graph access.
+
 Configure the connection in `config.yml`:
 
 ```yaml
@@ -581,22 +599,21 @@ graph:
   enabled: true
 ```
 
-Template operations once the graph is enabled. In its recall role ENGRAM wires
-these to a **read-only** graph function, so the read operations resolve against
-the graph while the authoring operations are refused — a mutating query returns
-an empty result rather than writing:
+Use a database account that is restricted to reads. The password is supplied by
+external runtime configuration and is never written into persisted cache state.
+
+The two supported template graph operations are read-only:
 
 - `<triple_query>` — resolve the unknown slot of a triple (`"?"` for subject or
   object). Read; active.
-- `<graph_query>` — run an author-supplied read Cypher. Active; a query carrying
+- `<graph_query>` — run a supplied read Cypher. A query carrying
   a write clause (`CREATE` / `MERGE` / `DELETE` / `SET` / `REMOVE` / …) is
   refused, as are `CALL` (stored procedures can mutate) and `LOAD` (data
   import) — the blocklist is conservative, so read-only procedures are refused
   too.
-- `<triple_add>` / `<graph_write>` / `<graph_delete>` — author into the graph.
-  Inert on the recall path. A standalone deployment that wants authoring wires
-  `graph_query` (or its own writer) as the template graph function in place of
-  the read-only default.
+
+The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
+are not supported.
 
 `schema.cypher` is the recall-relevant subset of the Tapestry canonical schema;
 the full store (Passage, Document, Event, Proof, Source, Inquiry nodes and the

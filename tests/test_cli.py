@@ -62,6 +62,8 @@ class TestInitAndStore:
             state = json.load(f)
         assert state["hit_count"] == 1
         assert state["query_count"] >= 1
+        statement = next(s for s in state["statements"] if s["text"] == "Paris is the capital of France")
+        assert statement["hit_count"] == 1
 
 
 class TestSessions:

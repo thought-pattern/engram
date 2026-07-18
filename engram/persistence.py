@@ -254,6 +254,8 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
     # Restore statements
     for stmt_data in data.get("statements", []):
         stmt = statement_from_dict(stmt_data)
+        if stmt["id"] in instance.statement_index:
+            raise ValueError(f"duplicate statement id in persisted data: {stmt['id']}")
         instance.statements.append(stmt)
         instance.statement_index[stmt["id"]] = len(instance.statements) - 1
         # Rebuild pattern matcher with context

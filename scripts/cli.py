@@ -412,7 +412,8 @@ def cmd_query(args: argparse.Namespace) -> int:
     # per-keyword query counters, so persist them. --hit additionally records
     # the hit (numerator) before saving.
     if args.hit and result["matches"]:
-        engram.record_hit(result["keywords"])
+        top_statement = result["matches"][0][0]
+        engram.record_hit(result["keywords"], statement_id=top_statement["id"])
     save_engram(engram, args.store)
 
     print(f"Keywords: {', '.join(result['keywords'])}")
