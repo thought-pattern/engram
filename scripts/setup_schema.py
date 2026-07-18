@@ -14,15 +14,12 @@ Options:
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
-# Allow running as `python scripts/setup_schema.py` without installing the
-# package: put the repo root (this file's parent's parent) on the import path.
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from engram.config import load_config
 from engram.graph import MemGraphConnection

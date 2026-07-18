@@ -15,7 +15,7 @@ from functools import lru_cache
 import spacy
 from spacy.cli import download
 
-from engram.constants import MODEL_NAME
+from .constants import MODEL_NAME
 
 
 def _load(model_name: str, disable):

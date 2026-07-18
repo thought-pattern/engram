@@ -5,10 +5,10 @@ import random
 import threading
 from difflib import SequenceMatcher
 
-from engram import eviction as eviction_mod
-from engram import sessions as sessions_mod
-from engram.config import engram_config
-from engram.constants import (
+from . import eviction as eviction_mod
+from . import sessions as sessions_mod
+from .config import engram_config
+from .constants import (
     CONFLICTING_FACT_RESPONSES,
     KIND_STATEMENT,
     KNOWN_FACT_RESPONSES,
@@ -20,9 +20,9 @@ from engram.constants import (
     WILDCARD_TOKENS,
     Tier,
 )
-from engram.facts_spacy import extract_facts
-from engram.graph import create_graph_client, is_write_cypher
-from engram.models import (
+from .facts_spacy import extract_facts
+from .graph import create_graph_client, is_write_cypher
+from .models import (
     keyword_entry,
     query_result,
     record_statement_hit,
@@ -31,14 +31,14 @@ from engram.models import (
     session_update_context,
     statement,
 )
-from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
-from engram.pattern import PatternMatcher, is_pure_wildcard
-from engram.phrasing import phrase_facts
-from engram.polish import polish_response
-from engram.scoring import score_statement
-from engram.substitutions import expand_contractions, split_sentences, substitution_maps
-from engram.template import TemplateProcessor, template_context
-from engram.text import (
+from .nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
+from .pattern import PatternMatcher, is_pure_wildcard
+from .phrasing import phrase_facts
+from .polish import polish_response
+from .scoring import score_statement
+from .substitutions import expand_contractions, split_sentences, substitution_maps
+from .template import TemplateProcessor, template_context
+from .text import (
     correct_spelling,
     expand_query,
     expand_with_synonyms,
