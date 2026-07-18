@@ -22,10 +22,13 @@ def statement(
     keywords=None,
     statement_id=None,
     pattern: str = "",
+    pattern_aliases=None,
     that: str = "",
     topic: str = "",
     template=None,
     priority: int = 0,
+    introduced_by_user_id: str | None = None,
+    source_label: str = "",
 ) -> dict:
     """Build a Statement dict (atomic unit of storage, a pattern-template pair).
 
@@ -38,10 +41,13 @@ def statement(
         "created_at": datetime.now(UTC),
         "keywords": keywords or [],
         "pattern": pattern,  # AIML-style pattern for matching
+        "pattern_aliases": list(pattern_aliases or []),  # Alternate patterns resolving to this statement
         "that": that,  # Pattern to match bot's previous response
         "topic": topic,  # Topic scope constraint
         "template": template or {},  # Structured template (JSON), {} if none
         "priority": priority,  # Override default priority (higher = preferred)
+        "introduced_by_user_id": introduced_by_user_id,
+        "source_label": source_label,
         "hit_count": 0,  # Number of times this statement was selected
         "query_count": 0,  # Number of times this statement was a candidate
         "last_hit": "",  # Timestamp of most recent hit ("" when never hit)
@@ -81,12 +87,18 @@ def statement_to_dict(stmt: dict) -> dict:
     # Only include optional fields if set
     if stmt["that"]:
         data["that"] = stmt["that"]
+    if stmt["pattern_aliases"]:
+        data["pattern_aliases"] = stmt["pattern_aliases"]
     if stmt["topic"]:
         data["topic"] = stmt["topic"]
     if stmt["template"]:
         data["template"] = stmt["template"]
     if stmt["priority"] != 0:
         data["priority"] = stmt["priority"]
+    if stmt["introduced_by_user_id"] is not None:
+        data["introduced_by_user_id"] = stmt["introduced_by_user_id"]
+    if stmt["source_label"]:
+        data["source_label"] = stmt["source_label"]
     # Eviction tracking (always include for consistency)
     data["hit_count"] = stmt["hit_count"]
     data["query_count"] = stmt["query_count"]
@@ -105,10 +117,13 @@ def statement_from_dict(data: dict) -> dict:
         "created_at": datetime.fromisoformat(data["created_at"]),
         "keywords": data.get("keywords", []),
         "pattern": data.get("pattern", ""),
+        "pattern_aliases": data.get("pattern_aliases", []),
         "that": data.get("that", ""),
         "topic": data.get("topic", ""),
         "template": data.get("template", {}),
         "priority": data.get("priority", 0),
+        "introduced_by_user_id": data.get("introduced_by_user_id"),
+        "source_label": data.get("source_label", ""),
         "hit_count": data.get("hit_count", 0),
         "query_count": data.get("query_count", 0),
         "last_hit": datetime.fromisoformat(last_hit_raw) if last_hit_raw else "",

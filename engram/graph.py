@@ -60,8 +60,7 @@ def is_connection_error(err: Exception) -> bool:
 # query's shape, and LOAD because LOAD CSV imports data; a read-only path that
 # allowed either would not be read-only.
 WRITE_CLAUSE = re.compile(
-    r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|"
-    r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
+    r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
     re.IGNORECASE,
 )
 

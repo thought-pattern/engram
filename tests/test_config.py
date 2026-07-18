@@ -20,7 +20,7 @@ class TestEngramConfig:
         assert config["weight_hit_rate"] == 0.2
         assert config["session_overflow"] == SessionOverflow.LRU
         assert config["stopwords"] == DEFAULT_STOPWORDS
-        assert config["learn_user_facts"] is False
+        assert config["learn_user_facts"] is True
 
     def test_custom_values(self) -> None:
         config = engram_config(

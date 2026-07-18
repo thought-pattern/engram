@@ -60,7 +60,7 @@ def engram_config(
     stopwords=None,
     # Input processing
     expand_contractions: bool = True,
-    learn_user_facts: bool = False,
+    learn_user_facts: bool = True,
     srai_depth_limit: int = 100,
     # Eviction settings
     eviction_policy: EvictionPolicy = EvictionPolicy.FIFO,
@@ -155,9 +155,7 @@ def config_to_dict(config: dict) -> dict:
     data["session_overflow"] = config["session_overflow"].value
     data["stopwords"] = sorted(config["stopwords"])
     if config.get("graph") is not None:
-        data["graph"] = {
-            key: value for key, value in config["graph"].items() if key != "password"
-        }
+        data["graph"] = {key: value for key, value in config["graph"].items() if key != "password"}
     return data
 
 

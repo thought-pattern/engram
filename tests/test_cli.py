@@ -192,3 +192,30 @@ class TestInteractiveChat:
         assert chat.process_input("hello") == "Hi there!"
         # Nothing matches and there is no catch-all: the chat default answers.
         assert chat.process_input("zzz qqq xxx") == "Tell me more about that."
+
+    def test_persistent_runtime_supports_inspection_and_reports(self, tmp_path, capsys) -> None:
+        from engram.constants import Tier
+        from engram.core import Engram
+
+        engram = Engram()
+        engram.store("Hi there!", pattern="HELLO", tier=Tier.STATIC)
+        transcript = tmp_path / "recovery.json"
+        chat = cli.InteractiveChat(
+            engram,
+            session_id="Human label",
+            initial_bot_text=".",
+            transcript_path=str(transcript),
+        )
+
+        assert chat.process_input("hello") == "Hi there!"
+        assert chat.runtime.inspect()["user_id"] == "Human label"
+        assert chat.runtime.inspect()["turn_count"] == 1
+        assert transcript.exists()
+
+        assert chat._handle_command("/inspect") is False
+        assert '"turn_count": 1' in capsys.readouterr().out
+
+        prefix = tmp_path / "human-chat"
+        assert chat._handle_command(f"/finish {prefix}") is False
+        assert prefix.with_suffix(".json").exists()
+        assert prefix.with_suffix(".md").exists()

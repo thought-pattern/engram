@@ -26,11 +26,15 @@ dependencies = [
     "nltk>=3.9",
     "spacy>=3.8",
     "pymgclient>=1.5",
+    "mcp>=1.27,<2",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
 # packaged console entry point; scripts/ is intentionally outside the engram
 # package.
+
+[project.scripts]
+engram-mcp = "engram.mcp_server:main"
 
 [project.optional-dependencies]
 dev = [

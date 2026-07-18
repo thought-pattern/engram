@@ -6,7 +6,7 @@ retrieval, updates, expiration, and cleanup of user sessions.
 
 from datetime import UTC, datetime, timedelta
 
-from engram.constants import SessionOverflow
+from engram.constants import DEFAULT_USER_ID, SessionOverflow
 from engram.models import session, session_update_context
 
 
@@ -20,6 +20,15 @@ class SessionNotFoundError(Exception):
     """Raised when a session is not found."""
 
     pass
+
+
+def normalize_user_id(user_id: str | None = None) -> str:
+    """Return the caller-owned user label, defaulting missing labels to "0"."""
+    if user_id is None or user_id == "":
+        return DEFAULT_USER_ID
+    if not isinstance(user_id, str):
+        raise ValueError("user_id must be a string")
+    return user_id
 
 
 def create_session(engram, session_id=None, metadata=None) -> str:

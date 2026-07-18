@@ -62,7 +62,9 @@ class TestFactExtractor:
         assert "SKY" in patterns
         assert "WHAT IS SKY" in patterns
         assert "WHAT IS THE SKY" in patterns
+        assert "WHAT IS BLUE" in patterns
         assert "TELL ME ABOUT SKY" in patterns
+        assert "WHAT DO YOU KNOW ABOUT SKY" in patterns
 
     def test_query_patterns_are(self):
         """Test query pattern generation for 'are' facts."""
@@ -71,6 +73,7 @@ class TestFactExtractor:
         assert "CATS" in patterns
         assert "WHAT ARE CATS" in patterns
         assert "WHAT ARE THE CATS" in patterns
+        assert "WHAT IS MAMMALS" in patterns
 
 
 class TestFactLearningIntegration:

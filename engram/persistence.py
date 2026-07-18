@@ -260,8 +260,14 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
         instance.statement_index[stmt["id"]] = len(instance.statements) - 1
         # Rebuild pattern matcher with context
         if stmt["pattern"]:
-            instance.pattern_matcher.add_pattern(stmt["pattern"], stmt["text"], that=stmt["that"], topic=stmt["topic"])
-            instance.pattern_to_statement[stmt["pattern"]] = stmt["id"]
+            for registered_pattern in [stmt["pattern"], *stmt["pattern_aliases"]]:
+                instance.pattern_matcher.add_pattern(
+                    registered_pattern,
+                    stmt["text"],
+                    that=stmt["that"],
+                    topic=stmt["topic"],
+                )
+                instance.pattern_to_statement[registered_pattern] = stmt["id"]
 
     # Restore keyword index
     for kw, entry_data in data.get("keywords", {}).items():

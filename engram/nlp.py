@@ -66,6 +66,7 @@ def fact_subject_upper(fact: dict) -> str:
 def fact_query_patterns(fact: dict) -> list[str]:
     """Generate patterns that should retrieve this fact."""
     subj = fact_subject_upper(fact)
+    obj = fact["obj"].upper()
     patterns = [subj]  # Direct query: "CATS"
 
     # Question forms based on predicate
@@ -83,6 +84,13 @@ def fact_query_patterns(fact: dict) -> list[str]:
     # Add "TELL ME ABOUT X" form
     patterns.append(f"TELL ME ABOUT {subj}")
     patterns.append(f"TELL ME ABOUT THE {subj}")
+    patterns.append(f"WHAT DO YOU KNOW ABOUT {subj}")
+    patterns.append(f"WHAT DO YOU KNOW ABOUT THE {subj}")
+
+    # Inverse lookup: "Sushi is good" should answer "What's good?"
+    # while retaining the full original sentence as the response.
+    patterns.append(f"WHAT IS {obj}")
+    patterns.append(f"WHAT ARE {obj}")
 
     return patterns
 

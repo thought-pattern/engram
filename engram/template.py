@@ -40,6 +40,7 @@ TRIPLE_QUERY_SUBJECT = (
     "RETURN hs.surface_form AS result LIMIT 1"
 )
 
+
 def template_context(
     # Wildcard captures from pattern matching
     stars=None,

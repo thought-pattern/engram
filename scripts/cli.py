@@ -12,9 +12,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from engram import metrics, persistence, pipeline, sessions
+from engram import metrics, persistence, sessions
 from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
+from engram.conversation import ConversationRuntime
 from engram.core import Engram
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
@@ -240,8 +241,22 @@ def create_parser() -> argparse.ArgumentParser:
     interactive_parser = subparsers.add_parser("interactive", help="Start interactive chat")
     interactive_parser.add_argument(
         "--session",
+        "--user-id",
+        dest="session",
         type=str,
-        help="Session ID to use (created if not exists)",
+        help="Caller-owned user/session label (created if absent)",
+    )
+    interactive_parser.add_argument(
+        "--initial-bot-text",
+        type=str,
+        default="",
+        help="Bot utterance immediately preceding the first interactive turn",
+    )
+    interactive_parser.add_argument(
+        "--transcript",
+        type=str,
+        default="",
+        help="Optional JSON recovery transcript updated after each turn",
     )
     interactive_parser.add_argument(
         "--graph",
@@ -682,6 +697,8 @@ class InteractiveChat:
         session_id=None,
         enable_graph: bool = False,
         store_path: str = "",
+        initial_bot_text: str = "",
+        transcript_path: str = "",
     ):
         self.engram = engram
         self.store_path = store_path
@@ -691,6 +708,12 @@ class InteractiveChat:
         )
 
         # Ensure session exists
+        self.runtime = ConversationRuntime(
+            engram,
+            user_id=self.session_id,
+            initial_bot_text=initial_bot_text,
+            transcript_path=transcript_path or None,
+        )
         self.session = sessions.get_session(engram, self.session_id, create_if_missing=True)
 
         # Note: Graph support would require extending core.py to accept graph callbacks
@@ -703,7 +726,7 @@ class InteractiveChat:
         Pattern match first; a question that only hits the catch-all consults
         keyword retrieval before settling for the deflection.
         """
-        result = pipeline.respond(self.engram, user_input, session_id=self.session_id)
+        result = self.runtime.send(user_input)
 
         if self.debug_mode:
             detail = f"Source: {result['source']} | Score: {result['score']:.2f}"
@@ -716,7 +739,10 @@ class InteractiveChat:
     def run(self) -> None:
         """Run the interactive chat loop."""
         print("ENGRAM Chat")
-        print("Commands: /debug, /metrics, /topic <name>, /set <name> <value>, /get <name>, /save, /quit")
+        print(
+            "Commands: /debug, /inspect, /metrics, /finish [prefix], /topic <name>, "
+            "/set <name> <value>, /get <name>, /save, /quit"
+        )
         print()
 
         while True:
@@ -749,11 +775,18 @@ class InteractiveChat:
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
 
         elif cmd == "metrics":
-            metric_data = metrics.get_metrics(self.engram)
+            metric_data = self.runtime.inspect()["metrics"]
             print(f"Patterns: {len(self.engram.pattern_matcher)}")
             print(f"Statements: {metric_data['statement_count']}")
             print(f"Sessions: {metric_data['session_count']}")
             print(f"Hit rate: {metric_data['hit_rate']:.1%}")
+
+        elif cmd == "inspect":
+            print(json.dumps(self.runtime.inspect(), indent=2))
+
+        elif cmd == "finish":
+            output_prefix = line.split(maxsplit=1)[1] if len(line.split(maxsplit=1)) == 2 else "engram-chat-transcript"
+            print(json.dumps(self.runtime.write_report(output_prefix), indent=2))
 
         elif cmd == "topic" and len(parts) >= 2:
             session = sessions.get_session(self.engram, self.session_id)
@@ -783,7 +816,9 @@ class InteractiveChat:
         elif cmd == "help":
             print("Commands:")
             print("  /debug         - Toggle debug mode")
+            print("  /inspect       - Show context, learned facts, and metrics")
             print("  /metrics       - Show metrics")
+            print("  /finish [path] - Write JSON and Markdown conversation reports")
             print("  /topic <name>  - Set conversation topic")
             print("  /set <n> <v>   - Set predicate")
             print("  /get <name>    - Get predicate value")
@@ -805,6 +840,8 @@ def cmd_interactive(args: argparse.Namespace) -> int:
         session_id=args.session,
         enable_graph=args.graph,
         store_path=args.store,
+        initial_bot_text=args.initial_bot_text,
+        transcript_path=args.transcript,
     )
 
     chat.run()
@@ -829,6 +866,8 @@ def main(argv=None) -> int:
         # Set defaults for interactive mode arguments when no subcommand was used
         args.session = None
         args.graph = False
+        args.initial_bot_text = ""
+        args.transcript = ""
 
     # Resolve configuration once (config.yml, with CLI flag overrides applied).
     args.engram_config = resolve_config(args)

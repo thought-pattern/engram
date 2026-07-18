@@ -3,6 +3,7 @@
 import logging
 import random
 import threading
+from difflib import SequenceMatcher
 
 from engram import eviction as eviction_mod
 from engram import sessions as sessions_mod
@@ -12,7 +13,11 @@ from engram.constants import (
     KIND_STATEMENT,
     KNOWN_FACT_RESPONSES,
     LEARNED_ACKNOWLEDGMENTS,
+    REPETITION_ESCAPE_RESPONSE,
+    REPETITION_FEEDBACK_MARKERS,
+    RESPONSE_SIMILARITY_THRESHOLD,
     VERSION,
+    WILDCARD_TOKENS,
     Tier,
 )
 from engram.facts_spacy import extract_facts
@@ -27,7 +32,7 @@ from engram.models import (
     statement,
 )
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
-from engram.pattern import PatternMatcher
+from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.scoring import score_statement
@@ -41,9 +46,34 @@ from engram.text import (
     extract_keywords_spacy,
     get_synonyms,
     normalize,
+    restore_capture_case,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _reports_repetition(text: str) -> bool:
+    normalized_text = normalize(text)
+    return any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
+
+
+def _response_repeats(candidate: str, recent_responses: list[str]) -> bool:
+    normalized_candidate = normalize(candidate)
+    if not normalized_candidate:
+        return False
+    for recent in recent_responses:
+        normalized_recent = normalize(recent)
+        if (
+            normalized_recent
+            and SequenceMatcher(None, normalized_candidate, normalized_recent).ratio() >= RESPONSE_SIMILARITY_THRESHOLD
+        ):
+            return True
+    return False
+
+
+def _pattern_has_wildcard(pattern: str) -> bool:
+    return any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
+
 
 # Canonical-graph recall queries. Claims link to canonical Entity/Predicate
 # nodes by edge; the surface triple is read from the denormalized projection on
@@ -136,11 +166,7 @@ class Engram:
         if self._graph_client is None and self.config["graph"]:
             with self._graph_client_lock:
                 graph_config = self.config["graph"]
-                if (
-                    self._graph_client is None
-                    and isinstance(graph_config, dict)
-                    and graph_config["enabled"]
-                ):
+                if self._graph_client is None and isinstance(graph_config, dict) and graph_config["enabled"]:
                     self._graph_client = create_graph_client(
                         host=graph_config["host"],
                         port=graph_config["port"],
@@ -263,6 +289,8 @@ class Engram:
         response: str,
         tier: Tier = Tier.DYNAMIC,
         template=None,
+        introduced_by_user_id: str | None = None,
+        source_label: str = "",
     ) -> str:
         """Learn from an LLM response by storing it for future retrieval.
 
@@ -289,6 +317,11 @@ class Engram:
         Returns:
             Statement ID of the stored (or updated) response.
         """
+        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(source_label, str):
+            raise ValueError("source_label must be a string")
+
         normalized = normalize(query)
         if self.config["use_spell_correction"]:
             with self.keyword_lock:
@@ -313,6 +346,8 @@ class Engram:
                     if stmt["tier"] == Tier.DYNAMIC and not stmt["pattern"] and set(stmt["keywords"]) == keyword_set:
                         stmt["text"] = response
                         stmt["template"] = template or {}
+                        stmt["introduced_by_user_id"] = introduced_by_user_id
+                        stmt["source_label"] = source_label
                         stmt["hit_count"] = 0
                         stmt["query_count"] = 0
                         stmt["last_hit"] = ""
@@ -323,6 +358,8 @@ class Engram:
             tier=tier,
             template=template,
             keyword_source=normalized,
+            introduced_by_user_id=introduced_by_user_id,
+            source_label=source_label,
         )
         return stmt_id
 
@@ -348,11 +385,14 @@ class Engram:
         tier: Tier = Tier.DYNAMIC,
         statement_id=None,
         pattern=None,
+        pattern_aliases=None,
         that=None,
         topic=None,
         template=None,
         priority: int = 0,
         keyword_source: str = "",
+        introduced_by_user_id: str | None = None,
+        source_label: str = "",
     ) -> str:
         """Add a statement to the store.
 
@@ -361,6 +401,8 @@ class Engram:
             tier: STATIC or DYNAMIC (default).
             statement_id: Optional specific ID.
             pattern: Optional pattern for matching (AIML-style).
+            pattern_aliases: Optional alternate patterns that resolve to the
+                same stored statement without duplicating its content.
             that: Optional pattern for bot's previous response.
             topic: Optional topic scope.
             template: Optional structured template (JSON/dict).
@@ -373,6 +415,20 @@ class Engram:
         Returns:
             Assigned statement ID.
         """
+        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(source_label, str):
+            raise ValueError("source_label must be a string")
+        if pattern_aliases is None:
+            aliases: list[str] = []
+        elif isinstance(pattern_aliases, list | tuple) and all(isinstance(alias, str) for alias in pattern_aliases):
+            aliases = list(dict.fromkeys(alias.strip() for alias in pattern_aliases if alias.strip()))
+        else:
+            raise ValueError("pattern_aliases must be a sequence of strings or None")
+        if aliases and not pattern:
+            raise ValueError("pattern_aliases require a primary pattern")
+        aliases = [alias for alias in aliases if alias != pattern]
+
         # Index under keyword_source when given, else the pattern, else the text
         source = keyword_source or pattern or text
         normalized = normalize(source)
@@ -385,10 +441,13 @@ class Engram:
             keywords=keywords,
             statement_id=statement_id,
             pattern=pattern or "",
+            pattern_aliases=aliases,
             that=that or "",
             topic=topic or "",
             template=template,
             priority=priority,
+            introduced_by_user_id=introduced_by_user_id,
+            source_label=source_label,
         )
 
         with self.statement_lock:
@@ -398,8 +457,9 @@ class Engram:
             # Register the pattern under the same lock that guards matching,
             # so a concurrent pattern_query never sees a half-updated matcher.
             if pattern:
-                self.pattern_matcher.add_pattern(pattern, text, that=that or "", topic=topic or "")
-                self.pattern_to_statement[pattern] = stmt["id"]
+                for registered_pattern in [pattern, *aliases]:
+                    self.pattern_matcher.add_pattern(registered_pattern, text, that=that or "", topic=topic or "")
+                    self.pattern_to_statement[registered_pattern] = stmt["id"]
 
             # Check capacity for DYNAMIC statements
             if tier == Tier.DYNAMIC:
@@ -430,13 +490,16 @@ class Engram:
         text: str,
         session_id=None,
         limit: int = 5,
+        user_id: str | None = None,
     ) -> dict:
         """Retrieve matching statements.
 
         Args:
             text: Query text.
-            session_id: Optional session for context expansion.
+            session_id: Optional legacy session label for context expansion.
             limit: Maximum results (default: 5).
+            user_id: Optional caller-owned user label. Missing labels supplied
+                through this argument normalize to "0".
 
         Returns:
             Dict with "matches" (list of (statement, score) pairs) and
@@ -445,6 +508,11 @@ class Engram:
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
+        if user_id is not None:
+            normalized_user_id = sessions_mod.normalize_user_id(user_id)
+            if session_id and session_id != normalized_user_id:
+                raise ValueError("session_id and user_id must identify the same context")
+            session_id = normalized_user_id
 
         with self.count_lock:
             self.query_count += 1
@@ -453,12 +521,20 @@ class Engram:
         # matching pattern_query -- a fresh session id must not silently skip
         # context tracking.
         expanded_text = text
+        if self.config["expand_contractions"]:
+            expanded_text = expand_contractions(
+                expanded_text,
+                self.substitution_maps["contractions"],
+            )
         if session_id:
             session = sessions_mod.get_session(self, session_id, create_if_missing=True)
             if session:
                 with self.session_lock:
                     session_touch(session)
-                    expanded_text = expand_query(text, session["previous_response"])
+                    expanded_text = expand_query(
+                        expanded_text,
+                        session["previous_response"],
+                    )
 
         # Normalize and extract keywords
         normalized = normalize(expanded_text)
@@ -559,6 +635,8 @@ class Engram:
         self,
         text: str,
         session_id=None,
+        user_id: str | None = None,
+        combine_sentences: bool = True,
     ) -> tuple:
         """Query using AIML-style pattern matching.
 
@@ -567,7 +645,13 @@ class Engram:
 
         Args:
             text: User input text (may contain multiple sentences).
-            session_id: Optional session for context.
+            session_id: Optional legacy session label for context.
+            user_id: Optional caller-owned user label. When supplied, learned
+                conversational facts record this attribution.
+            combine_sentences: Combine every matched sentence response when
+                true (the legacy low-level behavior). Chat callers set this
+                false so one user turn receives one response, selected from
+                the final matched sentence.
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
@@ -575,6 +659,13 @@ class Engram:
         """
         with self.count_lock:
             self.query_count += 1
+
+        attributed_user_id = None
+        if user_id is not None:
+            attributed_user_id = sessions_mod.normalize_user_id(user_id)
+            if session_id and session_id != attributed_user_id:
+                raise ValueError("session_id and user_id must identify the same context")
+            session_id = attributed_user_id
 
         # Apply contractions expansion if enabled
         processed_text = text
@@ -613,6 +704,9 @@ class Engram:
         responses: list[str] = []
         first_stmt = None
         first_captured: list[str] = []
+        last_stmt = None
+        last_captured: list[str] = []
+        last_catchall_render = None
 
         for sentence in sentences:
             match_text = sentence
@@ -630,10 +724,12 @@ class Engram:
                     matched_topic,
                     matched_that,
                 ) = result
+                captured = restore_capture_case(captured, sentence)
 
-                # Optionally extract and learn facts from declarative
-                # sentences. This is disabled by default because the learned
-                # statement pool is shared across sessions.
+                # Extract and learn facts from declarative sentences when
+                # configured. Learned knowledge is shared, while its user
+                # attribution and each user's conversation context remain
+                # distinct.
                 facts = []
                 if self.config["learn_user_facts"]:
                     if self.config["use_spacy_facts"]:
@@ -649,7 +745,10 @@ class Engram:
                 learned = False
                 known_response = ""
                 for fact in facts:
-                    if self.learn_fact(fact):
+                    if self.learn_fact(
+                        fact,
+                        introduced_by_user_id=attributed_user_id,
+                    ):
                         learned = True
                         continue
                     # Already known. Surface the stored belief instead of a
@@ -671,9 +770,8 @@ class Engram:
                 with self.statement_lock:
                     selected: dict = {}
                     for stmt in self.statements:
-                        triple_match = (
-                            stmt["pattern"] == matched_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
-                        )
+                        carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
+                        triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
                         if triple_match and (not selected or stmt["priority"] > selected["priority"]):
                             selected = stmt
                     if selected:
@@ -688,6 +786,7 @@ class Engram:
                         # instead -- rotating the phrasing so a teaching session
                         # does not answer identically every turn. A restated or
                         # contradicted known fact surfaces the stored belief.
+                        last_catchall_render = None
                         if learned and matched_pattern == "*":
                             final_response = random.choice(LEARNED_ACKNOWLEDGMENTS)
                         elif known_response and matched_pattern == "*":
@@ -702,12 +801,16 @@ class Engram:
                                 thatstars=thatstars,
                                 topicstars=topicstars,
                             )
+                            if is_pure_wildcard(matched_pattern):
+                                last_catchall_render = (selected, captured, sentence, thatstars, topicstars)
                         responses.append(final_response)
 
                         # Track first match for return value
                         if first_stmt is None:
                             first_stmt = selected
                             first_captured = captured
+                        last_stmt = selected
+                        last_captured = captured
 
                         # Update 'that' for next sentence (response becomes context)
                         that = final_response
@@ -731,8 +834,41 @@ class Engram:
                 return fallback_tuple
             return ()
 
-        # Combine responses
-        combined_response = " ".join(responses)
+        # Low-level pattern callers retain AIML-style multi-sentence
+        # composition. Conversational callers select one response from the
+        # final matched sentence, avoiding unrelated fragments in one reply.
+        if combine_sentences:
+            combined_response = " ".join(responses)
+            returned_stmt = first_stmt
+            returned_captured = first_captured
+        else:
+            combined_response = responses[-1]
+            returned_stmt = last_stmt
+            returned_captured = last_captured
+
+            # Catch-all prompts should not echo a recent wording or argue with
+            # explicit feedback that the conversation is looping. Re-render a
+            # randomized template a few times before using the honest escape.
+            if session and returned_stmt and _reports_repetition(text) and _pattern_has_wildcard(returned_stmt["pattern"]):
+                combined_response = REPETITION_ESCAPE_RESPONSE
+            elif last_catchall_render and returned_stmt is last_catchall_render[0] and session:
+                recent_responses = session["response_history"][:3]
+                if _response_repeats(combined_response, recent_responses):
+                    selected, captured, sentence, thatstars, topicstars = last_catchall_render
+                    for _ in range(8):
+                        candidate = self._process_statement_template(
+                            selected,
+                            captured,
+                            sentence,
+                            session,
+                            thatstars=thatstars,
+                            topicstars=topicstars,
+                        )
+                        if not _response_repeats(candidate, recent_responses):
+                            combined_response = candidate
+                            break
+                    else:
+                        combined_response = REPETITION_ESCAPE_RESPONSE
 
         # Output cleanup: repair casing (sentence starts, the pronoun I) that
         # lowercase wildcard captures splice into authored text.
@@ -744,7 +880,7 @@ class Engram:
             with self.session_lock:
                 session_update_context(session, combined_response, text)
 
-        match_tuple = (first_stmt, first_captured, combined_response)
+        match_tuple = (returned_stmt, returned_captured, combined_response)
         return match_tuple
 
     def _process_statement_template(
@@ -880,9 +1016,7 @@ class Engram:
                 for name, value in context["predicates"].items():
                     if not name.startswith("_"):
                         session["predicates"][name] = value
-                leaked_scratch = [
-                    name for name in session["predicates"] if name.startswith("_")
-                ]
+                leaked_scratch = [name for name in session["predicates"] if name.startswith("_")]
                 for name in leaked_scratch:
                     del session["predicates"][name]
 
@@ -910,7 +1044,13 @@ class Engram:
                 if idx is not None:
                     record_statement_hit(self.statements[idx])
 
-    def learn_fact(self, fact: dict) -> bool:
+    def learn_fact(
+        self,
+        fact: dict,
+        introduced_by_user_id: str | None = None,
+        source_label: str = "",
+        tier: Tier = Tier.DYNAMIC,
+    ) -> bool:
         """Learn a fact extracted from natural language.
 
         Creates patterns for the subject and common query forms so the fact
@@ -918,11 +1058,20 @@ class Engram:
 
         Args:
             fact: The extracted fact to learn.
+            introduced_by_user_id: Optional conversational user attribution.
+            source_label: Optional non-user source label.
+            tier: Storage tier for the generated statements.
 
         Returns:
             True if the fact was learned, False if it was already known.
         """
-        # Check if we already have a pattern for the primary subject
+        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(source_label, str):
+            raise ValueError("source_label must be a string")
+
+        # Check and store under one re-entrant statement lock so concurrent
+        # speakers cannot admit duplicate copies of the same fact.
         subject_pattern = fact_subject_upper(fact)
         with self.statement_lock:
             for stmt in self.statements:
@@ -930,37 +1079,78 @@ class Engram:
                     # Already know this - don't overwrite
                     return False
 
-        # Store the fact with multiple retrieval patterns
-        # The response is the full original sentence
-        response = fact["original"]
+            # Store one fact statement with alternate retrieval patterns.
+            # Aliases live in the matcher and map to this one statement, so a
+            # fact does not consume capacity once per query phrasing.
+            aliases = []
+            for query_pattern in fact_query_patterns(fact)[1:]:
+                query_pattern = query_pattern.strip()
+                if query_pattern and query_pattern != subject_pattern and query_pattern not in self.pattern_to_statement:
+                    aliases.append(query_pattern)
+            aliases = list(dict.fromkeys(aliases))
 
-        # Store primary pattern (just the subject). Keyword-index it under the
-        # full original sentence, so keyword retrieval sees the fact's content
-        # ("Is the sky blue?" needs [sky, blue], not just [sky]).
-        self.store(
-            text=response,
-            pattern=subject_pattern,
-            tier=Tier.DYNAMIC,
-            keyword_source=fact["original"],
-        )
-
-        # Store question patterns
-        for pattern in fact_query_patterns(fact)[1:]:  # Skip first (already stored)
-            # Check if pattern already exists
-            exists = False
-            with self.statement_lock:
-                for stmt in self.statements:
-                    if stmt["pattern"] == pattern:
-                        exists = True
-                        break
-            if not exists:
-                self.store(
-                    text=response,
-                    pattern=pattern,
-                    tier=Tier.DYNAMIC,
-                )
+            # Keyword-index under the original sentence so retrieval sees the
+            # fact's content ("Is the sky blue?" needs [sky, blue], not just
+            # [sky]). store() safely re-enters statement_lock here.
+            self.store(
+                text=fact["original"],
+                pattern=subject_pattern,
+                pattern_aliases=aliases,
+                tier=tier,
+                keyword_source=fact["original"],
+                introduced_by_user_id=introduced_by_user_id,
+                source_label=source_label,
+            )
 
         return True
+
+    def add_fact(
+        self,
+        text: str,
+        source_label: str = "",
+        tier: Tier = Tier.DYNAMIC,
+    ) -> str:
+        """Add shared knowledge without assigning it to a conversational user.
+
+        The fact is indexed and, when extraction succeeds, receives the usual
+        subject and question patterns. It never creates or updates user
+        context. The returned id identifies the primary stored statement.
+        """
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("fact text must be a non-empty string")
+        if not isinstance(source_label, str):
+            raise ValueError("source_label must be a string")
+
+        fact_text = text.strip()
+        facts = extract_facts(fact_text) if self.config["use_spacy_facts"] else []
+        if not facts:
+            fact = extract_fact(fact_text)
+            facts = [fact] if fact else []
+
+        if facts:
+            primary_pattern = fact_subject_upper(facts[0])
+            for fact in facts:
+                self.learn_fact(
+                    fact,
+                    introduced_by_user_id=None,
+                    source_label=source_label,
+                    tier=tier,
+                )
+            with self.statement_lock:
+                return self.pattern_to_statement.get(primary_pattern, "")
+
+        normalized_text = normalize(fact_text)
+        with self.statement_lock:
+            for stmt in self.statements:
+                if not stmt["pattern"] and normalize(stmt["text"]) == normalized_text:
+                    return stmt["id"]
+
+        return self.store(
+            text=fact_text,
+            tier=tier,
+            introduced_by_user_id=None,
+            source_label=source_label,
+        )
 
     def get_statement(self, statement_id: str) -> dict:
         """Get a statement by ID.

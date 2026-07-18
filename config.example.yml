@@ -20,7 +20,7 @@ session_overflow: lru # reject | expire_oldest | lru
 
 # --- Input processing ---
 expand_contractions: true
-learn_user_facts: false # Opt in only for trusted, single-tenant input
+learn_user_facts: true # Learn shared facts with per-user attribution
 srai_depth_limit: 100
 
 # --- Eviction ---

@@ -28,7 +28,8 @@ Engram is a keyword-indexed statement store with hit-rate tracking. In practical
 - It indexes them by extracted keywords
 - It retrieves relevant statements when queries share keywords
 - It tracks which retrievals succeed, learning over time
-- It maintains session state across conversation turns
+- It maintains isolated per-user context across conversation turns
+- It shares learned facts while retaining who introduced them
 
 The name "engram" comes from neuroscience, where it refers to a physical trace of memory in the brain. This system serves a similar purpose: it's where your application's memories live between expensive cognitive operations.
 
@@ -142,6 +143,36 @@ User: "What's its population?"
 
 Engram sessions track conversation state, enabling context expansion for pronouns and references. The LLM doesn't need to carry the full conversation history when Engram can resolve references locally.
 
+The user-aware entry point is `engram.pipeline.chat`. Its `user_id` is an
+opaque, case-sensitive string maintained by the calling application; missing
+or empty values use `"0"`. Histories, predicates, topics, and pronoun context
+stay isolated under that label. Facts learned during conversation are stored
+globally with `introduced_by_user_id`, so Alice can teach the system that sushi
+is good and Carol can later retrieve that fact without receiving Alice's
+conversation history. A fact is stored once; its common query forms are matcher
+aliases attached to that statement, so recall flexibility does not multiply
+cache entries or consume dynamic capacity repeatedly.
+
+External knowledge uses `engram.add_fact(text, source_label=...)`. This adds a
+single shared fact with no user attribution and does not create or modify a
+conversation context. The optional source label is also caller-owned, making
+it suitable for research tools, imports, or other non-conversational sources.
+
+The Python API remains the canonical integration surface. A shared
+`ConversationRuntime` adds turn diagnostics and transcript/report generation
+without changing `Engram`, `query`, `pattern_query`, `pipeline.respond`, or
+`pipeline.chat`. The human CLI and FastMCP stdio server are thin adapters over
+that runtime. Both keep an Engram instance alive across turns; the MCP host
+owns the server process, and an optional store path makes state durable across
+process restarts. The separately discussed gRPC production service remains
+deferred.
+
+Conversational calls return one reply per user turn. Multi-sentence input is
+still processed sentence by sentence for matching, learning, and context, but
+`pipeline.chat` selects the final matched response instead of concatenating
+unrelated fragments. The lower-level `pattern_query` combination behavior is
+retained for callers that intentionally use AIML-style multi-sentence output.
+
 ### Role 4: Response Validator
 
 ```
@@ -192,6 +223,7 @@ A statement is the atomic unit of storage. It contains:
 - **Pattern**: Optional AIML-style pattern for exact matching
 - **Template**: Optional dynamic response template
 - **Metrics**: Hit count, query count, timestamps
+- **Provenance**: Optional introducing user or non-user source label
 
 Statements can be plain text for simple caching, or they can include patterns and templates for scripted conversational flows.
 

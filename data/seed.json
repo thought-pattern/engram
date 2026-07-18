@@ -58,6 +58,8 @@
     { "pattern": "WHO MADE YOU", "response": "I was built as an AIML-style chatbot." },
     { "pattern": "WHO CREATED YOU", "response": "I was built as an AIML-style chatbot." },
     { "pattern": "DO YOU HAVE A NAME", "response": "Yes, I'm {bot:name}!" },
+    { "pattern": "WHAT SHOULD I CALL YOU", "response": "You can call me {bot:name}." },
+    { "pattern": "HOW SHOULD I ADDRESS YOU", "response": "You can call me {bot:name}." },
     { "pattern": "WHAT DO YOU LIKE", "response": "I like good conversation! What about you?" },
     { "pattern": "WHAT DO YOU LIKE *", "response": "I enjoy a good chat. What about you?" },
     { "pattern": "WHAT LANGUAGES DO YOU SPEAK", "response": "I work in English. What would you like to talk about?" },
@@ -665,6 +667,14 @@
     },
     { "pattern": "LET US PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?" },
     { "pattern": "LET US PLAY *", "response": "Sure! I can flip a coin, roll a die, or pick a number." },
+    {
+      "pattern": "LET US TALK ABOUT *",
+      "response": "Sure - let's talk about {star1}. What interests you about it?"
+    },
+    {
+      "pattern": "LET US * TALK ABOUT *",
+      "response": "Sure - let's talk about {star2}. What interests you about it?"
+    },
     { "pattern": "PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?" },
 
     { "pattern": "GOOD DAY", "response": "Good day to you!" },
@@ -953,6 +963,21 @@
           "missing": { "text": "I don't think you've told me your name yet. What is it?" }
         }
       }
+    },
+    {
+      "pattern": "CAN YOU REMIND ME *",
+      "response": "Your previous message was: {input:1}",
+      "template": { "text": "Your previous message was: {input:1}" }
+    },
+    {
+      "pattern": "WHAT DID I JUST SAY",
+      "response": "Your previous message was: {input:1}",
+      "template": { "text": "Your previous message was: {input:1}" }
+    },
+    {
+      "pattern": "WHAT DID I JUST TELL YOU",
+      "response": "Your previous message was: {input:1}",
+      "template": { "text": "Your previous message was: {input:1}" }
     },
     {
       "pattern": "I LIVE IN *",

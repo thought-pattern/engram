@@ -11,8 +11,9 @@ Key features:
 - **Keyword matching** - Fast, predictable retrieval using keyword overlap
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
-- **Session support** - Multiple concurrent sessions with context expansion
+- **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Persistence** - JSON-based save/load with full state preservation
+- **Multiple interfaces** - Existing Python API, a human CLI, and persistent FastMCP tools
 
 ## Setup
 
@@ -58,6 +59,44 @@ print(stmt["text"])  # "Paris is the capital of France"
 engram.record_hit(result["keywords"], statement_id=stmt["id"])
 ```
 
+## User-aware chatbot and shared facts
+
+`pipeline.chat` is the in-process chatbot entry point. The caller owns the
+user label: it is an arbitrary, case-sensitive string that Engram preserves
+without interpreting. A missing or empty label becomes `"0"`.
+
+```python
+from engram import pipeline
+
+# A catch-all supplies the chatbot's default conversational behavior.
+engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+pipeline.chat(engram, "Sushi is good.", user_id="Alice")
+result = pipeline.chat(engram, "What's good?", user_id="Carol")
+print(result["response"])  # "Sushi is good."
+```
+
+Alice and Carol have separate histories, predicates, topics, and pronoun
+context. Facts learned from either conversation enter the shared statement
+store and retain `introduced_by_user_id`, so another user can retrieve them
+without inheriting the speaker's conversation state. Each learned fact occupies
+one statement; alternate question phrasings are matcher aliases on that
+statement rather than duplicate cache entries.
+
+Research and tool output can enter the same shared store without pretending
+to be a user:
+
+```python
+statement_id = engram.add_fact(
+    "Tokyo is the capital of Japan.",
+    source_label="research-tool",
+)
+```
+
+`add_fact` ingests one fact, optionally records an opaque source label, and
+does not create or modify any user context. Conversational facts and external
+facts are both globally retrievable. Batch ingestion is intentionally deferred.
+
 ## Sessions
 
 Sessions enable context expansion for follow-up queries:
@@ -99,7 +138,7 @@ config = engram_config(
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
     eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
-    learn_user_facts=False,      # Opt in only for trusted, single-tenant input
+    learn_user_facts=True,       # Learn shared facts with user attribution
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
@@ -126,8 +165,9 @@ json_str = persistence.save_json(engram)
 engram = persistence.load_engram_json(json_str)
 ```
 
-The saved state includes statements, the keyword index with its statistics,
-sessions, bot properties, substitution maps, and non-secret configuration
+The saved state includes statements (including `introduced_by_user_id` and
+`source_label` provenance), the keyword index with its statistics, user
+contexts, bot properties, substitution maps, and non-secret configuration
 (weights, eviction policy, feature flags). Graph passwords are runtime-only and
 are never persisted. Loading restores the stored configuration unless a
 `config` override is passed to the loader. Files written by older versions
@@ -205,13 +245,14 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, pattern, template, priority, keyword_source)` | Add a statement; `keyword_source` indexes it under different text (e.g. the question a response answers)             |
-| `query(text, session_id, limit)`                                 | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords`                       |
-| `pattern_query(text, session_id)`                                | AIML-style match; returns `(statement, captured, response)` or `()`                                                  |
+| `store(text, tier, pattern, pattern_aliases, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases and provenance; `keyword_source` can index it under different text    |
+| `query(text, session_id, limit, user_id)`                         | Keyword retrieval; `user_id` selects an isolated caller-owned context                                                  |
+| `pattern_query(text, session_id, user_id, combine_sentences)`     | AIML-style match in a user context; returns `(statement, captured, response)` or `()`                                |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
-| `learn_from_response(query, response)`                           | Cache an LLM response, indexed under the query's keywords; re-learning the same question replaces the entry in place |
+| `learn_from_response(query, response, introduced_by_user_id, source_label)` | Cache a response with optional provenance; re-learning the same question replaces it in place                       |
 | `retire_statement(statement_id)`                                 | Deliberately remove a statement (and its pattern) by id                                                              |
-| `learn_fact(fact)`                                               | Learn an extracted fact                                                                                              |
+| `learn_fact(fact, introduced_by_user_id, source_label)`          | Learn an extracted fact with optional provenance                                                                     |
+| `add_fact(text, source_label, tier)`                              | Add one globally shared, unattributed fact without changing user context                                              |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
 | `fork(...)`                                                      | Create a child instance sharing the knowledge base                                                                   |
@@ -238,12 +279,21 @@ module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics
 
 ### Pipeline (`from engram import pipeline`)
 
-`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn)`
+`pipeline.chat(engram, text, user_id, llm_fn, high_confidence, context_limit, learn)`
+is the user-aware entry point. It defaults to user `"0"` and returns the
+normalized `user_id` in its result. The lower-level
+`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn, user_id)`
 packages the tiered strategy: scripted pattern match first, then a
 high-confidence cached answer, then the caller's LLM with retrieved context
 (whose response is learned for next time). Returns a dict with `response`,
 `source` (`pattern` / `cache` / `llm` / `none`), `score`, `matches`, and
 `keywords`.
+
+For multi-sentence input, `pipeline.chat` produces one conversational reply
+from the final matched sentence while still processing every sentence for
+learning and context. Direct `pattern_query` calls retain the legacy AIML
+behavior of combining every matched sentence response; pass
+`combine_sentences=False` to request the conversational behavior explicitly.
 
 ```python
 from engram import pipeline
@@ -376,22 +426,78 @@ engram export --dynamic-only
 ### Interactive Mode
 
 ```bash
-engram interactive
+engram interactive --user-id Robin --initial-bot-text "." \
+    --transcript conversation-recovery.json
 ```
 
 Interactive mode is a chat loop routed through the tiered pipeline: pattern
 matching first, with questions the patterns cannot answer consulting keyword
-retrieval before falling back. Type a message to get a response, or use a
-slash command:
+retrieval before falling back. `--user-id` is an arbitrary caller-owned label
+and defaults to a generated session for the human CLI. `--transcript` updates a
+JSON recovery transcript after each turn. Type a message to get a response, or
+use a slash command:
 
 - `/debug` - Toggle debug output
+- `/inspect` - Show the active context, learned facts, provenance, and metrics
 - `/metrics` - Show metrics
+- `/finish [path]` - Write JSON and Markdown conversation reports
 - `/topic <name>` - Set the conversation topic
 - `/set <name> <value>` - Set a session predicate
 - `/get <name>` - Show a session predicate
 - `/save` - Save to disk
 - `/help` - List commands
 - `/quit` - Exit (also `/exit`, `/q`)
+
+### MCP Agent Interface
+
+The agent interface is a FastMCP stdio server. The MCP host starts one process,
+and that process retains the same Engram conversation between tool calls:
+
+```bash
+python -m engram.mcp_server
+# After installing the project, this is equivalent:
+engram-mcp
+```
+
+A typical MCP client entry, run from the repository root, is:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "python",
+      "args": ["-m", "engram.mcp_server"],
+      "cwd": "E:\\current\\engram"
+    }
+  }
+}
+```
+
+The server exposes these tools:
+
+- `engram_start` - Create or restore one persistent conversation. The
+  caller-owned `user_id` defaults to `"0"`; `initial_bot_text` represents
+  Engram's utterance immediately before the first turn.
+- `engram_send` - Submit exactly one observed message and return Engram's
+  response plus match, timing, context-change, and learning diagnostics.
+- `engram_inspect` - Read the current user context, learned facts, provenance,
+  and metrics.
+- `engram_add_fact` - Add one shared, unattributed fact with an optional opaque
+  source label, without changing the conversation context.
+- `engram_finish` - Persist an optional store and write JSON and Markdown
+  reports while leaving the conversation active.
+- `engram_stop` - Persist an optional store and release the conversation. The
+  MCP host, not this tool, owns the server process.
+
+Call `engram_start` once and then `engram_send` once per turn, after observing
+the previous response. There is deliberately no batch-send tool. State is
+persistent between tool calls while the MCP process lives; pass `store_path`
+to `engram_start` when it must also survive process restarts.
+
+FastMCP and the CLI are additive adapters over the same `Engram` and
+`pipeline.chat` Python interfaces shown above. They do not replace or alter the
+programmatic API. They are local human/agent interfaces, not the deferred gRPC
+production service.
 
 ## NLP Features
 
@@ -518,9 +624,10 @@ pull subject-predicate-object triples from arbitrary declaratives:
 Copulas keep their surface form, prepositional links use the preposition, and
 action verbs are normalized to the verb lemma. Each fact also carries
 `subject_type`/`obj_type` from NER (`PERSON`/`GPE`/`ORG`/`DATE`, `""` when not an
-entity). Automatic learning from conversational input is separately opt-in
-(`learn_user_facts`, default off) because the learned statement pool is shared
-across sessions. When enabled, `use_spacy_facts` selects this relational
+entity). Automatic learning from conversational input is enabled by default
+(`learn_user_facts`) because shared knowledge with explicit user attribution
+is the chatbot's normal behavior. Set it to false when the calling application
+wants conversation to remain read-only. When enabled, `use_spacy_facts` selects this relational
 extractor instead of the conservative copula extractor.
 Run `python eval/compare_facts.py` to see it next to the copula extractor.
 
@@ -648,7 +755,7 @@ pytest
 ruff check .
 
 # Format code
-ruff format .
+black -l 132 -t py311 .
 ```
 
 ## License
