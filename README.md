@@ -15,6 +15,24 @@ Key features:
 - **Persistence** - JSON-based save/load with full state preservation
 - **Multiple interfaces** - Existing Python API, a human CLI, and persistent FastMCP tools
 
+## Architecture
+
+```text
+CLI ---------\
+              \
+FastMCP -------> EngramCore ---> Engram, pipeline, sessions, persistence
+              /
+future -------/
+```
+
+`EngramCore` in `engram/service.py` is the transport-neutral application
+facade. It owns the shared `Engram` instance, per-user conversation runtimes,
+persistence lifecycle, and regulated-cache proposal state. The CLI and MCP
+server translate their interface inputs into calls on that core; neither owns
+an independent implementation of Engram behavior. The lower-level `Engram`,
+`pipeline`, `sessions`, and `persistence` Python APIs remain available and
+backward compatible.
+
 ## Integration guides
 
 - [Tapestry–Engram integration](documentation/tapestry-integration.md) — the
@@ -273,8 +291,23 @@ shadow live ones.
 
 ## API Reference
 
-The data model is plain dicts, and behavior is split between `Engram` methods and
-module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics`).
+The data model is plain dicts. Interfaces normally use `EngramCore`; embedded
+callers can continue using `Engram` methods and module-level functions
+(`engram.sessions`, `engram.persistence`, `engram.metrics`) directly.
+
+### EngramCore (`from engram.service import EngramCore`)
+
+`EngramCore.open(config=..., store_path=..., seed_path=...)` loads or creates a
+shared application runtime. Its public operations include:
+
+- `start_conversation`, `chat`, `inspect_conversation`,
+  `finish_conversation`, and `stop_conversation`;
+- `add_fact`, `set_predicate`, and `get_predicate`;
+- `propose`, `resolve`, `learn_response`, and `retire_response`;
+- `flush` and `close` for persistence and lifecycle ownership.
+
+One core can retain multiple user conversations while sharing learned
+knowledge. Regulated-cache operations do not require a chatbot conversation.
 
 ### Engram methods
 
@@ -552,10 +585,10 @@ the previous response. There is deliberately no batch-send tool. State is
 persistent between tool calls while the MCP process lives; pass `store_path`
 to `engram_start` when it must also survive process restarts.
 
-FastMCP and the CLI are additive adapters over the same `Engram` and
-`pipeline.chat` Python interfaces shown above. They do not replace or alter the
-programmatic API. They are local human/agent interfaces, not the deferred gRPC
-production service.
+FastMCP and the CLI are adapters over the same transport-neutral `EngramCore`.
+They do not replace or alter the lower-level programmatic API. They are local
+human/agent interfaces; future transports can reuse the core without importing
+MCP or CLI code.
 
 Use `engram_send` for completed chatbot turns. For Tapestry, use
 `engram_propose` followed by `engram_resolve`; route misses and rejections to

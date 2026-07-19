@@ -10,8 +10,10 @@ Actor answer is learned by Engram unless the Actor reports `IDK`.
 
 The complete process-boundary workflow is implemented by `engram_propose`,
 `engram_resolve`, `engram_learn_response`, and `engram_retire_response`. The
-existing Python API remains available for applications embedding Engram in
-process. See [mcp-integration.md](mcp-integration.md) for exact tool contracts.
+same operations are available directly on the transport-neutral `EngramCore`
+for applications embedding Engram in process. The lower-level Python API also
+remains available. See [mcp-integration.md](mcp-integration.md) for exact tool
+contracts.
 
 ## Architecture
 

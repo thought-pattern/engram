@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
-import engram.mcp_server as mcp_server
+import engram.service as engram_service
 from engram.mcp_server import MCPConversationService, create_mcp_server
 
 
@@ -288,7 +288,7 @@ def test_regulated_state_expires_and_is_not_persisted(tmp_path) -> None:
 
 
 def test_regulated_proposal_storage_is_bounded(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(mcp_server, "MAX_TRANSIENT_RECORDS", 2)
+    monkeypatch.setattr(engram_service, "MAX_TRANSIENT_RECORDS", 2)
     service = MCPConversationService()
     service.start(seed_path=str(_seed_file(tmp_path)))
 

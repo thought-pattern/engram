@@ -159,14 +159,14 @@ single shared fact with no user attribution and does not create or modify a
 conversation context. The optional source label is also caller-owned, making
 it suitable for research tools, imports, or other non-conversational sources.
 
-The Python API remains the canonical integration surface. A shared
-`ConversationRuntime` adds turn diagnostics and transcript/report generation
-without changing `Engram`, `query`, `pattern_query`, `pipeline.respond`, or
-`pipeline.chat`. The human CLI and FastMCP stdio server are thin adapters over
-that runtime. Both keep an Engram instance alive across turns; the MCP host
-owns the server process, and an optional store path makes state durable across
-process restarts. The separately discussed gRPC production service remains
-deferred.
+The lower-level Python API remains available without compatibility changes.
+`EngramCore` is the transport-neutral application facade: it owns the shared
+`Engram`, user-bound `ConversationRuntime` instances, persistence, and
+regulated-cache lifecycle. `ConversationRuntime` supplies turn diagnostics and
+transcript/report generation without changing `Engram`, `query`,
+`pattern_query`, `pipeline.respond`, or `pipeline.chat`. The human CLI and
+FastMCP stdio server are thin adapters over `EngramCore`; future interfaces can
+reuse it without importing either adapter.
 
 Conversational calls return one reply per user turn. Multi-sentence input is
 still processed sentence by sentence for matching, learning, and context.
@@ -962,8 +962,8 @@ For LLM applications where cost, latency, and debuggability matter, Engram provi
 
 ## Further Reading
 
-- [README.md](README.md) - Quick start guide and API reference
-- [engram/core.py](engram/core.py) - Core implementation
-- [engram/pattern.py](engram/pattern.py) - AIML-style pattern matching
-- [engram/template.py](engram/template.py) - Dynamic template processing
-- [engram/scoring.py](engram/scoring.py) - Scoring algorithm details
+- [README.md](../README.md) - Quick start guide and API reference
+- [engram/core.py](../engram/core.py) - Core implementation
+- [engram/pattern.py](../engram/pattern.py) - AIML-style pattern matching
+- [engram/template.py](../engram/template.py) - Dynamic template processing
+- [engram/scoring.py](../engram/scoring.py) - Scoring algorithm details

@@ -12,11 +12,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from engram import metrics, persistence, sessions
+from engram import metrics, sessions
 from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
-from engram.conversation import ConversationRuntime
 from engram.core import Engram
+from engram.service import EngramCore
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
@@ -287,17 +287,9 @@ def resolve_config(args: argparse.Namespace) -> dict:
     return config
 
 
-def load_engram_instance(args: argparse.Namespace) -> Engram:
-    """Load engram from file (applying the resolved config) or create a new one."""
-    path = Path(args.store)
-    if path.exists():
-        return persistence.load_engram(path, config=args.engram_config)
-    return Engram(config=args.engram_config)
-
-
-def save_engram(engram: Engram, store_path: str) -> None:
-    """Save engram to file."""
-    persistence.save(engram, store_path)
+def load_core_instance(args: argparse.Namespace) -> EngramCore:
+    """Load the shared core using the CLI's resolved configuration."""
+    return EngramCore.open(config=args.engram_config, store_path=args.store)
 
 
 def load_seed_pairs(path: str = "") -> list:
@@ -322,10 +314,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("Use --force to overwrite", file=sys.stderr)
         return 1
 
-    engram = Engram(config=args.engram_config)
+    core = EngramCore(Engram(config=args.engram_config), store_path=args.store)
+    engram = core.engram
     pairs = load_seed_pairs()
     counts = engram.sync_corpus(pairs)
-    save_engram(engram, args.store)
+    core.flush()
     print(f"Initialized engram store: {args.store} ({counts['added']} seed statements)")
     return 0
 
@@ -338,7 +331,8 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
     touched. Run after updating data/seed.json so existing stores pick up the
     changes.
     """
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     pairs = load_seed_pairs(args.file)
     if not pairs:
@@ -347,7 +341,7 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
         return 1
 
     counts = engram.sync_corpus(pairs, prune=args.prune)
-    save_engram(engram, args.store)
+    core.flush()
     summary = f"Seed sync: {counts['added']} added, {counts['updated']} updated, {counts['unchanged']} unchanged"
     if args.prune:
         summary += f", {counts['pruned']} pruned"
@@ -357,7 +351,8 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
 
 def cmd_store(args: argparse.Namespace) -> int:
     """Store a statement."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
@@ -371,14 +366,15 @@ def cmd_store(args: argparse.Namespace) -> int:
             pass
 
     stmt_id = engram.store(text, tier=tier, pattern=args.pattern, template=template)
-    save_engram(engram, args.store)
+    core.flush()
     print(f"Stored: {stmt_id} ({tier.value})")
     return 0
 
 
 def cmd_load(args: argparse.Namespace) -> int:
     """Load statements from JSON file."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     path = Path(args.file)
@@ -412,14 +408,15 @@ def cmd_load(args: argparse.Namespace) -> int:
             engram.store(item, tier=tier)
             count += 1
 
-    save_engram(engram, args.store)
+    core.flush()
     print(f"Loaded {count} statements ({tier.value})")
     return 0
 
 
 def cmd_query(args: argparse.Namespace) -> int:
     """Query for statements."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     result = engram.query(args.text, session_id=args.session, limit=args.limit)
 
@@ -429,7 +426,7 @@ def cmd_query(args: argparse.Namespace) -> int:
     if args.hit and result["matches"]:
         top_statement = result["matches"][0][0]
         engram.record_hit(result["keywords"], statement_id=top_statement["id"])
-    save_engram(engram, args.store)
+    core.flush()
 
     print(f"Keywords: {', '.join(result['keywords'])}")
     print(f"Matches: {len(result['matches'])}")
@@ -446,7 +443,8 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_session(args: argparse.Namespace) -> int:
     """Session management commands."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
     modified = False
 
     if args.session_command == "create":
@@ -534,14 +532,15 @@ def cmd_session(args: argparse.Namespace) -> int:
         return 1
 
     if modified:
-        save_engram(engram, args.store)
+        core.flush()
 
     return 0
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
     metric_data = metrics.get_metrics(engram)
 
     print("ENGRAM Metrics")
@@ -562,7 +561,8 @@ def cmd_metrics(args: argparse.Namespace) -> int:
 
 def cmd_decay(args: argparse.Namespace) -> int:
     """Age hit statistics so old evidence loses standing over time."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     try:
         changed = metrics.decay_statistics(engram, factor=args.factor)
@@ -570,14 +570,15 @@ def cmd_decay(args: argparse.Namespace) -> int:
         print(f"Error: {err}", file=sys.stderr)
         return 1
 
-    save_engram(engram, args.store)
+    core.flush()
     print(f"Decayed statistics on {changed} records (factor {args.factor})")
     return 0
 
 
 def cmd_keywords(args: argparse.Namespace) -> int:
     """Keyword analysis."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     if args.zero_hit:
         results = metrics.get_zero_hit_keywords(engram, min_queries=args.min_queries)
@@ -606,7 +607,8 @@ def cmd_keywords(args: argparse.Namespace) -> int:
 
 def cmd_coverage(args: argparse.Namespace) -> int:
     """Coverage analysis."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     if args.report:
         report = metrics.get_coverage_report(engram)
@@ -653,7 +655,8 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export statements."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
+    engram = core.engram
 
     statements = []
     for stmt in engram.statements:
@@ -693,28 +696,31 @@ class InteractiveChat:
 
     def __init__(
         self,
-        engram: Engram,
+        core_or_engram: EngramCore | Engram,
         session_id=None,
         enable_graph: bool = False,
         store_path: str = "",
         initial_bot_text: str = "",
         transcript_path: str = "",
     ):
-        self.engram = engram
-        self.store_path = store_path
+        if isinstance(core_or_engram, EngramCore):
+            self.core = core_or_engram
+        else:
+            self.core = EngramCore(core_or_engram, store_path=store_path)
+        self.engram = self.core.engram
+        self.store_path = str(self.core.store_path) if self.core.store_path else store_path
         self.debug_mode = False
         self.session_id = session_id or sessions.create_session(
-            engram,
+            self.engram,
         )
 
-        # Ensure session exists
-        self.runtime = ConversationRuntime(
-            engram,
+        self.core.start_conversation(
             user_id=self.session_id,
             initial_bot_text=initial_bot_text,
             transcript_path=transcript_path or None,
         )
-        self.session = sessions.get_session(engram, self.session_id, create_if_missing=True)
+        self.runtime = self.core.get_conversation(self.session_id)
+        self.session = sessions.get_session(self.engram, self.session_id, create_if_missing=True)
 
         # Note: Graph support would require extending core.py to accept graph callbacks
         if enable_graph:
@@ -726,7 +732,7 @@ class InteractiveChat:
         Pattern match first; a question that only hits the catch-all consults
         keyword retrieval before settling for the deflection.
         """
-        result = self.runtime.send(user_input)
+        result = self.core.chat(self.session_id, user_input)
 
         if self.debug_mode:
             detail = f"Source: {result['source']} | Score: {result['score']:.2f}"
@@ -775,40 +781,33 @@ class InteractiveChat:
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
 
         elif cmd == "metrics":
-            metric_data = self.runtime.inspect()["metrics"]
+            metric_data = self.core.inspect_conversation(self.session_id)["metrics"]
             print(f"Patterns: {len(self.engram.pattern_matcher)}")
             print(f"Statements: {metric_data['statement_count']}")
             print(f"Sessions: {metric_data['session_count']}")
             print(f"Hit rate: {metric_data['hit_rate']:.1%}")
 
         elif cmd == "inspect":
-            print(json.dumps(self.runtime.inspect(), indent=2))
+            print(json.dumps(self.core.inspect_conversation(self.session_id), indent=2))
 
         elif cmd == "finish":
             output_prefix = line.split(maxsplit=1)[1] if len(line.split(maxsplit=1)) == 2 else "engram-chat-transcript"
-            print(json.dumps(self.runtime.write_report(output_prefix), indent=2))
+            print(json.dumps(self.core.finish_conversation(self.session_id, output_prefix), indent=2))
 
         elif cmd == "topic" and len(parts) >= 2:
-            session = sessions.get_session(self.engram, self.session_id)
-            if session:
-                session["predicates"]["topic"] = parts[1]
-                print(f"Topic set to: {parts[1]}")
+            self.core.set_predicate(self.session_id, "topic", parts[1])
+            print(f"Topic set to: {parts[1]}")
 
         elif cmd == "set" and len(parts) >= 3:
-            session = sessions.get_session(self.engram, self.session_id)
-            if session:
-                session["predicates"][parts[1]] = parts[2]
-                print(f"Set {parts[1]} = {parts[2]}")
+            self.core.set_predicate(self.session_id, parts[1], parts[2])
+            print(f"Set {parts[1]} = {parts[2]}")
 
         elif cmd == "get" and len(parts) >= 2:
-            session = sessions.get_session(self.engram, self.session_id)
-            if session:
-                value = session.get("predicates", {}).get(parts[1], "(not set)")
-                print(f"{parts[1]} = {value}")
+            value = self.core.get_predicate(self.session_id, parts[1], "(not set)")
+            print(f"{parts[1]} = {value}")
 
         elif cmd == "save":
-            if self.store_path:
-                save_engram(self.engram, self.store_path)
+            if self.core.flush():
                 print(f"Saved: {self.store_path}")
             else:
                 print("No store path configured; state will be saved on exit.")
@@ -833,10 +832,10 @@ class InteractiveChat:
 
 def cmd_interactive(args: argparse.Namespace) -> int:
     """Interactive AIML-style chat."""
-    engram = load_engram_instance(args)
+    core = load_core_instance(args)
 
     chat = InteractiveChat(
-        engram,
+        core,
         session_id=args.session,
         enable_graph=args.graph,
         store_path=args.store,
@@ -846,7 +845,7 @@ def cmd_interactive(args: argparse.Namespace) -> int:
 
     chat.run()
 
-    save_engram(engram, args.store)
+    core.stop_conversation(chat.session_id)
     print("Saved.")
     return 0
 
@@ -874,9 +873,10 @@ def main(argv=None) -> int:
 
     # Auto-init if store doesn't exist
     if args.command != "init" and not Path(args.store).exists():
-        engram = Engram(config=args.engram_config)
+        core = EngramCore(Engram(config=args.engram_config), store_path=args.store)
+        engram = core.engram
         engram.sync_corpus(load_seed_pairs())
-        save_engram(engram, args.store)
+        core.flush()
         print(f"Initialized engram store: {args.store}")
 
     commands = {

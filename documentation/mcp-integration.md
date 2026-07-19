@@ -6,9 +6,8 @@ Engram provides a FastMCP stdio server for agents and LLM hosts that need a
 persistent conversational process or a Regulator-controlled response cache.
 The ten tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, report generation, and a two-phase propose/resolve cache
-interface. They are implemented in `engram/mcp_server.py` over the same
-`Engram`, `pipeline.chat`, and `ConversationRuntime` APIs used by in-process
-callers and the human CLI.
+interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
+`EngramCore` in `engram/service.py`, which is also used by the human CLI.
 
 This document covers:
 
@@ -29,17 +28,21 @@ engram-mcp / python -m engram.mcp_server
 MCPConversationService
     |
     v
-one active ConversationRuntime and Engram instance
+EngramCore
+    |
+    v
+one MCP-active ConversationRuntime over a shared Engram instance
 ```
 
 The MCP host owns process lifetime. `engram_start` creates a conversation
 inside the process; it does not start the process. `engram_stop` releases that
 conversation; it does not terminate the MCP server.
 
-One MCP server process supports one active `ConversationRuntime` at a time.
-Run separate server processes when a host needs independently owned concurrent
-conversation lifecycles. Within Engram, user contexts are still keyed by the
-caller-owned `user_id`.
+The MCP adapter deliberately exposes one active `ConversationRuntime` at a
+time. `EngramCore` itself can own multiple user runtimes, so a future interface
+does not inherit that MCP lifecycle restriction. Run separate MCP processes
+when a host needs independently owned concurrent tool lifecycles. User context
+is keyed by the caller-owned `user_id`.
 
 ## Installation and launch
 
@@ -209,7 +212,8 @@ that dependency and would not constitute an observed conversation.
 
 ## Persistence and recovery
 
-`store_path` and `transcript_path` serve different purposes:
+`EngramCore` owns persistence; `store_path` and `transcript_path` serve
+different purposes:
 
 - `store_path` persists the complete Engram store, indexes, statistics,
   sessions, and non-secret configuration across MCP process restarts;
