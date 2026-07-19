@@ -227,6 +227,7 @@ REPETITION_FEEDBACK_MARKERS = (
     "asked that already",
 )
 RESPONSE_SIMILARITY_THRESHOLD = 0.72
+REPETITION_HISTORY_SIZE = 8
 
 # Responses when a stated fact matches what is already stored ({existing} is
 # replaced with the stored statement text).

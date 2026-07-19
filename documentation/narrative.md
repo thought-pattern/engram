@@ -145,8 +145,9 @@ Engram sessions track conversation state, enabling context expansion for pronoun
 
 The user-aware entry point is `engram.pipeline.chat`. Its `user_id` is an
 opaque, case-sensitive string maintained by the calling application; missing
-or empty values use `"0"`. Histories, predicates, topics, and pronoun context
-stay isolated under that label. Facts learned during conversation are stored
+or empty values use `"0"`. Histories, predicates, active topics, referenced
+entities, dialogue-act histories, and pronoun context stay isolated under that
+label. Facts learned during conversation are stored
 globally with `introduced_by_user_id`, so Alice can teach the system that sushi
 is good and Carol can later retrieve that fact without receiving Alice's
 conversation history. A fact is stored once; its common query forms are matcher
@@ -168,9 +169,20 @@ process restarts. The separately discussed gRPC production service remains
 deferred.
 
 Conversational calls return one reply per user turn. Multi-sentence input is
-still processed sentence by sentence for matching, learning, and context, but
-`pipeline.chat` selects the final matched response instead of concatenating
-unrelated fragments. The lower-level `pattern_query` combination behavior is
+still processed sentence by sentence for matching, learning, and context.
+`pipeline.chat` classifies dialogue acts and selects the final substantive
+move; a trailing thanks or acknowledgment therefore does not discard an
+earlier question or topic change. Topic-aware fallback responses can refer to
+the active per-user topic or an already learned fact instead of repeatedly
+asking generic therapist-style questions. Topic state follows current evidence:
+explicit shifts and recalled facts promote a topic, unrelated substantive
+turns replace or clear stale state, and conversational filler is removed from
+topic labels. Referenced entities are canonicalized per user instead of being
+accumulated under duplicate labels. Broad scripted patterns yield to grounded
+dialogue behavior, and global response-history checks vary repeated replies.
+Conversational fact inference also returns admission diagnostics with stable
+rejection reasons; explicit `add_fact` ingestion deliberately bypasses that
+heuristic gate. The lower-level `pattern_query` combination behavior is
 retained for callers that intentionally use AIML-style multi-sentence output.
 
 ### Role 4: Response Validator
@@ -337,6 +349,8 @@ Sessions track:
 
 - Previous bot responses (for context expansion)
 - Predicates (variables like topic, user name, preferences)
+- The active conversational topic and recent referenced entities
+- Recent dialogue acts used for whole-turn response selection
 - Input/output history
 - TTL for automatic expiration
 

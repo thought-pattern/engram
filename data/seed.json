@@ -669,11 +669,11 @@
     { "pattern": "LET US PLAY *", "response": "Sure! I can flip a coin, roll a die, or pick a number." },
     {
       "pattern": "LET US TALK ABOUT *",
-      "response": "Sure - let's talk about {star1}. What interests you about it?"
+      "response": "Sure - let's talk about {star1}."
     },
     {
       "pattern": "LET US * TALK ABOUT *",
-      "response": "Sure - let's talk about {star2}. What interests you about it?"
+      "response": "Sure - let's talk about {star2}."
     },
     { "pattern": "PLAY A GAME", "response": "Sure! I can flip a coin, roll a die, or pick a number. What'll it be?" },
 

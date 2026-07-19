@@ -11,12 +11,13 @@ import os
 import random
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import UTC, datetime
 from pathlib import Path
 
 from engram import metrics, pipeline, sessions
 from engram.constants import Tier
+from engram.text import normalize
 
 CONVERSATION_REPORT_VERSION = 1
 
@@ -50,6 +51,10 @@ def session_view(session: dict) -> dict:
         "session_id": session["session_id"],
         "previous_response": session["previous_response"],
         "predicates": dict(session["predicates"]),
+        "active_topic": session.get("active_topic", ""),
+        "entities": list(session.get("entities", [])),
+        "dialogue_act_history": list(session.get("dialogue_act_history", [])),
+        "last_fact_admissions": list(session.get("last_fact_admissions", [])),
         "input_history": list(session["input_history"]),
         "response_history": list(session["response_history"]),
         "history_size": session["history_size"],
@@ -64,6 +69,86 @@ def _predicate_changes(before: dict, after: dict) -> dict:
         if old_value != new_value:
             changes[name] = {"before": old_value, "after": new_value}
     return changes
+
+
+class ConversationTurnPlanner:
+    """Budget a scripted/adaptive conversation without accidental repeats.
+
+    Planned messages are always preserved, the final turn is reserved for the
+    farewell, and adaptive messages are accepted only while spare turn budget
+    remains. Exhaustion and unapproved normalized duplicates fail explicitly
+    instead of generating repeated filler.
+    """
+
+    def __init__(
+        self,
+        planned_messages: list[str],
+        total_turns: int,
+        farewell: str,
+        allowed_repeats: list[str] | None = None,
+    ) -> None:
+        if not isinstance(total_turns, int) or total_turns < 1:
+            raise ValueError("total_turns must be a positive integer")
+        if len(planned_messages) > total_turns - 1:
+            raise ValueError("planned messages must leave the final turn for the farewell")
+
+        self.total_turns = total_turns
+        self._planned = deque(planned_messages)
+        self._farewell = farewell
+        self._sent_keys: set[str] = set()
+        self._sent_messages: list[str] = []
+        self._allowed_repeat_keys = {self._message_key(message) for message in allowed_repeats or []}
+
+        planned_keys = [self._message_key(message) for message in planned_messages]
+        farewell_key = self._message_key(farewell)
+        seen: set[str] = set()
+        for key in [*planned_keys, farewell_key]:
+            if key in seen and key not in self._allowed_repeat_keys:
+                raise ValueError("conversation plan contains an unapproved repeated input")
+            seen.add(key)
+
+    @staticmethod
+    def _message_key(message: str) -> str:
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("conversation messages must be non-empty strings")
+        key = normalize(message)
+        if not key:
+            raise ValueError("conversation messages must contain meaningful text")
+        return key
+
+    @property
+    def turn_count(self) -> int:
+        """Return how many messages the planner has issued."""
+        return len(self._sent_messages)
+
+    @property
+    def remaining_turns(self) -> int:
+        """Return the unissued portion of the fixed turn budget."""
+        return self.total_turns - self.turn_count
+
+    def next_message(self, adaptive_message: str | None = None) -> str:
+        """Issue the next unique message while preserving plan and farewell."""
+        remaining = self.remaining_turns
+        if remaining <= 0:
+            raise StopIteration
+
+        if remaining == 1:
+            if self._planned:
+                raise RuntimeError("planned messages remain at the reserved farewell turn")
+            candidate = self._farewell
+        elif adaptive_message is not None and remaining > len(self._planned) + 1:
+            candidate = adaptive_message
+        elif self._planned:
+            candidate = self._planned.popleft()
+        else:
+            raise RuntimeError("conversation plan exhausted before the reserved farewell")
+
+        key = self._message_key(candidate)
+        if key in self._sent_keys and key not in self._allowed_repeat_keys:
+            raise ValueError("conversation driver attempted an unapproved repeated input")
+        self._sent_keys.add(key)
+        self._sent_messages.append(candidate)
+        return candidate
 
 
 class ConversationRuntime:
@@ -136,6 +221,10 @@ class ConversationRuntime:
                 "score": round(result["score"], 3),
                 "pattern": result["pattern"],
                 "captured": result["captured"],
+                "dialogue_act": result.get("dialogue_act", ""),
+                "active_topic": result.get("active_topic", ""),
+                "entities": result.get("entities", []),
+                "fact_admissions": result.get("fact_admissions", []),
                 "elapsed_seconds": round(elapsed, 3),
                 "context_changes": {
                     "previous_response": {
