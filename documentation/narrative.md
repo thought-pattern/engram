@@ -168,6 +168,13 @@ transcript/report generation without changing `Engram`, `query`,
 FastMCP stdio server are thin adapters over `EngramCore`; future interfaces can
 reuse it without importing either adapter.
 
+The deployed application model is deliberately single-instance: one process
+owns one `EngramCore` and one configured JSON store. With a store configured,
+the core atomically checkpoints successful durable mutations, while proposals
+and idempotency records remain bounded, expiring memory-only state. `close()`
+performs the final lifecycle flush. The remaining gRPC transport work is
+tracked in [grpc-integration.md](grpc-integration.md).
+
 Conversational calls return one reply per user turn. Multi-sentence input is
 still processed sentence by sentence for matching, learning, and context.
 `pipeline.chat` classifies dialogue acts and selects the final substantive

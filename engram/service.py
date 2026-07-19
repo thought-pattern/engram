@@ -47,9 +47,18 @@ def resolve_seed_path(seed_path: str) -> Path:
 class EngramCore:
     """Shared application runtime used by every Engram interface."""
 
-    def __init__(self, engram: Engram | None = None, store_path: str | Path = "") -> None:
+    def __init__(
+        self,
+        engram: Engram | None = None,
+        store_path: str | Path = "",
+        *,
+        checkpoint_on_mutation: bool = True,
+    ) -> None:
+        if not isinstance(checkpoint_on_mutation, bool):
+            raise ValueError("checkpoint_on_mutation must be a boolean")
         self.engram = engram or Engram()
         self.store_path = Path(store_path).resolve() if store_path else None
+        self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
         self.lock = threading.RLock()
         self._reset_regulated_state()
@@ -61,6 +70,7 @@ class EngramCore:
         config: dict | None = None,
         store_path: str | Path = "",
         seed_path: str | Path = "",
+        checkpoint_on_mutation: bool = True,
     ) -> "EngramCore":
         """Load or create a core, optionally synchronizing a seed corpus."""
         resolved_store = Path(store_path).resolve() if store_path else None
@@ -77,7 +87,22 @@ class EngramCore:
             seed_data = json.loads(resolved_seed.read_text(encoding="utf-8"))
             engram.sync_corpus(seed_data.get("pairs", []))
 
-        return cls(engram, store_path=resolved_store or "")
+        core = cls(
+            engram,
+            store_path=resolved_store or "",
+            checkpoint_on_mutation=checkpoint_on_mutation,
+        )
+        if seed_path:
+            core._checkpoint()
+        return core
+
+    def __enter__(self) -> "EngramCore":
+        """Return this core as a single owned application runtime."""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Flush configured state and release runtime resources."""
+        self.close()
 
     def start_conversation(
         self,
@@ -100,6 +125,7 @@ class EngramCore:
             )
             self.conversations[normalized_user_id] = runtime
             snapshot = runtime.inspect()
+            self._checkpoint()
             return {
                 "started": True,
                 "user_id": snapshot["user_id"],
@@ -121,7 +147,9 @@ class EngramCore:
     def chat(self, user_id: str, text: str) -> dict:
         """Submit one chatbot turn to an active user conversation."""
         with self.lock:
-            return self.get_conversation(user_id).send(text)
+            result = self.get_conversation(user_id).send(text)
+            self._checkpoint()
+            return result
 
     def inspect_conversation(self, user_id: str) -> dict:
         """Inspect one conversation and shared regulated-cache metrics."""
@@ -135,7 +163,9 @@ class EngramCore:
         """Add one unattributed shared fact without changing user context."""
         with self.lock:
             statement_id = self.engram.add_fact(text, source_label=source_label)
-            return statement_view(self.engram.get_statement(statement_id))
+            result = statement_view(self.engram.get_statement(statement_id))
+            self._checkpoint()
+            return result
 
     def finish_conversation(self, user_id: str, output_prefix: str | Path = "engram-transcript") -> dict:
         """Persist the store and write reports without ending a conversation."""
@@ -160,15 +190,19 @@ class EngramCore:
 
     def set_predicate(self, user_id: str, name: str, value: str) -> None:
         """Set one caller-owned predicate on a user context."""
-        normalized_user_id = sessions.normalize_user_id(user_id)
-        session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
-        with self.engram.session_lock:
-            session["predicates"][name] = value
+        with self.lock:
+            normalized_user_id = sessions.normalize_user_id(user_id)
+            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
+            with self.engram.session_lock:
+                session["predicates"][name] = value
+            self._checkpoint()
 
     def get_predicate(self, user_id: str, name: str, default=""):
         """Read one caller-owned predicate from a user context."""
         normalized_user_id = sessions.normalize_user_id(user_id)
-        session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
+        session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
+        if session is None:
+            return default
         with self.engram.session_lock:
             return session["predicates"].get(name, default)
 
@@ -231,6 +265,7 @@ class EngramCore:
                 if existing["signature"] != signature:
                     raise ValueError("request_id is already associated with a different proposal request")
                 self.regulated_metrics["idempotent_retries"] += 1
+                self._checkpoint()
                 return self._proposal_result(existing, idempotent=True)
 
             def statement_matches_scope(statement: dict) -> bool:
@@ -278,6 +313,7 @@ class EngramCore:
             if not candidates:
                 self.regulated_metrics["misses"] += 1
             self._enforce_transient_bound()
+            self._checkpoint()
             return self._proposal_result(self.proposals[proposal_id], idempotent=False)
 
     def resolve(self, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
@@ -302,6 +338,8 @@ class EngramCore:
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(record["resolution"])
                 result["idempotent"] = True
+                if outcome == "accepted":
+                    self._checkpoint()
                 return result
 
             candidate_responses = record["candidate_responses"]
@@ -331,6 +369,8 @@ class EngramCore:
             }
             record["resolution_signature"] = resolution_signature
             record["resolution"] = resolution
+            if outcome == "accepted":
+                self._checkpoint()
             return deepcopy(resolution)
 
     def learn_response(
@@ -376,6 +416,7 @@ class EngramCore:
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(previous["result"])
                 result["idempotent"] = True
+                self._checkpoint()
                 return result
 
             tapestry_metadata = deepcopy(metadata)
@@ -416,6 +457,7 @@ class EngramCore:
             }
             self.regulated_metrics[f"learned_{action}"] += 1
             self._enforce_transient_bound()
+            self._checkpoint()
             return deepcopy(result)
 
     def retire_response(self, statement_id: str, reason: str, request_id: str) -> dict:
@@ -433,6 +475,7 @@ class EngramCore:
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(previous["result"])
                 result["idempotent"] = True
+                self._checkpoint()
                 return result
 
             statement = self.engram.get_statement(statement_id)
@@ -456,6 +499,7 @@ class EngramCore:
             }
             self.regulated_metrics["retired"] += 1
             self._enforce_transient_bound()
+            self._checkpoint()
             return deepcopy(result)
 
     def regulated_cache_metrics(self) -> dict:
@@ -521,6 +565,10 @@ class EngramCore:
             "retired": 0,
             "idempotent_retries": 0,
         }
+
+    def _checkpoint(self) -> None:
+        if self.checkpoint_on_mutation:
+            self.flush()
 
     def _cleanup_transient(self) -> None:
         cutoff = time.monotonic() - PROPOSAL_TTL_SECONDS

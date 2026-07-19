@@ -225,10 +225,11 @@ When an existing store is loaded and `seed_path` is non-empty, the configured
 seed is synchronized into it. Dynamic learned content survives that refresh.
 Graph credentials are never persisted.
 
-If the host process exits without `engram_stop`, the per-turn transcript can
-still describe the observed conversation, but only a previously completed
-store save is durable. Use `engram_finish` or `engram_stop` at controlled
-boundaries.
+Successful durable mutations are atomically checkpointed when `store_path` is
+configured. An abrupt host exit can still lose transient proposals and any
+operation whose checkpoint failed, while the per-turn transcript separately
+describes observed chatbot turns. `engram_finish` and `engram_stop` remain
+explicit report and lifecycle boundaries.
 
 ## Security and authority boundaries
 
@@ -393,8 +394,9 @@ is retry-safe by `request_id`; conflicting request reuse is an error.
 Proposals and idempotency records are process-local, retained for five minutes,
 and bounded to 1,000 records of each kind. They are cleared by `engram_stop`
 and are never serialized. Learned responses, their scope/provenance metadata,
-and accepted hit statistics are part of the normal Engram store and become
-durable at `engram_finish` or `engram_stop` when `store_path` is configured.
+query statistics, accepted hit statistics, retirements, and user context are
+checkpointed to the normal Engram store after their successful mutating call
+when `store_path` is configured.
 
 Service calls are serialized by the conversation service lock. Concurrent
 identical resolutions therefore record exactly one accepted hit.

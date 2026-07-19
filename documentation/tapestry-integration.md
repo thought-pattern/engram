@@ -165,6 +165,11 @@ patternless response already has the same keyword set and exact scope, Engram
 replaces it in place and resets its statistics rather than accumulating
 duplicates. Other scopes remain independent. Provenance metadata is persisted.
 
+When the core has a configured store, a successful learn, accepted resolution,
+or retirement is atomically checkpointed before the call returns. Proposal and
+idempotency records remain transient and are intentionally absent after a
+process restart.
+
 Do not pass an Actor answer through conversational fact extraction merely to
 cache it. Response caching and durable fact ingestion are different actions:
 
