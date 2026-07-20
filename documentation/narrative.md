@@ -164,9 +164,10 @@ The lower-level Python API remains available without compatibility changes.
 `Engram`, user-bound `ConversationRuntime` instances, persistence, and
 regulated-cache lifecycle. `ConversationRuntime` supplies turn diagnostics and
 transcript/report generation without changing `Engram`, `query`,
-`pattern_query`, `pipeline.respond`, or `pipeline.chat`. The human CLI and
-FastMCP stdio server are thin adapters over `EngramCore`; future interfaces can
-reuse it without importing either adapter.
+`pattern_query`, `pipeline.respond`, or `pipeline.chat`. The human CLI,
+FastMCP stdio server, and single-instance gRPC server are thin adapters over
+`EngramCore`; future interfaces can reuse it without importing an existing
+adapter.
 
 The deployed application model is deliberately single-instance: one process
 owns one `EngramCore` and one configured JSON store. With a store configured,
@@ -176,8 +177,8 @@ is concurrency-safe and performs the final lifecycle flush. The core exposes
 stable adapter-facing errors and a shared lifecycle/durability status snapshot.
 A failed checkpoint leaves the mutation in live memory, marks durability
 degraded, and can be recovered by a later flush or exact idempotent retry. The
-remaining work in [grpc-integration.md](grpc-integration.md) is now limited to
-the protocol and its server adapter.
+implemented protobuf, health, persistence, and shutdown contract is documented
+in [grpc-integration.md](grpc-integration.md).
 
 Conversational calls return one reply per user turn. Multi-sentence input is
 still processed sentence by sentence for matching, learning, and context.

@@ -1,176 +1,220 @@
-# Engram gRPC Integration Plan
+# Engram gRPC Integration
 
-## Status
+## Status and scope
 
-The transport-neutral preparation is complete. No gRPC package, protobuf,
-generated stub, server, or gRPC test has been added yet.
+Engram provides a versioned unary gRPC API in `engram.v1`. The packaged
+`engram-grpc` process creates exactly one `EngramCore`, exposes it through a
+thin protobuf adapter, publishes the standard gRPC health service, and closes
+the core during graceful shutdown.
 
-Engram will run as one process containing exactly one shared `EngramCore`.
-There is no replication, load balancing, shared transaction service,
-distributed locking, or cross-instance consistency protocol.
+There is no replication, load balancing, distributed locking, shared
+transaction service, or cross-instance consistency protocol. Deploy one
+server process with one JSON store.
 
-## Work boundary
+## Installation and launch
 
-### Completed non-gRPC work
+```bash
+python -m pip install -e .
 
-- `EngramCore` owns the shared `Engram`, user conversations, persistence, and
-  regulated-cache lifecycle.
-- MCP and CLI behavior delegates to that core through thin adapters.
-- One core can isolate multiple `user_id` conversation contexts while sharing
-  learned knowledge.
-- Regulated-cache operations do not require an active chatbot conversation.
-- A configured store is written atomically after successful durable mutations.
-- The core exposes stable invalid-request, not-found, conflict, lifecycle, and
-  persistence exceptions for transport adapters.
-- Lifecycle is explicit (`running`, `closing`, `closed`); `close()` is
-  concurrency-safe and idempotent, and the context-manager exit performs the
-  final flush.
-- Transport-neutral status reports readiness, health, durability, dirty state,
-  the last checkpoint, and the last persistence error.
-- A failed checkpoint leaves the live single-instance state available, reports
-  degraded durability, and supports recovery with `flush()` or an idempotent
-  retry.
-- Proposals and idempotency records remain bounded, expiring, process-local
-  state and are never serialized.
-- Restart, adapter parity, concurrent shutdown, and checkpoint failure/recovery
-  behavior are covered by the Python test suite.
+engram-grpc \
+  --bind 127.0.0.1:50051 \
+  --store-path state/engram.json \
+  --seed-path data/seed.json \
+  --transcript-directory state/transcripts \
+  --report-directory state/reports
+```
 
-### Remaining gRPC work
+Running the module is equivalent:
 
-1. Define the protobuf package, messages, enums, and service.
-2. Add `grpcio` as a runtime dependency and `grpcio-tools` as a development
-   dependency.
-3. Generate and commit the Python protobuf and gRPC stubs.
-4. Implement a thin gRPC adapter over one `EngramCore` instance.
-5. Map the core's typed exceptions to gRPC status codes and expose
-   `PersistenceError.state_changed` in error details.
-6. Add the standard gRPC health service backed by `EngramCore.status()`.
-7. Wire process signals to graceful server shutdown and `EngramCore.close()`.
-8. Add in-process protocol, restart, deadline, and shutdown tests.
-9. Document launch configuration and provide a packaged server entry point.
+```bash
+python -m engram.grpc_server --bind 127.0.0.1:50051
+```
 
-Everything above is transport work. The core does not need another lifecycle,
-readiness, persistence, concurrency, or error-contract refactor before the
-gRPC adapter is started.
+The server accepts these deployment options:
 
-## Core contract available to the adapter
-
-`engram.errors` provides a transport-neutral error taxonomy. The exact gRPC
-mapping belongs in the adapter and protocol specification, but the initial
-mapping should be:
-
-| Core exception | Proposed gRPC status | Meaning |
+| Option | Default | Purpose |
 | --- | --- | --- |
-| `InvalidRequestError` | `INVALID_ARGUMENT` | The request is malformed or has an invalid value. |
-| `ResourceNotFoundError` | `NOT_FOUND` | The requested conversation, proposal, or statement is absent. |
-| `ConflictError` | `ALREADY_EXISTS` or `ABORTED` | The request conflicts with existing lifecycle or idempotency state. |
-| `LifecycleError` | `FAILED_PRECONDITION` or `UNAVAILABLE` | The core is not accepting that operation in its current state. |
-| `PersistenceError` | `INTERNAL` or `UNAVAILABLE` | A store load or checkpoint failed; error details must include `operation` and `state_changed`. |
+| `--bind` | `127.0.0.1:50051` | Listen address. |
+| `--store-path` | empty | Persistent JSON store; empty disables store persistence. |
+| `--seed-path` | `data/seed.json` | Seed synchronized at startup; pass an empty value to disable it. |
+| `--config-path` | empty | Engram YAML configuration. |
+| `--transcript-directory` | empty | Server-owned per-user recovery transcript directory. |
+| `--report-directory` | empty | Server-owned output directory required by `FinishConversation`. |
+| `--max-workers` | `10` | Maximum concurrent unary RPC handlers. |
+| `--grace-period` | `10` | Seconds allowed for RPCs to drain during shutdown. |
+| `--tls-cert`, `--tls-key` | empty | PEM certificate/key pair for server TLS. |
+| `--log-level` | `INFO` | Server log level. |
 
-`EngramCore.status()` is JSON-ready and returns `state`, `ready`, `healthy`,
-`durability`, `dirty`, `last_checkpoint_at`, `last_persistence_error`,
-`active_conversations`, and `store_path`. Health serving should translate this
-single source of truth rather than maintain separate adapter state.
+Store, seed, configuration, transcript/report locations, binding, and TLS are
+server configuration. Clients cannot submit filesystem paths through RPCs.
+Transcript and report filenames are stable SHA-256-derived names, so arbitrary
+caller-owned user labels cannot escape their configured directories.
 
-## Lifecycle contract
-
-- A successfully constructed or opened core is `running` and accepts work.
-- `close()` serializes with active calls, enters `closing`, performs the final
-  checkpoint, clears runtime-only state, and becomes `closed`.
-- A second `close()` returns `False`; every other operation on a closed core
-  raises `LifecycleError`.
-- If the final checkpoint fails, `close()` raises `PersistenceError` and
-  returns the core to `running` in degraded durability so the caller can retry
-  `flush()` or `close()` after correcting the store failure.
-- The gRPC server must stop admission at the transport before calling
-  `close()`, allowing its own grace-period policy to govern in-flight RPCs.
-
-## Single-instance process model
+## Process model
 
 ```text
 gRPC clients
      |
      v
-one gRPC server process
+one Engram gRPC server process
      |
      v
 one EngramCore
      |
      +-- shared Engram knowledge and response cache
      +-- isolated user conversation contexts
-     +-- in-memory proposal/idempotency records
-     +-- one configured JSON store
+     +-- bounded in-memory proposal/idempotency records
+     +-- one optional JSON store
 ```
 
-The server creates `EngramCore` once during process startup. Store, seed,
-configuration, transcript/report location, bind address, and transport security
-are server configuration. They are not supplied as ordinary request fields.
+Concurrent RPC handlers all delegate to the same core. The core serializes
+state transitions with its application lock; the adapter does not reimplement
+chat, retrieval, learning, idempotency, or persistence logic.
 
-## Proposed unary RPC surface
+## Protocol and generated code
 
-- `StartConversation`
-- `Chat`
-- `InspectConversation`
-- `StopConversation`
-- `AddFact`
-- `Propose`
-- `Resolve`
-- `LearnResponse`
-- `RetireResponse`
-- optional administrative `Flush`
+The source contract is [engram.proto](../engram/v1/engram.proto). Generated
+Python messages, type stubs, and service stubs are committed beside it. RPC
+requests have explicit fields and `Resolve` uses the `RegulatorOutcome` enum.
+Engram conversation, inspection, and cache results use
+`google.protobuf.Struct` because those JSON-ready diagnostic payloads are
+extensible application data rather than stable scalar records.
 
-The existing MCP contracts define the response-cache field semantics. The
-protobuf should use explicit enums for Regulator outcomes and explicit fields
-for `request_id`, `proposal_id`, `user_id`, namespace, context fingerprint,
-source label, and caller metadata.
+Install the development dependencies and regenerate after changing the proto:
 
-## Durability model
+```bash
+python -m pip install -e ".[dev]"
+python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
+  --grpc_python_out=. engram/v1/engram.proto
+```
 
-When `store_path` is configured, `EngramCore` performs a synchronous atomic
-checkpoint after successful operations that change durable state:
+The test suite regenerates the files in a temporary directory and compares
+them byte-for-byte with the committed output.
 
-- starting a conversation;
-- completing a chat turn;
-- adding a fact or setting a predicate;
-- proposing a candidate, because retrieval changes query statistics;
-- accepting a proposal, because it changes hit statistics and user context;
-- learning or retiring a response.
+## RPC surface
 
-Rejected verdicts, proposal records, idempotency records, and regulated-cache
-counters are transient. They do not require a store write. `finish`, `stop`,
-`flush`, and `close` remain explicit persistence boundaries, and graceful gRPC
-shutdown must call `close()`.
+| RPC | Purpose |
+| --- | --- |
+| `StartConversation` | Start an isolated user runtime; an empty `user_id` becomes `"0"`. |
+| `Chat` | Submit one observed chatbot turn. |
+| `InspectConversation` | Return user context, learned knowledge, metrics, and core status. |
+| `FinishConversation` | Flush and write JSON/Markdown reports without stopping the user runtime. |
+| `StopConversation` | Flush and release one user runtime without stopping the server. |
+| `AddFact` | Add a shared, unattributed fact with an opaque source label. |
+| `SetPredicate`, `GetPredicate` | Write/read a caller-owned value in one user context. |
+| `Propose` | Retrieve scoped response-cache candidates without recording a hit. |
+| `Resolve` | Commit one typed Regulator verdict; accepted retries cannot double-credit. |
+| `LearnResponse` | Cache a non-`IDK` Actor answer with scope and metadata. |
+| `RetireResponse` | Retire one dynamic, patternless cached answer. |
+| `GetStatus` | Return lifecycle, readiness, durability, checkpoint, and conversation status. |
+| `Flush` | Explicitly checkpoint the configured store. |
 
-`checkpoint_on_mutation=False` exists for controlled batch/embedded use. The
-gRPC server should leave it enabled.
+`Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
+Tapestry contract documented in [tapestry-integration.md](tapestry-integration.md).
+They do not require an active chatbot conversation.
 
-A checkpoint error does not roll back the already-applied in-memory mutation.
-`PersistenceError.state_changed` states whether live state changed before the
-failure. While degraded, `ready` remains true but `healthy` is false and
-`dirty` is true. A successful `flush()` restores healthy durability. Regulated
-operations may instead repeat the exact same `request_id`; their idempotency
-path retries the checkpoint without applying or crediting the mutation twice.
+## Python client example
 
-## Restart behavior
+```python
+import grpc
+from google.protobuf.json_format import MessageToDict
 
-After a clean or unclean process restart:
+from engram.v1 import engram_pb2, engram_pb2_grpc
 
-- learned responses, facts, user contexts, query/hit statistics, and retired
-  state come from the last completed atomic checkpoint;
-- outstanding proposal IDs are unknown and must be treated as expired;
-- a caller with an unresolved proposal should invoke the Actor again rather
-  than assume the cached response was accepted.
+with grpc.insecure_channel("127.0.0.1:50051") as channel:
+    stub = engram_pb2_grpc.EngramServiceStub(channel)
+    stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+    turn = stub.Chat(
+        engram_pb2.ChatRequest(user_id="Alice", text="Hello, Engram."),
+        timeout=5,
+    )
+    print(MessageToDict(turn, preserving_proto_field_name=True)["response"])
+```
 
-## Initial acceptance criteria
+Use `grpc.secure_channel` with matching client credentials when the server is
+launched with `--tls-cert` and `--tls-key`. The built-in TLS option provides
+server authentication and encryption; application authentication and
+authorization remain deployment responsibilities.
 
-- Exactly one `EngramCore` is created by the server process.
-- Every RPC delegates to that instance; handlers contain no duplicate Engram
-  behavior.
-- Alice and Carol retain isolated contexts and shared intended knowledge.
-- Accepted proposals record one hit under concurrent identical retries.
-- Learned and retired state survives process restart without an explicit Flush
-  RPC.
-- Transient proposals do not survive restart.
-- Health changes to not-serving before graceful shutdown begins.
-- Shutdown stops new calls, completes or cancels in-flight work within its
-  grace period, closes the core, and exits.
+## Error contract
+
+Core failures map consistently at the transport boundary:
+
+| Core exception | gRPC status |
+| --- | --- |
+| `InvalidRequestError` | `INVALID_ARGUMENT` |
+| `ResourceNotFoundError` | `NOT_FOUND` |
+| `ConflictError` | `ABORTED` |
+| `LifecycleError` | `FAILED_PRECONDITION` |
+| `PersistenceError` | `UNAVAILABLE` |
+| Unexpected adapter failure | `INTERNAL` with a generic client message |
+
+Every typed failure supplies `engram-error-type` in trailing metadata.
+Persistence failures also supply `engram-operation` and
+`engram-state-changed`. The latter is `true` when the requested mutation was
+already applied to live memory before its checkpoint failed.
+
+## Health and readiness
+
+The server registers `grpc.health.v1.Health` for both the aggregate empty
+service name and `engram.v1.EngramService`. It reports `SERVING` only while the
+core is both ready and healthy. A degraded store, closing core, closed core, or
+graceful shutdown reports `NOT_SERVING`.
+
+`GetStatus` provides the detailed source data: `state`, `ready`, `healthy`,
+`durability`, `dirty`, `last_checkpoint_at`, `last_persistence_error`,
+`active_conversations`, and `store_path`.
+
+## Persistence, retry, and deadlines
+
+With a configured store, successful durable mutations synchronously use the
+core's atomic checkpoint path. Proposals and idempotency records remain
+bounded, five-minute, process-local state and are never serialized.
+
+A checkpoint error does not roll back an in-memory mutation. While degraded,
+the core remains ready but standard health becomes `NOT_SERVING`. Correct the
+store and either call `Flush` or repeat the exact regulated-cache operation
+with the same `request_id`; its idempotency path retries persistence without
+applying or crediting the mutation twice.
+
+A client deadline or cancellation also cannot claim rollback after handler
+execution has started. Chat calls are not idempotent, so inspect their user
+context before deciding whether to repeat an ambiguous timed-out turn.
+Regulated-cache calls should retain and reuse their logical `request_id`.
+
+After restart, learned responses, facts, user contexts, statistics, and
+retirements come from the last completed checkpoint. Outstanding proposal IDs
+are expired; invoke the Actor again instead of assuming that an unresolved
+candidate was accepted.
+
+## Graceful shutdown
+
+SIGINT and SIGTERM request shutdown. The process marks health not-serving,
+stops accepting new RPCs, allows in-flight calls to complete within
+`--grace-period`, then calls `EngramCore.close()` for the final checkpoint.
+Repeated server shutdown is idempotent.
+
+If the final checkpoint fails, the process logs the persistence failure and
+exits unsuccessfully. The core's `PersistenceError` still distinguishes
+whether live state differed from the last durable checkpoint. An application
+embedding `EngramGrpcServer` may correct the store and call `stop()` again to
+retry the final checkpoint; the already-stopped transport is not restarted.
+
+## Security and authority boundaries
+
+- Bind to loopback unless remote clients are explicitly required.
+- Use TLS or a trusted encrypted proxy for remote transport.
+- Protect the store, transcripts, and reports as application data.
+- `source_label` and metadata are provenance, not authorization decisions.
+- Grant `AddFact`, `LearnResponse`, and `RetireResponse` only to callers that
+  may change shared cache content.
+- Runtime graph access remains read-only. Graph schema setup remains the
+  separate administrative utility in `scripts/setup_schema.py`.
+
+## Verification coverage
+
+Network-level tests cover multi-user conversation isolation, shared facts,
+predicates, reports, health, all regulated-cache phases, typed errors,
+checkpoint degradation/recovery, restart behavior, client deadlines,
+in-flight graceful shutdown, TLS configuration validation, and reproducible
+stub generation.

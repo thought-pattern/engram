@@ -39,8 +39,8 @@ inside the process; it does not start the process. `engram_stop` releases that
 conversation; it does not terminate the MCP server.
 
 The MCP adapter deliberately exposes one active `ConversationRuntime` at a
-time. `EngramCore` itself can own multiple user runtimes, so a future interface
-does not inherit that MCP lifecycle restriction. Run separate MCP processes
+time. `EngramCore` itself can own multiple user runtimes, and the gRPC interface
+uses that capability for concurrent user contexts. Run separate MCP processes
 when a host needs independently owned concurrent tool lifecycles. User context
 is keyed by the caller-owned `user_id`.
 

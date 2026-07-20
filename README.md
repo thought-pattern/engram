@@ -13,7 +13,7 @@ Key features:
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Persistence** - JSON-based save/load with full state preservation
-- **Multiple interfaces** - Existing Python API, a human CLI, and persistent FastMCP tools
+- **Multiple interfaces** - Python API, human CLI, persistent FastMCP tools, and a single-instance gRPC service
 
 ## Architecture
 
@@ -22,16 +22,16 @@ CLI ---------\
               \
 FastMCP -------> EngramCore ---> Engram, pipeline, sessions, persistence
               /
-future -------/
+gRPC ---------/
 ```
 
 `EngramCore` in `engram/service.py` is the transport-neutral application
 facade. It owns the shared `Engram` instance, per-user conversation runtimes,
-persistence lifecycle, and regulated-cache proposal state. The CLI and MCP
-server translate their interface inputs into calls on that core; neither owns
-an independent implementation of Engram behavior. The lower-level `Engram`,
-`pipeline`, `sessions`, and `persistence` Python APIs remain available and
-backward compatible.
+persistence lifecycle, and regulated-cache proposal state. The CLI, MCP, and
+gRPC servers translate their interface inputs into calls on that core; none
+owns an independent implementation of Engram behavior. The lower-level
+`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available
+and backward compatible.
 
 ## Integration guides
 
@@ -41,8 +41,8 @@ backward compatible.
 - [FastMCP integration](documentation/mcp-integration.md) — installation,
   process ownership, all tool contracts, persistence, host configuration, and
   the implemented two-phase Tapestry cache interface.
-- [gRPC integration plan](documentation/grpc-integration.md) — the completed
-  transport-neutral preparation and the remaining single-instance gRPC work.
+- [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
+  launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
 
 ## Setup
 
@@ -312,8 +312,8 @@ shared application runtime. Its public operations include:
 One core can retain multiple user conversations while sharing learned
 knowledge. Regulated-cache operations do not require a chatbot conversation.
 With a configured store, successful durable mutations are atomically
-checkpointed immediately; `close()` performs a final flush. The planned gRPC
-server will own exactly one core instance.
+checkpointed immediately; `close()` performs a final flush. The gRPC server
+owns exactly one core instance.
 
 The core has explicit `running`, `closing`, and `closed` lifecycle states.
 `close()` is concurrency-safe and idempotent. Stable adapter-facing exceptions
@@ -599,16 +599,32 @@ the previous response. There is deliberately no batch-send tool. State is
 persistent between tool calls while the MCP process lives; pass `store_path`
 to `engram_start` when it must also survive process restarts.
 
-FastMCP and the CLI are adapters over the same transport-neutral `EngramCore`.
-They do not replace or alter the lower-level programmatic API. They are local
-human/agent interfaces; future transports can reuse the core without importing
-MCP or CLI code.
+FastMCP, gRPC, and the CLI are adapters over the same transport-neutral
+`EngramCore`. They do not replace or alter the lower-level programmatic API.
 
 Use `engram_send` for completed chatbot turns. For Tapestry, use
 `engram_propose` followed by `engram_resolve`; route misses and rejections to
 the Actor, then pass eligible answers to `engram_learn_response`. The same
 workflow remains available through the Python API when a process boundary is
 unnecessary.
+
+### gRPC Service Interface
+
+The gRPC interface runs as one independent process containing exactly one
+shared `EngramCore`. It supports multiple isolated `user_id` conversations,
+the regulated Tapestry cache workflow, standard gRPC health, optional server
+TLS, synchronous persistence, and graceful signal handling:
+
+```bash
+engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
+# Or from a checkout:
+python -m engram.grpc_server --bind 127.0.0.1:50051
+```
+
+The versioned source contract and committed Python stubs live in
+`engram/v1`. See [gRPC integration](documentation/grpc-integration.md) for the
+complete RPC list, Python client example, status mapping, deployment options,
+retry semantics, and shutdown contract.
 
 Scripted or adaptive soak runners can use `ConversationTurnPlanner` to reserve
 the final turn for a farewell, preserve planned messages when adaptive replies

@@ -8,12 +8,14 @@ Tapestry Regulator decides whether that answer is acceptable for the current
 request, and the Actor handles every rejected proposal or cache miss. A final
 Actor answer is learned by Engram unless the Actor reports `IDK`.
 
-The complete process-boundary workflow is implemented by `engram_propose`,
-`engram_resolve`, `engram_learn_response`, and `engram_retire_response`. The
-same operations are available directly on the transport-neutral `EngramCore`
-for applications embedding Engram in process. The lower-level Python API also
-remains available. See [mcp-integration.md](mcp-integration.md) for exact tool
-contracts.
+The complete process-boundary workflow is implemented by the MCP
+`engram_propose`, `engram_resolve`, `engram_learn_response`, and
+`engram_retire_response` tools and by the gRPC `Propose`, `Resolve`,
+`LearnResponse`, and `RetireResponse` methods. The same operations are
+available directly on the transport-neutral `EngramCore` for applications
+embedding Engram in process. The lower-level Python API also remains
+available. See [mcp-integration.md](mcp-integration.md) and
+[grpc-integration.md](grpc-integration.md) for the transport contracts.
 
 ## Architecture
 
