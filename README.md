@@ -306,6 +306,7 @@ shared application runtime. Its public operations include:
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
 - `propose`, `resolve`, `learn_response`, and `retire_response`;
+- `status` for transport-neutral readiness and durability information; and
 - `flush` and `close` for persistence and lifecycle ownership.
 
 One core can retain multiple user conversations while sharing learned
@@ -313,6 +314,14 @@ knowledge. Regulated-cache operations do not require a chatbot conversation.
 With a configured store, successful durable mutations are atomically
 checkpointed immediately; `close()` performs a final flush. The planned gRPC
 server will own exactly one core instance.
+
+The core has explicit `running`, `closing`, and `closed` lifecycle states.
+`close()` is concurrency-safe and idempotent. Stable adapter-facing exceptions
+live in `engram.errors`: `InvalidRequestError`, `ResourceNotFoundError`,
+`ConflictError`, `LifecycleError`, and `PersistenceError`. A checkpoint failure
+does not undo an in-memory mutation; `PersistenceError.state_changed` reports
+that condition, `status()` reports degraded durability, and a later `flush()`
+or exact idempotent regulated-cache retry can restore durability.
 
 ### Engram methods
 

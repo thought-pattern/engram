@@ -170,6 +170,16 @@ or retirement is atomically checkpointed before the call returns. Proposal and
 idempotency records remain transient and are intentionally absent after a
 process restart.
 
+If a checkpoint fails, Engram raises a transport-neutral `PersistenceError`
+and keeps the already-applied mutation in its live single-instance state.
+`state_changed` indicates whether this occurred. Tapestry must not interpret
+the error as a rollback: retry the exact operation with the same `request_id`
+after storage recovers. Engram's idempotency path retries persistence without
+learning, retiring, or crediting the item twice. `EngramCore.status()` reports
+the intervening state as ready but unhealthy, with degraded durability and
+dirty state. If the process exits before a successful checkpoint, the dirty
+mutation is lost.
+
 Do not pass an Actor answer through conversational fact extraction merely to
 cache it. Response caching and durable fact ingestion are different actions:
 

@@ -173,6 +173,11 @@ the active `ConversationRuntime`. It does not write conversation reports; call
 
 All other tools require an active conversation established by `engram_start`.
 
+`engram_inspect` includes `core_status`, the transport-neutral lifecycle and
+durability snapshot. Its fields include `state`, `ready`, `healthy`,
+`durability`, `dirty`, the last checkpoint/error information, and the number
+of active conversations.
+
 ## Required lifecycle
 
 ```text
@@ -226,10 +231,20 @@ seed is synchronized into it. Dynamic learned content survives that refresh.
 Graph credentials are never persisted.
 
 Successful durable mutations are atomically checkpointed when `store_path` is
-configured. An abrupt host exit can still lose transient proposals and any
-operation whose checkpoint failed, while the per-turn transcript separately
-describes observed chatbot turns. `engram_finish` and `engram_stop` remain
-explicit report and lifecycle boundaries.
+configured. Core validation, not-found, conflict, lifecycle, and persistence
+failures are surfaced by FastMCP as tool errors. If a checkpoint fails after a
+mutation, the tool call fails but the mutation remains applied in the live MCP
+process; `core_status` reports `durability: "degraded"` and `dirty: true`.
+Do not assume that such a tool error rolled back the request.
+
+The regulated-cache tools support safe recovery: retry the exact request with
+the same `request_id`, or reach an explicit `flush`/lifecycle boundary after
+the store becomes available. The idempotency path checkpoints again without
+learning, retiring, or crediting the item twice. An abrupt host exit before
+recovery loses that uncheckpointed state, as well as all transient proposals.
+The per-turn transcript separately describes observed chatbot turns.
+`engram_finish` and `engram_stop` remain explicit report and lifecycle
+boundaries.
 
 ## Security and authority boundaries
 

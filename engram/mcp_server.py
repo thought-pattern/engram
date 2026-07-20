@@ -5,6 +5,7 @@ import threading
 from mcp.server.fastmcp import FastMCP
 
 from engram.config import engram_config, load_config
+from engram.errors import ConflictError, LifecycleError
 from engram.service import EngramCore
 
 
@@ -49,7 +50,7 @@ class MCPConversationService:
         """Start one MCP-owned conversation over a new shared core."""
         with self.lock:
             if self.core is not None:
-                raise ValueError("a conversation is already active; call engram_stop before starting another")
+                raise ConflictError("a conversation is already active; call engram_stop before starting another")
 
             config = load_config(config_path) if config_path else engram_config()
             core = EngramCore.open(config=config, store_path=store_path, seed_path=seed_path)
@@ -165,7 +166,7 @@ class MCPConversationService:
 
     def _require_active(self) -> tuple[EngramCore, str]:
         if self.core is None or self.active_user_id is None:
-            raise ValueError("no active conversation; call engram_start first")
+            raise LifecycleError("no active conversation; call engram_start first")
         return self.core, self.active_user_id
 
 

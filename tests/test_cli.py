@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from engram.errors import PersistenceError
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_PATH = os.path.join(REPO_ROOT, "scripts", "cli.py")
 
@@ -135,6 +137,17 @@ class TestConfigErrors:
         config.write_text("graph:\n  uri: bolt://localhost:7687\n  enabled: false\n", encoding="utf-8")
         with pytest.raises(ValueError, match="uri"):
             cli.main(["--store", store, "--config", str(config), "metrics"])
+
+    def test_core_error_is_reported_without_a_traceback(self, store, capsys, monkeypatch) -> None:
+        run_cli(store, "init")
+
+        def fail_open(cls, **kwargs):
+            raise PersistenceError("store load", OSError("unavailable"), state_changed=False)
+
+        monkeypatch.setattr(cli.EngramCore, "open", classmethod(fail_open))
+
+        assert run_cli(store, "metrics") == 1
+        assert "store load failed: unavailable" in capsys.readouterr().err
 
 
 class TestSyncSeed:

@@ -8,6 +8,7 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 import engram.service as engram_service
+from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 
 
@@ -84,13 +85,13 @@ def test_service_adds_unattributed_shared_fact_without_context_change(tmp_path) 
 
 def test_service_requires_an_explicit_lifecycle(tmp_path) -> None:
     service = MCPConversationService()
-    with pytest.raises(ValueError, match="engram_start"):
+    with pytest.raises(LifecycleError, match="engram_start"):
         service.send("hello")
-    with pytest.raises(ValueError, match="engram_start"):
+    with pytest.raises(LifecycleError, match="engram_start"):
         service.propose("hello", "proposal-before-start")
 
     service.start(seed_path=str(_seed_file(tmp_path)))
-    with pytest.raises(ValueError, match="already active"):
+    with pytest.raises(ConflictError, match="already active"):
         service.start(seed_path=str(_seed_file(tmp_path)))
 
 

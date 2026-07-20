@@ -16,6 +16,7 @@ from engram import metrics, sessions
 from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
+from engram.errors import EngramCoreError
 from engram.service import EngramCore
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
@@ -896,7 +897,11 @@ def main(argv=None) -> int:
 
     handler = commands.get(args.command)
     if handler:
-        return handler(args)
+        try:
+            return handler(args)
+        except EngramCoreError as error:
+            print(f"Error: {error}", file=sys.stderr)
+            return 1
 
     parser.print_help()
     return 1

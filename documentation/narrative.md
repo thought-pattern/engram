@@ -172,8 +172,12 @@ The deployed application model is deliberately single-instance: one process
 owns one `EngramCore` and one configured JSON store. With a store configured,
 the core atomically checkpoints successful durable mutations, while proposals
 and idempotency records remain bounded, expiring memory-only state. `close()`
-performs the final lifecycle flush. The remaining gRPC transport work is
-tracked in [grpc-integration.md](grpc-integration.md).
+is concurrency-safe and performs the final lifecycle flush. The core exposes
+stable adapter-facing errors and a shared lifecycle/durability status snapshot.
+A failed checkpoint leaves the mutation in live memory, marks durability
+degraded, and can be recovered by a later flush or exact idempotent retry. The
+remaining work in [grpc-integration.md](grpc-integration.md) is now limited to
+the protocol and its server adapter.
 
 Conversational calls return one reply per user turn. Multi-sentence input is
 still processed sentence by sentence for matching, learning, and context.

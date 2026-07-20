@@ -11,6 +11,8 @@ import threading
 import time
 from collections import Counter
 from copy import deepcopy
+from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +21,7 @@ from engram.config import engram_config
 from engram.constants import Tier
 from engram.conversation import ConversationRuntime, statement_view
 from engram.core import Engram
+from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
 from engram.text import normalize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +37,22 @@ REGULATOR_OUTCOMES = frozenset(
         "rejected_policy",
     }
 )
+
+
+class CoreState(str, Enum):
+    """Lifecycle state of the single owned application core."""
+
+    RUNNING = "running"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+class DurabilityState(str, Enum):
+    """Current relationship between live state and configured persistence."""
+
+    DISABLED = "disabled"
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
 
 
 def resolve_seed_path(seed_path: str) -> Path:
@@ -55,12 +74,17 @@ class EngramCore:
         checkpoint_on_mutation: bool = True,
     ) -> None:
         if not isinstance(checkpoint_on_mutation, bool):
-            raise ValueError("checkpoint_on_mutation must be a boolean")
+            raise InvalidRequestError("checkpoint_on_mutation must be a boolean")
         self.engram = engram or Engram()
         self.store_path = Path(store_path).resolve() if store_path else None
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
         self.lock = threading.RLock()
+        self._state = CoreState.RUNNING
+        self._durability = DurabilityState.HEALTHY if self.store_path else DurabilityState.DISABLED
+        self._dirty = False
+        self._last_checkpoint_at = ""
+        self._last_persistence_error = ""
         self._reset_regulated_state()
 
     @classmethod
@@ -76,16 +100,25 @@ class EngramCore:
         resolved_store = Path(store_path).resolve() if store_path else None
         core_config = config if config is not None else engram_config()
         if resolved_store and resolved_store.exists():
-            engram = persistence.load_engram(resolved_store, config=core_config)
+            try:
+                engram = persistence.load_engram(resolved_store, config=core_config)
+            except Exception as error:
+                raise PersistenceError("store load", error, state_changed=False) from error
         else:
-            engram = Engram(config=core_config)
+            try:
+                engram = Engram(config=core_config)
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
 
         if seed_path:
             resolved_seed = resolve_seed_path(str(seed_path))
             if not resolved_seed.exists():
-                raise ValueError(f"seed file not found: {resolved_seed}")
-            seed_data = json.loads(resolved_seed.read_text(encoding="utf-8"))
-            engram.sync_corpus(seed_data.get("pairs", []))
+                raise ResourceNotFoundError(f"seed file not found: {resolved_seed}")
+            try:
+                seed_data = json.loads(resolved_seed.read_text(encoding="utf-8"))
+                engram.sync_corpus(seed_data.get("pairs", []))
+            except (OSError, json.JSONDecodeError, ValueError) as error:
+                raise InvalidRequestError(f"invalid seed file {resolved_seed}: {error}") from error
 
         core = cls(
             engram,
@@ -93,16 +126,36 @@ class EngramCore:
             checkpoint_on_mutation=checkpoint_on_mutation,
         )
         if seed_path:
+            core._dirty = True
             core._checkpoint()
         return core
 
     def __enter__(self) -> "EngramCore":
         """Return this core as a single owned application runtime."""
-        return self
+        with self.lock:
+            self._require_running()
+            return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         """Flush configured state and release runtime resources."""
         self.close()
+
+    def status(self) -> dict:
+        """Return transport-neutral lifecycle and durability readiness."""
+        with self.lock:
+            accepting_requests = self._state == CoreState.RUNNING
+            durability_healthy = self._durability != DurabilityState.DEGRADED
+            return {
+                "state": self._state.value,
+                "ready": accepting_requests,
+                "healthy": accepting_requests and durability_healthy,
+                "durability": self._durability.value,
+                "dirty": self._dirty,
+                "last_checkpoint_at": self._last_checkpoint_at,
+                "last_persistence_error": self._last_persistence_error,
+                "active_conversations": len(self.conversations),
+                "store_path": str(self.store_path) if self.store_path else "",
+            }
 
     def start_conversation(
         self,
@@ -113,18 +166,23 @@ class EngramCore:
     ) -> dict:
         """Create one observable conversation for a user context."""
         with self.lock:
-            normalized_user_id = sessions.normalize_user_id(user_id)
+            self._require_running()
+            normalized_user_id = self._normalize_user_id(user_id)
             if normalized_user_id in self.conversations:
-                raise ValueError(f"conversation already active for user_id: {normalized_user_id}")
-            runtime = ConversationRuntime(
-                self.engram,
-                user_id=normalized_user_id,
-                initial_bot_text=initial_bot_text,
-                random_seed=random_seed,
-                transcript_path=transcript_path or None,
-            )
+                raise ConflictError(f"conversation already active for user_id: {normalized_user_id}")
+            try:
+                runtime = ConversationRuntime(
+                    self.engram,
+                    user_id=normalized_user_id,
+                    initial_bot_text=initial_bot_text,
+                    random_seed=random_seed,
+                    transcript_path=transcript_path or None,
+                )
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
             self.conversations[normalized_user_id] = runtime
             snapshot = runtime.inspect()
+            self._dirty = True
             self._checkpoint()
             return {
                 "started": True,
@@ -138,38 +196,53 @@ class EngramCore:
     def get_conversation(self, user_id: str) -> ConversationRuntime:
         """Return an active user runtime or raise a lifecycle error."""
         with self.lock:
-            normalized_user_id = sessions.normalize_user_id(user_id)
+            self._require_running()
+            normalized_user_id = self._normalize_user_id(user_id)
             runtime = self.conversations.get(normalized_user_id)
             if runtime is None:
-                raise ValueError(f"no active conversation for user_id: {normalized_user_id}")
+                raise ResourceNotFoundError(f"no active conversation for user_id: {normalized_user_id}")
             return runtime
 
     def chat(self, user_id: str, text: str) -> dict:
         """Submit one chatbot turn to an active user conversation."""
         with self.lock:
-            result = self.get_conversation(user_id).send(text)
+            self._require_running()
+            runtime = self.get_conversation(user_id)
+            try:
+                result = runtime.send(text)
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
+            self._dirty = True
             self._checkpoint()
             return result
 
     def inspect_conversation(self, user_id: str) -> dict:
         """Inspect one conversation and shared regulated-cache metrics."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             snapshot = self.get_conversation(user_id).inspect()
             snapshot["regulated_cache"] = self.regulated_cache_metrics()
+            snapshot["core_status"] = self.status()
             return snapshot
 
     def add_fact(self, text: str, source_label: str = "") -> dict:
         """Add one unattributed shared fact without changing user context."""
         with self.lock:
-            statement_id = self.engram.add_fact(text, source_label=source_label)
+            self._require_running()
+            try:
+                statement_id = self.engram.add_fact(text, source_label=source_label)
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
             result = statement_view(self.engram.get_statement(statement_id))
+            self._dirty = True
             self._checkpoint()
             return result
 
     def finish_conversation(self, user_id: str, output_prefix: str | Path = "engram-transcript") -> dict:
         """Persist the store and write reports without ending a conversation."""
         with self.lock:
+            self._require_running()
             runtime = self.get_conversation(user_id)
             self.flush()
             return runtime.write_report(output_prefix)
@@ -177,6 +250,7 @@ class EngramCore:
     def stop_conversation(self, user_id: str, *, flush: bool = True) -> dict:
         """End one conversation while leaving the shared core available."""
         with self.lock:
+            self._require_running()
             runtime = self.get_conversation(user_id)
             report = runtime.report()
             if flush:
@@ -191,37 +265,51 @@ class EngramCore:
     def set_predicate(self, user_id: str, name: str, value: str) -> None:
         """Set one caller-owned predicate on a user context."""
         with self.lock:
-            normalized_user_id = sessions.normalize_user_id(user_id)
+            self._require_running()
+            self._require_text(name, "name")
+            self._require_string(value, "value")
+            normalized_user_id = self._normalize_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
                 session["predicates"][name] = value
+            self._dirty = True
             self._checkpoint()
 
     def get_predicate(self, user_id: str, name: str, default=""):
         """Read one caller-owned predicate from a user context."""
-        normalized_user_id = sessions.normalize_user_id(user_id)
-        session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
-        if session is None:
-            return default
-        with self.engram.session_lock:
-            return session["predicates"].get(name, default)
+        with self.lock:
+            self._require_running()
+            normalized_user_id = self._normalize_user_id(user_id)
+            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
+            if session is None:
+                return default
+            with self.engram.session_lock:
+                return session["predicates"].get(name, default)
 
     def flush(self) -> bool:
         """Atomically save configured state; return False when no store is configured."""
         with self.lock:
-            if self.store_path is None:
-                return False
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
-            persistence.save(self.engram, self.store_path)
-            return True
+            self._require_running()
+            return self._flush_store()
 
-    def close(self, *, flush: bool = True) -> None:
+    def close(self, *, flush: bool = True) -> bool:
         """Flush and release all transport-independent runtime state."""
         with self.lock:
-            if flush:
-                self.flush()
+            if self._state == CoreState.CLOSED:
+                return False
+            if self._state != CoreState.RUNNING:
+                raise LifecycleError(f"core cannot close while {self._state.value}")
+            self._state = CoreState.CLOSING
+            try:
+                if flush:
+                    self._flush_store()
+            except PersistenceError:
+                self._state = CoreState.RUNNING
+                raise
             self.conversations.clear()
             self._reset_regulated_state()
+            self._state = CoreState.CLOSED
+            return True
 
     def propose(
         self,
@@ -236,6 +324,7 @@ class EngramCore:
     ) -> dict:
         """Create a speculative, uncredited response-cache proposal."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             self._require_text(request, "request")
             self._require_text(request_id, "request_id")
@@ -243,12 +332,12 @@ class EngramCore:
             self._require_string(context_fingerprint, "context_fingerprint")
             self._require_string(required_source_label, "required_source_label")
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
-                raise ValueError("limit must be an integer from 1 through 10")
+                raise InvalidRequestError("limit must be an integer from 1 through 10")
             if required_metadata is None:
                 required_metadata = {}
             if not isinstance(required_metadata, dict):
-                raise ValueError("required_metadata must be an object or None")
-            normalized_user_id = sessions.normalize_user_id(user_id)
+                raise InvalidRequestError("required_metadata must be an object or None")
+            normalized_user_id = self._normalize_user_id(user_id)
             signature = self._signature(
                 request=request,
                 user_id=normalized_user_id,
@@ -263,7 +352,7 @@ class EngramCore:
             if existing_proposal_id:
                 existing = self.proposals[existing_proposal_id]
                 if existing["signature"] != signature:
-                    raise ValueError("request_id is already associated with a different proposal request")
+                    raise ConflictError("request_id is already associated with a different proposal request")
                 self.regulated_metrics["idempotent_retries"] += 1
                 self._checkpoint()
                 return self._proposal_result(existing, idempotent=True)
@@ -313,12 +402,14 @@ class EngramCore:
             if not candidates:
                 self.regulated_metrics["misses"] += 1
             self._enforce_transient_bound()
+            self._dirty = True
             self._checkpoint()
             return self._proposal_result(self.proposals[proposal_id], idempotent=False)
 
     def resolve(self, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
         """Commit one Regulator verdict without double-crediting retries."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             self._require_text(proposal_id, "proposal_id")
             self._require_string(outcome, "outcome")
@@ -326,15 +417,15 @@ class EngramCore:
             self._require_string(reason, "reason")
             if outcome not in REGULATOR_OUTCOMES:
                 supported = ", ".join(sorted(REGULATOR_OUTCOMES))
-                raise ValueError(f"outcome must be one of: {supported}")
+                raise InvalidRequestError(f"outcome must be one of: {supported}")
 
             record = self.proposals.get(proposal_id)
             if record is None:
-                raise ValueError("unknown or expired proposal_id")
+                raise ResourceNotFoundError("unknown or expired proposal_id")
             resolution_signature = self._signature(outcome=outcome, statement_id=statement_id, reason=reason)
             if record["resolution"] is not None:
                 if record["resolution_signature"] != resolution_signature:
-                    raise ValueError("proposal has already been resolved with a different verdict")
+                    raise ConflictError("proposal has already been resolved with a different verdict")
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(record["resolution"])
                 result["idempotent"] = True
@@ -344,18 +435,19 @@ class EngramCore:
 
             candidate_responses = record["candidate_responses"]
             if statement_id and statement_id not in candidate_responses:
-                raise ValueError("statement_id is not a candidate in this proposal")
+                raise InvalidRequestError("statement_id is not a candidate in this proposal")
             if outcome == "accepted":
                 if not statement_id:
-                    raise ValueError("accepted outcomes require statement_id")
+                    raise InvalidRequestError("accepted outcomes require statement_id")
                 current = self.engram.get_statement(statement_id)
                 if not current or current["text"] != candidate_responses[statement_id]:
-                    raise ValueError("candidate is no longer current; resolve it as rejected_stale")
+                    raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
                 proposal = record["proposal"]
                 self.engram.record_hit(proposal["keywords"], statement_id=statement_id)
                 sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
                 sessions.update_session_context(self.engram, proposal["user_id"], current["text"])
                 self.regulated_metrics["accepted"] += 1
+                self._dirty = True
             else:
                 self.regulated_metrics["rejections"][outcome] += 1
 
@@ -386,6 +478,7 @@ class EngramCore:
     ) -> dict:
         """Cache an Actor response, replacing only within its exact scope."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             self._require_text(request, "request")
             self._require_text(response, "response")
@@ -394,12 +487,12 @@ class EngramCore:
             self._require_string(context_fingerprint, "context_fingerprint")
             self._require_string(source_label, "source_label")
             if normalize(response) == "idk":
-                raise ValueError("IDK is not a cacheable response")
+                raise InvalidRequestError("IDK is not a cacheable response")
             if metadata is None:
                 metadata = {}
             if not isinstance(metadata, dict):
-                raise ValueError("metadata must be an object or None")
-            normalized_user_id = sessions.normalize_user_id(user_id)
+                raise InvalidRequestError("metadata must be an object or None")
+            normalized_user_id = self._normalize_user_id(user_id)
             signature = self._signature(
                 request=request,
                 response=response,
@@ -412,7 +505,7 @@ class EngramCore:
             previous = self.learn_requests.get(request_id)
             if previous is not None:
                 if previous["signature"] != signature:
-                    raise ValueError("request_id is already associated with a different learned response")
+                    raise ConflictError("request_id is already associated with a different learned response")
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(previous["result"])
                 result["idempotent"] = True
@@ -457,12 +550,14 @@ class EngramCore:
             }
             self.regulated_metrics[f"learned_{action}"] += 1
             self._enforce_transient_bound()
+            self._dirty = True
             self._checkpoint()
             return deepcopy(result)
 
     def retire_response(self, statement_id: str, reason: str, request_id: str) -> dict:
         """Retire one dynamic, patternless response-cache entry."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             self._require_text(statement_id, "statement_id")
             self._require_text(reason, "reason")
@@ -471,7 +566,7 @@ class EngramCore:
             previous = self.retire_requests.get(request_id)
             if previous is not None:
                 if previous["signature"] != signature:
-                    raise ValueError("request_id is already associated with a different retirement")
+                    raise ConflictError("request_id is already associated with a different retirement")
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(previous["result"])
                 result["idempotent"] = True
@@ -480,11 +575,11 @@ class EngramCore:
 
             statement = self.engram.get_statement(statement_id)
             if not statement:
-                raise ValueError("unknown statement_id")
+                raise ResourceNotFoundError("unknown statement_id")
             if statement["tier"] != Tier.DYNAMIC or statement["pattern"]:
-                raise ValueError("only dynamic, patternless response-cache entries can be retired")
+                raise InvalidRequestError("only dynamic, patternless response-cache entries can be retired")
             if not self.engram.retire_statement(statement_id):
-                raise ValueError("statement could not be retired")
+                raise ConflictError("statement could not be retired")
             result = {
                 "retired": True,
                 "statement_id": statement_id,
@@ -499,12 +594,14 @@ class EngramCore:
             }
             self.regulated_metrics["retired"] += 1
             self._enforce_transient_bound()
+            self._dirty = True
             self._checkpoint()
             return deepcopy(result)
 
     def regulated_cache_metrics(self) -> dict:
         """Return a JSON-ready snapshot of regulated-cache activity."""
         with self.lock:
+            self._require_running()
             self._cleanup_transient()
             return {
                 **deepcopy(self.regulated_metrics),
@@ -515,19 +612,19 @@ class EngramCore:
     @staticmethod
     def _require_text(value: str, name: str) -> None:
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{name} must be a non-empty string")
+            raise InvalidRequestError(f"{name} must be a non-empty string")
 
     @staticmethod
     def _require_string(value: str, name: str) -> None:
         if not isinstance(value, str):
-            raise ValueError(f"{name} must be a string")
+            raise InvalidRequestError(f"{name} must be a string")
 
     @staticmethod
     def _signature(**values) -> str:
         try:
             return json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError) as error:
-            raise ValueError("metadata and request values must be JSON-compatible") from error
+            raise InvalidRequestError("metadata and request values must be JSON-compatible") from error
 
     @staticmethod
     def _candidate_result(statement: dict, score: float) -> dict:
@@ -568,7 +665,36 @@ class EngramCore:
 
     def _checkpoint(self) -> None:
         if self.checkpoint_on_mutation:
-            self.flush()
+            self._flush_store()
+
+    def _flush_store(self) -> bool:
+        if self.store_path is None:
+            self._durability = DurabilityState.DISABLED
+            self._dirty = False
+            return False
+        try:
+            self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            persistence.save(self.engram, self.store_path)
+        except Exception as error:
+            self._durability = DurabilityState.DEGRADED
+            self._last_persistence_error = str(error)
+            raise PersistenceError("store checkpoint", error, state_changed=self._dirty) from error
+        self._durability = DurabilityState.HEALTHY
+        self._dirty = False
+        self._last_checkpoint_at = datetime.now(UTC).isoformat()
+        self._last_persistence_error = ""
+        return True
+
+    def _require_running(self) -> None:
+        if self._state != CoreState.RUNNING:
+            raise LifecycleError(f"core is {self._state.value}; operation requires running state")
+
+    @staticmethod
+    def _normalize_user_id(user_id: str | None) -> str:
+        try:
+            return sessions.normalize_user_id(user_id)
+        except ValueError as error:
+            raise InvalidRequestError(str(error)) from error
 
     def _cleanup_transient(self) -> None:
         cutoff = time.monotonic() - PROPOSAL_TTL_SECONDS
