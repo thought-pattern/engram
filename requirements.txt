@@ -20,7 +20,7 @@ spacy==3.8.14
 
 confection==1.3.3
 srsly==2.5.3
-thinc==8.3.12
+thinc==9.1.1
 weasel==1.0.0
 
 
@@ -28,4 +28,4 @@ weasel==1.0.0
 # Matches the Tapestry knowledge-graph connection interface. Imported
 # unconditionally like every other dependency (no lazy imports); the graph
 # layer itself stays inert until graph.enabled is set in config.yml.
-pymgclient==1.5.2
+pymgclient==1.6.0
