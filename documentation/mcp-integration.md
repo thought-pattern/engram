@@ -12,8 +12,8 @@ interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 This document covers:
 
 1. the conversational FastMCP interface; and
-2. the implemented Regulator-controlled Tapestry interface defined in
-   [tapestry-integration.md](tapestry-integration.md).
+2. the implemented Regulator-controlled Tapestry interface defined in the
+   [Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
 
 ## Process model
 
@@ -445,5 +445,5 @@ identical resolutions therefore record exactly one accepted hit.
 - Transient proposals expire and are not restored, while learned responses are restored.
 - Adaptive conversation tests observe every response before sending the next
   input.
-- The regulated-cache tools satisfy the acceptance tests in
-  [tapestry-integration.md](tapestry-integration.md).
+- The regulated-cache tools satisfy the acceptance tests in the
+  [Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).

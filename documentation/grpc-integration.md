@@ -110,7 +110,8 @@ them byte-for-byte with the committed output.
 | `Flush` | Explicitly checkpoint the configured store. |
 
 `Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
-Tapestry contract documented in [tapestry-integration.md](tapestry-integration.md).
+Tapestry contract documented in the
+[Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
 They do not require an active chatbot conversation.
 
 ## Python client example

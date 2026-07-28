@@ -35,12 +35,9 @@ and backward compatible.
 
 ## Integration guides
 
-- [Tapestry–Engram integration](documentation/tapestry-integration.md) — the
-  Regulator-controlled response-cache workflow, existing Python API mapping,
-  learning rules, invalidation, failure behavior, metrics, and acceptance tests.
 - [FastMCP integration](documentation/mcp-integration.md) — installation,
   process ownership, all tool contracts, persistence, host configuration, and
-  the implemented two-phase Tapestry cache interface.
+  the implemented two-phase regulated-cache interface.
 - [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
   launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
 
@@ -527,7 +524,7 @@ and that process retains the same Engram conversation between tool calls:
 
 See [FastMCP integration](documentation/mcp-integration.md) for the complete
 tool contract, lifecycle, host configuration, persistence and recovery rules,
-and the implemented Regulator-controlled cache interface.
+and the implemented two-phase regulated-cache interface.
 
 ```bash
 python -m engram.mcp_server
@@ -566,10 +563,10 @@ The server exposes these tools:
   MCP host, not this tool, owns the server process.
 - `engram_propose` - Retrieve scoped keyword-cache candidates without recording
   a successful hit or changing response context.
-- `engram_resolve` - Commit one accepted or rejected Regulator verdict;
+- `engram_resolve` - Commit one accepted or rejected proposal verdict;
   accepted candidates receive exactly one hit.
-- `engram_learn_response` - Cache one non-`IDK` Actor response with namespace,
-  context, provenance metadata, and retry-safe request identity.
+- `engram_learn_response` - Cache one non-`IDK` generated response with
+  namespace, context, provenance metadata, and retry-safe request identity.
 - `engram_retire_response` - Explicitly remove one globally stale dynamic,
   patternless cache response.
 
@@ -581,18 +578,18 @@ to `engram_start` when it must also survive process restarts.
 FastMCP, gRPC, and the CLI are adapters over the same transport-neutral
 `EngramCore`. They do not replace or alter the lower-level programmatic API.
 
-Use `engram_send` for completed chatbot turns. For Tapestry, use
+Use `engram_send` for completed chatbot turns. For a regulated cache, use
 `engram_propose` followed by `engram_resolve`; route misses and rejections to
-the Actor, then pass eligible answers to `engram_learn_response`. The same
-workflow remains available through the Python API when a process boundary is
-unnecessary.
+the calling application's response generator, then pass eligible answers to
+`engram_learn_response`. The same workflow remains available through the
+Python API when a process boundary is unnecessary.
 
 ### gRPC Service Interface
 
 The gRPC interface runs as one independent process containing exactly one
 shared `EngramCore`. It supports multiple isolated `user_id` conversations,
-the regulated Tapestry cache workflow, standard gRPC health, optional server
-TLS, synchronous persistence, and graceful signal handling:
+the regulated-cache workflow, standard gRPC health, optional server TLS,
+synchronous persistence, and graceful signal handling:
 
 ```bash
 engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
@@ -782,8 +779,8 @@ queries all reject mutating Cypher before opening a connection. There is no
 runtime writer method or authoring template. Reads degrade gracefully when the
 host is unreachable and use a reconnect cooldown.
 
-Facts use the canonical-first model shared with Tapestry: a `Claim` node links
-by edge to canonical `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
+Facts use a canonical-first model: a `Claim` node links by edge to canonical
+`Entity` and `Predicate` nodes (`HAS_SUBJECT` /
 `USES_PREDICATE` / `HAS_OBJECT`), and the surface triple is also kept as a
 denormalized projection on the Claim so a reader sees it without joining edges.
 Lookups resolve through the canonical edges (by `primary_label`, `aliases`, or
@@ -839,9 +836,9 @@ The two supported template graph operations are read-only:
 The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
 are not supported.
 
-`schema.cypher` is the recall-relevant subset of the Tapestry canonical schema;
-the full store (Passage, Document, Event, Proof, Source, Inquiry nodes and the
-vector indexes) is a superset ENGRAM does not own.
+`schema.cypher` defines the recall-relevant schema Engram requires. A larger
+store may add Passage, Document, Event, Proof, Source, and Inquiry nodes or
+vector indexes; Engram does not own or depend on those extensions.
 
 ## Evaluation
 
