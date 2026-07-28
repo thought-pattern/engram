@@ -84,4 +84,4 @@ def test_explicit_topic_change_gets_a_relevant_transition() -> None:
     result = pipeline.chat(engram, "Let us change direction and talk about food.", user_id="Codex")
 
     assert result["pattern"] == "LET US * TALK ABOUT *"
-    assert result["response"] == "Sure - let's talk about food. What interests you about it?"
+    assert result["response"] == "Sure - let's talk about food."

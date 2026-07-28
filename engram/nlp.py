@@ -86,6 +86,12 @@ def fact_query_patterns(fact: dict) -> list[str]:
     patterns.append(f"TELL ME ABOUT THE {subj}")
     patterns.append(f"WHAT DO YOU KNOW ABOUT {subj}")
     patterns.append(f"WHAT DO YOU KNOW ABOUT THE {subj}")
+    patterns.append(f"WHAT DO YOU REMEMBER ABOUT {subj}")
+    patterns.append(f"WHAT DO YOU REMEMBER ABOUT THE {subj}")
+    patterns.append(f"WHAT DID I SAY ABOUT {subj}")
+    patterns.append(f"WHAT DID I SAY ABOUT THE {subj}")
+    patterns.append(f"DO YOU REMEMBER {subj}")
+    patterns.append(f"DO YOU REMEMBER THE {subj}")
 
     # Inverse lookup: "Sushi is good" should answer "What's good?"
     # while retaining the full original sentence as the response.
@@ -184,8 +190,9 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
 
     # Guardrail: a verb or modal before the copula means the copula belongs to
     # an embedded clause, not "subject is object".
-    for _, pos in tagged[:copula_idx]:
-        if pos.startswith("VB") or pos == "MD":
+    for index, (_, pos) in enumerate(tagged[:copula_idx]):
+        noun_like_ing_subject = index == 0 and copula_idx == 1 and pos == "VBG"
+        if (pos.startswith("VB") and not noun_like_ing_subject) or pos == "MD":
             return {}
 
     # Extract subject (everything before copula)

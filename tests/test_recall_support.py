@@ -62,6 +62,44 @@ def test_learn_from_response_dedup_replaces_in_place():
     assert "First conclusion." not in texts
 
 
+def test_learn_from_response_replaces_only_within_exact_scope():
+    engram = Engram()
+    support_scope = {"tapestry": {"namespace": "support", "context_fingerprint": "tier:pro"}}
+    billing_scope = {"tapestry": {"namespace": "billing", "context_fingerprint": "tier:pro"}}
+
+    support_id = engram.learn_from_response("when are you open", "Support answer.", template=support_scope)
+    billing_id = engram.learn_from_response("when are you open", "Billing answer.", template=billing_scope)
+    replacement_id = engram.learn_from_response("when are you open", "Updated support answer.", template=support_scope)
+
+    assert support_id != billing_id
+    assert replacement_id == support_id
+    assert engram.get_statement(support_id)["text"] == "Updated support answer."
+    assert engram.get_statement(billing_id)["text"] == "Billing answer."
+
+
+def test_query_filters_before_statement_candidacy_accounting():
+    engram = Engram()
+    support_id = engram.learn_from_response(
+        "when are you open",
+        "Support answer.",
+        template={"tapestry": {"namespace": "support", "context_fingerprint": "tier:pro"}},
+    )
+    billing_id = engram.learn_from_response(
+        "when are you open",
+        "Billing answer.",
+        template={"tapestry": {"namespace": "billing", "context_fingerprint": "tier:pro"}},
+    )
+
+    result = engram.query(
+        "when are you open",
+        statement_filter=lambda statement: statement["template"]["tapestry"]["namespace"] == "support",
+    )
+
+    assert [statement["id"] for statement, _ in result["matches"]] == [support_id]
+    assert engram.get_statement(support_id)["query_count"] == 1
+    assert engram.get_statement(billing_id)["query_count"] == 0
+
+
 def test_retire_statement_removes_entry():
     engram = Engram()
     stmt_id = engram.learn_from_response("who acquired github", "Microsoft acquired GitHub.")

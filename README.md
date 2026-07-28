@@ -13,7 +13,36 @@ Key features:
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Persistence** - JSON-based save/load with full state preservation
-- **Multiple interfaces** - Existing Python API, a human CLI, and persistent FastMCP tools
+- **Multiple interfaces** - Python API, human CLI, persistent FastMCP tools, and a single-instance gRPC service
+
+## Architecture
+
+```text
+CLI ---------\
+              \
+FastMCP -------> EngramCore ---> Engram, pipeline, sessions, persistence
+              /
+gRPC ---------/
+```
+
+`EngramCore` in `engram/service.py` is the transport-neutral application
+facade. It owns the shared `Engram` instance, per-user conversation runtimes,
+persistence lifecycle, and regulated-cache proposal state. The CLI, MCP, and
+gRPC servers translate their interface inputs into calls on that core; none
+owns an independent implementation of Engram behavior. The lower-level
+`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available
+and backward compatible.
+
+## Integration guides
+
+- [Tapestry–Engram integration](documentation/tapestry-integration.md) — the
+  Regulator-controlled response-cache workflow, existing Python API mapping,
+  learning rules, invalidation, failure behavior, metrics, and acceptance tests.
+- [FastMCP integration](documentation/mcp-integration.md) — installation,
+  process ownership, all tool contracts, persistence, host configuration, and
+  the implemented two-phase Tapestry cache interface.
+- [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
+  launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
 
 ## Setup
 
@@ -76,8 +105,8 @@ result = pipeline.chat(engram, "What's good?", user_id="Carol")
 print(result["response"])  # "Sushi is good."
 ```
 
-Alice and Carol have separate histories, predicates, topics, and pronoun
-context. Facts learned from either conversation enter the shared statement
+Alice and Carol have separate histories, predicates, active topics, referenced
+entities, dialogue-act histories, and pronoun context. Facts learned from either conversation enter the shared statement
 store and retain `introduced_by_user_id`, so another user can retrieve them
 without inheriting the speaker's conversation state. Each learned fact occupies
 one statement; alternate question phrasings are matcher aliases on that
@@ -96,6 +125,32 @@ statement_id = engram.add_fact(
 `add_fact` ingests one fact, optionally records an opaque source label, and
 does not create or modify any user context. Conversational facts and external
 facts are both globally retrievable. Batch ingestion is intentionally deferred.
+
+## Regulated response-cache integration
+
+Tapestry can place its Regulator between Engram retrieval and the Actor:
+
+```text
+request -> Engram candidate -> Regulator
+                               | accepted -> return candidate
+                               | rejected/miss -> Actor
+                                                   | IDK -> return without learning
+                                                   | answer -> cache in Engram -> return
+```
+
+For the current in-process integration, use `Engram.query(..., limit=1)` to
+obtain a speculative candidate, call `record_hit()` only after Regulator
+acceptance, and use `learn_from_response()` for a cacheable Actor answer. A
+rejected candidate receives no hit, so its candidacy naturally lowers its hit
+rate. Do not send Actor answers through fact ingestion merely to cache them.
+
+`pipeline.respond()` is intentionally more autonomous: it accepts qualifying
+pattern and cache responses itself. Likewise, `pattern_query()` records a
+selected pattern as successful immediately. Neither is the correct proposal
+boundary when the Regulator must commit acceptance. See the complete
+[Tapestry integration guide](documentation/tapestry-integration.md) for the
+current API example, scoping constraints, replacement policy, and delivery
+phases.
 
 ## Sessions
 
@@ -238,8 +293,35 @@ shadow live ones.
 
 ## API Reference
 
-The data model is plain dicts, and behavior is split between `Engram` methods and
-module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics`).
+The data model is plain dicts. Interfaces normally use `EngramCore`; embedded
+callers can continue using `Engram` methods and module-level functions
+(`engram.sessions`, `engram.persistence`, `engram.metrics`) directly.
+
+### EngramCore (`from engram.service import EngramCore`)
+
+`EngramCore.open(config=..., store_path=..., seed_path=...)` loads or creates a
+shared application runtime. Its public operations include:
+
+- `start_conversation`, `chat`, `inspect_conversation`,
+  `finish_conversation`, and `stop_conversation`;
+- `add_fact`, `set_predicate`, and `get_predicate`;
+- `propose`, `resolve`, `learn_response`, and `retire_response`;
+- `status` for transport-neutral readiness and durability information; and
+- `flush` and `close` for persistence and lifecycle ownership.
+
+One core can retain multiple user conversations while sharing learned
+knowledge. Regulated-cache operations do not require a chatbot conversation.
+With a configured store, successful durable mutations are atomically
+checkpointed immediately; `close()` performs a final flush. The gRPC server
+owns exactly one core instance.
+
+The core has explicit `running`, `closing`, and `closed` lifecycle states.
+`close()` is concurrency-safe and idempotent. Stable adapter-facing exceptions
+live in `engram.errors`: `InvalidRequestError`, `ResourceNotFoundError`,
+`ConflictError`, `LifecycleError`, and `PersistenceError`. A checkpoint failure
+does not undo an in-memory mutation; `PersistenceError.state_changed` reports
+that condition, `status()` reports degraded durability, and a later `flush()`
+or exact idempotent regulated-cache retry can restore durability.
 
 ### Engram methods
 
@@ -287,13 +369,24 @@ packages the tiered strategy: scripted pattern match first, then a
 high-confidence cached answer, then the caller's LLM with retrieved context
 (whose response is learned for next time). Returns a dict with `response`,
 `source` (`pattern` / `cache` / `llm` / `none`), `score`, `matches`, and
-`keywords`.
+`keywords`. User-aware results also expose the selected `dialogue_act`,
+`active_topic`, recent canonical `entities`, and `fact_admissions`. Each fact
+admission records whether an inferred conversational fact was stored and, when
+it was rejected, a stable reason such as `hedged`, `transient`, or
+`meta_subject`.
 
 For multi-sentence input, `pipeline.chat` produces one conversational reply
-from the final matched sentence while still processing every sentence for
-learning and context. Direct `pattern_query` calls retain the legacy AIML
+while still processing every sentence for learning and context. It normally
+uses the final substantive sentence, but a trailing courtesy or acknowledgment
+does not hide an earlier question, command, fact, self-introduction, or topic
+change. Direct `pattern_query` calls retain the legacy AIML
 behavior of combining every matched sentence response; pass
 `combine_sentences=False` to request the conversational behavior explicitly.
+Topic state is evidence-driven: explicit shifts and recalled facts promote a
+topic, unrelated substantive turns replace or clear stale topics, and topic
+labels discard conversational filler such as "for a while". Repeated responses
+are checked across all conversational routes, including exact and broad
+patterns, while direct lower-level pattern queries retain their legacy output.
 
 ```python
 from engram import pipeline
@@ -453,6 +546,10 @@ use a slash command:
 The agent interface is a FastMCP stdio server. The MCP host starts one process,
 and that process retains the same Engram conversation between tool calls:
 
+See [FastMCP integration](documentation/mcp-integration.md) for the complete
+tool contract, lifecycle, host configuration, persistence and recovery rules,
+and the implemented Regulator-controlled cache interface.
+
 ```bash
 python -m engram.mcp_server
 # After installing the project, this is equivalent:
@@ -488,16 +585,52 @@ The server exposes these tools:
   reports while leaving the conversation active.
 - `engram_stop` - Persist an optional store and release the conversation. The
   MCP host, not this tool, owns the server process.
+- `engram_propose` - Retrieve scoped keyword-cache candidates without recording
+  a successful hit or changing response context.
+- `engram_resolve` - Commit one accepted or rejected Regulator verdict;
+  accepted candidates receive exactly one hit.
+- `engram_learn_response` - Cache one non-`IDK` Actor response with namespace,
+  context, provenance metadata, and retry-safe request identity.
+- `engram_retire_response` - Explicitly remove one globally stale dynamic,
+  patternless cache response.
 
 Call `engram_start` once and then `engram_send` once per turn, after observing
 the previous response. There is deliberately no batch-send tool. State is
 persistent between tool calls while the MCP process lives; pass `store_path`
 to `engram_start` when it must also survive process restarts.
 
-FastMCP and the CLI are additive adapters over the same `Engram` and
-`pipeline.chat` Python interfaces shown above. They do not replace or alter the
-programmatic API. They are local human/agent interfaces, not the deferred gRPC
-production service.
+FastMCP, gRPC, and the CLI are adapters over the same transport-neutral
+`EngramCore`. They do not replace or alter the lower-level programmatic API.
+
+Use `engram_send` for completed chatbot turns. For Tapestry, use
+`engram_propose` followed by `engram_resolve`; route misses and rejections to
+the Actor, then pass eligible answers to `engram_learn_response`. The same
+workflow remains available through the Python API when a process boundary is
+unnecessary.
+
+### gRPC Service Interface
+
+The gRPC interface runs as one independent process containing exactly one
+shared `EngramCore`. It supports multiple isolated `user_id` conversations,
+the regulated Tapestry cache workflow, standard gRPC health, optional server
+TLS, synchronous persistence, and graceful signal handling:
+
+```bash
+engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
+# Or from a checkout:
+python -m engram.grpc_server --bind 127.0.0.1:50051
+```
+
+The versioned source contract and committed Python stubs live in
+`engram/v1`. See [gRPC integration](documentation/grpc-integration.md) for the
+complete RPC list, Python client example, status mapping, deployment options,
+retry semantics, and shutdown contract.
+
+Scripted or adaptive soak runners can use `ConversationTurnPlanner` to reserve
+the final turn for a farewell, preserve planned messages when adaptive replies
+consume spare turns, and reject accidental normalized duplicate inputs. Any
+intentional repeat, such as testing name recall twice, must be listed through
+`allowed_repeats`.
 
 ## NLP Features
 
@@ -607,6 +740,11 @@ deliberately conservative: the span before the copula must look like a plain
 noun phrase, so subjects longer than four words, subjects containing a verb or
 modal ("X should inform that Y is ..."), and subjects or objects carrying
 pronouns or possessives are rejected rather than learned as junk facts. A
+second conversational admission gate rejects hedged claims, transient claims
+(`"Lunch is good today"`), vague subjects, and statements about the current
+chat itself. This gate only applies to facts inferred from conversation;
+`add_fact` remains an explicit, caller-authorized ingestion API and is not
+filtered by conversational heuristics. A
 learned fact is protected from overwrites; restating it earns a confirmation
 ("Yes - The sky is blue.") and contradicting it surfaces the stored belief
 ("Hmm, I have it differently: The sky is blue.") instead of a silent

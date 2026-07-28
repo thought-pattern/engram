@@ -17,7 +17,7 @@ from enum import Enum
 # Canonical package version. pyproject.toml derives the distribution version
 # from this via setuptools' dynamic ``attr``, so the version lives in exactly one
 # place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "0.4.0"
+VERSION = "1.0.0"
 DEFAULT_USER_ID = "0"
 
 # =============================================================================
@@ -227,6 +227,7 @@ REPETITION_FEEDBACK_MARKERS = (
     "asked that already",
 )
 RESPONSE_SIMILARITY_THRESHOLD = 0.72
+REPETITION_HISTORY_SIZE = 8
 
 # Responses when a stated fact matches what is already stored ({existing} is
 # replaced with the stored statement text).

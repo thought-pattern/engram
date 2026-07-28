@@ -53,7 +53,27 @@ def pipeline_result(
         "pattern": pattern,
         "captured": captured if captured is not None else [],
         "user_id": user_id,
+        "dialogue_act": "",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
     }
+    return result
+
+
+def _attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
+    """Attach the latest per-user discourse state to an API result."""
+    if not session_id:
+        return result
+    with engram.session_lock:
+        session = engram.sessions.get(session_id)
+        if not session:
+            return result
+        history = session.get("dialogue_act_history", [])
+        result["dialogue_act"] = history[0] if history else ""
+        result["active_topic"] = session.get("active_topic", "")
+        result["entities"] = list(session.get("entities", []))
+        result["fact_admissions"] = list(session.get("last_fact_admissions", []))
     return result
 
 
@@ -183,7 +203,7 @@ def respond(
                     captured=matched_captured,
                     user_id=context_id,
                 )
-                return tier1
+                return _attach_dialogue_state(engram, tier1, context_id)
 
     # Tier 2: confident cached answer via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
@@ -205,7 +225,7 @@ def respond(
                 keywords=keywords,
                 user_id=context_id,
             )
-            return tier2
+            return _attach_dialogue_state(engram, tier2, context_id)
 
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
@@ -226,7 +246,7 @@ def respond(
                 keywords=keywords,
                 user_id=context_id,
             )
-            return tier3
+            return _attach_dialogue_state(engram, tier3, context_id)
 
     # Tier 4: nothing confident. A held catch-all response still beats
     # silence -- re-record it into the session since it is actually shown --
@@ -243,7 +263,7 @@ def respond(
             captured=matched_captured,
             user_id=context_id,
         )
-        return deferred
+        return _attach_dialogue_state(engram, deferred, context_id)
     top_score = matches[0][1] if matches else 0.0
     tier4 = pipeline_result(
         "",
@@ -253,7 +273,7 @@ def respond(
         keywords=keywords,
         user_id=context_id,
     )
-    return tier4
+    return _attach_dialogue_state(engram, tier4, context_id)
 
 
 def chat(

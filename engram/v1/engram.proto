@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package engram.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+// A single Engram process owns one instance of this service and one shared
+// EngramCore. Conversation context is isolated by user_id; learned knowledge
+// is shared by the core.
+service EngramService {
+  rpc StartConversation(StartConversationRequest) returns (google.protobuf.Struct);
+  rpc Chat(ChatRequest) returns (google.protobuf.Struct);
+  rpc InspectConversation(UserRequest) returns (google.protobuf.Struct);
+  rpc FinishConversation(UserRequest) returns (google.protobuf.Struct);
+  rpc StopConversation(UserRequest) returns (google.protobuf.Struct);
+
+  rpc AddFact(AddFactRequest) returns (google.protobuf.Struct);
+  rpc SetPredicate(SetPredicateRequest) returns (PredicateResponse);
+  rpc GetPredicate(GetPredicateRequest) returns (PredicateResponse);
+
+  rpc Propose(ProposeRequest) returns (google.protobuf.Struct);
+  rpc Resolve(ResolveRequest) returns (google.protobuf.Struct);
+  rpc LearnResponse(LearnResponseRequest) returns (google.protobuf.Struct);
+  rpc RetireResponse(RetireResponseRequest) returns (google.protobuf.Struct);
+
+  rpc GetStatus(google.protobuf.Empty) returns (google.protobuf.Struct);
+  rpc Flush(google.protobuf.Empty) returns (FlushResponse);
+}
+
+message StartConversationRequest {
+  string user_id = 1;
+  string initial_bot_text = 2;
+  optional int64 random_seed = 3;
+}
+
+message ChatRequest {
+  string user_id = 1;
+  string text = 2;
+}
+
+message UserRequest {
+  string user_id = 1;
+}
+
+message AddFactRequest {
+  string text = 1;
+  string source_label = 2;
+}
+
+message SetPredicateRequest {
+  string user_id = 1;
+  string name = 2;
+  string value = 3;
+}
+
+message GetPredicateRequest {
+  string user_id = 1;
+  string name = 2;
+  string default_value = 3;
+}
+
+message PredicateResponse {
+  string value = 1;
+}
+
+message ProposeRequest {
+  string request = 1;
+  string request_id = 2;
+  string user_id = 3;
+  string namespace = 4;
+  string context_fingerprint = 5;
+  optional int32 limit = 6;
+  google.protobuf.Struct required_metadata = 7;
+  string required_source_label = 8;
+}
+
+enum RegulatorOutcome {
+  REGULATOR_OUTCOME_UNSPECIFIED = 0;
+  REGULATOR_OUTCOME_ACCEPTED = 1;
+  REGULATOR_OUTCOME_REJECTED_QUALITY = 2;
+  REGULATOR_OUTCOME_REJECTED_CONTEXT = 3;
+  REGULATOR_OUTCOME_REJECTED_STALE = 4;
+  REGULATOR_OUTCOME_REJECTED_POLICY = 5;
+}
+
+message ResolveRequest {
+  string proposal_id = 1;
+  RegulatorOutcome outcome = 2;
+  string statement_id = 3;
+  string reason = 4;
+}
+
+message LearnResponseRequest {
+  string request = 1;
+  string response = 2;
+  string request_id = 3;
+  string user_id = 4;
+  string namespace = 5;
+  string context_fingerprint = 6;
+  string source_label = 7;
+  google.protobuf.Struct metadata = 8;
+}
+
+message RetireResponseRequest {
+  string statement_id = 1;
+  string reason = 2;
+  string request_id = 3;
+}
+
+message FlushResponse {
+  bool persisted = 1;
+}

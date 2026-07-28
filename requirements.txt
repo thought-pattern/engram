@@ -32,3 +32,9 @@ pymgclient==1.5.2
 
 # Agent/LLM interface. Keep the stable v1 SDK line until MCP v2 is released.
 mcp==1.28.1
+
+# Single-instance RPC interface and standard health service. The protobuf 6
+# line remains compatible with MCP's googleapis-common-protos dependency.
+grpcio==1.81.0
+grpcio-health-checking==1.81.0
+protobuf==6.33.6

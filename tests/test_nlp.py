@@ -65,6 +65,9 @@ class TestFactExtractor:
         assert "WHAT IS BLUE" in patterns
         assert "TELL ME ABOUT SKY" in patterns
         assert "WHAT DO YOU KNOW ABOUT SKY" in patterns
+        assert "WHAT DO YOU REMEMBER ABOUT SKY" in patterns
+        assert "WHAT DID I SAY ABOUT SKY" in patterns
+        assert "DO YOU REMEMBER SKY" in patterns
 
     def test_query_patterns_are(self):
         """Test query pattern generation for 'are' facts."""
@@ -164,6 +167,13 @@ class TestFactExtractionGuardrails:
         assert fact["subject"] == "capital of France"
         fact = extract_fact("The sky is blue")
         assert fact["subject"] == "sky"
+
+    def test_accept_single_noun_like_ing_subject(self):
+        fact = extract_fact("Lightning is an electrical discharge")
+
+        assert fact["subject"] == "Lightning"
+        assert fact["predicate"] == "is"
+        assert fact["obj"] == "an electrical discharge"
 
 
 class TestQuestionDetection:

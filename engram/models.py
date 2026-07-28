@@ -204,6 +204,10 @@ def session(
         "last_active": now,
         "metadata": metadata or {},
         "predicates": {},
+        "active_topic": "",
+        "entities": [],
+        "dialogue_act_history": [],
+        "last_fact_admissions": [],
         "input_history": [],
         "response_history": [],
         "that_history": [],
@@ -246,6 +250,55 @@ def session_update_context(
             session["input_history"].pop()
 
 
+def session_record_input(session: dict, user_input: str) -> None:
+    """Record an input without changing the previous bot response."""
+    if not user_input:
+        return
+    session["last_active"] = datetime.now(UTC)
+    session["input_history"].insert(0, user_input)
+    if len(session["input_history"]) > session["history_size"]:
+        session["input_history"].pop()
+
+
+def session_update_dialogue(
+    session: dict,
+    dialogue_act: str,
+    active_topic: str = "",
+    entities: list[dict] | None = None,
+    fact_admissions: list[dict] | None = None,
+) -> None:
+    """Update per-user discourse state independently of response history."""
+    session.setdefault("active_topic", "")
+    session.setdefault("entities", [])
+    session.setdefault("dialogue_act_history", [])
+    session.setdefault("last_fact_admissions", [])
+
+    session["active_topic"] = active_topic
+    session["last_fact_admissions"] = list(fact_admissions or [])
+    if dialogue_act:
+        session["dialogue_act_history"].insert(0, dialogue_act)
+        if len(session["dialogue_act_history"]) > session["history_size"]:
+            session["dialogue_act_history"].pop()
+
+    for entity in entities or []:
+        entity_text = str(entity.get("text", "")).strip()
+        if not entity_text:
+            continue
+        entity_label = str(entity.get("label", ""))
+        matching = [
+            existing for existing in session["entities"] if str(existing.get("text", "")).casefold() == entity_text.casefold()
+        ]
+        label_priority = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
+        for existing in matching:
+            if label_priority.get(str(existing.get("label", "")), 0) > label_priority.get(entity_label, 0):
+                entity_label = str(existing.get("label", ""))
+        session["entities"] = [
+            existing for existing in session["entities"] if str(existing.get("text", "")).casefold() != entity_text.casefold()
+        ]
+        session["entities"].insert(0, {"text": entity_text, "label": entity_label})
+    del session["entities"][20:]
+
+
 def session_touch(session: dict) -> None:
     """Update last_active timestamp."""
     session["last_active"] = datetime.now(UTC)
@@ -268,6 +321,10 @@ def session_to_dict(session: dict) -> dict:
         "last_active": session["last_active"].isoformat(),
         "metadata": session["metadata"],
         "predicates": session["predicates"],
+        "active_topic": session.get("active_topic", ""),
+        "entities": session.get("entities", []),
+        "dialogue_act_history": session.get("dialogue_act_history", []),
+        "last_fact_admissions": session.get("last_fact_admissions", []),
         "input_history": session["input_history"],
         "response_history": session["response_history"],
         "that_history": session["that_history"],
@@ -285,6 +342,10 @@ def session_from_dict(data: dict) -> dict:
         "last_active": datetime.fromisoformat(data["last_active"]),
         "metadata": data.get("metadata", {}),
         "predicates": data.get("predicates", {}),
+        "active_topic": data.get("active_topic", ""),
+        "entities": data.get("entities", []),
+        "dialogue_act_history": data.get("dialogue_act_history", []),
+        "last_fact_admissions": data.get("last_fact_admissions", []),
         "input_history": data.get("input_history", []),
         "response_history": data.get("response_history", []),
         "that_history": data.get("that_history", []),
