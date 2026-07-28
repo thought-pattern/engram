@@ -131,32 +131,6 @@ statement_id = engram.add_fact(
 does not create or modify any user context. Conversational facts and external
 facts are both globally retrievable. Batch ingestion is intentionally deferred.
 
-## Regulated response-cache integration
-
-Tapestry can place its Regulator between Engram retrieval and the Actor:
-
-```text
-request -> Engram candidate -> Regulator
-                               | accepted -> return candidate
-                               | rejected/miss -> Actor
-                                                   | IDK -> return without learning
-                                                   | answer -> cache in Engram -> return
-```
-
-For the current in-process integration, use `Engram.query(..., limit=1)` to
-obtain a speculative candidate, call `record_hit()` only after Regulator
-acceptance, and use `learn_from_response()` for a cacheable Actor answer. A
-rejected candidate receives no hit, so its candidacy naturally lowers its hit
-rate. Do not send Actor answers through fact ingestion merely to cache them.
-
-`pipeline.respond()` is intentionally more autonomous: it accepts qualifying
-pattern and cache responses itself. Likewise, `pattern_query()` records a
-selected pattern as successful immediately. Neither is the correct proposal
-boundary when the Regulator must commit acceptance. See the complete
-[Tapestry integration guide](documentation/tapestry-integration.md) for the
-current API example, scoping constraints, replacement policy, and delivery
-phases.
-
 ## Sessions
 
 Sessions enable context expansion for follow-up queries:
