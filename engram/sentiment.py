@@ -12,8 +12,8 @@ from functools import lru_cache
 
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-from .constants import NEGATIVE, NEGATIVE_THRESHOLD, NEUTRAL, NEUTRAL_SCORES, POSITIVE, POSITIVE_THRESHOLD
-from .nltk_data import ensure_resource
+from engram.constants import NEGATIVE, NEGATIVE_THRESHOLD, NEUTRAL, NEUTRAL_SCORES, POSITIVE, POSITIVE_THRESHOLD
+from engram.nltk_data import ensure_resource
 
 
 @lru_cache(maxsize=1)

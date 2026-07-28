@@ -28,8 +28,8 @@ Stemming support:
 import re
 from functools import lru_cache
 
-from .constants import THAT_PRIORITY, TOPIC_PRIORITY, WILDCARD_TOKENS
-from .text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
+from engram.constants import THAT_PRIORITY, TOPIC_PRIORITY, WILDCARD_TOKENS
+from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
 
 def match_result(

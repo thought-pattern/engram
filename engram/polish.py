@@ -9,8 +9,8 @@ punctuation -- templates author their own punctuation, and anything beyond
 casing risks rewriting content.
 """
 
-from .constants import STANDALONE_I_FORMS
-from .substitutions import apply_substitutions, split_sentences
+from engram.constants import STANDALONE_I_FORMS
+from engram.substitutions import apply_substitutions, split_sentences
 
 
 def polish_response(text: str) -> str:

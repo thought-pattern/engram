@@ -11,11 +11,11 @@ import random
 import re
 from datetime import datetime
 
-from .constants import VERSION
-from .graph import graph_is_empty, graph_single, is_write_cypher
-from .nlp import input_kind
-from .sentiment import sentiment_label
-from .text import extract_name, first_clause
+from engram.constants import VERSION
+from engram.graph import graph_is_empty, graph_single, is_write_cypher
+from engram.nlp import input_kind
+from engram.sentiment import sentiment_label
+from engram.text import extract_name, first_clause
 
 TRIPLE_QUERY_OBJECT = (
     "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "

@@ -20,10 +20,10 @@ Usage:
     print(result["source"], result["response"])
 """
 
-from . import sessions as sessions_mod
-from .constants import QUESTION_WORDS
-from .nlp import is_question
-from .pattern import is_pure_wildcard
+from engram import sessions as sessions_mod
+from engram.constants import QUESTION_WORDS
+from engram.nlp import is_question
+from engram.pattern import is_pure_wildcard
 
 
 def pipeline_result(

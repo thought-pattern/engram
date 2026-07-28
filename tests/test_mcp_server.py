@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
-import engram.service as engram_service
+from engram import service as engram_service
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 

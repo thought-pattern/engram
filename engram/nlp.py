@@ -12,7 +12,7 @@ from nltk.metrics.distance import edit_distance
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from .constants import (
+from engram.constants import (
     COMMAND_WORDS,
     COPULAS,
     KIND_COMMAND,
@@ -23,8 +23,8 @@ from .constants import (
     PRONOUNS,
     QUESTION_WORDS,
 )
-from .nltk_data import ensure_resource
-from .text import is_known_word
+from engram.nltk_data import ensure_resource
+from engram.text import is_known_word
 
 
 @lru_cache(maxsize=1)

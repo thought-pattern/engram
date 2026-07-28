@@ -7,10 +7,10 @@ deserializing ENGRAM state to/from JSON files and strings.
 import json
 import os
 
-from .config import config_from_dict, config_to_dict, engram_config
-from .constants import PERSISTENCE_VERSION
-from .core import Engram
-from .models import (
+from engram.config import config_from_dict, config_to_dict, engram_config
+from engram.constants import PERSISTENCE_VERSION
+from engram.core import Engram
+from engram.models import (
     keyword_entry,
     keyword_entry_from_dict,
     keyword_entry_to_dict,

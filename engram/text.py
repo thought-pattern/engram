@@ -9,7 +9,7 @@ from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from .constants import (
+from engram.constants import (
     CLAUSE_BOUNDARY_TRAILERS,
     CLAUSE_QUESTION_BOUNDARIES,
     CONTENT_POS_TAGS,
@@ -23,8 +23,8 @@ from .constants import (
     SPELL_LONG_TOKEN_LENGTH,
     SUBJECT_PRONOUNS,
 )
-from .nltk_data import ensure_resource
-from .spacy_setup import get_nlp
+from engram.nltk_data import ensure_resource
+from engram.spacy_setup import get_nlp
 
 
 @lru_cache(maxsize=4096)

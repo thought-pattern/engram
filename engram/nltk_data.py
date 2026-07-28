@@ -14,7 +14,7 @@ import os
 
 import nltk
 
-from .constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
+from engram.constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
 
 
 def configure_path() -> str:

@@ -71,6 +71,9 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
 [tool.ruff.lint.per-file-ignores]
 # Runnable entrypoints put the repo root on sys.path before importing the
 # package, so their package imports are intentionally not at the top of file.
@@ -95,6 +98,8 @@ extend-exclude = "engram/v1/engram_pb2.*"
 profile = "black"
 line_length = 132
 known_first_party = ["engram"]
+combine_as_imports = true
+skip_glob = ["engram/v1/engram_pb2*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

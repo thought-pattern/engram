@@ -8,8 +8,8 @@ to be methods.
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from .constants import Tier
-from .substitutions import split_sentences
+from engram.constants import Tier
+from engram.substitutions import split_sentences
 
 # =============================================================================
 # Statement

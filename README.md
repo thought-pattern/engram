@@ -44,6 +44,11 @@ and backward compatible.
 - [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
   launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
 
+## Development
+
+- [Python code style](documentation/code-style.md) — the Engram import
+  convention and the Google Python Style Guide baseline used elsewhere.
+
 ## Setup
 
 ```bash

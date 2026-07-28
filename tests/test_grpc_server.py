@@ -12,7 +12,7 @@ import pytest
 from google.protobuf import empty_pb2, json_format, struct_pb2
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
-import engram.service as service_module
+from engram import service as service_module
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, PersistenceError

@@ -26,7 +26,7 @@ This is presentation only. ENGRAM keeps its own copy of the frame logic;
 it does not depend on Tapestry.
 """
 
-from .spacy_setup import get_nlp
+from engram.spacy_setup import get_nlp
 
 VOWELS = set("aeiou")
 

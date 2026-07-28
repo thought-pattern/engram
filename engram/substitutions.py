@@ -8,8 +8,8 @@ from functools import lru_cache
 
 from nltk.tokenize import sent_tokenize
 
-from .constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
-from .nltk_data import ensure_resource
+from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
+from engram.nltk_data import ensure_resource
 
 
 @lru_cache(maxsize=1)
