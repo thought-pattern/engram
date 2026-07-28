@@ -46,7 +46,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
-    "grpcio-tools>=1.81,<1.82",
+    "grpcio-tools==1.81.0",
 ]
 
 [build-system]

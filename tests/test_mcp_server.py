@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -276,7 +277,7 @@ def test_regulated_state_expires_and_is_not_persisted(tmp_path) -> None:
     service.start(seed_path=str(_seed_file(tmp_path)), store_path=str(store))
     learned = service.learn_response("What persists?", "The learned response.", "learn-persist")
     proposal = service.propose("What persists?", "proposal-expiring")
-    service.proposals[proposal["proposal_id"]]["created_at"] = 0
+    service.proposals[proposal["proposal_id"]]["created_at"] = time.monotonic() - engram_service.PROPOSAL_TTL_SECONDS - 1
     with pytest.raises(ValueError, match="expired"):
         service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
 
