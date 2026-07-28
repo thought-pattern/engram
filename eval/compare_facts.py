@@ -10,7 +10,6 @@ Usage:
 """
 
 import sys
-import warnings
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -19,8 +18,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from engram.facts_spacy import extract_facts
 from engram.nlp import extract_fact
-
-warnings.filterwarnings("ignore")
 
 CORPUS = [
     "The sky is blue.",
