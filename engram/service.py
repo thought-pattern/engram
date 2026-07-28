@@ -98,14 +98,14 @@ class EngramCore:
     ) -> "EngramCore":
         """Load or create a core, optionally synchronizing a seed corpus."""
         resolved_store = Path(store_path).resolve() if store_path else None
-        core_config = config if config is not None else engram_config()
         if resolved_store and resolved_store.exists():
             try:
-                engram = persistence.load_engram(resolved_store, config=core_config)
+                engram = persistence.load_engram(resolved_store, config=config)
             except Exception as error:
                 raise PersistenceError("store load", error, state_changed=False) from error
         else:
             try:
+                core_config = config if config is not None else engram_config()
                 engram = Engram(config=core_config)
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error

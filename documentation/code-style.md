@@ -1,6 +1,6 @@
 # Engram Python Code Style
 
-Engram follows the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) except for the import convention defined below. This document takes precedence for imports; the Google guide governs all other Python style decisions.
+Engram follows the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) with two intentional exceptions: the import convention and the 132-character line length defined below. This document takes precedence for those exceptions; the Google guide governs all other Python style decisions.
 
 ## Imports
 

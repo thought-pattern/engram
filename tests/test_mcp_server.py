@@ -9,8 +9,11 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from engram import service as engram_service
+from engram.config import engram_config
+from engram.core import Engram
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
+from engram.service import EngramCore
 
 
 def _seed_file(tmp_path):
@@ -69,6 +72,19 @@ def test_service_persists_one_runtime_across_calls(tmp_path) -> None:
     restarted = MCPConversationService()
     restarted.start(user_id="Carol", seed_path="", store_path=str(store))
     assert restarted.send("What's good?")["response"] == "Sushi is good."
+
+
+def test_service_restart_without_config_path_restores_stored_config(tmp_path) -> None:
+    store = tmp_path / "engram.json"
+    stored = EngramCore(Engram(config=engram_config(capacity=37, use_synonyms=False)), store_path=store)
+    assert stored.flush() is True
+
+    service = MCPConversationService()
+    service.start(seed_path="", store_path=str(store))
+
+    assert service.core is not None
+    assert service.core.engram.config["capacity"] == 37
+    assert service.core.engram.config["use_synonyms"] is False
 
 
 def test_service_adds_unattributed_shared_fact_without_context_change(tmp_path) -> None:

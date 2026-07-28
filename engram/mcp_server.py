@@ -4,7 +4,7 @@ import threading
 
 from mcp.server.fastmcp import FastMCP
 
-from engram.config import engram_config, load_config
+from engram.config import load_config
 from engram.errors import ConflictError, LifecycleError
 from engram.service import EngramCore
 
@@ -52,7 +52,7 @@ class MCPConversationService:
             if self.core is not None:
                 raise ConflictError("a conversation is already active; call engram_stop before starting another")
 
-            config = load_config(config_path) if config_path else engram_config()
+            config = load_config(config_path) if config_path else None
             core = EngramCore.open(config=config, store_path=store_path, seed_path=seed_path)
             try:
                 started = core.start_conversation(

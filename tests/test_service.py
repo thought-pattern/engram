@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from engram import service as service_module
+from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
@@ -81,6 +82,24 @@ def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) 
     assert recalled["candidates"][0]["statement_id"] == learned["statement_id"]
     with pytest.raises(ValueError, match="expired"):
         restored.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
+
+
+def test_core_open_restores_stored_config_unless_explicitly_overridden(tmp_path) -> None:
+    store = tmp_path / "engram.json"
+    stored_config = engram_config(capacity=37, use_synonyms=False)
+    core = EngramCore(Engram(config=stored_config), store_path=store)
+    assert core.flush() is True
+
+    restored = EngramCore.open(store_path=store)
+
+    assert restored.engram.config["capacity"] == 37
+    assert restored.engram.config["use_synonyms"] is False
+
+    override = engram_config(capacity=41, use_synonyms=True)
+    overridden = EngramCore.open(config=override, store_path=store)
+
+    assert overridden.engram.config["capacity"] == 41
+    assert overridden.engram.config["use_synonyms"] is True
 
 
 def test_core_without_store_reports_that_flush_was_skipped() -> None:

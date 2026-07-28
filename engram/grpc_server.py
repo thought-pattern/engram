@@ -15,7 +15,7 @@ import grpc
 from google.protobuf import empty_pb2, json_format, struct_pb2
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
-from engram.config import engram_config, load_config
+from engram.config import load_config
 from engram.errors import (
     ConflictError,
     EngramCoreError,
@@ -374,7 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     certificate, private_key = _read_tls_files(parser, args.tls_cert, args.tls_key)
 
-    config = load_config(args.config_path) if args.config_path else engram_config()
+    config = load_config(args.config_path) if args.config_path else None
     try:
         core = EngramCore.open(config=config, store_path=args.store_path, seed_path=args.seed_path)
         server = create_grpc_server(
