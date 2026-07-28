@@ -12,7 +12,7 @@ import time
 from collections import Counter
 from copy import deepcopy
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,7 +39,7 @@ REGULATOR_OUTCOMES = frozenset(
 )
 
 
-class CoreState(str, Enum):
+class CoreState(StrEnum):
     """Lifecycle state of the single owned application core."""
 
     RUNNING = "running"
@@ -47,7 +47,7 @@ class CoreState(str, Enum):
     CLOSED = "closed"
 
 
-class DurabilityState(str, Enum):
+class DurabilityState(StrEnum):
     """Current relationship between live state and configured persistence."""
 
     DISABLED = "disabled"
