@@ -34,6 +34,7 @@ def pipeline_result(
     keywords=None,
     pattern: str = "",
     captured=None,
+    user_id: str = "",
 ) -> dict:
     """Build a pipeline response dict.
 
@@ -51,7 +52,28 @@ def pipeline_result(
         "keywords": keywords if keywords is not None else [],
         "pattern": pattern,
         "captured": captured if captured is not None else [],
+        "user_id": user_id,
+        "dialogue_act": "",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
     }
+    return result
+
+
+def _attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
+    """Attach the latest per-user discourse state to an API result."""
+    if not session_id:
+        return result
+    with engram.session_lock:
+        session = engram.sessions.get(session_id)
+        if not session:
+            return result
+        history = session.get("dialogue_act_history", [])
+        result["dialogue_act"] = history[0] if history else ""
+        result["active_topic"] = session.get("active_topic", "")
+        result["entities"] = list(session.get("entities", []))
+        result["fact_admissions"] = list(session.get("last_fact_admissions", []))
     return result
 
 
@@ -96,6 +118,7 @@ def respond(
     high_confidence: float = 0.7,
     context_limit: int = 3,
     learn: bool = True,
+    user_id: str | None = None,
 ) -> dict:
     """Answer text through the tiered strategy: pattern, cache, then LLM.
 
@@ -126,10 +149,25 @@ def respond(
             answers without the LLM (scores run 0.0 - 1.0).
         context_limit: Maximum retrieved statements passed to llm_fn.
         learn: Whether to cache llm_fn responses via learn_from_response.
+        user_id: Optional caller-owned user label. When supplied, it identifies
+            both the isolated conversation context and fact attribution.
 
     Returns:
         Pipeline result dict (response, source, score, matches, keywords).
     """
+    if not 0 <= high_confidence <= 1:
+        raise ValueError("high_confidence must be between 0 and 1")
+    if context_limit < 0:
+        raise ValueError("context_limit must be non-negative")
+
+    context_id = session_id
+    attributed_user_id = None
+    if user_id is not None:
+        attributed_user_id = sessions_mod.normalize_user_id(user_id)
+        if session_id and session_id != attributed_user_id:
+            raise ValueError("session_id and user_id must identify the same context")
+        context_id = attributed_user_id
+
     # Tier 1: scripted pattern. Accept a response backed by a matched
     # statement or by graph recall, but not the configured fallback text.
     # A catch-all deflection answering a question is held back: confident
@@ -137,7 +175,12 @@ def respond(
     deferred_shrug = ""
     matched_pattern = ""
     matched_captured: list = []
-    pattern_result = engram.pattern_query(text, session_id=session_id)
+    pattern_result = engram.pattern_query(
+        text,
+        session_id=context_id,
+        user_id=attributed_user_id,
+        combine_sentences=False,
+    )
     if pattern_result:
         stmt, captured, response = pattern_result
         matched_pattern = stmt["pattern"] if stmt else ""
@@ -150,15 +193,22 @@ def respond(
                 # retrieval tier's session context expansion. It is
                 # re-recorded if it actually ends up being shown.
                 deferred_shrug = response
-                _retract_response(engram, session_id, deferred_shrug)
+                _retract_response(engram, context_id, deferred_shrug)
             else:
-                tier1 = pipeline_result(response, "pattern", score=1.0, pattern=matched_pattern, captured=matched_captured)
-                return tier1
+                tier1 = pipeline_result(
+                    response,
+                    "pattern",
+                    score=1.0,
+                    pattern=matched_pattern,
+                    captured=matched_captured,
+                    user_id=context_id,
+                )
+                return _attach_dialogue_state(engram, tier1, context_id)
 
     # Tier 2: confident cached answer via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
     # why why") is no evidence, however perfectly it overlaps something.
-    retrieval = engram.query(text, session_id=session_id, limit=max(context_limit, 1))
+    retrieval = engram.query(text, session_id=context_id, limit=max(context_limit, 1))
     matches = retrieval["matches"]
     keywords = retrieval["keywords"]
     content_keywords = [kw for kw in keywords if kw not in QUESTION_WORDS]
@@ -166,9 +216,16 @@ def respond(
         top_stmt, top_score = matches[0]
         if top_score >= high_confidence:
             engram.record_hit(keywords, statement_id=top_stmt["id"])
-            _update_session(engram, session_id, top_stmt["text"])
-            tier2 = pipeline_result(top_stmt["text"], "cache", score=top_score, matches=matches, keywords=keywords)
-            return tier2
+            _update_session(engram, context_id, top_stmt["text"])
+            tier2 = pipeline_result(
+                top_stmt["text"],
+                "cache",
+                score=top_score,
+                matches=matches,
+                keywords=keywords,
+                user_id=context_id,
+            )
+            return _attach_dialogue_state(engram, tier2, context_id)
 
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
@@ -176,16 +233,26 @@ def respond(
         response = llm_fn(text, context_statements)
         if response:
             if learn:
-                engram.learn_from_response(text, response)
-            _update_session(engram, session_id, response)
-            tier3 = pipeline_result(response, "llm", matches=matches, keywords=keywords)
-            return tier3
+                engram.learn_from_response(
+                    retrieval["resolved_query"],
+                    response,
+                    source_label="llm",
+                )
+            _update_session(engram, context_id, response)
+            tier3 = pipeline_result(
+                response,
+                "llm",
+                matches=matches,
+                keywords=keywords,
+                user_id=context_id,
+            )
+            return _attach_dialogue_state(engram, tier3, context_id)
 
     # Tier 4: nothing confident. A held catch-all response still beats
     # silence -- re-record it into the session since it is actually shown --
     # otherwise hand the retrieval back to the caller.
     if deferred_shrug:
-        _update_session(engram, session_id, deferred_shrug)
+        _update_session(engram, context_id, deferred_shrug)
         deferred = pipeline_result(
             deferred_shrug,
             "pattern",
@@ -194,8 +261,38 @@ def respond(
             keywords=keywords,
             pattern=matched_pattern,
             captured=matched_captured,
+            user_id=context_id,
         )
-        return deferred
+        return _attach_dialogue_state(engram, deferred, context_id)
     top_score = matches[0][1] if matches else 0.0
-    tier4 = pipeline_result("", "none", score=top_score, matches=matches, keywords=keywords)
-    return tier4
+    tier4 = pipeline_result(
+        "",
+        "none",
+        score=top_score,
+        matches=matches,
+        keywords=keywords,
+        user_id=context_id,
+    )
+    return _attach_dialogue_state(engram, tier4, context_id)
+
+
+def chat(
+    engram,
+    text: str,
+    user_id: str = "0",
+    llm_fn=None,
+    high_confidence: float = 0.7,
+    context_limit: int = 3,
+    learn: bool = True,
+) -> dict:
+    """Run the chatbot for one caller-owned user context."""
+    normalized_user_id = sessions_mod.normalize_user_id(user_id)
+    return respond(
+        engram,
+        text,
+        llm_fn=llm_fn,
+        high_confidence=high_confidence,
+        context_limit=context_limit,
+        learn=learn,
+        user_id=normalized_user_id,
+    )

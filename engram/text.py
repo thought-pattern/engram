@@ -69,6 +69,42 @@ def normalize(text: str) -> str:
     return trimmed
 
 
+def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
+    """Restore wildcard capture casing from the caller's original sentence.
+
+    Pattern matching intentionally normalizes input, but template output and
+    caller-owned labels should not inherit that lowercase representation. This
+    aligns each normalized capture with a contiguous word span in the original
+    sentence and returns the original spellings when possible.
+    """
+    if not captures or not source_text:
+        return captures
+
+    source_matches = list(re.finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re.UNICODE))
+    source_words = [normalize(match.group(0)) for match in source_matches]
+    restored: list[str] = []
+    search_start = 0
+
+    for capture in captures:
+        capture_words = normalize(capture).split()
+        found = -1
+        if capture_words:
+            last_start = len(source_words) - len(capture_words)
+            for index in range(search_start, last_start + 1):
+                if source_words[index : index + len(capture_words)] == capture_words:
+                    found = index
+                    break
+        if found < 0:
+            restored.append(capture)
+            continue
+
+        end = found + len(capture_words)
+        restored.append(" ".join(match.group(0) for match in source_matches[found:end]))
+        search_start = end
+
+    return restored
+
+
 def extract_keywords(
     text: str,
     stopwords: set[str],
@@ -239,9 +275,10 @@ def expand_query(query: str, previous_response: str) -> str:
     dilute its own keywords and let the bot's last answer distort unrelated
     retrieval.
 
-    When it fires, the previous response's nouns and proper nouns are appended
-    -- the things a pronoun can refer to -- falling back to the full response
-    when no nouns can be extracted.
+    When it fires, referring pronouns are removed and the previous response's
+    nouns and proper nouns are appended. Removing the unresolved pronoun makes
+    the resulting cache key context-specific instead of teaching a globally
+    reusable ambiguous query.
 
     Args:
         query: Current query text.
@@ -252,7 +289,7 @@ def expand_query(query: str, previous_response: str) -> str:
 
     Example:
         >>> expand_query("What is its population?", "Paris is the capital of France")
-        'What is its population? Paris capital France'
+        'What is population? Paris capital France'
     """
     if not previous_response:
         return query
@@ -261,11 +298,14 @@ def expand_query(query: str, previous_response: str) -> str:
     if not query_words & REFERRING_PRONOUNS:
         return query
 
+    resolved_tokens = [token for token in query.split() if token.strip(".,!?;:'\"").lower() not in REFERRING_PRONOUNS]
+    resolved_query = " ".join(resolved_tokens).strip() or query
+
     terms = extract_context_terms(previous_response)
     if not terms:
-        expanded = f"{query} {previous_response}"
+        expanded = f"{resolved_query} {previous_response}"
         return expanded
-    expanded = f"{query} {' '.join(terms)}"
+    expanded = f"{resolved_query} {' '.join(terms)}"
     return expanded
 
 

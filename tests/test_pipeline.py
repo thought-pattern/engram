@@ -1,6 +1,6 @@
 """Tests for the tiered response pipeline."""
 
-from engram import pipeline
+from engram import pipeline, sessions
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
@@ -103,6 +103,60 @@ class TestLlmTier:
         session = engram.sessions["user1"]
         assert session["previous_response"] == "Paris is lovely in spring."
 
+    def test_llm_response_has_non_user_provenance(self) -> None:
+        engram = Engram()
+        llm_fn, _ = _counting_llm("A generated answer.")
+
+        pipeline.chat(engram, "a novel question", user_id="alice", llm_fn=llm_fn)
+
+        stmt = next(s for s in engram.statements if s["text"] == "A generated answer.")
+        assert stmt["introduced_by_user_id"] is None
+        assert stmt["source_label"] == "llm"
+
+    def test_contextual_cache_key_does_not_leak_to_fresh_session(self) -> None:
+        engram = Engram()
+        sessions.create_session(engram, "paris")
+        sessions.update_session_context(
+            engram,
+            "paris",
+            "Paris is the capital of France.",
+        )
+        paris_llm, _ = _counting_llm("Paris has about 2.1 million residents.")
+
+        first = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="paris",
+            llm_fn=paris_llm,
+        )
+
+        fresh_llm, fresh_calls = _counting_llm("Which place do you mean?")
+        fresh = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="fresh",
+            llm_fn=fresh_llm,
+        )
+
+        assert first["source"] == "llm"
+        assert fresh["source"] == "llm"
+        assert fresh["response"] == "Which place do you mean?"
+        assert len(fresh_calls) == 1
+
+        sessions.create_session(engram, "same-context")
+        sessions.update_session_context(
+            engram,
+            "same-context",
+            "Paris is the capital of France.",
+        )
+        same = pipeline.respond(
+            engram,
+            "What is its population?",
+            session_id="same-context",
+        )
+        assert same["source"] == "cache"
+        assert same["response"] == "Paris has about 2.1 million residents."
+
 
 class TestNoneTier:
     def test_no_answer_returns_retrieval(self) -> None:
@@ -124,6 +178,42 @@ class TestNoneTier:
         assert result["source"] == "none"
         assert result["matches"] == []
         assert result["score"] == 0.0
+
+
+class TestUserAwareChat:
+    def test_missing_user_uses_default_context(self) -> None:
+        engram = Engram()
+        engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
+
+        result = pipeline.chat(engram, "hello", user_id="")
+
+        assert result["user_id"] == "0"
+        assert "0" in engram.sessions
+
+    def test_context_is_isolated_but_learned_facts_are_shared(self) -> None:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        alice = pipeline.chat(engram, "Sushi is good.", user_id="Alice")
+        carol = pipeline.chat(engram, "What's good?", user_id="Carol")
+
+        assert alice["source"] == "pattern"
+        assert carol["source"] == "pattern"
+        assert carol["response"] == "Sushi is good."
+        learned_id = engram.pattern_to_statement["SUSHI"]
+        assert engram.get_statement(learned_id)["introduced_by_user_id"] == "Alice"
+        assert engram.sessions["Alice"]["input_history"] == ["Sushi is good."]
+        assert engram.sessions["Carol"]["input_history"] == ["What's good?"]
+
+    def test_user_labels_are_case_sensitive_and_caller_owned(self) -> None:
+        engram = Engram()
+        engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
+
+        pipeline.chat(engram, "hello", user_id="Alice")
+        pipeline.chat(engram, "hello", user_id="alice")
+
+        assert "Alice" in engram.sessions
+        assert "alice" in engram.sessions
 
 
 class TestQuestionRouting:
@@ -200,6 +290,41 @@ class TestPipelineResultDetail:
         assert result["source"] == "cache"
         assert result["pattern"] == ""
         assert result["captured"] == []
+
+
+class TestConversationalComposition:
+    def test_chat_uses_final_matched_sentence_instead_of_concatenating(self) -> None:
+        engram = Engram()
+        engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
+        engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
+
+        result = pipeline.chat(engram, "First. Second.", user_id="speaker")
+
+        assert result["response"] == "Second reply."
+        assert result["pattern"] == "SECOND"
+
+    def test_low_level_pattern_query_keeps_legacy_combination(self) -> None:
+        engram = Engram()
+        engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
+        engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
+
+        result = engram.pattern_query("First. Second.")
+
+        assert result[2] == "First reply. Second reply."
+
+    def test_repetition_feedback_gets_an_acknowledgment_not_another_probe(self) -> None:
+        engram = Engram()
+        engram.store("Why do you say that?", pattern="*", tier=Tier.STATIC)
+
+        pipeline.chat(engram, "Limited time creates urgency.", user_id="speaker")
+        result = pipeline.chat(
+            engram,
+            "I just explained why. You're asking the same question.",
+            user_id="speaker",
+        )
+
+        assert "repeating myself" in result["response"]
+        assert result["response"] != "Why do you say that?"
 
 
 class TestDeferredShrugRetraction:

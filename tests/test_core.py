@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from engram import eviction, metrics, persistence, sessions
-from engram.config import engram_config
+from engram import eviction, metrics, persistence, pipeline, sessions
+from engram.config import engram_config, graph_config
 from engram.constants import SessionOverflow, Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
@@ -67,6 +67,17 @@ class TestEngramStore:
 
         assert metrics.get_static_count(engram) == 1
         assert metrics.get_dynamic_count(engram) == 2
+
+    def test_duplicate_statement_id_is_rejected_without_mutation(self) -> None:
+        engram = Engram()
+        engram.store("First", statement_id="fixed", pattern="FIRST")
+
+        with pytest.raises(ValueError, match="duplicate statement id"):
+            engram.store("Second", statement_id="fixed", pattern="SECOND")
+
+        assert len(engram.statements) == 1
+        assert engram.pattern_query("first")[2] == "First"
+        assert not engram.pattern_query("second")
 
 
 class TestEngramQuery:
@@ -597,6 +608,45 @@ class TestEngramPersistence:
 
         assert metrics.get_statement_count(loaded) == 2
 
+    def test_persistence_preserves_user_context_and_fact_provenance(self) -> None:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        pipeline.chat(engram, "Sushi is good.", user_id="Alice")
+        research_id = engram.add_fact(
+            "Tokyo is the capital of Japan.",
+            source_label="research-tool",
+        )
+
+        loaded = persistence.load_engram_json(persistence.save_json(engram))
+
+        sushi_id = loaded.pattern_to_statement["SUSHI"]
+        sushi = loaded.get_statement(sushi_id)
+        assert sushi["introduced_by_user_id"] == "Alice"
+        assert sushi["source_label"] == ""
+
+        research = loaded.get_statement(research_id)
+        assert research["introduced_by_user_id"] is None
+        assert research["source_label"] == "research-tool"
+        assert "Alice" in loaded.sessions
+
+    def test_legacy_statement_without_provenance_still_loads(self) -> None:
+        engram = Engram()
+        engram.store(
+            "Legacy statement",
+            introduced_by_user_id="old-user",
+            source_label="old-source",
+        )
+        data = persistence.to_dict(engram)
+        data["statements"][0].pop("introduced_by_user_id")
+        data["statements"][0].pop("source_label")
+
+        loaded = persistence.load_engram_from_dict(data)
+        statement = loaded.statements[0]
+
+        assert statement["introduced_by_user_id"] is None
+        assert statement["source_label"] == ""
+
     def test_persistence_preserves_statistics(self) -> None:
         engram = Engram()
         engram.store("Paris France")
@@ -644,6 +694,25 @@ class TestEngramPersistence:
         loaded = persistence.load_engram_json(json_str, config=override)
 
         assert loaded.config["capacity"] == 456
+
+    def test_persistence_omits_graph_password(self) -> None:
+        config = engram_config(graph=graph_config(enabled=True, username="reader", password="secret"))
+        engram = Engram(config=config)
+
+        data = persistence.to_dict(engram)
+
+        assert "password" not in data["config"]["graph"]
+        loaded = persistence.load_engram_from_dict(data)
+        assert loaded.config["graph"]["password"] == ""
+
+    def test_duplicate_statement_id_in_persistence_is_rejected(self) -> None:
+        engram = Engram()
+        engram.store("First", statement_id="fixed")
+        data = persistence.to_dict(engram)
+        data["statements"].append(dict(data["statements"][0]))
+
+        with pytest.raises(ValueError, match="duplicate statement id"):
+            persistence.load_engram_from_dict(data)
 
     def test_load_legacy_state_without_config(self) -> None:
         """Files written before the config block still load, keeping capacity."""
@@ -1472,6 +1541,15 @@ class TestInputOutputCleanup:
 
         assert result[2] == "You said something loud. I heard you."
 
+    def test_wildcard_capture_preserves_caller_name_casing(self) -> None:
+        engram = Engram()
+        engram.store("Nice to meet you, {star1}!", pattern="MY NAME IS *")
+
+        result = engram.pattern_query("My name is Robin.")
+
+        assert result[1] == ["Robin"]
+        assert result[2] == "Nice to meet you, Robin!"
+
     def test_response_polish_disabled(self) -> None:
         config = engram_config(polish_responses=False)
         engram = Engram(config=config)
@@ -1638,7 +1716,7 @@ class TestSoakRegressions:
 
     def test_typo_question_not_learned_as_fact(self) -> None:
         """Spelling correction reveals a typo'd question before fact learning."""
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
         engram.store("It is time.", pattern="WHAT TIME IS IT", tier=Tier.STATIC)
 
@@ -1649,7 +1727,7 @@ class TestSoakRegressions:
 
     def test_possessive_sentence_not_greeted(self) -> None:
         """'His name is Rex.' must not stem-match a greeting pattern."""
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Hi there!", pattern="HI *", tier=Tier.STATIC)
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
@@ -1660,7 +1738,7 @@ class TestSoakRegressions:
     def test_learn_acknowledgment_rotates(self) -> None:
         from engram.constants import LEARNED_ACKNOWLEDGMENTS
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
         responses = set()
@@ -1671,12 +1749,86 @@ class TestSoakRegressions:
         assert responses <= set(LEARNED_ACKNOWLEDGMENTS)
         assert len(responses) >= 2
 
+    def test_user_assertions_enter_shared_knowledge(self) -> None:
+        engram = Engram()
+        engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+        engram.pattern_query(
+            "The support code is 9999.",
+            user_id="user-a",
+        )
+        result = engram.pattern_query(
+            "What is the support code?",
+            user_id="user-b",
+        )
+
+        assert result[2] == "The support code is 9999."
+        learned_id = engram.pattern_to_statement["SUPPORT CODE"]
+        assert engram.get_statement(learned_id)["introduced_by_user_id"] == "user-a"
+
+
+class TestExternalFactIngestion:
+    """Research facts enter shared knowledge without entering a user context."""
+
+    def test_add_fact_is_unattributed_and_globally_retrievable(self) -> None:
+        engram = Engram()
+
+        stmt_id = engram.add_fact(
+            "Tokyo is the capital of Japan",
+            source_label="research-tool",
+        )
+
+        stmt = engram.get_statement(stmt_id)
+        assert stmt["introduced_by_user_id"] is None
+        assert stmt["source_label"] == "research-tool"
+        assert engram.sessions == {}
+        assert engram.pattern_query("What is Tokyo?", user_id="carol")[2] == ("Tokyo is the capital of Japan.")
+        assert metrics.get_dynamic_count(engram) == 1
+        assert "WHAT IS TOKYO" in stmt["pattern_aliases"]
+
+    def test_fact_aliases_survive_persistence_and_retirement(self) -> None:
+        engram = Engram()
+        stmt_id = engram.add_fact("Tokyo is the capital of Japan")
+        restored = persistence.load_engram_json(persistence.save_json(engram))
+
+        assert restored.pattern_query("What is Tokyo?")[2] == "Tokyo is the capital of Japan."
+        assert restored.pattern_to_statement["WHAT IS TOKYO"] == stmt_id
+
+        restored.retire_statement(stmt_id)
+        assert restored.pattern_query("What is Tokyo?") == ()
+        assert "WHAT IS TOKYO" not in restored.pattern_to_statement
+
+    def test_add_fact_retains_unstructured_text(self) -> None:
+        engram = Engram()
+
+        stmt_id = engram.add_fact("Sushi: good, portable, and widely available.")
+
+        assert engram.get_statement(stmt_id)["text"] == ("Sushi: good, portable, and widely available.")
+        assert engram.get_statement(stmt_id)["pattern"] == ""
+
+    def test_add_fact_is_idempotent_for_existing_fact(self) -> None:
+        engram = Engram()
+
+        first = engram.add_fact("Tokyo is the capital of Japan")
+        second = engram.add_fact("Tokyo is the capital of Japan")
+
+        assert second == first
+        assert sum(stmt["pattern"] == "TOKYO" for stmt in engram.statements) == 1
+
+    def test_add_fact_validates_input(self) -> None:
+        engram = Engram()
+
+        with pytest.raises(ValueError):
+            engram.add_fact("")
+        with pytest.raises(ValueError):
+            engram.add_fact("A fact", source_label=None)
+
 
 class TestKnownFactResponses:
     """Restating or contradicting a known fact surfaces the stored belief."""
 
     def _taught_engram(self) -> Engram:
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("The sky is blue.")
         return engram
@@ -1708,7 +1860,7 @@ class TestFactContentRetrieval:
     def test_yes_no_question_reaches_cache(self) -> None:
         from engram import pipeline
 
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("The sky is blue.")
 
@@ -1718,7 +1870,7 @@ class TestFactContentRetrieval:
         assert result["response"] == "The sky is blue."
 
     def test_who_is_pattern_generated(self) -> None:
-        engram = Engram()
+        engram = Engram(config=engram_config(learn_user_facts=True))
         engram.store("Go on.", pattern="*", tier=Tier.STATIC)
         engram.pattern_query("Rex is a golden retriever.")
 

@@ -7,6 +7,7 @@ the statement index is consistent, and the metrics counters saw every event.
 
 import threading
 
+from engram import pipeline
 from engram.constants import Tier
 from engram.core import Engram
 
@@ -75,3 +76,58 @@ def test_concurrent_session_updates() -> None:
 
     assert errors == []
     assert len(engram.sessions) == 0
+
+
+def test_concurrent_user_chat_contexts_are_isolated() -> None:
+    engram = Engram()
+    engram.store("Hello.", pattern="HELLO *", tier=Tier.STATIC)
+    errors: list[Exception] = []
+
+    def worker(n: int) -> None:
+        try:
+            user_id = f"user-{n}"
+            for i in range(ITERATIONS):
+                result = pipeline.chat(
+                    engram,
+                    f"hello {user_id} item {i}",
+                    user_id=user_id,
+                )
+                assert result["user_id"] == user_id
+        except Exception as err:
+            errors.append(err)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert set(engram.sessions) == {f"user-{n}" for n in range(THREADS)}
+    for n in range(THREADS):
+        history = engram.sessions[f"user-{n}"]["input_history"]
+        assert history
+        assert all(entry.startswith(f"hello user-{n} item ") for entry in history)
+
+
+def test_concurrent_speakers_store_one_copy_of_the_same_fact() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    errors: list[Exception] = []
+
+    def worker(n: int) -> None:
+        try:
+            pipeline.chat(engram, "Sushi is good.", user_id=f"user-{n}")
+        except Exception as err:
+            errors.append(err)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    learned = [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]
+    assert len(learned) == 1
+    assert engram.pattern_query("What's good?")[2] == "Sushi is good."

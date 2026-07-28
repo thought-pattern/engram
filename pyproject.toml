@@ -26,11 +26,19 @@ dependencies = [
     "nltk>=3.9",
     "spacy>=3.8",
     "pymgclient>=1.5",
+    "mcp>=1.27,<2",
+    "grpcio>=1.81,<1.82",
+    "grpcio-health-checking>=1.81,<1.82",
+    "protobuf>=6.33.6,<7",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
 # packaged console entry point; scripts/ is intentionally outside the engram
 # package.
+
+[project.scripts]
+engram-mcp = "engram.mcp_server:main"
+engram-grpc = "engram.grpc_server:main"
 
 [project.optional-dependencies]
 dev = [
@@ -38,6 +46,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
+    "grpcio-tools==1.81.0",
 ]
 
 [build-system]
@@ -47,6 +56,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["engram*"]
+
+[tool.setuptools.package-data]
+engram = ["v1/*.proto", "v1/*.pyi"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}
@@ -59,11 +71,18 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
 [tool.ruff.lint.per-file-ignores]
 # Runnable entrypoints put the repo root on sys.path before importing the
 # package, so their package imports are intentionally not at the top of file.
 "scripts/*" = ["E402"]
 "eval/*" = ["E402"]
+# Generated gRPC method names follow the protobuf service contract.
+"engram/grpc_server.py" = ["N802"]
+# These files are compiler output and are checked for reproducibility in tests.
+"engram/v1/engram_pb2*" = ["ALL"]
 
 # Black is the formatter of record: `black -l 132 -t py311`. The code targets
 # 3.12+ (see requires-python and ruff target-version), but the py311 formatting
@@ -71,6 +90,7 @@ ignore = ["E501"]
 [tool.black]
 line-length = 132
 target-version = ["py311"]
+extend-exclude = "engram/v1/engram_pb2.*"
 
 # isort uses the black profile + matching line length so it never disagrees with
 # black (or ruff's own `I` import-order rule) on how to wrap parenthesized imports.
@@ -78,6 +98,8 @@ target-version = ["py311"]
 profile = "black"
 line_length = 132
 known_first_party = ["engram"]
+combine_as_imports = true
+skip_glob = ["engram/v1/engram_pb2*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

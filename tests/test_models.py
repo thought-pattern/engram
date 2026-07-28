@@ -43,7 +43,14 @@ class TestStatement:
         assert stmt["keywords"] == ["hello", "world"]
 
     def test_serialization(self) -> None:
-        stmt = statement("Test statement", keywords=["test"])
+        stmt = statement(
+            "Test statement",
+            keywords=["test"],
+            pattern="TEST",
+            pattern_aliases=["WHAT IS TEST"],
+            introduced_by_user_id="alice",
+            source_label="conversation",
+        )
         data = statement_to_dict(stmt)
 
         assert data["text"] == "Test statement"
@@ -54,6 +61,16 @@ class TestStatement:
         assert restored["id"] == stmt["id"]
         assert restored["text"] == stmt["text"]
         assert restored["tier"] == stmt["tier"]
+        assert restored["pattern_aliases"] == ["WHAT IS TEST"]
+        assert restored["introduced_by_user_id"] == "alice"
+        assert restored["source_label"] == "conversation"
+
+    def test_unattributed_statement_defaults(self) -> None:
+        stmt = statement("Shared fact")
+
+        assert stmt["introduced_by_user_id"] is None
+        assert stmt["source_label"] == ""
+        assert stmt["pattern_aliases"] == []
 
 
 class TestKeywordEntry:

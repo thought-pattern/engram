@@ -6,18 +6,20 @@ store and config paths under tmp_path -- the repo's engram.json and config.yml
 are never touched.
 """
 
-import importlib.util
 import json
 import os
 import sys
+from importlib import util
 
 import pytest
+
+from engram.errors import PersistenceError
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_PATH = os.path.join(REPO_ROOT, "scripts", "cli.py")
 
-_spec = importlib.util.spec_from_file_location("engram_cli", CLI_PATH)
-cli = importlib.util.module_from_spec(_spec)
+_spec = util.spec_from_file_location("engram_cli", CLI_PATH)
+cli = util.module_from_spec(_spec)
 sys.modules.setdefault("engram_cli", cli)
 _spec.loader.exec_module(cli)
 
@@ -62,6 +64,8 @@ class TestInitAndStore:
             state = json.load(f)
         assert state["hit_count"] == 1
         assert state["query_count"] >= 1
+        statement = next(s for s in state["statements"] if s["text"] == "Paris is the capital of France")
+        assert statement["hit_count"] == 1
 
 
 class TestSessions:
@@ -134,6 +138,17 @@ class TestConfigErrors:
         with pytest.raises(ValueError, match="uri"):
             cli.main(["--store", store, "--config", str(config), "metrics"])
 
+    def test_core_error_is_reported_without_a_traceback(self, store, capsys, monkeypatch) -> None:
+        run_cli(store, "init")
+
+        def fail_open(cls, **kwargs):
+            raise PersistenceError("store load", OSError("unavailable"), state_changed=False)
+
+        monkeypatch.setattr(cli.EngramCore, "open", classmethod(fail_open))
+
+        assert run_cli(store, "metrics") == 1
+        assert "store load failed: unavailable" in capsys.readouterr().err
+
 
 class TestSyncSeed:
     def test_sync_seed_refreshes_stale_template(self, store, tmp_path, capsys) -> None:
@@ -190,3 +205,30 @@ class TestInteractiveChat:
         assert chat.process_input("hello") == "Hi there!"
         # Nothing matches and there is no catch-all: the chat default answers.
         assert chat.process_input("zzz qqq xxx") == "Tell me more about that."
+
+    def test_persistent_runtime_supports_inspection_and_reports(self, tmp_path, capsys) -> None:
+        from engram.constants import Tier
+        from engram.core import Engram
+
+        engram = Engram()
+        engram.store("Hi there!", pattern="HELLO", tier=Tier.STATIC)
+        transcript = tmp_path / "recovery.json"
+        chat = cli.InteractiveChat(
+            engram,
+            session_id="Human label",
+            initial_bot_text=".",
+            transcript_path=str(transcript),
+        )
+
+        assert chat.process_input("hello") == "Hi there!"
+        assert chat.runtime.inspect()["user_id"] == "Human label"
+        assert chat.runtime.inspect()["turn_count"] == 1
+        assert transcript.exists()
+
+        assert chat._handle_command("/inspect") is False
+        assert '"turn_count": 1' in capsys.readouterr().out
+
+        prefix = tmp_path / "human-chat"
+        assert chat._handle_command(f"/finish {prefix}") is False
+        assert prefix.with_suffix(".json").exists()
+        assert prefix.with_suffix(".md").exists()

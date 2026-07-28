@@ -10,32 +10,13 @@ The evaluation context is a plain dict built by ``TemplateContext``.
 import random
 import re
 from datetime import datetime
-from uuid import uuid4
 
 from engram.constants import VERSION
-from engram.graph import graph_is_empty, graph_single
+from engram.graph import graph_is_empty, graph_single, is_write_cypher
 from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
 from engram.text import extract_name, first_clause
 
-# Canonical-graph triple operations. A triple is stored as a Claim node linked by
-# edge to canonical Entity/Predicate nodes, mirroring the Tapestry schema; the
-# surface triple is also written to the Claim's denormalized projection so a
-# reader sees it without joining edges. See schema.cypher.
-TRIPLE_ADD_QUERY = (
-    "MERGE (s:Entity {primary_label: $subject}) "
-    "ON CREATE SET s.canonical_id = $subject_cid, s.aliases = [], s.created_at = datetime() "
-    "MERGE (o:Entity {primary_label: $object}) "
-    "ON CREATE SET o.canonical_id = $object_cid, o.aliases = [], o.created_at = datetime() "
-    "MERGE (p:Predicate {label: $predicate}) "
-    "ON CREATE SET p.canonical_id = $predicate_cid, p.synonyms = [], p.created_at = datetime() "
-    "CREATE (c:Claim {id: $claim_id, claim_type: 'relational', "
-    "subject: $subject, predicate: $predicate, object: $object, "
-    "normalized: $normalized, invalidated_at: NULL, created_at: datetime()}) "
-    "CREATE (c)-[:HAS_SUBJECT {surface_form: $subject}]->(s) "
-    "CREATE (c)-[:USES_PREDICATE]->(p) "
-    "CREATE (c)-[:HAS_OBJECT {surface_form: $object}]->(o)"
-)
 TRIPLE_QUERY_OBJECT = (
     "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
     "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
@@ -58,18 +39,6 @@ TRIPLE_QUERY_SUBJECT = (
     "AND c.invalidated_at IS NULL "
     "RETURN hs.surface_form AS result LIMIT 1"
 )
-
-
-def canonical_slug(text: str) -> str:
-    """Lowercase underscore slug used as a lightweight canonical id for triples.
-
-    Standalone ENGRAM has no entity reconciler, so a triple's canonical_id is
-    derived deterministically from its surface form. Tapestry assigns richer
-    canonical ids when it owns the write; this keeps standalone triples
-    interoperable with the canonical schema.
-    """
-    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
-    return slug
 
 
 def template_context(
@@ -333,21 +302,6 @@ class TemplateProcessor:
             result = self._process_graph_query(template["graph_query"], context)
             return result
 
-        # Graph write
-        if "graph_write" in template:
-            result = self._process_graph_write(template["graph_write"], context)
-            return result
-
-        # Graph delete
-        if "graph_delete" in template:
-            result = self._process_graph_delete(template["graph_delete"], context)
-            return result
-
-        # Triple add shorthand
-        if "triple_add" in template:
-            result = self._process_triple_add(template["triple_add"], context)
-            return result
-
         # Triple query shorthand
         if "triple_query" in template:
             result = self._process_triple_query(template["triple_query"], context)
@@ -505,6 +459,9 @@ class TemplateProcessor:
 
         # Resolve query and parameters
         query = self._substitute_variables(query_data.get("query", ""), context)
+        if is_write_cypher(query):
+            output = self.process(query_data.get("on_failure", ""), context)
+            return output
         params = {}
         for key, value in query_data.get("params", {}).items():
             params[key] = self._substitute_variables(str(value), context)
@@ -555,86 +512,6 @@ class TemplateProcessor:
             output = self.process(template_copy, context)
             return output
         return result_str
-
-    def _process_graph_write(self, write_data: dict, context: dict) -> str:
-        """Process graph write operation."""
-        if not context["graph_fn"]:
-            output = self.process(write_data.get("on_failure", ""), context)
-            return output
-
-        # Resolve query and parameters
-        query = self._substitute_variables(write_data.get("query", ""), context)
-        params = {}
-        for key, value in write_data.get("params", {}).items():
-            params[key] = self._substitute_variables(str(value), context)
-
-        # Execute write. The graph layer raises if the write cannot be applied
-        # (unreachable host or query failure); a write must not be reported as
-        # success when it did not land.
-        try:
-            context["graph_fn"](query, params)
-        except Exception:
-            output = self.process(write_data.get("on_failure", ""), context)
-            return output
-
-        output = self.process(write_data.get("on_success", ""), context)
-        return output
-
-    def _process_graph_delete(self, delete_data: dict, context: dict) -> str:
-        """Process graph delete operation."""
-        if not context["graph_fn"]:
-            output = self.process(delete_data.get("on_failure", ""), context)
-            return output
-
-        # Resolve query and parameters
-        query = self._substitute_variables(delete_data.get("query", ""), context)
-        params = {}
-        for key, value in delete_data.get("params", {}).items():
-            params[key] = self._substitute_variables(str(value), context)
-
-        # Execute delete. The graph layer raises if it cannot be applied; a
-        # delete must not be reported as success when it did not land.
-        try:
-            context["graph_fn"](query, params)
-        except Exception:
-            output = self.process(delete_data.get("on_failure", ""), context)
-            return output
-
-        output = self.process(delete_data.get("on_success", ""), context)
-        return output
-
-    def _process_triple_add(self, triple_data: dict, context: dict) -> str:
-        """Process triple add shorthand operation."""
-        if not context["graph_fn"]:
-            return ""
-
-        # Resolve triple components
-        subject = self._substitute_variables(triple_data.get("subject", ""), context)
-        predicate = self._substitute_variables(triple_data.get("predicate", ""), context)
-        obj = self._substitute_variables(triple_data.get("object", ""), context)
-
-        if not subject or not predicate or not obj:
-            return ""
-
-        # Store the triple as a canonical Claim: Entity/Predicate nodes linked by
-        # HAS_SUBJECT / USES_PREDICATE / HAS_OBJECT edges, plus the denormalized
-        # surface projection on the Claim node.
-        params = {
-            "subject": subject,
-            "predicate": predicate,
-            "object": obj,
-            "subject_cid": canonical_slug(subject),
-            "predicate_cid": canonical_slug(predicate),
-            "object_cid": canonical_slug(obj),
-            "claim_id": str(uuid4()),
-            "normalized": f"{subject} {predicate} {obj}".lower(),
-        }
-
-        try:
-            context["graph_fn"](TRIPLE_ADD_QUERY, params)
-        except Exception:
-            return ""
-        return ""
 
     def _process_triple_query(self, triple_data: dict, context: dict) -> str:
         """Process triple query shorthand operation."""

@@ -3,7 +3,7 @@
 NLTK has no dependency parser, so the NLTK-based extractor in engram.nlp only
 handles copula sentences ("X is Y"). This module uses spaCy's dependency parse
 to pull subject-predicate-object triples from arbitrary declarative sentences,
-which can feed the knowledge-graph triple layer (triple_add/triple_query).
+which can feed opt-in local fact learning and read-only graph recall.
 
 Opt-in via the use_spacy_facts config flag. The model is loaded lazily; if it
 cannot be loaded, extraction returns an empty list rather than failing.

@@ -66,7 +66,7 @@ class TestSpacyFactLearning:
     def test_learns_relational_fact(self):
         from engram.core import Engram
 
-        config = engram_config(use_spacy_facts=True)
+        config = engram_config(use_spacy_facts=True, learn_user_facts=True)
         engram = Engram(config=config)
         engram.store("Tell me more.", pattern="*")
 

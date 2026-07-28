@@ -66,24 +66,25 @@ def evict_statement_at(engram, idx: int) -> bool:
                 if not engram.keywords[kw]["statement_ids"]:
                     del engram.keywords[kw]
 
-    # Remove the statement's pattern from the matcher, unless another statement
-    # still carries the same (pattern, that, topic) -- a dead pattern that keeps
-    # matching would shadow live patterns and silently produce no response.
-    pattern = stmt["pattern"]
-    if pattern:
-        shared = any(
-            s["id"] != stmt["id"] and s["pattern"] == pattern and s["that"] == stmt["that"] and s["topic"] == stmt["topic"]
+    # Remove primary and alias patterns from the matcher. A surviving statement
+    # carrying the same pattern keeps it registered and becomes the map target.
+    for pattern in [stmt["pattern"], *stmt["pattern_aliases"]]:
+        if not pattern:
+            continue
+        survivors = [
+            s
             for s in engram.statements
-        )
-        if not shared:
+            if s["id"] != stmt["id"]
+            and (s["pattern"] == pattern or pattern in s["pattern_aliases"])
+            and s["that"] == stmt["that"]
+            and s["topic"] == stmt["topic"]
+        ]
+        if not survivors:
             engram.pattern_matcher.remove_pattern(pattern, that=stmt["that"], topic=stmt["topic"])
         if engram.pattern_to_statement.get(pattern) == stmt["id"]:
             del engram.pattern_to_statement[pattern]
-            # Remap to a surviving statement with the same pattern, if any
-            for s in engram.statements:
-                if s["id"] != stmt["id"] and s["pattern"] == pattern:
-                    engram.pattern_to_statement[pattern] = s["id"]
-                    break
+            if survivors:
+                engram.pattern_to_statement[pattern] = survivors[0]["id"]
 
     # Remove from statement list and update index
     del engram.statement_index[stmt["id"]]

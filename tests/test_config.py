@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import engram_config
+from engram.config import engram_config, graph_config
 from engram.constants import DEFAULT_STOPWORDS, SessionOverflow
 
 
@@ -20,6 +20,7 @@ class TestEngramConfig:
         assert config["weight_hit_rate"] == 0.2
         assert config["session_overflow"] == SessionOverflow.LRU
         assert config["stopwords"] == DEFAULT_STOPWORDS
+        assert config["learn_user_facts"] is True
 
     def test_custom_values(self) -> None:
         config = engram_config(
@@ -57,6 +58,30 @@ class TestEngramConfig:
     def test_invalid_weights(self) -> None:
         with pytest.raises(ValueError):
             engram_config(weight_base=-1, weight_recency=-1, weight_hit_rate=-1)
+        with pytest.raises(ValueError):
+            engram_config(weight_base=-0.1)
+        with pytest.raises(ValueError):
+            engram_config(weight_recency=float("nan"))
+        with pytest.raises(ValueError):
+            engram_config(weight_hit_rate=float("inf"))
+
+    def test_invalid_matching_and_eviction_settings(self) -> None:
+        with pytest.raises(ValueError):
+            engram_config(srai_depth_limit=0)
+        with pytest.raises(ValueError):
+            engram_config(max_synonyms_per_word=-1)
+        with pytest.raises(ValueError):
+            engram_config(min_hit_rate=1.1)
+        with pytest.raises(ValueError):
+            engram_config(protect_static=False)
+
+    def test_graph_config_validation(self) -> None:
+        with pytest.raises(ValueError):
+            graph_config(host="")
+        with pytest.raises(ValueError):
+            graph_config(port=0)
+        with pytest.raises(ValueError):
+            graph_config(port=70000)
 
     def test_custom_stopwords(self) -> None:
         custom = {"custom", "stop", "words"}

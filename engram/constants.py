@@ -17,7 +17,8 @@ from enum import Enum
 # Canonical package version. pyproject.toml derives the distribution version
 # from this via setuptools' dynamic ``attr``, so the version lives in exactly one
 # place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "0.4.0"
+VERSION = "1.0.0"
+DEFAULT_USER_ID = "0"
 
 # =============================================================================
 # Enumerations
@@ -210,6 +211,23 @@ LEARNED_ACKNOWLEDGMENTS = (
     "Understood.",
     "Okay, I'll keep that in mind.",
 )
+
+# Conversational escape used when a catch-all would repeat a recent prompt or
+# the caller explicitly points out that the bot is looping.
+REPETITION_ESCAPE_RESPONSE = "You're right - I was repeating myself. Let's take a different approach."
+REPETITION_FEEDBACK_MARKERS = (
+    "same question",
+    "you are repeating",
+    "youre repeating",
+    "you keep repeating",
+    "repeat yourself",
+    "already explained",
+    "just explained",
+    "already answered",
+    "asked that already",
+)
+RESPONSE_SIMILARITY_THRESHOLD = 0.72
+REPETITION_HISTORY_SIZE = 8
 
 # Responses when a stated fact matches what is already stored ({existing} is
 # replaced with the stored statement text).

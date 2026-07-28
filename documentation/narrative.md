@@ -28,7 +28,8 @@ Engram is a keyword-indexed statement store with hit-rate tracking. In practical
 - It indexes them by extracted keywords
 - It retrieves relevant statements when queries share keywords
 - It tracks which retrievals succeed, learning over time
-- It maintains session state across conversation turns
+- It maintains isolated per-user context across conversation turns
+- It shares learned facts while retaining who introduced them
 
 The name "engram" comes from neuroscience, where it refers to a physical trace of memory in the brain. This system serves a similar purpose: it's where your application's memories live between expensive cognitive operations.
 
@@ -142,6 +143,60 @@ User: "What's its population?"
 
 Engram sessions track conversation state, enabling context expansion for pronouns and references. The LLM doesn't need to carry the full conversation history when Engram can resolve references locally.
 
+The user-aware entry point is `engram.pipeline.chat`. Its `user_id` is an
+opaque, case-sensitive string maintained by the calling application; missing
+or empty values use `"0"`. Histories, predicates, active topics, referenced
+entities, dialogue-act histories, and pronoun context stay isolated under that
+label. Facts learned during conversation are stored
+globally with `introduced_by_user_id`, so Alice can teach the system that sushi
+is good and Carol can later retrieve that fact without receiving Alice's
+conversation history. A fact is stored once; its common query forms are matcher
+aliases attached to that statement, so recall flexibility does not multiply
+cache entries or consume dynamic capacity repeatedly.
+
+External knowledge uses `engram.add_fact(text, source_label=...)`. This adds a
+single shared fact with no user attribution and does not create or modify a
+conversation context. The optional source label is also caller-owned, making
+it suitable for research tools, imports, or other non-conversational sources.
+
+The lower-level Python API remains available without compatibility changes.
+`EngramCore` is the transport-neutral application facade: it owns the shared
+`Engram`, user-bound `ConversationRuntime` instances, persistence, and
+regulated-cache lifecycle. `ConversationRuntime` supplies turn diagnostics and
+transcript/report generation without changing `Engram`, `query`,
+`pattern_query`, `pipeline.respond`, or `pipeline.chat`. The human CLI,
+FastMCP stdio server, and single-instance gRPC server are thin adapters over
+`EngramCore`; future interfaces can reuse it without importing an existing
+adapter.
+
+The deployed application model is deliberately single-instance: one process
+owns one `EngramCore` and one configured JSON store. With a store configured,
+the core atomically checkpoints successful durable mutations, while proposals
+and idempotency records remain bounded, expiring memory-only state. `close()`
+is concurrency-safe and performs the final lifecycle flush. The core exposes
+stable adapter-facing errors and a shared lifecycle/durability status snapshot.
+A failed checkpoint leaves the mutation in live memory, marks durability
+degraded, and can be recovered by a later flush or exact idempotent retry. The
+implemented protobuf, health, persistence, and shutdown contract is documented
+in [grpc-integration.md](grpc-integration.md).
+
+Conversational calls return one reply per user turn. Multi-sentence input is
+still processed sentence by sentence for matching, learning, and context.
+`pipeline.chat` classifies dialogue acts and selects the final substantive
+move; a trailing thanks or acknowledgment therefore does not discard an
+earlier question or topic change. Topic-aware fallback responses can refer to
+the active per-user topic or an already learned fact instead of repeatedly
+asking generic therapist-style questions. Topic state follows current evidence:
+explicit shifts and recalled facts promote a topic, unrelated substantive
+turns replace or clear stale state, and conversational filler is removed from
+topic labels. Referenced entities are canonicalized per user instead of being
+accumulated under duplicate labels. Broad scripted patterns yield to grounded
+dialogue behavior, and global response-history checks vary repeated replies.
+Conversational fact inference also returns admission diagnostics with stable
+rejection reasons; explicit `add_fact` ingestion deliberately bypasses that
+heuristic gate. The lower-level `pattern_query` combination behavior is
+retained for callers that intentionally use AIML-style multi-sentence output.
+
 ### Role 4: Response Validator
 
 ```
@@ -166,13 +221,13 @@ Your STATIC tier can contain authoritative facts. Before returning an LLM respon
 
 Vector databases with neural embeddings are powerful, but they have drawbacks:
 
-| Concern | Embeddings | Keywords (Engram) |
-|---------|------------|-------------------|
-| Latency | Embedding computation + ANN search | Simple index lookup |
-| Debuggability | Opaque similarity scores | Visible keyword overlap |
-| Determinism | Varies with model versions | Consistent results |
-| Cost | Embedding API calls | No external calls |
-| Learning | Requires retraining | Hit-rate tracking adapts |
+| Concern       | Embeddings                         | Keywords (Engram)        |
+| ------------- | ---------------------------------- | ------------------------ |
+| Latency       | Embedding computation + ANN search | Simple index lookup      |
+| Debuggability | Opaque similarity scores           | Visible keyword overlap  |
+| Determinism   | Varies with model versions         | Consistent results       |
+| Cost          | Embedding API calls                | No external calls        |
+| Learning      | Requires retraining                | Hit-rate tracking adapts |
 
 Engram's keyword approach is **intentionally simple**. When a user asks "What is the capital of France?", you don't need semantic understanding to know that a statement containing "capital" and "France" is probably relevant.
 
@@ -192,6 +247,7 @@ A statement is the atomic unit of storage. It contains:
 - **Pattern**: Optional AIML-style pattern for exact matching
 - **Template**: Optional dynamic response template
 - **Metrics**: Hit count, query count, timestamps
+- **Provenance**: Optional introducing user or non-user source label
 
 Statements can be plain text for simple caching, or they can include patterns and templates for scripted conversational flows.
 
@@ -273,6 +329,7 @@ forever on old evidence.
 - Evicted when capacity is reached
 
 Eviction policies for DYNAMIC content:
+
 - **FIFO**: Oldest statement evicted first
 - **LRU**: Least recently hit evicted (never-hit statements go first)
 - **LFU**: Least frequently hit evicted
@@ -301,8 +358,11 @@ result = engram.query("What are its applications?", session_id=session_id)
 ```
 
 Sessions track:
+
 - Previous bot responses (for context expansion)
 - Predicates (variables like topic, user name, preferences)
+- The active conversational topic and recent referenced entities
+- Recent dialogue acts used for whole-turn response selection
 - Input/output history
 - TTL for automatic expiration
 
@@ -346,7 +406,7 @@ def answer_question(query: str) -> str:
 
 **Benefits**: Immediate cost savings on repeated queries. The cache warms up organically through usage.
 
-`learn_from_response` indexes the response under the *query's* keywords, so
+`learn_from_response` indexes the response under the _query's_ keywords, so
 future phrasings of the same question retrieve it even when the answer shares
 no words with the question. Re-learning a question with the same keyword set
 replaces the cached entry in place (with fresh, unproven statistics) instead
@@ -517,6 +577,7 @@ Dr. Wallace began developing ALICE in 1995, with AIML formalized around 1998-200
 ```
 
 This separation enabled:
+
 - **Portability**: Knowledge bases could be shared across implementations
 - **Maintainability**: Non-programmers could author conversational content
 - **Scalability**: ALICE accumulated over 40,000 categories through community contribution
@@ -535,6 +596,7 @@ AIML 1.0 introduced core concepts still relevant today:
 - **Variables**: `<get>` and `<set>` for session state
 
 AIML 2.0 (2014) added:
+
 - **Zero-or-more wildcards**: `#` and `^`
 - **Sets and maps**: For vocabulary and lookup tables
 - **Rich media**: Support for modern interfaces
@@ -556,16 +618,16 @@ Many production chatbots use hybrid architectures: patterns handle known cases d
 
 Engram inherits AIML's pattern-template architecture but extends it for modern LLM pipelines:
 
-| AIML Concept | Engram Implementation |
-|--------------|----------------------|
-| Categories | Statements with patterns and templates |
-| Wildcards | Full support: `*`, `_`, `#`, `^` |
-| `<that>` context | Statement `that` field for response-based matching |
-| Topics | Statement `topic` field for scoped matching |
-| `<srai>` recursion | Template redirect with depth limiting |
-| Predicates | Session predicates with persistence |
-| Sets | Named sets for vocabulary matching |
-| Maps | Named maps for value lookup |
+| AIML Concept       | Engram Implementation                              |
+| ------------------ | -------------------------------------------------- |
+| Categories         | Statements with patterns and templates             |
+| Wildcards          | Full support: `*`, `_`, `#`, `^`                   |
+| `<that>` context   | Statement `that` field for response-based matching |
+| Topics             | Statement `topic` field for scoped matching        |
+| `<srai>` recursion | Template redirect with depth limiting              |
+| Predicates         | Session predicates with persistence                |
+| Sets               | Named sets for vocabulary matching                 |
+| Maps               | Named maps for value lookup                        |
 
 **Extensions Beyond AIML:**
 
@@ -592,12 +654,12 @@ Engram's pattern matching system draws from AIML's mature standard, providing po
 
 Patterns match user input using wildcards:
 
-| Wildcard | Meaning | Priority |
-|----------|---------|----------|
-| `*` | One or more words | Low |
-| `_` | One or more words | High |
-| `#` | Zero or more words | Low |
-| `^` | Zero or more words | High |
+| Wildcard | Meaning            | Priority |
+| -------- | ------------------ | -------- |
+| `*`      | One or more words  | Low      |
+| `_`      | One or more words  | High     |
+| `#`      | Zero or more words | Low      |
+| `^`      | Zero or more words | High     |
 
 High-priority wildcards match before low-priority ones, enabling catch-all patterns that defer to more specific matches.
 
@@ -716,11 +778,15 @@ engram = persistence.load_engram_json(json_str)
 ```
 
 The persisted state includes:
+
 - All statements (STATIC and DYNAMIC)
 - Keyword index with hit statistics
 - Active sessions
 - Bot properties and configuration
 - Substitution maps
+
+Connection credentials are not state: graph passwords are deliberately omitted
+from persisted cache data and must come from external runtime configuration.
 
 ---
 
@@ -767,6 +833,7 @@ print(f"Evictions: {data['eviction_count']}")
 ```
 
 A healthy system shows:
+
 - Growing hit rate over time
 - Eviction count stabilizing (equilibrium reached)
 - Session count within limits
@@ -774,6 +841,7 @@ A healthy system shows:
 ### Thread Safety
 
 Engram guards its core structures with locks:
+
 - Statement storage, indexing, the pattern matcher, and the pattern map
   (one lock, so matching never sees a half-updated matcher)
 - Keyword index and statistics
@@ -906,8 +974,8 @@ For LLM applications where cost, latency, and debuggability matter, Engram provi
 
 ## Further Reading
 
-- [README.md](README.md) - Quick start guide and API reference
-- [engram/core.py](engram/core.py) - Core implementation
-- [engram/pattern.py](engram/pattern.py) - AIML-style pattern matching
-- [engram/template.py](engram/template.py) - Dynamic template processing
-- [engram/scoring.py](engram/scoring.py) - Scoring algorithm details
+- [README.md](../README.md) - Quick start guide and API reference
+- [engram/core.py](../engram/core.py) - Core implementation
+- [engram/pattern.py](../engram/pattern.py) - AIML-style pattern matching
+- [engram/template.py](../engram/template.py) - Dynamic template processing
+- [engram/scoring.py](../engram/scoring.py) - Scoring algorithm details

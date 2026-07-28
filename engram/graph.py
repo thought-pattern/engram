@@ -1,19 +1,18 @@
 """Knowledge Graph integration for ENGRAM.
 
-Connects to a MemGraph instance using the same interface Tapestry uses: the
-pymgclient driver, a host/port connection, and execute / execute_read /
-execute_write methods that return a list of row dicts. ENGRAM has read-only
-access to the graph in its recall role, but the connection class exposes the
-full method surface so a standalone deployment can also author triples.
+Connects to a MemGraph instance using the pymgclient driver. Runtime access is
+strictly read-only: every public execution path rejects mutating Cypher before
+opening a connection.
 
 Degrades gracefully when MemGraph is unreachable: read calls return an empty
-list and write calls raise so a lost write is never silent. A backend swap
+list. A backend swap
 (e.g. to a different Bolt-speaking store) is a sibling module with the same
 method names — duck typing is the contract, so there is no abstract base class.
 """
 
 import logging
 import re
+import threading
 import time
 from uuid import UUID
 
@@ -60,7 +59,10 @@ def is_connection_error(err: Exception) -> bool:
 # included because stored procedures can write regardless of the surrounding
 # query's shape, and LOAD because LOAD CSV imports data; a read-only path that
 # allowed either would not be read-only.
-WRITE_CLAUSE = re.compile(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD)\b", re.IGNORECASE)
+WRITE_CLAUSE = re.compile(
+    r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
+    re.IGNORECASE,
+)
 
 
 def is_write_cypher(cypher: str) -> bool:
@@ -130,6 +132,9 @@ class MemGraphConnection:
         self.conn = None
         self.available = None  # None = unknown, True = connected, False = failed
         self.last_connect_attempt = 0.0
+        # pymgclient connections may be shared between threads but not used
+        # concurrently. Serialize all connection and cursor access.
+        self._lock = threading.RLock()
 
     def connect(self):
         """Establish a connection to MemGraph.
@@ -137,6 +142,11 @@ class MemGraphConnection:
         Returns the connection on success, None on failure. Sets self.available
         so callers can check without retrying.
         """
+        with self._lock:
+            return self._connect_unlocked()
+
+    def _connect_unlocked(self):
+        """Establish a connection while the caller holds the connection lock."""
         if self.conn is not None:
             return self.conn
 
@@ -183,91 +193,62 @@ class MemGraphConnection:
 
     def disconnect(self):
         """Close the connection to MemGraph."""
-        if self.conn is not None:
-            self.conn.close()
-            self.conn = None
-            self.available = None
-            logger.info("Disconnected from MemGraph")
+        with self._lock:
+            if self.conn is not None:
+                self.conn.close()
+                self.conn = None
+                self.available = None
+                logger.info("Disconnected from MemGraph")
 
     def is_connected(self) -> bool:
         """Check if the connection is active."""
-        if self.conn is None:
-            return False
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("RETURN 1")
-            cursor.fetchall()
-            return True
-        except Exception:
-            self.conn = None
-            self.available = False
-            return False
+        with self._lock:
+            if self.conn is None:
+                return False
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("RETURN 1")
+                cursor.fetchall()
+                return True
+            except Exception:
+                self.conn = None
+                self.available = False
+                return False
 
     def execute(self, query: str, parameters: dict = None) -> list:
         """Execute a Cypher query and return results as a list of dicts.
 
         Returns an empty list if MemGraph is unreachable; raises RuntimeError on
         a query-level failure so a real error is never mistaken for "no rows".
+        Mutating or ambiguous Cypher is rejected before connecting.
         """
-        if self.conn is None and self.connect() is None:
-            return []
+        if is_write_cypher(query):
+            raise ValueError("ENGRAM graph access is read-only")
 
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(query, coerce_params(parameters) or {})
-            columns = [desc.name for desc in cursor.description] if cursor.description else []
-            rows = cursor.fetchall()
-            return [dict(zip(columns, row, strict=False)) for row in rows]
-        except Exception as err:
-            err_str = str(err).lower()
-            if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                logger.debug("Query failed (expected): %s: %s", type(err).__name__, err)
-            else:
-                logger.error("Query failed: %s: %s", type(err).__name__, err)
-                if is_connection_error(err):
-                    self.conn = None
-                    self.available = False
-            raise RuntimeError(f"Query failed: {err}") from err
+        with self._lock:
+            if self.conn is None and self._connect_unlocked() is None:
+                return []
+
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(query, coerce_params(parameters) or {})
+                columns = [desc.name for desc in cursor.description] if cursor.description else []
+                rows = cursor.fetchall()
+                return [dict(zip(columns, row, strict=False)) for row in rows]
+            except Exception as err:
+                err_str = str(err).lower()
+                if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
+                    logger.debug("Query failed (expected): %s: %s", type(err).__name__, err)
+                else:
+                    logger.error("Query failed: %s: %s", type(err).__name__, err)
+                    if is_connection_error(err):
+                        self.conn = None
+                        self.available = False
+                raise RuntimeError(f"Query failed: {err}") from err
 
     def execute_read(self, query: str, parameters: dict = None) -> list:
-        """Read-only alias for execute().
-
-        MemGraph does not distinguish read/write transactions at the driver
-        level, so this is a thin alias provided so callers can signal intent.
-        """
+        """Read-only alias for execute()."""
         return self.execute(query, parameters)
-
-    def execute_write(self, query: str, parameters: dict = None) -> list:
-        """Execute a write query; return RETURN rows if the query has any.
-
-        Raises RuntimeError if MemGraph is unreachable -- writes must not
-        silently vanish. Callers that should survive a graph outage must catch
-        RuntimeError at the call site and log the skip explicitly.
-        """
-        if self.conn is None and self.connect() is None:
-            logger.error(
-                "Write query skipped: MemGraph unreachable at %s:%d",
-                self.host,
-                self.port,
-            )
-            raise RuntimeError(f"Write query failed: MemGraph unreachable at {self.host}:{self.port}")
-
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(query, coerce_params(parameters) or {})
-            columns = [desc.name for desc in cursor.description] if cursor.description else []
-            rows = cursor.fetchall()
-            return [dict(zip(columns, row, strict=False)) for row in rows]
-        except Exception as err:
-            err_str = str(err).lower()
-            if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                logger.debug("Write query failed (expected): %s", err)
-            else:
-                logger.error("Write query failed: %s", err)
-                if is_connection_error(err):
-                    self.conn = None
-                    self.available = False
-            raise RuntimeError(f"Write query failed: {err}") from err
 
 
 def create_graph_client(

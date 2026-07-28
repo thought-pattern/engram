@@ -46,7 +46,7 @@ LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
-    engram = Engram(config=engram_config())
+    engram = Engram(config=engram_config(learn_user_facts=True))
     seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)

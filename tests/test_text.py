@@ -7,6 +7,7 @@ from engram.text import (
     lemmatize_word,
     normalize,
     normalize_with_stemming,
+    restore_capture_case,
     stem_text,
     stem_word,
 )
@@ -32,6 +33,12 @@ class TestNormalize:
         assert normalize("hello    world") == "hello world"
         assert normalize("  hello   world  ") == "hello world"
         assert normalize("hello\t\nworld") == "hello world"
+
+    def test_restore_capture_case_uses_original_proper_name(self) -> None:
+        assert restore_capture_case(["robin"], "My name is Robin.") == ["Robin"]
+
+    def test_restore_capture_case_handles_multiple_words(self) -> None:
+        assert restore_capture_case(["mary jane"], "Please call me Mary Jane!") == ["Mary Jane"]
 
     def test_empty_string(self) -> None:
         assert normalize("") == ""
@@ -91,7 +98,7 @@ class TestExpandQuery:
         # Only the previous response's nouns are appended -- the referents a
         # pronoun can point back to -- not its stopwords and verbs.
         result = expand_query("What is its population?", "Paris is the capital of France")
-        assert result == "What is its population? Paris capital France"
+        assert result == "What is population? Paris capital France"
 
     def test_expansion_skips_non_referents(self) -> None:
         result = expand_query("Why is that?", "The tower was built quickly in Paris")
@@ -104,7 +111,7 @@ class TestExpandQuery:
         # A response with nothing taggable as a noun falls back to appending
         # the full response rather than dropping context entirely.
         result = expand_query("What is that?", "Very quickly")
-        assert result.startswith("What is that? ")
+        assert result == "What is Very quickly"
 
     def test_no_expansion_without_referring_pronoun(self) -> None:
         # A self-contained query must not inherit the previous response's

@@ -3,6 +3,7 @@
 Configurations are plain dicts built by the factory functions below.
 """
 
+import math
 import os
 
 import yaml
@@ -22,6 +23,17 @@ def graph_config(
     Connects to MemGraph with the pymgclient driver over host/port, matching
     the Tapestry knowledge-graph connection interface.
     """
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("graph host must be a non-empty string")
+    if not isinstance(port, int) or isinstance(port, bool) or port < 1 or port > 65535:
+        raise ValueError("graph port must be an integer between 1 and 65535")
+    if not isinstance(username, str):
+        raise ValueError("graph username must be a string")
+    if not isinstance(password, str):
+        raise ValueError("graph password must be a string")
+    if not isinstance(enabled, bool):
+        raise ValueError("graph enabled must be a boolean")
+
     config = {
         "host": host,
         "port": port,
@@ -48,10 +60,11 @@ def engram_config(
     stopwords=None,
     # Input processing
     expand_contractions: bool = True,
+    learn_user_facts: bool = True,
     srai_depth_limit: int = 100,
     # Eviction settings
     eviction_policy: EvictionPolicy = EvictionPolicy.FIFO,
-    protect_static: bool = True,  # Never evict STATIC tier
+    protect_static: bool | None = None,  # Legacy option; STATIC is always protected
     min_hit_rate: float = 0.0,  # Protect categories above this hit rate
     # Matching enhancements
     use_stemming: bool = True,  # Enable stemmed matching (run matches running)
@@ -77,12 +90,25 @@ def engram_config(
     if session_ttl_seconds <= 0:
         raise ValueError("session_ttl_seconds must be positive")
 
-    # Validate weights sum reasonably
-    total_weight = weight_base + weight_recency + weight_hit_rate
-    if total_weight <= 0:
+    weights = (weight_base, weight_recency, weight_hit_rate)
+    if any(not math.isfinite(weight) or weight < 0 for weight in weights):
+        raise ValueError("scoring weights must be finite and non-negative")
+    if sum(weights) <= 0:
         raise ValueError("scoring weights must sum to a positive value")
-    if recency_half_life_seconds <= 0:
-        raise ValueError("recency_half_life_seconds must be positive")
+    if not math.isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
+        raise ValueError("recency_half_life_seconds must be finite and positive")
+    if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
+        raise ValueError("srai_depth_limit must be an integer")
+    if srai_depth_limit < 1:
+        raise ValueError("srai_depth_limit must be at least 1")
+    if not isinstance(max_synonyms_per_word, int) or isinstance(max_synonyms_per_word, bool):
+        raise ValueError("max_synonyms_per_word must be an integer")
+    if max_synonyms_per_word < 0:
+        raise ValueError("max_synonyms_per_word must be non-negative")
+    if not math.isfinite(min_hit_rate) or not 0 <= min_hit_rate <= 1:
+        raise ValueError("min_hit_rate must be between 0 and 1")
+    if protect_static is False:
+        raise ValueError("static statements are always protected from eviction")
 
     if stopwords is None:
         stopwords = DEFAULT_STOPWORDS
@@ -98,9 +124,9 @@ def engram_config(
         "session_overflow": session_overflow,
         "stopwords": stopwords,
         "expand_contractions": expand_contractions,
+        "learn_user_facts": learn_user_facts,
         "srai_depth_limit": srai_depth_limit,
         "eviction_policy": eviction_policy,
-        "protect_static": protect_static,
         "min_hit_rate": min_hit_rate,
         "use_stemming": use_stemming,
         "use_lemmatization": use_lemmatization,
@@ -121,12 +147,15 @@ def config_to_dict(config: dict) -> dict:
     """Serialize a config dict to a JSON-ready dictionary.
 
     Enums are written by value and the stopword set as a sorted list, so the
-    result round-trips through JSON. The graph section is already a plain dict.
+    result round-trips through JSON. Graph credentials are runtime-only and
+    deliberately omitted so cache persistence cannot retain secrets.
     """
     data = dict(config)
     data["eviction_policy"] = config["eviction_policy"].value
     data["session_overflow"] = config["session_overflow"].value
     data["stopwords"] = sorted(config["stopwords"])
+    if config.get("graph") is not None:
+        data["graph"] = {key: value for key, value in config["graph"].items() if key != "password"}
     return data
 
 

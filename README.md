@@ -11,8 +11,43 @@ Key features:
 - **Keyword matching** - Fast, predictable retrieval using keyword overlap
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
-- **Session support** - Multiple concurrent sessions with context expansion
+- **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Persistence** - JSON-based save/load with full state preservation
+- **Multiple interfaces** - Python API, human CLI, persistent FastMCP tools, and a single-instance gRPC service
+
+## Architecture
+
+```text
+CLI ---------\
+              \
+FastMCP -------> EngramCore ---> Engram, pipeline, sessions, persistence
+              /
+gRPC ---------/
+```
+
+`EngramCore` in `engram/service.py` is the transport-neutral application
+facade. It owns the shared `Engram` instance, per-user conversation runtimes,
+persistence lifecycle, and regulated-cache proposal state. The CLI, MCP, and
+gRPC servers translate their interface inputs into calls on that core; none
+owns an independent implementation of Engram behavior. The lower-level
+`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available
+and backward compatible.
+
+## Integration guides
+
+- [Tapestry–Engram integration](documentation/tapestry-integration.md) — the
+  Regulator-controlled response-cache workflow, existing Python API mapping,
+  learning rules, invalidation, failure behavior, metrics, and acceptance tests.
+- [FastMCP integration](documentation/mcp-integration.md) — installation,
+  process ownership, all tool contracts, persistence, host configuration, and
+  the implemented two-phase Tapestry cache interface.
+- [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
+  launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
+
+## Development
+
+- [Python code style](documentation/code-style.md) — the Engram import
+  convention and the Google Python Style Guide baseline used elsewhere.
 
 ## Setup
 
@@ -58,6 +93,70 @@ print(stmt["text"])  # "Paris is the capital of France"
 engram.record_hit(result["keywords"], statement_id=stmt["id"])
 ```
 
+## User-aware chatbot and shared facts
+
+`pipeline.chat` is the in-process chatbot entry point. The caller owns the
+user label: it is an arbitrary, case-sensitive string that Engram preserves
+without interpreting. A missing or empty label becomes `"0"`.
+
+```python
+from engram import pipeline
+
+# A catch-all supplies the chatbot's default conversational behavior.
+engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+pipeline.chat(engram, "Sushi is good.", user_id="Alice")
+result = pipeline.chat(engram, "What's good?", user_id="Carol")
+print(result["response"])  # "Sushi is good."
+```
+
+Alice and Carol have separate histories, predicates, active topics, referenced
+entities, dialogue-act histories, and pronoun context. Facts learned from either conversation enter the shared statement
+store and retain `introduced_by_user_id`, so another user can retrieve them
+without inheriting the speaker's conversation state. Each learned fact occupies
+one statement; alternate question phrasings are matcher aliases on that
+statement rather than duplicate cache entries.
+
+Research and tool output can enter the same shared store without pretending
+to be a user:
+
+```python
+statement_id = engram.add_fact(
+    "Tokyo is the capital of Japan.",
+    source_label="research-tool",
+)
+```
+
+`add_fact` ingests one fact, optionally records an opaque source label, and
+does not create or modify any user context. Conversational facts and external
+facts are both globally retrievable. Batch ingestion is intentionally deferred.
+
+## Regulated response-cache integration
+
+Tapestry can place its Regulator between Engram retrieval and the Actor:
+
+```text
+request -> Engram candidate -> Regulator
+                               | accepted -> return candidate
+                               | rejected/miss -> Actor
+                                                   | IDK -> return without learning
+                                                   | answer -> cache in Engram -> return
+```
+
+For the current in-process integration, use `Engram.query(..., limit=1)` to
+obtain a speculative candidate, call `record_hit()` only after Regulator
+acceptance, and use `learn_from_response()` for a cacheable Actor answer. A
+rejected candidate receives no hit, so its candidacy naturally lowers its hit
+rate. Do not send Actor answers through fact ingestion merely to cache them.
+
+`pipeline.respond()` is intentionally more autonomous: it accepts qualifying
+pattern and cache responses itself. Likewise, `pattern_query()` records a
+selected pattern as successful immediately. Neither is the correct proposal
+boundary when the Regulator must commit acceptance. See the complete
+[Tapestry integration guide](documentation/tapestry-integration.md) for the
+current API example, scoping constraints, replacement policy, and delivery
+phases.
+
 ## Sessions
 
 Sessions enable context expansion for follow-up queries:
@@ -99,6 +198,7 @@ config = engram_config(
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
     eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
+    learn_user_facts=True,       # Learn shared facts with user attribution
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
@@ -125,12 +225,13 @@ json_str = persistence.save_json(engram)
 engram = persistence.load_engram_json(json_str)
 ```
 
-The saved state includes statements, the keyword index with its statistics,
-sessions, bot properties, substitution maps, and the full configuration
-(weights, eviction policy, feature flags). Loading restores the stored
-configuration unless a `config` override is passed to the loader. Files
-written by older versions (which stored only `capacity`) still load, with
-defaults for the rest.
+The saved state includes statements (including `introduced_by_user_id` and
+`source_label` provenance), the keyword index with its statistics, user
+contexts, bot properties, substitution maps, and non-secret configuration
+(weights, eviction policy, feature flags). Graph passwords are runtime-only and
+are never persisted. Loading restores the stored configuration unless a
+`config` override is passed to the loader. Files written by older versions
+(which stored only `capacity`) still load, with defaults for the rest.
 
 ## Scoring Algorithm
 
@@ -144,6 +245,7 @@ score = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hi
 ```
 
 Where:
+
 - `overlap` - IDF-weighted fraction of query keywords present in the statement
   (0.0 to 1.0). Rare keywords count for more than common ones, and a keyword
   matched only through a WordNet synonym earns half credit.
@@ -196,52 +298,100 @@ shadow live ones.
 
 ## API Reference
 
-The data model is plain dicts, and behavior is split between `Engram` methods and
-module-level functions (`engram.sessions`, `engram.persistence`, `engram.metrics`).
+The data model is plain dicts. Interfaces normally use `EngramCore`; embedded
+callers can continue using `Engram` methods and module-level functions
+(`engram.sessions`, `engram.persistence`, `engram.metrics`) directly.
+
+### EngramCore (`from engram.service import EngramCore`)
+
+`EngramCore.open(config=..., store_path=..., seed_path=...)` loads or creates a
+shared application runtime. Its public operations include:
+
+- `start_conversation`, `chat`, `inspect_conversation`,
+  `finish_conversation`, and `stop_conversation`;
+- `add_fact`, `set_predicate`, and `get_predicate`;
+- `propose`, `resolve`, `learn_response`, and `retire_response`;
+- `status` for transport-neutral readiness and durability information; and
+- `flush` and `close` for persistence and lifecycle ownership.
+
+One core can retain multiple user conversations while sharing learned
+knowledge. Regulated-cache operations do not require a chatbot conversation.
+With a configured store, successful durable mutations are atomically
+checkpointed immediately; `close()` performs a final flush. The gRPC server
+owns exactly one core instance.
+
+The core has explicit `running`, `closing`, and `closed` lifecycle states.
+`close()` is concurrency-safe and idempotent. Stable adapter-facing exceptions
+live in `engram.errors`: `InvalidRequestError`, `ResourceNotFoundError`,
+`ConflictError`, `LifecycleError`, and `PersistenceError`. A checkpoint failure
+does not undo an in-memory mutation; `PersistenceError.state_changed` reports
+that condition, `status()` reports degraded durability, and a later `flush()`
+or exact idempotent regulated-cache retry can restore durability.
 
 ### Engram methods
 
-| Method | Description |
-|--------|-------------|
-| `store(text, tier, pattern, template, priority, keyword_source)` | Add a statement; `keyword_source` indexes it under different text (e.g. the question a response answers) |
-| `query(text, session_id, limit)` | Keyword retrieval; returns a dict with `matches` (list of `(statement, score)`) and `keywords` |
-| `pattern_query(text, session_id)` | AIML-style match; returns `(statement, captured, response)` or `()` |
-| `record_hit(keywords, statement_id)` | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement |
-| `learn_from_response(query, response)` | Cache an LLM response, indexed under the query's keywords; re-learning the same question replaces the entry in place |
-| `retire_statement(statement_id)` | Deliberately remove a statement (and its pattern) by id |
-| `learn_fact(fact)` | Learn an extracted fact |
-| `get_statement(statement_id)` | Fetch a statement dict by id (`{}` if absent) |
-| `load_corpus(statements, tier)` | Bulk-add statements |
-| `fork(...)` | Create a child instance sharing the knowledge base |
+| Method                                                           | Description                                                                                                          |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `store(text, tier, pattern, pattern_aliases, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases and provenance; `keyword_source` can index it under different text    |
+| `query(text, session_id, limit, user_id)`                         | Keyword retrieval; `user_id` selects an isolated caller-owned context                                                  |
+| `pattern_query(text, session_id, user_id, combine_sentences)`     | AIML-style match in a user context; returns `(statement, captured, response)` or `()`                                |
+| `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
+| `learn_from_response(query, response, introduced_by_user_id, source_label)` | Cache a response with optional provenance; re-learning the same question replaces it in place                       |
+| `retire_statement(statement_id)`                                 | Deliberately remove a statement (and its pattern) by id                                                              |
+| `learn_fact(fact, introduced_by_user_id, source_label)`          | Learn an extracted fact with optional provenance                                                                     |
+| `add_fact(text, source_label, tier)`                              | Add one globally shared, unattributed fact without changing user context                                              |
+| `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
+| `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
+| `fork(...)`                                                      | Create a child instance sharing the knowledge base                                                                   |
 
 ### Sessions (`from engram import sessions`)
 
-| Function | Description |
-|----------|-------------|
-| `create_session(engram, session_id, metadata)` | Create a session, returns its id |
-| `get_session(engram, session_id, create_if_missing)` | Retrieve a session dict |
-| `update_session_context(engram, session_id, previous_response)` | Update session context |
-| `delete_session(engram, session_id)` | Remove a session |
-| `expire_sessions(engram, inactive_threshold)` | Remove inactive sessions |
-| `list_sessions(engram, active_since)` | List sessions |
+| Function                                                        | Description                      |
+| --------------------------------------------------------------- | -------------------------------- |
+| `create_session(engram, session_id, metadata)`                  | Create a session, returns its id |
+| `get_session(engram, session_id, create_if_missing)`            | Retrieve a session dict          |
+| `update_session_context(engram, session_id, previous_response)` | Update session context           |
+| `delete_session(engram, session_id)`                            | Remove a session                 |
+| `expire_sessions(engram, inactive_threshold)`                   | Remove inactive sessions         |
+| `list_sessions(engram, active_since)`                           | List sessions                    |
 
 ### Persistence (`from engram import persistence`)
 
-| Function | Description |
-|----------|-------------|
-| `save(engram, path)` | Save state to JSON file |
-| `load_engram(path)` | Load state from JSON file |
-| `save_json(engram)` | Serialize to JSON string |
+| Function                     | Description                  |
+| ---------------------------- | ---------------------------- |
+| `save(engram, path)`         | Save state to JSON file      |
+| `load_engram(path)`          | Load state from JSON file    |
+| `save_json(engram)`          | Serialize to JSON string     |
 | `load_engram_json(json_str)` | Deserialize from JSON string |
 
 ### Pipeline (`from engram import pipeline`)
 
-`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn)`
+`pipeline.chat(engram, text, user_id, llm_fn, high_confidence, context_limit, learn)`
+is the user-aware entry point. It defaults to user `"0"` and returns the
+normalized `user_id` in its result. The lower-level
+`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn, user_id)`
 packages the tiered strategy: scripted pattern match first, then a
 high-confidence cached answer, then the caller's LLM with retrieved context
 (whose response is learned for next time). Returns a dict with `response`,
 `source` (`pattern` / `cache` / `llm` / `none`), `score`, `matches`, and
-`keywords`.
+`keywords`. User-aware results also expose the selected `dialogue_act`,
+`active_topic`, recent canonical `entities`, and `fact_admissions`. Each fact
+admission records whether an inferred conversational fact was stored and, when
+it was rejected, a stable reason such as `hedged`, `transient`, or
+`meta_subject`.
+
+For multi-sentence input, `pipeline.chat` produces one conversational reply
+while still processing every sentence for learning and context. It normally
+uses the final substantive sentence, but a trailing courtesy or acknowledgment
+does not hide an earlier question, command, fact, self-introduction, or topic
+change. Direct `pattern_query` calls retain the legacy AIML
+behavior of combining every matched sentence response; pass
+`combine_sentences=False` to request the conversational behavior explicitly.
+Topic state is evidence-driven: explicit shifts and recalled facts promote a
+topic, unrelated substantive turns replace or clear stale topics, and topic
+labels discard conversational filler such as "for a while". Repeated responses
+are checked across all conversational routes, including exact and broad
+patterns, while direct lower-level pattern queries retain their legacy output.
 
 ```python
 from engram import pipeline
@@ -266,17 +416,17 @@ LLM speak first, and returns it only when neither does.
 
 `metrics.get_metrics(engram)` returns a dict with these keys:
 
-| Key | Description |
-|-----|-------------|
-| `statement_count` | Total statements |
-| `static_count` | STATIC tier count |
-| `dynamic_count` | DYNAMIC tier count |
-| `keyword_count` | Distinct keywords |
-| `session_count` | Active sessions |
-| `query_count` | Queries performed |
-| `hit_count` | Hits recorded |
-| `eviction_count` | Evictions |
-| `hit_rate` | Hit rate (0.0 to 1.0) |
+| Key               | Description           |
+| ----------------- | --------------------- |
+| `statement_count` | Total statements      |
+| `static_count`    | STATIC tier count     |
+| `dynamic_count`   | DYNAMIC tier count    |
+| `keyword_count`   | Distinct keywords     |
+| `session_count`   | Active sessions       |
+| `query_count`     | Queries performed     |
+| `hit_count`       | Hits recorded         |
+| `eviction_count`  | Evictions             |
+| `hit_rate`        | Hit rate (0.0 to 1.0) |
 
 `metrics.decay_statistics(engram, factor=0.5)` ages every hit/query count by
 the factor (see Eviction and Hit Tracking above).
@@ -374,21 +524,118 @@ engram export --dynamic-only
 ### Interactive Mode
 
 ```bash
-engram interactive
+engram interactive --user-id Robin --initial-bot-text "." \
+    --transcript conversation-recovery.json
 ```
 
 Interactive mode is a chat loop routed through the tiered pipeline: pattern
 matching first, with questions the patterns cannot answer consulting keyword
-retrieval before falling back. Type a message to get a response, or use a
-slash command:
+retrieval before falling back. `--user-id` is an arbitrary caller-owned label
+and defaults to a generated session for the human CLI. `--transcript` updates a
+JSON recovery transcript after each turn. Type a message to get a response, or
+use a slash command:
+
 - `/debug` - Toggle debug output
+- `/inspect` - Show the active context, learned facts, provenance, and metrics
 - `/metrics` - Show metrics
+- `/finish [path]` - Write JSON and Markdown conversation reports
 - `/topic <name>` - Set the conversation topic
 - `/set <name> <value>` - Set a session predicate
 - `/get <name>` - Show a session predicate
 - `/save` - Save to disk
 - `/help` - List commands
 - `/quit` - Exit (also `/exit`, `/q`)
+
+### MCP Agent Interface
+
+The agent interface is a FastMCP stdio server. The MCP host starts one process,
+and that process retains the same Engram conversation between tool calls:
+
+See [FastMCP integration](documentation/mcp-integration.md) for the complete
+tool contract, lifecycle, host configuration, persistence and recovery rules,
+and the implemented Regulator-controlled cache interface.
+
+```bash
+python -m engram.mcp_server
+# After installing the project, this is equivalent:
+engram-mcp
+```
+
+A typical MCP client entry, run from the repository root, is:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "python",
+      "args": ["-m", "engram.mcp_server"],
+      "cwd": "E:\\current\\engram"
+    }
+  }
+}
+```
+
+The server exposes these tools:
+
+- `engram_start` - Create or restore one persistent conversation. The
+  caller-owned `user_id` defaults to `"0"`; `initial_bot_text` represents
+  Engram's utterance immediately before the first turn.
+- `engram_send` - Submit exactly one observed message and return Engram's
+  response plus match, timing, context-change, and learning diagnostics.
+- `engram_inspect` - Read the current user context, learned facts, provenance,
+  and metrics.
+- `engram_add_fact` - Add one shared, unattributed fact with an optional opaque
+  source label, without changing the conversation context.
+- `engram_finish` - Persist an optional store and write JSON and Markdown
+  reports while leaving the conversation active.
+- `engram_stop` - Persist an optional store and release the conversation. The
+  MCP host, not this tool, owns the server process.
+- `engram_propose` - Retrieve scoped keyword-cache candidates without recording
+  a successful hit or changing response context.
+- `engram_resolve` - Commit one accepted or rejected Regulator verdict;
+  accepted candidates receive exactly one hit.
+- `engram_learn_response` - Cache one non-`IDK` Actor response with namespace,
+  context, provenance metadata, and retry-safe request identity.
+- `engram_retire_response` - Explicitly remove one globally stale dynamic,
+  patternless cache response.
+
+Call `engram_start` once and then `engram_send` once per turn, after observing
+the previous response. There is deliberately no batch-send tool. State is
+persistent between tool calls while the MCP process lives; pass `store_path`
+to `engram_start` when it must also survive process restarts.
+
+FastMCP, gRPC, and the CLI are adapters over the same transport-neutral
+`EngramCore`. They do not replace or alter the lower-level programmatic API.
+
+Use `engram_send` for completed chatbot turns. For Tapestry, use
+`engram_propose` followed by `engram_resolve`; route misses and rejections to
+the Actor, then pass eligible answers to `engram_learn_response`. The same
+workflow remains available through the Python API when a process boundary is
+unnecessary.
+
+### gRPC Service Interface
+
+The gRPC interface runs as one independent process containing exactly one
+shared `EngramCore`. It supports multiple isolated `user_id` conversations,
+the regulated Tapestry cache workflow, standard gRPC health, optional server
+TLS, synchronous persistence, and graceful signal handling:
+
+```bash
+engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
+# Or from a checkout:
+python -m engram.grpc_server --bind 127.0.0.1:50051
+```
+
+The versioned source contract and committed Python stubs live in
+`engram/v1`. See [gRPC integration](documentation/grpc-integration.md) for the
+complete RPC list, Python client example, status mapping, deployment options,
+retry semantics, and shutdown contract.
+
+Scripted or adaptive soak runners can use `ConversationTurnPlanner` to reserve
+the final turn for a farewell, preserve planned messages when adaptive replies
+consume spare turns, and reject accidental normalized duplicate inputs. Any
+intentional repeat, such as testing name recall twice, must be listed through
+`allowed_repeats`.
 
 ## NLP Features
 
@@ -463,14 +710,24 @@ Templates can branch on the sentiment of captured input using the
 instead of enumerating every emotion word:
 
 ```json
-{"pattern": "I AM *", "template": {"sequence": [
-  {"set": {"name": "_mood", "value": "{sentiment:{star1}}"}},
-  {"condition": {"name": "_mood", "branches": [
-    {"value": "negative", "then": {"text": "I'm sorry to hear you're {star1}. Want to talk about it?"}},
-    {"value": "positive", "then": {"text": "That's great that you're {star1}!"}},
-    {"then": {"text": "Nice to know you're {star1}."}}
-  ]}}
-]}}
+{
+  "pattern": "I AM *",
+  "template": {
+    "sequence": [
+      { "set": { "name": "_mood", "value": "{sentiment:{star1}}" } },
+      {
+        "condition": {
+          "name": "_mood",
+          "branches": [
+            { "value": "negative", "then": { "text": "I'm sorry to hear you're {star1}. Want to talk about it?" } },
+            { "value": "positive", "then": { "text": "That's great that you're {star1}!" } },
+            { "then": { "text": "Nice to know you're {star1}." } }
+          ]
+        }
+      }
+    ]
+  }
+}
 ```
 
 So `I am sad` is met with sympathy while `I am thrilled` is met with cheer,
@@ -488,6 +745,11 @@ deliberately conservative: the span before the copula must look like a plain
 noun phrase, so subjects longer than four words, subjects containing a verb or
 modal ("X should inform that Y is ..."), and subjects or objects carrying
 pronouns or possessives are rejected rather than learned as junk facts. A
+second conversational admission gate rejects hedged claims, transient claims
+(`"Lunch is good today"`), vague subjects, and statements about the current
+chat itself. This gate only applies to facts inferred from conversation;
+`add_fact` remains an explicit, caller-authorized ingestion API and is not
+filtered by conversational heuristics. A
 learned fact is protected from overwrites; restating it earns a confirmation
 ("Yes - The sky is blue.") and contradicting it surfaces the stored belief
 ("Hmm, I have it differently: The sky is blue.") instead of a silent
@@ -495,18 +757,21 @@ deflection. With
 spaCy enabled, `engram.facts_spacy.extract_facts` uses the dependency parse to
 pull subject-predicate-object triples from arbitrary declaratives:
 
-| Sentence | Triple |
-|----------|--------|
-| Paris is the capital of France | `(Paris, is, capital of France)` |
-| Paris is in France | `(Paris, in, France)` |
+| Sentence                                    | Triple                                      |
+| ------------------------------------------- | ------------------------------------------- |
+| Paris is the capital of France              | `(Paris, is, capital of France)`            |
+| Paris is in France                          | `(Paris, in, France)`                       |
 | Einstein developed the theory of relativity | `(Einstein, develop, theory of relativity)` |
-| The book belongs to Mary | `(book, belong to, Mary)` |
+| The book belongs to Mary                    | `(book, belong to, Mary)`                   |
 
 Copulas keep their surface form, prepositional links use the preposition, and
 action verbs are normalized to the verb lemma. Each fact also carries
 `subject_type`/`obj_type` from NER (`PERSON`/`GPE`/`ORG`/`DATE`, `""` when not an
-entity), so triples can populate typed graph nodes. This is opt-in
-(`use_spacy_facts`, default off) and feeds the knowledge-graph triple layer.
+entity). Automatic learning from conversational input is enabled by default
+(`learn_user_facts`) because shared knowledge with explicit user attribution
+is the chatbot's normal behavior. Set it to false when the calling application
+wants conversation to remain read-only. When enabled, `use_spacy_facts` selects this relational
+extractor instead of the conservative copula extractor.
 Run `python eval/compare_facts.py` to see it next to the copula extractor.
 
 This is the deliberate spaCy/NLTK split: spaCy for dependency parsing, NLTK for
@@ -537,11 +802,11 @@ vectors, to be worthwhile.)
 
 ENGRAM can recall facts from a MemGraph knowledge graph in addition to its
 statement store. The graph layer is off by default (`graph.enabled: false`) and
-uses the same interface as Tapestry: the pymgclient driver over a host/port,
-with `execute` / `execute_read` / `execute_write` returning lists of row dicts,
-graceful degradation when the host is unreachable, and a reconnect cooldown.
-ENGRAM's role is recall — it reads the canonical graph; a standalone deployment
-can also author triples through `<triple_add>` templates.
+uses the pymgclient driver over a host/port. Runtime graph access is strictly
+read-only: `execute`, `execute_read`, `Engram.graph_query`, and template
+queries all reject mutating Cypher before opening a connection. There is no
+runtime writer method or authoring template. Reads degrade gracefully when the
+host is unreachable and use a reconnect cooldown.
 
 Facts use the canonical-first model shared with Tapestry: a `Claim` node links
 by edge to canonical `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
@@ -570,6 +835,9 @@ python scripts/setup_schema.py            # uses config.yml graph.host / graph.p
 python scripts/setup_schema.py --check    # print the statements without running them
 ```
 
+`scripts/setup_schema.py` is the explicit administrative schema utility and
+is intentionally separate from runtime graph access.
+
 Configure the connection in `config.yml`:
 
 ```yaml
@@ -581,22 +849,21 @@ graph:
   enabled: true
 ```
 
-Template operations once the graph is enabled. In its recall role ENGRAM wires
-these to a **read-only** graph function, so the read operations resolve against
-the graph while the authoring operations are refused — a mutating query returns
-an empty result rather than writing:
+Use a database account that is restricted to reads. The password is supplied by
+external runtime configuration and is never written into persisted cache state.
+
+The two supported template graph operations are read-only:
 
 - `<triple_query>` — resolve the unknown slot of a triple (`"?"` for subject or
   object). Read; active.
-- `<graph_query>` — run an author-supplied read Cypher. Active; a query carrying
+- `<graph_query>` — run a supplied read Cypher. A query carrying
   a write clause (`CREATE` / `MERGE` / `DELETE` / `SET` / `REMOVE` / …) is
   refused, as are `CALL` (stored procedures can mutate) and `LOAD` (data
   import) — the blocklist is conservative, so read-only procedures are refused
   too.
-- `<triple_add>` / `<graph_write>` / `<graph_delete>` — author into the graph.
-  Inert on the recall path. A standalone deployment that wants authoring wires
-  `graph_query` (or its own writer) as the template graph function in place of
-  the read-only default.
+
+The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
+are not supported.
 
 `schema.cypher` is the recall-relevant subset of the Tapestry canonical schema;
 the full store (Passage, Document, Event, Proof, Source, Inquiry nodes and the
@@ -631,7 +898,7 @@ pytest
 ruff check .
 
 # Format code
-ruff format .
+black -l 132 -t py311 .
 ```
 
 ## License
