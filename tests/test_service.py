@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import engram.service as service_module
+from engram import service as service_module
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError

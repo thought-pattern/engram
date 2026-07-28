@@ -25,8 +25,7 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
-from engram.models import Tier, session_update_dialogue
-from engram.models import session as make_session
+from engram.models import Tier, session as make_session, session_update_dialogue
 from engram.nlp import extract_fact
 
 SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"

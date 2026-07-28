@@ -2,15 +2,13 @@
 
 import argparse
 import json
-import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
-# Allow running as `python scripts/cli.py` without installing the package: put
-# the repo root (this file's parent's parent) on the import path.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from engram import metrics, sessions
 from engram.config import load_config
@@ -501,8 +499,6 @@ def cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     elif args.session_command == "expire":
-        from datetime import timedelta
-
         threshold = timedelta(hours=args.hours)
         count = sessions.expire_sessions(engram, inactive_threshold=threshold)
         print(f"Expired {count} sessions")

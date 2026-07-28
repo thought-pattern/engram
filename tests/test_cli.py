@@ -6,10 +6,10 @@ store and config paths under tmp_path -- the repo's engram.json and config.yml
 are never touched.
 """
 
-import importlib.util
 import json
 import os
 import sys
+from importlib import util
 
 import pytest
 
@@ -18,8 +18,8 @@ from engram.errors import PersistenceError
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_PATH = os.path.join(REPO_ROOT, "scripts", "cli.py")
 
-_spec = importlib.util.spec_from_file_location("engram_cli", CLI_PATH)
-cli = importlib.util.module_from_spec(_spec)
+_spec = util.spec_from_file_location("engram_cli", CLI_PATH)
+cli = util.module_from_spec(_spec)
 sys.modules.setdefault("engram_cli", cli)
 _spec.loader.exec_module(cli)
 

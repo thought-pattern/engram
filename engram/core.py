@@ -5,8 +5,7 @@ import random
 import threading
 from difflib import SequenceMatcher
 
-from engram import eviction as eviction_mod
-from engram import sessions as sessions_mod
+from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import (
     CONFLICTING_FACT_RESPONSES,
