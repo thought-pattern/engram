@@ -89,7 +89,9 @@ python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
 ```
 
 The test suite regenerates the files in a temporary directory and compares
-them byte-for-byte with the committed output.
+them byte-for-byte with the committed output. Regenerate with the pinned
+`grpcio-tools` and `protobuf` versions in `pyproject.toml`; the committed stubs
+currently target `grpcio-tools` 1.83.0 and protobuf 7.35.1.
 
 ## RPC surface
 
@@ -205,7 +207,11 @@ retry the final checkpoint; the already-stopped transport is not restarted.
 
 - Bind to loopback unless remote clients are explicitly required.
 - Use TLS or a trusted encrypted proxy for remote transport.
-- Protect the store, transcripts, and reports as application data.
+- Protect the store, transcripts, and reports as application data. Engram
+  creates service-owned artifact directories with owner-only permissions
+  (`0700`) and writes stores, transcripts, and reports as owner-only files
+  (`0600`) on platforms that support POSIX modes. Deployment ACLs remain the
+  authoritative boundary on non-POSIX systems.
 - `source_label` and metadata are provenance, not authorization decisions.
 - Grant `AddFact`, `LearnResponse`, and `RetireResponse` only to callers that
   may change shared cache content.

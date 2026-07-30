@@ -1,6 +1,7 @@
 """Tests for core ENGRAM implementation."""
 
 import tempfile
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -586,6 +587,7 @@ class TestEngramPersistence:
             assert metrics.get_static_count(loaded) == 1
             assert metrics.get_dynamic_count(loaded) == 1
             assert metrics.get_session_count(loaded) == 1
+            assert stat.S_IMODE(Path(path).stat().st_mode) == 0o600
         finally:
             Path(path).unlink()
 

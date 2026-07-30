@@ -674,6 +674,10 @@ class EngramCore:
             return False
         try:
             self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self.store_path.parent.chmod(0o700)
+            except OSError:
+                pass
             persistence.save(self.engram, self.store_path)
         except Exception as error:
             self._durability = DurabilityState.DEGRADED

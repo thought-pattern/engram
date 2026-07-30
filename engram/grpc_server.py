@@ -92,6 +92,13 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         self.health_servicer = health_servicer
         self.transcript_directory = Path(transcript_directory).resolve() if transcript_directory else None
         self.report_directory = Path(report_directory).resolve() if report_directory else None
+        for directory in (self.transcript_directory, self.report_directory):
+            if directory is not None:
+                directory.mkdir(parents=True, exist_ok=True)
+                try:
+                    directory.chmod(0o700)
+                except OSError:
+                    pass
         self.sync_health()
 
     def sync_health(self) -> None:
