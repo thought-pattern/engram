@@ -25,11 +25,11 @@ dependencies = [
     "PyYAML>=6.0",
     "nltk>=3.9",
     "spacy>=3.8",
-    "pymgclient>=1.5",
-    "mcp>=1.27,<2",
-    "grpcio>=1.81,<1.82",
-    "grpcio-health-checking>=1.81,<1.82",
-    "protobuf>=6.33.6,<7",
+    "pymgclient>=1.6.0",
+    "mcp>=2.0.0,<3",
+    "grpcio>=1.83.0,<1.84",
+    "grpcio-health-checking>=1.83.0,<1.84",
+    "protobuf>=7.35.1,<8",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
@@ -45,12 +45,12 @@ dev = [
     "black>=26.5.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.20",
-    "grpcio-tools==1.81.0",
+    "ruff>=0.16.0",
+    "grpcio-tools==1.83.0",
 ]
 
 [build-system]
-requires = ["setuptools>=82.0.1"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
