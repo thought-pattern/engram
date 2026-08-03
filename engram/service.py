@@ -6,6 +6,7 @@ such as MCP and the CLI translate their inputs and outputs at the boundary;
 this module contains no transport-specific types or behavior.
 """
 
+import contextlib
 import json
 import threading
 import time
@@ -674,10 +675,8 @@ class EngramCore:
             return False
         try:
             self.store_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
+            with contextlib.suppress(OSError):
                 self.store_path.parent.chmod(0o700)
-            except OSError:
-                pass
             persistence.save(self.engram, self.store_path)
         except Exception as error:
             self._durability = DurabilityState.DEGRADED

@@ -1,8 +1,8 @@
-# Engram FastMCP Integration
+# Engram MCPServer Integration
 
 ## Status and scope
 
-Engram provides a FastMCP stdio server for agents and LLM hosts that need a
+Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 persistent conversational process or a Regulator-controlled response cache.
 The ten tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, report generation, and a two-phase propose/resolve cache
@@ -11,7 +11,7 @@ interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 
 This document covers:
 
-1. the conversational FastMCP interface; and
+1. the conversational MCP interface; and
 2. the implemented Regulator-controlled Tapestry interface defined in the
    [Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
 
@@ -232,7 +232,7 @@ Graph credentials are never persisted.
 
 Successful durable mutations are atomically checkpointed when `store_path` is
 configured. Core validation, not-found, conflict, lifecycle, and persistence
-failures are surfaced by FastMCP as tool errors. If a checkpoint fails after a
+failures are surfaced by MCPServer as tool errors. If a checkpoint fails after a
 mutation, the tool call fails but the mutation remains applied in the live MCP
 process; `core_status` reports `durability: "degraded"` and `dirty: true`.
 Do not assume that such a tool error rolled back the request.

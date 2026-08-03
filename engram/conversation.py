@@ -6,6 +6,7 @@ an additive orchestration layer for clients that also need a transcript,
 turn-level diagnostics, inspection, and report generation.
 """
 
+import contextlib
 import json
 import os
 import random
@@ -28,21 +29,15 @@ def _utc_now() -> str:
 
 def _atomic_write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(OSError):
         path.parent.chmod(0o700)
-    except OSError:
-        pass
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
+    with contextlib.suppress(OSError):
         temporary.chmod(0o600)
-    except OSError:
-        pass
     os.replace(temporary, path)
-    try:
+    with contextlib.suppress(OSError):
         path.chmod(0o600)
-    except OSError:
-        pass
 
 
 def statement_view(statement: dict) -> dict:
@@ -300,15 +295,11 @@ class ConversationRuntime:
         report = self.report()
         _atomic_write_json(json_path, report)
         markdown_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
+        with contextlib.suppress(OSError):
             markdown_path.parent.chmod(0o700)
-        except OSError:
-            pass
         markdown_path.write_text(render_markdown(report), encoding="utf-8")
-        try:
+        with contextlib.suppress(OSError):
             markdown_path.chmod(0o600)
-        except OSError:
-            pass
         return {
             "summary": report["summary"],
             "json": str(json_path),
