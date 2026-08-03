@@ -165,7 +165,7 @@ The lower-level Python API remains available without compatibility changes.
 regulated-cache lifecycle. `ConversationRuntime` supplies turn diagnostics and
 transcript/report generation without changing `Engram`, `query`,
 `pattern_query`, `pipeline.respond`, or `pipeline.chat`. The human CLI,
-FastMCP stdio server, and single-instance gRPC server are thin adapters over
+MCPServer stdio server, and single-instance gRPC server are thin adapters over
 `EngramCore`; future interfaces can reuse it without importing an existing
 adapter.
 

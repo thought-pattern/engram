@@ -22,14 +22,14 @@ classifiers = [
 # every module imports its dependencies at the top. Keep in step with
 # requirements.txt, which carries the pinned versions.
 dependencies = [
-    "PyYAML>=6.0",
-    "nltk>=3.9",
-    "spacy>=3.8",
-    "pymgclient>=1.5",
-    "mcp>=1.27,<2",
-    "grpcio>=1.81,<1.82",
-    "grpcio-health-checking>=1.81,<1.82",
-    "protobuf>=6.33.6,<7",
+    "PyYAML>=6.0.3",
+    "nltk>=3.10.1",
+    "spacy>=3.8.14",
+    "pymgclient>=1.6.0",
+    "mcp>=2.0.0,<3",
+    "grpcio>=1.83,<1.84",
+    "grpcio-health-checking>=1.83,<1.84",
+    "protobuf>=7.35.1,<8",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
@@ -42,11 +42,14 @@ engram-grpc = "engram.grpc_server:main"
 
 [project.optional-dependencies]
 dev = [
+    "bandit>=1.8.6",
     "black>=26.5.1",
+    "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
-    "grpcio-tools==1.81.0",
+    "grpcio-tools==1.83.0",
+    "vulture>=2.14",
 ]
 
 [build-system]
@@ -100,6 +103,11 @@ line_length = 132
 known_first_party = ["engram"]
 combine_as_imports = true
 skip_glob = ["engram/v1/engram_pb2*"]
+
+[tool.vulture]
+paths = ["engram", "scripts", "eval"]
+min_confidence = 65
+ignore_names = ["exc_type", "exc_value", "traceback"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
