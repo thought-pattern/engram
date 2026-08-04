@@ -5,8 +5,14 @@
 // Or with mgconsole:
 //   mgconsole < schema.cypher
 //
-// Schema version: 3.4 (aligned with the Tapestry knowledge graph)
-// Last updated: 2026-08-01
+// Schema version: 3.5 (aligned with the Tapestry knowledge graph)
+// Last updated: 2026-08-04
+//
+// 3.5 adds Tapestry-owned Proof role, obligation, dependency-publication, and
+// retrieval-confidence metadata outside Engram's recall subset, plus an
+// optional research_leaf_proof_id receipt on Claims. Engram ignores that
+// receipt, remains a read-only Claim/Entity/Predicate/vector client, and owns
+// no Proof nodes.
 //
 // 3.4 adds only Tapestry-owned reasoning-projection metadata outside Engram's
 // recall subset; the Claim validity and vector-recall contract is unchanged.
@@ -91,6 +97,8 @@ CREATE INDEX ON :Predicate(label);
 //     source_calibrated_trust: Float (nullable, versioned source/person score),
 //     source_trust_score_version: Integer (nullable),
 //     ownership_category: String ('PUBLIC', 'COMPANY', or 'CUSTOMER'),
+//     research_leaf_proof_id: String (nullable application-owned proof receipt;
+//                                    ENGRAM does not interpret or mutate it),
 //     created_at: DateTime,
 //     system_from: DateTime (inclusive transaction-time lower bound),
 //     system_to: DateTime (nullable exclusive transaction-time upper bound),

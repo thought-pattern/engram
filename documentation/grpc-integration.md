@@ -13,10 +13,14 @@ server process with one JSON store.
 
 The gRPC contract does not transport Knowledge Graph Claim records. When graph
 recall is enabled, Engram reads the configured Memgraph instance directly. Its
-Schema 3.3 read subset understands Tapestry's half-open Claim times and excludes
+Schema 3.5 read subset understands Tapestry's half-open Claim times and excludes
 closed or retrieval-only (`generic_relation`) Claims. Consequently Phase A does
 not add protobuf fields or create a separate Engram graph in a Tapestry
 deployment.
+
+Schema 3.5 may also expose `research_leaf_proof_id` on a Claim as an
+application-owned proof receipt. Engram does not interpret or mutate it; recall
+continues to rely on the active canonical Claim and configured vector index.
 
 The subset also indexes the canonical semantic fingerprint and carries Claim
 trust/ownership classification. These are graph properties read from the shared
