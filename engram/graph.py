@@ -63,6 +63,7 @@ WRITE_CLAUSE = re.compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
     re.IGNORECASE,
 )
+VECTOR_INDEX_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
 
 def is_write_cypher(cypher: str) -> bool:
@@ -225,6 +226,11 @@ class MemGraphConnection:
         if is_write_cypher(query):
             raise ValueError("ENGRAM graph access is read-only")
 
+        return self._execute_read_query(query, parameters)
+
+    def _execute_read_query(self, query: str, parameters: dict = None) -> list:
+        """Execute a query already constrained to a read-only internal shape."""
+
         with self._lock:
             if self.conn is None and self._connect_unlocked() is None:
                 return []
@@ -245,6 +251,63 @@ class MemGraphConnection:
                         self.conn = None
                         self.available = False
                 raise RuntimeError(f"Query failed: {err}") from err
+
+    def vector_search_claims(
+        self,
+        embedding: list[float],
+        *,
+        index_name: str = "claim_premise_embeddings",
+        limit: int = 250,
+        min_similarity: float = 0.45,
+    ) -> list:
+        """Search active proof-canonical Claims through one fixed ANN query.
+
+        Generic ``CALL`` remains forbidden on :meth:`execute`. This method is
+        the sole procedure exception and exposes no caller-supplied Cypher;
+        only a validated vector-index identifier and bounded scalar parameters
+        reach the hard-coded read query.
+        """
+        if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
+            raise ValueError("invalid vector index name")
+        if not isinstance(embedding, list) or not embedding:
+            raise ValueError("embedding must be a non-empty list")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer from 1 through 1000")
+        if (
+            not isinstance(min_similarity, int | float)
+            or isinstance(min_similarity, bool)
+            or not 0.0 <= float(min_similarity) <= 1.0
+        ):
+            raise ValueError("min_similarity must be between 0 and 1")
+        query = """
+            CALL vector_search.search(
+                $index_name, $limit, $query_embedding
+            ) YIELD node, distance
+            WITH node AS claim, 1.0 - distance AS similarity
+            MATCH (claim)-[:USES_PREDICATE]->(predicate:Predicate)
+            OPTIONAL MATCH (claim)-[:HAS_OBJECT]->(object:Entity)
+            WHERE similarity >= $min_similarity
+              AND claim.invalidated_at IS NULL
+              AND claim.system_to IS NULL
+              AND predicate.canonical_id <> 'generic_relation'
+              AND coalesce(claim.predicate_canonical, true) = true
+              AND (trim(coalesce(claim.object, '')) = '' OR object IS NOT NULL)
+            RETURN DISTINCT claim.id AS claim_id,
+                   claim.subject AS subject,
+                   claim.predicate AS predicate,
+                   claim.object AS object,
+                   similarity
+            ORDER BY similarity DESC, claim.id
+        """
+        return self._execute_read_query(
+            query,
+            {
+                "index_name": index_name,
+                "limit": limit,
+                "query_embedding": embedding,
+                "min_similarity": float(min_similarity),
+            },
+        )
 
     def execute_read(self, query: str, parameters: dict = None) -> list:
         """Read-only alias for execute()."""

@@ -82,6 +82,28 @@ class TestEngramConfig:
             graph_config(port=0)
         with pytest.raises(ValueError):
             graph_config(port=70000)
+        with pytest.raises(ValueError):
+            graph_config(vector_limit=0)
+        with pytest.raises(ValueError):
+            graph_config(vector_min_similarity=1.1)
+        with pytest.raises(ValueError):
+            graph_config(vector_weight=-0.1)
+
+    def test_graph_vector_config(self) -> None:
+        config = graph_config(
+            enabled=True,
+            vector_enabled=True,
+            vector_index_name="claim_premise_embeddings",
+            vector_model_path="/models/minilm",
+            vector_limit=75,
+            vector_min_similarity=0.52,
+            vector_weight=0.8,
+        )
+
+        assert config["vector_enabled"] is True
+        assert config["vector_limit"] == 75
+        assert config["vector_min_similarity"] == 0.52
+        assert config["vector_weight"] == 0.8
 
     def test_custom_stopwords(self) -> None:
         custom = {"custom", "stop", "words"}

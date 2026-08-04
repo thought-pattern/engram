@@ -818,6 +818,14 @@ graph:
   username: ""
   password: ""
   enabled: true
+  vector_enabled: true
+  vector_index_name: claim_premise_embeddings
+  vector_model: all-MiniLM-L6-v2
+  vector_model_path: /path/to/all-MiniLM-L6-v2
+  vector_dimension: 384
+  vector_limit: 250
+  vector_min_similarity: 0.45
+  vector_weight: 0.75
 ```
 
 Use a database account that is restricted to reads. The password is supplied by
@@ -833,12 +841,22 @@ The two supported template graph operations are read-only:
   import) — the blocklist is conservative, so read-only procedures are refused
   too.
 
+Vector recall is deliberately narrower than a template graph operation. Engram
+uses one fixed internal `vector_search.search` call against the configured Claim
+premise index. For response proposals it intersects those results with the
+support Claim IDs already attached to exactly scoped cached responses and merges
+the vector similarity with the ordinary keyword score. It does not expose
+arbitrary procedure calls or return arbitrary KG content as cached answers.
+
 The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
 are not supported.
 
-`schema.cypher` defines the recall-relevant schema Engram requires. A larger
-store may add Passage, Document, Event, Proof, Source, and Inquiry nodes or
-vector indexes; Engram does not own or depend on those extensions.
+`schema.cypher` defines the recall-relevant Schema 3.3 subset Engram requires,
+including canonical semantic identity, Claim trust/ownership classification,
+and half-open valid/system-time fields. A larger store may add Passage,
+Document, Event, Proof, Source, and Inquiry nodes or vector indexes; Engram does
+not own those extensions. Vector recall depends only on the externally managed
+Claim-premise index when explicitly enabled.
 
 ## Evaluation
 

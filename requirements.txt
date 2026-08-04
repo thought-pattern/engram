@@ -1,6 +1,8 @@
 # ENGRAM dependencies
 
 PyYAML==6.0.3
+numpy==2.4.4
+sentence-transformers==5.6.0
 
 # Natural Language Processing
 nltk==3.10.0

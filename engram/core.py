@@ -4,6 +4,9 @@ import logging
 import random
 import threading
 from difflib import SequenceMatcher
+from pathlib import Path
+
+from sentence_transformers import SentenceTransformer
 
 from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
@@ -126,18 +129,29 @@ def _response_cache_scope(template) -> tuple[str, str]:
 # nodes by edge; the surface triple is read from the denormalized projection on
 # the Claim node (subject/predicate/object), never matched on. See schema.cypher.
 GRAPH_ENTITY_FACTS_QUERY = (
-    "MATCH (c:Claim)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
+    "MATCH (c:Claim)-[:HAS_SUBJECT]->(proof_subject:Entity) "
+    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
+    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
+    "MATCH (c)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
     "WHERE (toLower(e.primary_label) = toLower($name) "
     "OR toLower($name) IN [a IN e.aliases | toLower(a)] "
     "OR toLower(rel.surface_form) = toLower($name)) "
-    "AND c.invalidated_at IS NULL "
+    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
+    "AND proof_predicate.canonical_id <> 'generic_relation' "
+    "AND coalesce(c.predicate_canonical, true) = true "
+    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
     "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
     "LIMIT 5"
 )
 GRAPH_KEYWORD_FACTS_QUERY = (
     "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) "
+    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
+    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
     "WHERE toLower(e.primary_label) CONTAINS toLower($keyword) "
-    "AND c.invalidated_at IS NULL "
+    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
+    "AND proof_predicate.canonical_id <> 'generic_relation' "
+    "AND coalesce(c.predicate_canonical, true) = true "
+    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
     "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
     "LIMIT 3"
 )
@@ -206,6 +220,8 @@ class Engram:
         # Graph client (lazy initialization)
         self._graph_client = None
         self._graph_client_lock = threading.Lock()
+        self._graph_embedding_model = None
+        self._graph_embedding_model_lock = threading.Lock()
 
     @property
     def graph_client(self):
@@ -255,6 +271,134 @@ class Engram:
         """
         return self.graph_query(cypher, params)
 
+    def _encode_graph_query(self, text: str) -> list[float]:
+        """Encode one graph-recall query with the configured local model."""
+        graph_config = self.config.get("graph") or {}
+        model_name = str(graph_config.get("vector_model") or "").strip()
+        model_path = str(graph_config.get("vector_model_path") or "").strip()
+        dimension = int(graph_config.get("vector_dimension") or 0)
+        if not model_name or dimension < 1:
+            raise ValueError("vector recall model and dimension must be configured")
+        if self._graph_embedding_model is None:
+            with self._graph_embedding_model_lock:
+                if self._graph_embedding_model is None:
+                    model_source = model_path or model_name
+                    if model_path and not Path(model_path).is_dir():
+                        raise FileNotFoundError(f"vector model path does not exist: {model_path}")
+                    self._graph_embedding_model = SentenceTransformer(
+                        model_source,
+                        device="cpu",
+                        local_files_only=True,
+                    )
+        encoded = self._graph_embedding_model.encode(
+            [text],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        )
+        vector = encoded[0].tolist()
+        if len(vector) != dimension:
+            raise ValueError(f"query embedding dimension {len(vector)} does not match configured graph dimension {dimension}")
+        return vector
+
+    def graph_vector_claims(self, text: str, *, limit: int | None = None) -> list:
+        """Return active semantic Claim hits for ``text``.
+
+        The method fails soft because vector recall augments the deterministic
+        keyword path; a model, index, or graph outage must not make Engram
+        unavailable.
+        """
+        graph_config = self.config.get("graph") or {}
+        client = self.graph_client
+        if client is None or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
+            return []
+        search = getattr(client, "vector_search_claims", None)
+        if not callable(search):
+            return []
+        try:
+            embedding = self._encode_graph_query(text)
+            return search(
+                embedding,
+                index_name=graph_config["vector_index_name"],
+                limit=(max(1, min(1000, int(limit))) if limit is not None else int(graph_config["vector_limit"])),
+                min_similarity=float(graph_config["vector_min_similarity"]),
+            )
+        except Exception as err:
+            logger.warning("Vector graph recall unavailable; using keyword fallback: %s", err)
+            return []
+
+    def warm_vector_recall(self) -> bool:
+        """Load the query model and verify the configured graph ANN path.
+
+        Unlike request-time augmentation, startup warm-up is strict: an
+        enabled vector path that cannot reach its model, graph, or index must
+        not advertise a healthy server and then time out on the first proposal.
+        """
+        graph_config = self.config.get("graph") or {}
+        if not graph_config.get("vector_enabled"):
+            return False
+        client = self.graph_client
+        search = getattr(client, "vector_search_claims", None)
+        if client is None or not callable(search):
+            raise RuntimeError("configured graph client lacks vector Claim search")
+        embedding = self._encode_graph_query("Engram vector recall readiness")
+        search(
+            embedding,
+            index_name=graph_config["vector_index_name"],
+            limit=1,
+            min_similarity=0.0,
+        )
+        if getattr(client, "available", True) is False:
+            raise RuntimeError("configured MemGraph service is unavailable")
+        return True
+
+    @staticmethod
+    def _statement_support_ids(statement: dict) -> set[str]:
+        template = statement.get("template")
+        if not isinstance(template, dict):
+            return set()
+        metadata = template.get("tapestry")
+        if not isinstance(metadata, dict):
+            return set()
+        support = metadata.get("support")
+        if not isinstance(support, list):
+            return set()
+        return {
+            str(reference.get("claim_id"))
+            for reference in support
+            if isinstance(reference, dict) and str(reference.get("claim_id") or "").strip()
+        }
+
+    def vector_supported_matches(
+        self,
+        text: str,
+        *,
+        limit: int,
+        statement_filter=None,
+    ) -> list[tuple[dict, float]]:
+        """Rank scoped cached responses through their KG support Claims."""
+        rows = self.graph_vector_claims(text)
+        support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
+        if not support_scores:
+            return []
+        vector_weight = float((self.config.get("graph") or {})["vector_weight"])
+        scored: list[tuple[dict, float, int]] = []
+        with self.statement_lock:
+            for index, statement_value in enumerate(self.statements):
+                if statement_filter is not None and not statement_filter(statement_value):
+                    continue
+                similarities = [
+                    support_scores[claim_id]
+                    for claim_id in self._statement_support_ids(statement_value)
+                    if claim_id in support_scores
+                ]
+                if not similarities:
+                    continue
+                score = max(similarities) * vector_weight + float(statement_value.get("priority", 0))
+                scored.append((statement_value, score, index))
+        scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
+        return [(statement_value, score) for statement_value, score, _ in scored[:limit]]
+
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
 
@@ -287,7 +431,8 @@ class Engram:
             if facts:
                 formatted = self._format_graph_facts(facts)
                 return formatted
-            return ""
+            vector_facts = self._records_to_facts(self.graph_vector_claims(text, limit=5))
+            return self._format_graph_facts(vector_facts) if vector_facts else ""
 
         # Query the canonical graph for each entity. The Claim node carries the
         # rendered subject/predicate/object projection, so one query covers the
@@ -301,7 +446,8 @@ class Engram:
             # Format facts as natural language
             formatted = self._format_graph_facts(facts)
             return formatted
-        return ""
+        vector_facts = self._records_to_facts(self.graph_vector_claims(text, limit=5))
+        return self._format_graph_facts(vector_facts) if vector_facts else ""
 
     def _records_to_facts(self, records: list) -> list:
         """Turn canonical claim-projection rows into (subject, predicate, object) tuples."""
@@ -548,6 +694,7 @@ class Engram:
         limit: int = 5,
         user_id: str | None = None,
         statement_filter=None,
+        record_candidates: bool = True,
     ) -> dict:
         """Retrieve matching statements.
 
@@ -560,6 +707,9 @@ class Engram:
             statement_filter: Optional predicate applied before scoring and
                 candidacy accounting. Intended for integrations that isolate
                 caller-owned response-cache scopes.
+            record_candidates: Record query accounting for returned matches.
+                Regulated proposal retrieval disables this until keyword and
+                vector candidates have been merged.
 
         Returns:
             Dict with "matches" (list of (statement, score) pairs) and
@@ -570,6 +720,8 @@ class Engram:
             raise ValueError("limit must be at least 1")
         if statement_filter is not None and not callable(statement_filter):
             raise ValueError("statement_filter must be callable or None")
+        if not isinstance(record_candidates, bool):
+            raise ValueError("record_candidates must be a boolean")
         if user_id is not None:
             normalized_user_id = sessions_mod.normalize_user_id(user_id)
             if session_id and session_id != normalized_user_id:
@@ -684,9 +836,10 @@ class Engram:
         # the caller, so it counts as a query against that statement. Paired
         # with record_hit(statement_id=...), this feeds the hit-rate-aware
         # eviction policies (LRU / LFU / HIT_RATE) and min_hit_rate protection.
-        with self.statement_lock:
-            for stmt, _ in matches:
-                record_statement_query(stmt)
+        if record_candidates:
+            with self.statement_lock:
+                for stmt, _ in matches:
+                    record_statement_query(stmt)
 
         result = query_result(
             matches=matches,
