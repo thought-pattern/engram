@@ -1,4 +1,4 @@
-"""Protocol and lifecycle tests for the FastMCP adapter."""
+"""Protocol and lifecycle tests for the MCPServer adapter."""
 
 import asyncio
 import json
@@ -6,10 +6,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.client import Client
 
 from engram import service as engram_service
 from engram.config import engram_config
+from engram.constants import VERSION
 from engram.core import Engram
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
@@ -33,7 +34,7 @@ def _seed_file(tmp_path):
 
 
 def _tool_json(result) -> dict:
-    assert result.isError is False
+    assert result.is_error is False
     assert len(result.content) == 1
     return json.loads(result.content[0].text)
 
@@ -320,10 +321,15 @@ def test_regulated_proposal_storage_is_bounded(tmp_path, monkeypatch) -> None:
         service.resolve(oldest["proposal_id"], "rejected_quality")
 
 
-def test_fastmcp_tools_work_through_the_mcp_protocol(tmp_path) -> None:
+def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
     async def exercise_protocol() -> None:
         server = create_mcp_server()
-        async with create_connected_server_and_client_session(server) as client:
+        async with Client(server) as client:
+            assert client.server_info is not None
+            assert client.server_info.name == "Engram"
+            assert client.server_info.version == VERSION
+            assert client.instructions
+
             listed = await client.list_tools()
             assert [tool.name for tool in listed.tools] == [
                 "engram_start",

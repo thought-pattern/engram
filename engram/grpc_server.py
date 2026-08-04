@@ -95,10 +95,8 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         for directory in (self.transcript_directory, self.report_directory):
             if directory is not None:
                 directory.mkdir(parents=True, exist_ok=True)
-                try:
+                with suppress(OSError):
                     directory.chmod(0o700)
-                except OSError:
-                    pass
         self.sync_health()
 
     def sync_health(self) -> None:

@@ -13,14 +13,14 @@ Key features:
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Persistence** - JSON-based save/load with full state preservation
-- **Multiple interfaces** - Python API, human CLI, persistent FastMCP tools, and a single-instance gRPC service
+- **Multiple interfaces** - Python API, human CLI, persistent MCP tools, and a single-instance gRPC service
 
 ## Architecture
 
 ```text
 CLI ---------\
               \
-FastMCP -------> EngramCore ---> Engram, pipeline, sessions, persistence
+MCPServer -----> EngramCore ---> Engram, pipeline, sessions, persistence
               /
 gRPC ---------/
 ```
@@ -35,7 +35,7 @@ and backward compatible.
 
 ## Integration guides
 
-- [FastMCP integration](documentation/mcp-integration.md) — installation,
+- [MCP integration](documentation/mcp-integration.md) — installation,
   process ownership, all tool contracts, persistence, host configuration, and
   the implemented two-phase regulated-cache interface.
 - [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
@@ -519,10 +519,10 @@ use a slash command:
 
 ### MCP Agent Interface
 
-The agent interface is a FastMCP stdio server. The MCP host starts one process,
+The agent interface is an MCPServer stdio server. The MCP host starts one process,
 and that process retains the same Engram conversation between tool calls:
 
-See [FastMCP integration](documentation/mcp-integration.md) for the complete
+See [MCP integration](documentation/mcp-integration.md) for the complete
 tool contract, lifecycle, host configuration, persistence and recovery rules,
 and the implemented two-phase regulated-cache interface.
 
@@ -575,7 +575,7 @@ the previous response. There is deliberately no batch-send tool. State is
 persistent between tool calls while the MCP process lives; pass `store_path`
 to `engram_start` when it must also survive process restarts.
 
-FastMCP, gRPC, and the CLI are adapters over the same transport-neutral
+MCPServer, gRPC, and the CLI are adapters over the same transport-neutral
 `EngramCore`. They do not replace or alter the lower-level programmatic API.
 
 Use `engram_send` for completed chatbot turns. For a regulated cache, use

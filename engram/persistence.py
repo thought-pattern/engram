@@ -4,6 +4,7 @@ This module provides save/load functionality for serializing and
 deserializing ENGRAM state to/from JSON files and strings.
 """
 
+import contextlib
 import json
 import os
 
@@ -30,15 +31,11 @@ def _write_json_atomic(path, state: dict) -> None:
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(tmp_path, 0o600)
-    except OSError:
-        pass
     os.replace(tmp_path, path)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(path, 0o600)
-    except OSError:
-        pass
 
 
 def save(engram, path) -> None:

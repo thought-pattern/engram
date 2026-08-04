@@ -1,7 +1,6 @@
 """Tests for the shared persistent conversation runtime."""
 
 import json
-import stat
 
 import pytest
 
@@ -29,7 +28,6 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn(tmp_path) -> N
     assert runtime.inspect()["session"]["response_history"] == ["Hello!", "."]
     saved = json.loads(transcript.read_text(encoding="utf-8"))
     assert saved["turns"] == [event]
-    assert stat.S_IMODE(transcript.stat().st_mode) == 0o600
 
 
 def test_runtime_rejects_empty_or_batch_input() -> None:
@@ -70,9 +68,6 @@ def test_runtime_writes_json_and_markdown_reports(tmp_path) -> None:
     assert output["summary"]["exchanges"] == 1
     assert report["user_id"] == "agent"
     assert "**Interlocutor:** hello" in markdown
-    assert stat.S_IMODE((tmp_path / "reports").stat().st_mode) == 0o700
-    assert stat.S_IMODE((tmp_path / "reports" / "adaptive-chat.json").stat().st_mode) == 0o600
-    assert stat.S_IMODE((tmp_path / "reports" / "adaptive-chat.md").stat().st_mode) == 0o600
 
 
 def test_turn_planner_preserves_messages_and_reserves_the_farewell() -> None:

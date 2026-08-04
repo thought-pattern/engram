@@ -1,10 +1,11 @@
-"""FastMCP adapter for the transport-neutral Engram core."""
+"""MCPServer adapter for the transport-neutral Engram core."""
 
 import threading
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from engram.config import load_config
+from engram.constants import VERSION
 from engram.errors import ConflictError, LifecycleError
 from engram.service import EngramCore
 
@@ -170,11 +171,12 @@ class MCPConversationService:
         return self.core, self.active_user_id
 
 
-def create_mcp_server(service: MCPConversationService | None = None) -> FastMCP:
-    """Create the repository-local FastMCP server."""
+def create_mcp_server(service: MCPConversationService | None = None) -> MCPServer:
+    """Create the repository-local MCP server."""
     conversation_service = service or MCPConversationService()
-    server = FastMCP(
+    server = MCPServer(
         "Engram",
+        version=VERSION,
         instructions=(
             "Use engram_start once, then use engram_send for chatbot turns or the propose/resolve tools for regulated cache work. "
             "Use engram_inspect for context and provenance, and engram_finish before engram_stop when a transcript is needed."
