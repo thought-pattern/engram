@@ -5,8 +5,17 @@
 // Or with mgconsole:
 //   mgconsole < schema.cypher
 //
-// Schema version: 3.5 (aligned with the Tapestry knowledge graph)
-// Last updated: 2026-08-04
+// Schema version: 3.8 (aligned recall subset of the Tapestry knowledge graph)
+// Last updated: 2026-08-06
+//
+// 3.8 adds no Engram-owned schema. Tapestry's CommunitySnapshot and per-Claim
+// routing-version metadata remain outside Engram's recall-only contract, as do
+// Item 17's file-backed pair-reranker manifest and weights. Engram continues to
+// read the canonical Claim vector index and Memgraph topology.
+//
+// 3.7 adds no Engram-owned schema. Tapestry's compact PageRankSnapshot and its
+// activation decision remain outside Engram's recall-only contract; Engram
+// continues to read the canonical Claim vector index and Memgraph topology.
 //
 // 3.5 adds Tapestry-owned Proof role, obligation, dependency-publication, and
 // retrieval-confidence metadata outside Engram's recall subset, plus an
