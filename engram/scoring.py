@@ -55,7 +55,7 @@ def keyword_idf(keyword: str, keyword_index: dict[str, dict], total_statements: 
 def keyword_match_weights(
     query_keywords: list[str],
     statement_keywords: list[str],
-    synonyms=None,
+    synonyms=(),
 ) -> dict[str, float]:
     """Per-query-keyword match weight against a statement's keywords.
 
@@ -71,7 +71,7 @@ def keyword_match_weights(
         Dict of query keyword -> match weight.
     """
     statement_set = set(statement_keywords)
-    synonym_map = synonyms if synonyms is not None else {}
+    synonym_map = synonyms if isinstance(synonyms, dict) else {}
     weights: dict[str, float] = {}
     for kw in query_keywords:
         if kw in statement_set:
@@ -179,7 +179,7 @@ def score_statement(
     weight_recency: float,
     weight_hit_rate: float,
     recency_half_life_seconds: float,
-    synonyms=None,
+    synonyms=(),
 ) -> float:
     """Calculate the calibrated score for a statement against a query.
 

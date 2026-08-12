@@ -110,7 +110,7 @@ class TestLlmTier:
         pipeline.chat(engram, "a novel question", user_id="alice", llm_fn=llm_fn)
 
         stmt = next(s for s in engram.statements if s["text"] == "A generated answer.")
-        assert stmt["introduced_by_user_id"] is None
+        assert stmt["introduced_by_user_id"] == ""
         assert stmt["source_label"] == "llm"
 
     def test_contextual_cache_key_does_not_leak_to_fresh_session(self) -> None:

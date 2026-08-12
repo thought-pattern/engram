@@ -242,7 +242,7 @@ _ENTITY_LABEL_PRIORITY = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
 _BROAD_DIALOGUE_PATTERNS = {"THAT *", "THAT IS *", "THE *"}
 
 
-def classify_dialogue_act(text: str, fact: dict | None = None) -> str:
+def classify_dialogue_act(text: str, fact=()) -> str:
     """Classify one sentence into a stable, caller-visible dialogue act."""
     stripped = text.strip()
     if _CLOSING_RE.search(stripped):
@@ -314,8 +314,8 @@ def explicit_topic(text: str) -> str:
 
 def infer_active_topic(
     text: str,
-    fact: dict | None = None,
-    entities: list[dict] | None = None,
+    fact=(),
+    entities=(),
     previous_topic: str = "",
 ) -> str:
     """Infer a durable turn topic without treating every noun as a topic."""
@@ -352,7 +352,7 @@ def infer_active_topic(
     return ""
 
 
-def extract_dialogue_entities(text: str, fact: dict | None = None, topic: str = "") -> list[dict]:
+def extract_dialogue_entities(text: str, fact=(), topic: str = "") -> list[dict]:
     """Extract lightweight references suitable for per-turn tracking.
 
     Full NLTK named-entity chunking remains available through

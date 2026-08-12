@@ -9,34 +9,36 @@ from engram.constants import VERSION
 from engram.errors import ConflictError, LifecycleError
 from engram.service import EngramCore
 
+EMPTY_METADATA: dict = {}
+
 
 class MCPConversationService:
     """MCP lifecycle state delegating all Engram behavior to ``EngramCore``."""
 
     def __init__(self) -> None:
-        self.core: EngramCore | None = None
-        self.active_user_id: str | None = None
+        self.core = ()
+        self.active_user_id = ""
         self.lock = threading.RLock()
 
     @property
     def runtime(self):
         """Expose the active runtime for compatibility with existing callers."""
-        if self.core is None or self.active_user_id is None:
-            return None
+        if not self.core or not self.active_user_id:
+            return {}
         return self.core.get_conversation(self.active_user_id)
 
     @property
     def store_path(self):
         """Expose the configured store path for compatibility."""
-        return self.core.store_path if self.core is not None else None
+        return self.core.store_path if self.core else ""
 
     @property
     def proposals(self) -> dict:
-        return self.core.proposals if self.core is not None else {}
+        return self.core.proposals if self.core else {}
 
     @property
     def proposal_requests(self) -> dict:
-        return self.core.proposal_requests if self.core is not None else {}
+        return self.core.proposal_requests if self.core else {}
 
     def start(
         self,
@@ -46,14 +48,15 @@ class MCPConversationService:
         store_path: str = "",
         config_path: str = "",
         transcript_path: str = "",
-        random_seed: int | None = None,
+        random_seed: int = 0,
+        random_seed_present: bool = False,
     ) -> dict:
         """Start one MCP-owned conversation over a new shared core."""
         with self.lock:
-            if self.core is not None:
+            if self.core:
                 raise ConflictError("a conversation is already active; call engram_stop before starting another")
 
-            config = load_config(config_path) if config_path else None
+            config = load_config(config_path) if config_path else {}
             core = EngramCore.open(config=config, store_path=store_path, seed_path=seed_path)
             try:
                 started = core.start_conversation(
@@ -61,6 +64,7 @@ class MCPConversationService:
                     initial_bot_text=initial_bot_text,
                     transcript_path=transcript_path,
                     random_seed=random_seed,
+                    random_seed_present=random_seed_present,
                 )
             except Exception:
                 core.close(flush=False)
@@ -99,8 +103,8 @@ class MCPConversationService:
             core, user_id = self._require_active()
             result = core.stop_conversation(user_id)
             core.close(flush=False)
-            self.core = None
-            self.active_user_id = None
+            self.core = ()
+            self.active_user_id = ""
             return result
 
     def propose(
@@ -111,7 +115,7 @@ class MCPConversationService:
         namespace: str = "",
         context_fingerprint: str = "",
         limit: int = 1,
-        required_metadata: dict | None = None,
+        required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
         """Create a speculative, uncredited response-cache proposal."""
@@ -143,7 +147,7 @@ class MCPConversationService:
         namespace: str = "",
         context_fingerprint: str = "",
         source_label: str = "tapestry:actor",
-        metadata: dict | None = None,
+        metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Cache an Actor response, replacing only within its exact scope."""
         with self.lock:
@@ -166,12 +170,12 @@ class MCPConversationService:
             return core.retire_response(statement_id, reason, request_id)
 
     def _require_active(self) -> tuple[EngramCore, str]:
-        if self.core is None or self.active_user_id is None:
+        if not self.core or not self.active_user_id:
             raise LifecycleError("no active conversation; call engram_start first")
         return self.core, self.active_user_id
 
 
-def create_mcp_server(service: MCPConversationService | None = None) -> MCPServer:
+def create_mcp_server(service=()) -> MCPServer:
     """Create the repository-local MCP server."""
     conversation_service = service or MCPConversationService()
     server = MCPServer(
@@ -191,7 +195,8 @@ def create_mcp_server(service: MCPConversationService | None = None) -> MCPServe
         store_path: str = "",
         config_path: str = "",
         transcript_path: str = "",
-        random_seed: int | None = None,
+        random_seed: int = 0,
+        random_seed_present: bool = False,
     ) -> dict:
         """Start one persistent Engram conversation for subsequent tool calls."""
         return conversation_service.start(
@@ -202,6 +207,7 @@ def create_mcp_server(service: MCPConversationService | None = None) -> MCPServe
             config_path=config_path,
             transcript_path=transcript_path,
             random_seed=random_seed,
+            random_seed_present=random_seed_present,
         )
 
     @server.tool()
@@ -237,7 +243,7 @@ def create_mcp_server(service: MCPConversationService | None = None) -> MCPServe
         namespace: str = "",
         context_fingerprint: str = "",
         limit: int = 1,
-        required_metadata: dict | None = None,
+        required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
         """Retrieve scoped candidates without recording a successful hit."""
@@ -271,7 +277,7 @@ def create_mcp_server(service: MCPConversationService | None = None) -> MCPServe
         namespace: str = "",
         context_fingerprint: str = "",
         source_label: str = "tapestry:actor",
-        metadata: dict | None = None,
+        metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Cache one non-IDK Actor response with scope and provenance."""
         return conversation_service.learn_response(

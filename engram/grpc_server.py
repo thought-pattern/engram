@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import logging
 import signal
+import sys
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -54,13 +55,13 @@ def _from_struct(value: struct_pb2.Struct) -> dict:
     return json_format.MessageToDict(value, preserving_proto_field_name=True)
 
 
-def _artifact_path(directory: Path | None, user_id: str, suffix: str = "") -> Path | None:
+def _artifact_path(directory: str, user_id: str, suffix: str = "") -> str:
     """Derive a traversal-safe, stable artifact path from an arbitrary user label."""
-    if directory is None:
-        return None
+    if not directory:
+        return ""
     normalized_user_id = user_id or "0"
     digest = hashlib.sha256(normalized_user_id.encode("utf-8")).hexdigest()[:16]
-    return directory / f"conversation-{digest}{suffix}"
+    return str(Path(directory) / f"conversation-{digest}{suffix}")
 
 
 def _status_code(error: EngramCoreError) -> grpc.StatusCode:
@@ -85,18 +86,19 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         core: EngramCore,
         health_servicer: health.HealthServicer,
         *,
-        transcript_directory: str | Path = "",
-        report_directory: str | Path = "",
+        transcript_directory: str = "",
+        report_directory: str = "",
     ) -> None:
         self.core = core
         self.health_servicer = health_servicer
-        self.transcript_directory = Path(transcript_directory).resolve() if transcript_directory else None
-        self.report_directory = Path(report_directory).resolve() if report_directory else None
+        self.transcript_directory = str(Path(transcript_directory).resolve()) if transcript_directory else ""
+        self.report_directory = str(Path(report_directory).resolve()) if report_directory else ""
         for directory in (self.transcript_directory, self.report_directory):
-            if directory is not None:
-                directory.mkdir(parents=True, exist_ok=True)
+            if directory:
+                path = Path(directory)
+                path.mkdir(parents=True, exist_ok=True)
                 with suppress(OSError):
-                    directory.chmod(0o700)
+                    path.chmod(0o700)
         self.sync_health()
 
     def sync_health(self) -> None:
@@ -131,7 +133,8 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
             self.sync_health()
 
     def StartConversation(self, request: engram_pb2.StartConversationRequest, context: grpc.ServicerContext) -> struct_pb2.Struct:
-        random_seed = request.random_seed if request.HasField("random_seed") else None
+        random_seed_present = request.HasField("random_seed")
+        random_seed = request.random_seed if random_seed_present else 0
         transcript_path = _artifact_path(self.transcript_directory, request.user_id, ".json")
         return self._invoke(
             context,
@@ -141,6 +144,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                     initial_bot_text=request.initial_bot_text,
                     transcript_path=transcript_path or "",
                     random_seed=random_seed,
+                    random_seed_present=random_seed_present,
                 )
             ),
         )
@@ -154,7 +158,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     def FinishConversation(self, request: engram_pb2.UserRequest, context: grpc.ServicerContext) -> struct_pb2.Struct:
         def finish() -> struct_pb2.Struct:
             output_prefix = _artifact_path(self.report_directory, request.user_id)
-            if output_prefix is None:
+            if not output_prefix:
                 raise LifecycleError("report directory is not configured for this server")
             return _to_struct(self.core.finish_conversation(request.user_id, output_prefix))
 
@@ -259,10 +263,10 @@ class EngramGrpcServer:
         *,
         bind_address: str = DEFAULT_BIND_ADDRESS,
         max_workers: int = DEFAULT_MAX_WORKERS,
-        transcript_directory: str | Path = "",
-        report_directory: str | Path = "",
-        tls_certificate: bytes | None = None,
-        tls_private_key: bytes | None = None,
+        transcript_directory: str = "",
+        report_directory: str = "",
+        tls_certificate: bytes = b"",
+        tls_private_key: bytes = b"",
     ) -> None:
         if not isinstance(bind_address, str) or not bind_address.strip():
             raise InvalidRequestError("bind_address must be a non-empty string")
@@ -315,13 +319,15 @@ class EngramGrpcServer:
                 self._started = True
             return self.target
 
-    def wait_for_termination(self, timeout: float | None = None) -> bool:
+    def wait_for_termination(self, timeout: float = 0.0, timeout_present: bool = False) -> bool:
         """Wait for server termination, returning gRPC's timeout indicator."""
-        return self._server.wait_for_termination(timeout=timeout)
+        if timeout_present or timeout:
+            return self._server.wait_for_termination(timeout=timeout)
+        return self._server.wait_for_termination()
 
     def stop(self, grace: float = DEFAULT_GRACE_SECONDS) -> bool:
         """Stop admission, drain calls, then close the single core instance."""
-        if not isinstance(grace, int | float) or isinstance(grace, bool) or grace < 0:
+        if not isinstance(grace, (int, float)) or isinstance(grace, bool) or grace < 0:
             raise InvalidRequestError("grace must be a non-negative number")
         with self._lifecycle_lock:
             if self._closed:
@@ -359,30 +365,27 @@ def _argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_tls_files(
-    parser: argparse.ArgumentParser, certificate_path: str, private_key_path: str
-) -> tuple[bytes | None, bytes | None]:
+def _read_tls_files(parser: argparse.ArgumentParser, certificate_path: str, private_key_path: str) -> tuple[bytes, bytes]:
     if bool(certificate_path) != bool(private_key_path):
         parser.error("--tls-cert and --tls-key must be provided together")
     if not certificate_path:
-        return None, None
+        return b"", b""
     try:
         return Path(certificate_path).read_bytes(), Path(private_key_path).read_bytes()
     except OSError as error:
         parser.error(f"unable to read TLS files: {error}")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] = ()) -> int:
     """Run Engram until SIGINT or SIGTERM requests graceful shutdown."""
     parser = _argument_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     certificate, private_key = _read_tls_files(parser, args.tls_cert, args.tls_key)
 
-    config = load_config(args.config_path) if args.config_path else None
+    config = load_config(args.config_path) if args.config_path else {}
     try:
         core = EngramCore.open(config=config, store_path=args.store_path, seed_path=args.seed_path)
-        core.warm_vector_recall()
         server = create_grpc_server(
             core,
             bind_address=args.bind,
@@ -421,4 +424,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

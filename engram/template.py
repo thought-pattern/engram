@@ -43,33 +43,33 @@ TRIPLE_QUERY_SUBJECT = (
 
 def template_context(
     # Wildcard captures from pattern matching
-    stars=None,
-    thatstars=None,
-    topicstars=None,
+    stars=(),
+    thatstars=(),
+    topicstars=(),
     # Session state
-    predicates=None,
-    input_history=None,
-    response_history=None,
-    that_history=None,
+    predicates=(),
+    input_history=(),
+    response_history=(),
+    that_history=(),
     # Current input
     input_text: str = "",
     request_text: str = "",
     # Bot properties
-    bot=None,
+    bot=(),
     # Maps for lookups
-    maps=None,
+    maps=(),
     # Substitution maps
-    person_subs=None,
-    person2_subs=None,
-    gender_subs=None,
+    person_subs=(),
+    person2_subs=(),
+    gender_subs=(),
     # System info
     session_id: str = "",
     category_count: int = 0,
     vocabulary_count: int = 0,
     # Callbacks (set by processor)
-    redirect_fn=None,
-    learn_fn=None,
-    graph_fn=None,
+    redirect_fn=(),
+    learn_fn=(),
+    graph_fn=(),
 ) -> dict:
     """Build a context dict for template evaluation.
 
@@ -77,20 +77,20 @@ def template_context(
     session predicates, bot properties, and history.
     """
     context = {
-        "stars": stars if stars is not None else [],
-        "thatstars": thatstars if thatstars is not None else [],
-        "topicstars": topicstars if topicstars is not None else [],
-        "predicates": predicates if predicates is not None else {},
-        "input_history": input_history if input_history is not None else [],
-        "response_history": response_history if response_history is not None else [],
-        "that_history": that_history if that_history is not None else [],
+        "stars": list(stars or ()),
+        "thatstars": list(thatstars or ()),
+        "topicstars": list(topicstars or ()),
+        "predicates": predicates if isinstance(predicates, dict) else {},
+        "input_history": list(input_history or ()),
+        "response_history": list(response_history or ()),
+        "that_history": list(that_history or ()),
         "input_text": input_text,
         "request_text": request_text,
-        "bot": bot if bot is not None else {},
-        "maps": maps if maps is not None else {},
-        "person_subs": person_subs if person_subs is not None else {},
-        "person2_subs": person2_subs if person2_subs is not None else {},
-        "gender_subs": gender_subs if gender_subs is not None else {},
+        "bot": bot if isinstance(bot, dict) else {},
+        "maps": maps if isinstance(maps, dict) else {},
+        "person_subs": person_subs if isinstance(person_subs, dict) else {},
+        "person2_subs": person2_subs if isinstance(person2_subs, dict) else {},
+        "gender_subs": gender_subs if isinstance(gender_subs, dict) else {},
         "session_id": session_id,
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
@@ -222,7 +222,7 @@ class TemplateProcessor:
         Returns:
             Processed output string.
         """
-        if template is None:
+        if not template:
             return ""
 
         if isinstance(template, str):
@@ -473,7 +473,7 @@ class TemplateProcessor:
             records = context["graph_fn"](query, params)
         except Exception:
             records = []
-        if records is None:
+        if not records:
             records = []
 
         if graph_is_empty(records):
@@ -573,7 +573,7 @@ class TemplateProcessor:
 
         # That history: {that} or {that:M} or {that:M:N}
         def that_sub(m):
-            if m.group(1) is None:
+            if not m.group(1):
                 # Get most recent bot response
                 if context["that_history"] and context["that_history"][0]:
                     return context["that_history"][0][0]
@@ -685,10 +685,11 @@ class TemplateProcessor:
             return resolved
 
         # Keep applying until no more transforms
-        prev = None
-        while prev != text:
-            prev = text
-            text = self.TRANSFORM_PATTERN.sub(transform, text)
+        while True:
+            transformed_text = self.TRANSFORM_PATTERN.sub(transform, text)
+            if transformed_text == text:
+                break
+            text = transformed_text
 
         return text
 

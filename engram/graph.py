@@ -130,8 +130,9 @@ class MemGraphConnection:
         self.port = port
         self.username = username
         self.password = password
-        self.conn = None
-        self.available = None  # None = unknown, True = connected, False = failed
+        self.conn = ()
+        self.available = False
+        self.connection_attempted = False
         self.last_connect_attempt = 0.0
         # pymgclient connections may be shared between threads but not used
         # concurrently. Serialize all connection and cursor access.
@@ -140,7 +141,7 @@ class MemGraphConnection:
     def connect(self):
         """Establish a connection to MemGraph.
 
-        Returns the connection on success, None on failure. Sets self.available
+        Returns the connection on success, or an empty tuple on failure. Sets self.available
         so callers can check without retrying.
         """
         with self._lock:
@@ -148,16 +149,17 @@ class MemGraphConnection:
 
     def _connect_unlocked(self):
         """Establish a connection while the caller holds the connection lock."""
-        if self.conn is not None:
+        if self.conn:
             return self.conn
 
         # Respect cooldown after a failed attempt
-        if self.available is False:
+        if self.connection_attempted and not self.available:
             elapsed = time.monotonic() - self.last_connect_attempt
             if elapsed < RECONNECT_COOLDOWN_SECONDS:
-                return None
+                return ()
 
         self.last_connect_attempt = time.monotonic()
+        self.connection_attempted = True
 
         try:
             connect_params = {
@@ -181,7 +183,7 @@ class MemGraphConnection:
                 self.host,
                 self.port,
             )
-            return None
+            return ()
         except Exception as err:
             self.available = False
             logger.warning(
@@ -190,21 +192,22 @@ class MemGraphConnection:
                 self.port,
                 err,
             )
-            return None
+            return ()
 
     def disconnect(self):
         """Close the connection to MemGraph."""
         with self._lock:
-            if self.conn is not None:
+            if self.conn:
                 self.conn.close()
-                self.conn = None
-                self.available = None
+                self.conn = ()
+                self.available = False
+                self.connection_attempted = False
                 logger.info("Disconnected from MemGraph")
 
     def is_connected(self) -> bool:
         """Check if the connection is active."""
         with self._lock:
-            if self.conn is None:
+            if not self.conn:
                 return False
             try:
                 cursor = self.conn.cursor()
@@ -212,11 +215,11 @@ class MemGraphConnection:
                 cursor.fetchall()
                 return True
             except Exception:
-                self.conn = None
+                self.conn = ()
                 self.available = False
                 return False
 
-    def execute(self, query: str, parameters: dict = None) -> list:
+    def execute(self, query: str, parameters=()) -> list:
         """Execute a Cypher query and return results as a list of dicts.
 
         Returns an empty list if MemGraph is unreachable; raises RuntimeError on
@@ -228,11 +231,11 @@ class MemGraphConnection:
 
         return self._execute_read_query(query, parameters)
 
-    def _execute_read_query(self, query: str, parameters: dict = None) -> list:
+    def _execute_read_query(self, query: str, parameters=()) -> list:
         """Execute a query already constrained to a read-only internal shape."""
 
         with self._lock:
-            if self.conn is None and self._connect_unlocked() is None:
+            if not self.conn and not self._connect_unlocked():
                 return []
 
             try:
@@ -248,7 +251,7 @@ class MemGraphConnection:
                 else:
                     logger.error("Query failed: %s: %s", type(err).__name__, err)
                     if is_connection_error(err):
-                        self.conn = None
+                        self.conn = ()
                         self.available = False
                 raise RuntimeError(f"Query failed: {err}") from err
 
@@ -274,7 +277,7 @@ class MemGraphConnection:
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
             raise ValueError("limit must be an integer from 1 through 1000")
         if (
-            not isinstance(min_similarity, int | float)
+            not isinstance(min_similarity, (int, float))
             or isinstance(min_similarity, bool)
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
@@ -309,7 +312,7 @@ class MemGraphConnection:
             },
         )
 
-    def execute_read(self, query: str, parameters: dict = None) -> list:
+    def execute_read(self, query: str, parameters=()) -> list:
         """Read-only alias for execute()."""
         return self.execute(query, parameters)
 
@@ -322,8 +325,10 @@ def create_graph_client(
 ) -> MemGraphConnection:
     """Create a MemGraph connection.
 
-    The connection is established lazily on the first query, so this never
-    blocks and never raises on an unreachable host.
+    The connection is attempted immediately so enabled graph readiness is
+    established during startup. An unreachable host leaves a concrete,
+    unavailable client whose reads fail soft with empty lists.
     """
     client = MemGraphConnection(host=host, port=port, username=username, password=password)
+    client.connect()
     return client

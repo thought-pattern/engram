@@ -1,15 +1,7 @@
 """Tests for template processing."""
 
 from engram.constants import VERSION
-from engram.template import (
-    TemplateProcessor,
-    get_input,
-    get_map,
-    get_response,
-    get_star,
-    process_template,
-    template_context,
-)
+from engram.template import TemplateProcessor, get_input, get_map, get_response, get_star, process_template, template_context
 
 
 class TestTemplateContext:

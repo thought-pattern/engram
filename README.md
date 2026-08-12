@@ -45,6 +45,9 @@ and backward compatible.
 
 - [Python code style](documentation/code-style.md) — the Engram import
   convention and the Google Python Style Guide baseline used elsewhere.
+- [Query identity contracts](documentation/identity/contracts-v1.md) — the
+  versioned scope, identity, normalization, retrieval-key, representation, and
+  authoritative-input foundation used by exact retrieval work.
 
 ## Setup
 
@@ -777,7 +780,9 @@ uses the pymgclient driver over a host/port. Runtime graph access is strictly
 read-only: `execute`, `execute_read`, `Engram.graph_query`, and template
 queries all reject mutating Cypher before opening a connection. There is no
 runtime writer method or authoring template. Reads degrade gracefully when the
-host is unreachable and use a reconnect cooldown.
+host becomes unreachable after startup and use a reconnect cooldown. When graph
+access is enabled, the initial connection must pass transport-neutral preflight
+before Python, CLI, MCP, or gRPC serving begins.
 
 Facts use a canonical-first model: a `Claim` node links by edge to canonical
 `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
@@ -796,8 +801,9 @@ role `'s performer is`), with an article inserted where a noun head needs one
 "was owned by". A small override map keyed by predicate slug corrects spaCy's
 few single-token misreads and gives the temporal predicates an idiom
 (`date_of_birth` → "was born on"). The frame is derived once per predicate and
-memoized; if the spaCy model is unavailable, phrasing degrades to a bare active
-frame rather than breaking recall.
+memoized. The pre-provisioned spaCy model loads during enabled-component
+preflight; a missing model fails startup rather than changing phrasing behavior
+on the first request.
 
 Apply the sample schema (`schema.cypher`) before enabling the graph:
 
@@ -851,7 +857,7 @@ arbitrary procedure calls or return arbitrary KG content as cached answers.
 The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
 are not supported.
 
-`schema.cypher` defines the recall-relevant Schema 3.3 subset Engram requires,
+`schema.cypher` defines the recall-relevant Schema 3.8 subset Engram requires,
 including canonical semantic identity, Claim trust/ownership classification,
 and half-open valid/system-time fields. A larger store may add Passage,
 Document, Event, Proof, Source, and Inquiry nodes or vector indexes; Engram does

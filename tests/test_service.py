@@ -69,6 +69,26 @@ def test_regulated_cache_does_not_require_a_chat_conversation() -> None:
     assert core.engram.sessions["Carol"]["previous_response"] == "Support is open from nine to five."
 
 
+@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+def test_regulated_mapping_arguments_reject_falsey_non_objects(invalid) -> None:
+    core = EngramCore()
+
+    with pytest.raises(InvalidRequestError, match="required_metadata must be an object"):
+        core.propose("What is cached?", "proposal-invalid-metadata", required_metadata=invalid)
+    with pytest.raises(InvalidRequestError, match="metadata must be an object"):
+        core.learn_response("What is cached?", "A cached answer.", "learn-invalid-metadata", metadata=invalid)
+
+
+def test_regulated_mapping_arguments_copy_concrete_empty_objects() -> None:
+    core = EngramCore()
+
+    learned = core.learn_response("What is cached?", "A cached answer.", "learn-empty-metadata", metadata={})
+    proposal = core.propose("What is cached?", "proposal-empty-metadata", required_metadata={})
+
+    assert learned["action"] == "created"
+    assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
+
+
 def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) -> None:
     store = tmp_path / "engram.json"
     core = EngramCore(Engram(), store_path=store)
@@ -104,6 +124,12 @@ def test_core_open_restores_stored_config_unless_explicitly_overridden(tmp_path)
 
 def test_core_without_store_reports_that_flush_was_skipped() -> None:
     assert EngramCore().flush() is False
+
+
+@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+def test_core_open_rejects_falsey_non_object_config(invalid) -> None:
+    with pytest.raises(InvalidRequestError, match="config must be an object"):
+        EngramCore.open(config=invalid)
 
 
 def test_core_checkpoints_each_durable_mutation(tmp_path) -> None:

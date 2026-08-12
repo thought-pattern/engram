@@ -9,6 +9,14 @@ class InvalidRequestError(ValueError, EngramCoreError):
     """The request is invalid regardless of current core state."""
 
 
+class IdentityValidationError(InvalidRequestError):
+    """An identity contract is malformed or internally inconsistent."""
+
+
+class UnsupportedIdentityVersionError(IdentityValidationError):
+    """An identity contract uses a schema or normalization version not supported here."""
+
+
 class ResourceNotFoundError(ValueError, EngramCoreError):
     """A requested conversation, proposal, or statement does not exist."""
 

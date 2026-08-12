@@ -12,7 +12,7 @@ import pytest
 from google.protobuf import empty_pb2, json_format, struct_pb2
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
-from engram import service as service_module
+from engram import grpc_server as grpc_server_module, service as service_module
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, PersistenceError
@@ -77,7 +77,7 @@ def test_conversation_fact_predicate_report_and_health_protocol(tmp_path) -> Non
         assert recalled["response"] == "Sushi is good."
         assert predicate.value == "curious"
         assert read_predicate.value == "curious"
-        assert fact["introduced_by_user_id"] is None
+        assert fact["introduced_by_user_id"] == ""
         assert fact["source_label"] == "research"
         assert inspected["session"]["previous_response"] == "Sushi is good."
         assert inspected["core_status"]["active_conversations"] == 2
@@ -334,6 +334,15 @@ def test_tls_requires_a_certificate_and_key_pair() -> None:
     with pytest.raises(InvalidRequestError, match="together"):
         create_grpc_server(core, bind_address="127.0.0.1:0", tls_certificate=b"certificate")
     core.close()
+
+
+def test_grpc_main_refuses_to_serve_after_component_preflight_failure(monkeypatch) -> None:
+    def fail_open(cls, **kwargs):
+        raise InvalidRequestError("component preflight failed: graph unavailable")
+
+    monkeypatch.setattr(EngramCore, "open", classmethod(fail_open))
+
+    assert grpc_server_module.main(["--log-level", "ERROR"]) == 1
 
 
 def test_committed_generated_stubs_match_the_proto(tmp_path) -> None:

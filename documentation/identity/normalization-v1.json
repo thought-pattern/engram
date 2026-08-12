@@ -1,0 +1,114 @@
+{
+  "artifact_schema_version": 1,
+  "normalization_version": 1,
+  "description": "Golden, synthetic retrieval normalization and identity-contrast fixtures.",
+  "normalization_cases": [
+    {
+      "id": "apostrophe-contraction-case-whitespace",
+      "input": "  What’s\tTHE default PostgreSQL port?!  ",
+      "expected": "what is the default postgresql port"
+    },
+    {
+      "id": "unicode-nfkc",
+      "input": "ＷＨＡＴ is PostgreSQL？",
+      "expected": "what is postgresql"
+    },
+    {
+      "id": "dash-variant",
+      "input": "Where—exactly—is Ada Lovelace?",
+      "expected": "where exactly is ada lovelace"
+    },
+    {
+      "id": "language-symbols",
+      "input": "Use C++ with .NET and C#.",
+      "expected": "use c++ with .net and c#"
+    },
+    {
+      "id": "paths",
+      "input": "Read /API/v1/Users and C:\\Engram\\config.yml.",
+      "expected": "read /api/v1/users and c:\\engram\\config.yml"
+    },
+    {
+      "id": "error-and-qualified-symbol",
+      "input": "Error E-1234 in package.module:call",
+      "expected": "error e-1234 in package.module:call"
+    },
+    {
+      "id": "whitespace",
+      "input": "Postgres   default   port",
+      "expected": "postgres default port"
+    },
+    {
+      "id": "uppercase-negative-contraction",
+      "input": "CAN’T connect",
+      "expected": "cannot connect"
+    },
+    {
+      "id": "at-and-slash",
+      "input": "@OpenAI/research",
+      "expected": "@openai/research"
+    },
+    {
+      "id": "terminal-period-after-version",
+      "input": "version v1.2.3.",
+      "expected": "version v1.2.3"
+    },
+    {
+      "id": "comparison-symbols",
+      "input": "Latency <= 100ms and version != 1.2",
+      "expected": "latency <= 100ms and version != 1.2"
+    },
+    {
+      "id": "technical-identity-symbols",
+      "input": "$PATH | A&B | 2*3 | load=75%",
+      "expected": "$path | a&b | 2*3 | load=75%"
+    }
+  ],
+  "identity_contrasts": [
+    {
+      "id": "when-where",
+      "left": "When was Ada Lovelace born?",
+      "right": "Where was Ada Lovelace born?"
+    },
+    {
+      "id": "who-what",
+      "left": "Who created Python?",
+      "right": "What created Python?"
+    },
+    {
+      "id": "current-historical",
+      "left": "What is the current Python version?",
+      "right": "What was the Python version in 2020?"
+    },
+    {
+      "id": "positive-negative",
+      "left": "Which releases support feature X?",
+      "right": "Which releases do not support feature X?"
+    },
+    {
+      "id": "count-lookup",
+      "left": "How many Python releases are supported?",
+      "right": "Which Python releases are supported?"
+    },
+    {
+      "id": "less-than-greater-than",
+      "left": "Is latency < 100 ms?",
+      "right": "Is latency > 100 ms?"
+    },
+    {
+      "id": "equal-not-equal",
+      "left": "Does version == 1.2?",
+      "right": "Does version != 1.2?"
+    },
+    {
+      "id": "technical-pipe",
+      "left": "Evaluate A|B",
+      "right": "Evaluate A B"
+    },
+    {
+      "id": "technical-product",
+      "left": "Evaluate 2*3",
+      "right": "Evaluate 2 3"
+    }
+  ]
+}

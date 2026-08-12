@@ -21,6 +21,8 @@ from engram.models import (
     statement_to_dict,
 )
 
+EMPTY_CONFIG: dict = {}
+
 
 def _write_json_atomic(path, state: dict) -> None:
     """Write JSON to path atomically via a temp file and rename.
@@ -160,7 +162,7 @@ def rebuild_index(engram) -> None:
                 engram.keywords[kw]["statement_ids"].add(stmt["id"])
 
 
-def load_engram(path, config=None, engram_class=None):
+def load_engram(path, config: dict = EMPTY_CONFIG, engram_class=()):
     """Load ENGRAM state from JSON file.
 
     Args:
@@ -177,7 +179,7 @@ def load_engram(path, config=None, engram_class=None):
     return instance
 
 
-def load_engram_json(json_str: str, config=None, engram_class=None):
+def load_engram_json(json_str: str, config: dict = EMPTY_CONFIG, engram_class=()):
     """Load ENGRAM state from JSON string.
 
     Args:
@@ -193,7 +195,7 @@ def load_engram_json(json_str: str, config=None, engram_class=None):
     return instance
 
 
-def load_engram_from_dict(data: dict, config=None, engram_class=None):
+def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=()):
     """Deserialize ENGRAM state from dictionary.
 
     Args:
@@ -208,7 +210,11 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
         ValueError: If persistence version is unsupported.
     """
 
-    if engram_class is None:
+    if not isinstance(data, dict):
+        raise ValueError("persisted state must be an object")
+    if not isinstance(config, dict):
+        raise ValueError("config override must be an object")
+    if not engram_class:
         engram_class = Engram
 
     version = data.get("version", 1)
@@ -217,9 +223,9 @@ def load_engram_from_dict(data: dict, config=None, engram_class=None):
 
     # Create instance with config: an explicit override wins, then the config
     # stored with the state, then defaults (older files carried only capacity).
-    if config is None and "config" in data:
+    if not config and "config" in data:
         config = config_from_dict(data["config"])
-    if config is None:
+    if not config:
         config = engram_config(capacity=data.get("capacity", 10000))
     instance = engram_class(config=config)
 

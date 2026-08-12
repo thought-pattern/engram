@@ -42,6 +42,14 @@ Keep imports at module scope, immediately after the module docstring. Group them
 
 Generated protobuf and gRPC modules under `engram/v1/` are compiler output. Regenerate them from `engram.proto`; do not edit or reformat them by hand.
 
+## Concrete absence values
+
+Production annotations do not use union types. Core, persistence, and transport contracts represent absence with a value of the field's concrete type: `""`, `[]`, `{}`, `()`, `0`, `0.0`, `b""`, or `false`. When that value is also a meaningful observation, add a separate Boolean presence field; `random_seed` and `random_seed_present` are the reference example. Normalize omitted external inputs at the adapter boundary and never emit JSON `null`.
+
+Validate the concrete type before copying or normalizing a supplied value. A falsey value of the wrong type is malformed input, not an omission: for example, a mapping field accepts `{}` but rejects `[]`, `()`, `""`, `0`, and `false`. Legacy persistence loaders may translate a specifically documented historical `null` to the current concrete empty value, but new public calls remain strict.
+
+Procedures may retain `-> None` because that annotation describes a side-effect-only function rather than an absent data value. Compiler-generated files under `engram/v1/` are exempt from the annotation rule and remain byte-for-byte reproducible from `engram.proto`.
+
 ## All Other Python Style
 
 Follow the Google Python Style Guide for naming, docstrings, comments, exceptions, comprehensions, type annotations, function design, and every topic not explicitly overridden above.

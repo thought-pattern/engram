@@ -2,7 +2,7 @@
 
 import pytest
 
-from engram.config import engram_config, graph_config
+from engram.config import config_from_dict, engram_config, graph_config
 from engram.constants import DEFAULT_STOPWORDS, SessionOverflow
 
 
@@ -88,6 +88,16 @@ class TestEngramConfig:
             graph_config(vector_min_similarity=1.1)
         with pytest.raises(ValueError):
             graph_config(vector_weight=-0.1)
+        with pytest.raises(ValueError, match="requires graph enabled"):
+            graph_config(vector_enabled=True)
+
+    @pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+    def test_engram_config_rejects_falsey_non_object_graph_config(self, invalid) -> None:
+        with pytest.raises(ValueError, match="graph config must be an object"):
+            engram_config(graph=invalid)
+
+        with pytest.raises(ValueError, match="serialized graph config must be an object"):
+            config_from_dict({"graph": invalid})
 
     def test_graph_vector_config(self) -> None:
         config = graph_config(

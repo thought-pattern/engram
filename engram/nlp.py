@@ -239,7 +239,7 @@ def extract_fact(text: str) -> dict:
         text: Input text to analyze.
 
     Returns:
-        ExtractedFact if a fact was extracted, None otherwise.
+        ExtractedFact if a fact was extracted, otherwise an empty dict.
     """
     _ensure_nltk_data()
 

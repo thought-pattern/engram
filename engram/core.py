@@ -66,6 +66,7 @@ from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.scoring import score_statement
+from engram.spacy_setup import get_nlp
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
@@ -80,6 +81,7 @@ from engram.text import (
 )
 
 logger = logging.getLogger(__name__)
+EMPTY_CONFIG: dict = {}
 
 
 def _reports_repetition(text: str) -> bool:
@@ -97,7 +99,8 @@ def _response_repeats(candidate: str, recent_responses: list[str], *, allow_simi
             normalized_candidate == normalized_recent
             or (
                 allow_similarity
-                and SequenceMatcher(None, normalized_candidate, normalized_recent).ratio() >= RESPONSE_SIMILARITY_THRESHOLD
+                and SequenceMatcher(lambda _: False, normalized_candidate, normalized_recent).ratio()
+                >= RESPONSE_SIMILARITY_THRESHOLD
             )
         ):
             return True
@@ -165,13 +168,15 @@ class Engram:
     common statement pool.
     """
 
-    def __init__(self, config=None) -> None:
+    def __init__(self, config: dict = EMPTY_CONFIG) -> None:
         """Initialize ENGRAM instance.
 
         Args:
             config: Configuration options. Uses defaults if not provided.
         """
-        self.config = config or engram_config()
+        if not isinstance(config, dict):
+            raise ValueError("config must be an object")
+        self.config = dict(config) if config else engram_config()
 
         # Core data structures
         self.statements: list[dict] = []
@@ -217,28 +222,61 @@ class Engram:
         self.hit_count = 0
         self.eviction_count = 0
 
-        # Graph client (lazy initialization)
-        self._graph_client = None
-        self._graph_client_lock = threading.Lock()
-        self._graph_embedding_model = None
-        self._graph_embedding_model_lock = threading.Lock()
+        # Enabled graph components are initialized during construction. Request
+        # paths only use already-created clients and already-loaded models.
+        self._graph_client = ()
+        self._graph_embedding_model = ()
+        graph_config = self.config.get("graph") or {}
+        if graph_config.get("enabled"):
+            self._graph_client = create_graph_client(
+                host=graph_config["host"],
+                port=graph_config["port"],
+                username=graph_config["username"],
+                password=graph_config.get("password", ""),
+            )
+        if graph_config.get("vector_enabled"):
+            self._load_graph_embedding_model()
+        try:
+            self.component_status = self.preflight_components()
+        except RuntimeError as error:
+            raise ValueError(f"component preflight failed: {error}") from error
 
     @property
     def graph_client(self):
-        """Get the graph client, initializing if needed."""
-        if self._graph_client is None and self.config["graph"]:
-            with self._graph_client_lock:
-                graph_config = self.config["graph"]
-                if self._graph_client is None and isinstance(graph_config, dict) and graph_config["enabled"]:
-                    self._graph_client = create_graph_client(
-                        host=graph_config["host"],
-                        port=graph_config["port"],
-                        username=graph_config["username"],
-                        password=graph_config.get("password", ""),
-                    )
+        """Return the graph client created during Engram initialization."""
         return self._graph_client
 
-    def graph_query(self, cypher: str, params=None) -> list:
+    def preflight_components(self) -> dict:
+        """Verify every enabled external or model-backed component before serving."""
+        graph_settings = self.config.get("graph") or {}
+        graph_enabled = bool(graph_settings.get("enabled"))
+        vector_enabled = bool(graph_settings.get("vector_enabled"))
+        spacy_full_enabled = any(
+            self.config.get(name, False) for name in ("use_spacy_facts", "use_spacy_lemmatization", "use_phrase_keywords")
+        )
+        spacy_phrasing_enabled = graph_enabled
+
+        if vector_enabled and not graph_enabled:
+            raise RuntimeError("vector recall requires graph access to be enabled")
+        if graph_enabled and (not self._graph_client or getattr(self._graph_client, "available", True) is False):
+            raise RuntimeError("configured MemGraph service is unavailable")
+        if vector_enabled:
+            self.warm_vector_recall()
+        if spacy_full_enabled and not get_nlp():
+            raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
+        if spacy_phrasing_enabled and not get_nlp(disable=("parser", "ner")):
+            raise RuntimeError("enabled graph phrasing requires the pre-provisioned spaCy English model")
+
+        return {
+            "graph": {"enabled": graph_enabled, "ready": graph_enabled},
+            "vector": {"enabled": vector_enabled, "ready": vector_enabled},
+            "spacy": {
+                "enabled": spacy_full_enabled or spacy_phrasing_enabled,
+                "ready": spacy_full_enabled or spacy_phrasing_enabled,
+            },
+        }
+
+    def graph_query(self, cypher: str, params=()) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
 
         Args:
@@ -254,7 +292,7 @@ class Engram:
             raise ValueError("ENGRAM graph access is read-only")
 
         client = self.graph_client
-        if client is None:
+        if not client:
             return []
         try:
             records = client.execute_read(cypher, params)
@@ -263,7 +301,7 @@ class Engram:
             logger.debug("Graph query failed: %s", err)
             return []
 
-    def graph_read_fn(self, cypher: str, params=None) -> list:
+    def graph_read_fn(self, cypher: str, params=()) -> list:
         """Read-only graph callback for template operations.
 
         Both this callback and the underlying connection reject mutating
@@ -271,25 +309,29 @@ class Engram:
         """
         return self.graph_query(cypher, params)
 
-    def _encode_graph_query(self, text: str) -> list[float]:
-        """Encode one graph-recall query with the configured local model."""
+    def _load_graph_embedding_model(self) -> None:
+        """Load the configured local embedding model during initialization."""
         graph_config = self.config.get("graph") or {}
         model_name = str(graph_config.get("vector_model") or "").strip()
         model_path = str(graph_config.get("vector_model_path") or "").strip()
         dimension = int(graph_config.get("vector_dimension") or 0)
         if not model_name or dimension < 1:
             raise ValueError("vector recall model and dimension must be configured")
-        if self._graph_embedding_model is None:
-            with self._graph_embedding_model_lock:
-                if self._graph_embedding_model is None:
-                    model_source = model_path or model_name
-                    if model_path and not Path(model_path).is_dir():
-                        raise FileNotFoundError(f"vector model path does not exist: {model_path}")
-                    self._graph_embedding_model = SentenceTransformer(
-                        model_source,
-                        device="cpu",
-                        local_files_only=True,
-                    )
+        model_source = model_path or model_name
+        if model_path and not Path(model_path).is_dir():
+            raise FileNotFoundError(f"vector model path does not exist: {model_path}")
+        self._graph_embedding_model = SentenceTransformer(
+            model_source,
+            device="cpu",
+            local_files_only=True,
+        )
+
+    def _encode_graph_query(self, text: str) -> list[float]:
+        """Encode one graph-recall query with the startup-loaded local model."""
+        graph_config = self.config.get("graph") or {}
+        dimension = int(graph_config.get("vector_dimension") or 0)
+        if not self._graph_embedding_model:
+            raise RuntimeError("vector recall model was not initialized")
         encoded = self._graph_embedding_model.encode(
             [text],
             normalize_embeddings=True,
@@ -301,7 +343,7 @@ class Engram:
             raise ValueError(f"query embedding dimension {len(vector)} does not match configured graph dimension {dimension}")
         return vector
 
-    def graph_vector_claims(self, text: str, *, limit: int | None = None) -> list:
+    def graph_vector_claims(self, text: str, *, limit: int = 0) -> list:
         """Return active semantic Claim hits for ``text``.
 
         The method fails soft because vector recall augments the deterministic
@@ -310,9 +352,9 @@ class Engram:
         """
         graph_config = self.config.get("graph") or {}
         client = self.graph_client
-        if client is None or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
+        if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
             return []
-        search = getattr(client, "vector_search_claims", None)
+        search = getattr(client, "vector_search_claims", ())
         if not callable(search):
             return []
         try:
@@ -320,7 +362,7 @@ class Engram:
             return search(
                 embedding,
                 index_name=graph_config["vector_index_name"],
-                limit=(max(1, min(1000, int(limit))) if limit is not None else int(graph_config["vector_limit"])),
+                limit=(max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])),
                 min_similarity=float(graph_config["vector_min_similarity"]),
             )
         except Exception as err:
@@ -338,8 +380,8 @@ class Engram:
         if not graph_config.get("vector_enabled"):
             return False
         client = self.graph_client
-        search = getattr(client, "vector_search_claims", None)
-        if client is None or not callable(search):
+        search = getattr(client, "vector_search_claims", ())
+        if not client or not callable(search):
             raise RuntimeError("configured graph client lacks vector Claim search")
         embedding = self._encode_graph_query("Engram vector recall readiness")
         search(
@@ -374,7 +416,7 @@ class Engram:
         text: str,
         *,
         limit: int,
-        statement_filter=None,
+        statement_filter=(),
     ) -> list[tuple[dict, float]]:
         """Rank scoped cached responses through their KG support Claims."""
         rows = self.graph_vector_claims(text)
@@ -385,7 +427,7 @@ class Engram:
         scored: list[tuple[dict, float, int]] = []
         with self.statement_lock:
             for index, statement_value in enumerate(self.statements):
-                if statement_filter is not None and not statement_filter(statement_value):
+                if statement_filter and not statement_filter(statement_value):
                     continue
                 similarities = [
                     support_scores[claim_id]
@@ -409,10 +451,10 @@ class Engram:
             text: User input text.
 
         Returns:
-            Response string if graph has relevant info, None otherwise.
+            Response string if graph has relevant info, otherwise an empty string.
         """
         client = self.graph_client
-        if client is None:
+        if not client:
             return ""
 
         # Extract entities from the input
@@ -481,8 +523,8 @@ class Engram:
         query: str,
         response: str,
         tier: Tier = Tier.DYNAMIC,
-        template=None,
-        introduced_by_user_id: str | None = None,
+        template=(),
+        introduced_by_user_id: str = "",
         source_label: str = "",
     ) -> str:
         """Learn from an LLM response by storing it for future retrieval.
@@ -511,8 +553,8 @@ class Engram:
         Returns:
             Statement ID of the stored (or updated) response.
         """
-        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
-            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string")
         if not isinstance(source_label, str):
             raise ValueError("source_label must be a string")
 
@@ -536,9 +578,9 @@ class Engram:
                     if kw in self.keywords:
                         candidate_ids.update(self.keywords[kw]["statement_ids"])
                 for stmt_id in candidate_ids:
-                    idx = self.statement_index.get(stmt_id)
-                    if idx is None:
+                    if stmt_id not in self.statement_index:
                         continue
+                    idx = self.statement_index[stmt_id]
                     stmt = self.statements[idx]
                     if (
                         stmt["tier"] == Tier.DYNAMIC
@@ -547,7 +589,7 @@ class Engram:
                         and _response_cache_scope(stmt["template"]) == response_scope
                     ):
                         stmt["text"] = response
-                        stmt["template"] = template or {}
+                        stmt["template"] = dict(template or ())
                         stmt["introduced_by_user_id"] = introduced_by_user_id
                         stmt["source_label"] = source_label
                         stmt["hit_count"] = 0
@@ -585,15 +627,15 @@ class Engram:
         self,
         text: str,
         tier: Tier = Tier.DYNAMIC,
-        statement_id=None,
-        pattern=None,
-        pattern_aliases=None,
-        that=None,
-        topic=None,
-        template=None,
+        statement_id: str = "",
+        pattern: str = "",
+        pattern_aliases=(),
+        that: str = "",
+        topic: str = "",
+        template=(),
         priority: int = 0,
         keyword_source: str = "",
-        introduced_by_user_id: str | None = None,
+        introduced_by_user_id: str = "",
         source_label: str = "",
     ) -> str:
         """Add a statement to the store.
@@ -617,16 +659,16 @@ class Engram:
         Returns:
             Assigned statement ID.
         """
-        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
-            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string")
         if not isinstance(source_label, str):
             raise ValueError("source_label must be a string")
-        if pattern_aliases is None:
+        if not pattern_aliases:
             aliases: list[str] = []
-        elif isinstance(pattern_aliases, list | tuple) and all(isinstance(alias, str) for alias in pattern_aliases):
+        elif isinstance(pattern_aliases, (list, tuple)) and all(isinstance(alias, str) for alias in pattern_aliases):
             aliases = list(dict.fromkeys(alias.strip() for alias in pattern_aliases if alias.strip()))
         else:
-            raise ValueError("pattern_aliases must be a sequence of strings or None")
+            raise ValueError("pattern_aliases must be a sequence of strings")
         if aliases and not pattern:
             raise ValueError("pattern_aliases require a primary pattern")
         aliases = [alias for alias in aliases if alias != pattern]
@@ -690,10 +732,10 @@ class Engram:
     def query(
         self,
         text: str,
-        session_id=None,
+        session_id: str = "",
         limit: int = 5,
-        user_id: str | None = None,
-        statement_filter=None,
+        user_id: str = "",
+        statement_filter=(),
         record_candidates: bool = True,
     ) -> dict:
         """Retrieve matching statements.
@@ -718,11 +760,11 @@ class Engram:
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        if statement_filter is not None and not callable(statement_filter):
-            raise ValueError("statement_filter must be callable or None")
+        if statement_filter and not callable(statement_filter):
+            raise ValueError("statement_filter must be callable")
         if not isinstance(record_candidates, bool):
             raise ValueError("record_candidates must be a boolean")
-        if user_id is not None:
+        if user_id:
             normalized_user_id = sessions_mod.normalize_user_id(user_id)
             if session_id and session_id != normalized_user_id:
                 raise ValueError("session_id and user_id must identify the same context")
@@ -807,24 +849,25 @@ class Engram:
         with self.statement_lock, self.keyword_lock:
             total = len(self.statements)
             for stmt_id in candidate_ids:
-                idx = self.statement_index.get(stmt_id)
-                if idx is not None:
-                    stmt = self.statements[idx]
-                    if statement_filter is not None and not statement_filter(stmt):
-                        continue
-                    score = score_statement(
-                        statement=stmt,
-                        query_keywords=keywords,
-                        keyword_index=self.keywords,
-                        total_statements=total,
-                        weight_base=self.config["weight_base"],
-                        weight_recency=self.config["weight_recency"],
-                        weight_hit_rate=self.config["weight_hit_rate"],
-                        recency_half_life_seconds=self.config["recency_half_life_seconds"],
-                        synonyms=synonyms_by_keyword,
-                    )
-                    if score > 0:
-                        scored.append((stmt, score, idx))
+                if stmt_id not in self.statement_index:
+                    continue
+                idx = self.statement_index[stmt_id]
+                stmt = self.statements[idx]
+                if statement_filter and not statement_filter(stmt):
+                    continue
+                score = score_statement(
+                    statement=stmt,
+                    query_keywords=keywords,
+                    keyword_index=self.keywords,
+                    total_statements=total,
+                    weight_base=self.config["weight_base"],
+                    weight_recency=self.config["weight_recency"],
+                    weight_hit_rate=self.config["weight_hit_rate"],
+                    recency_half_life_seconds=self.config["recency_half_life_seconds"],
+                    synonyms=synonyms_by_keyword,
+                )
+                if score > 0:
+                    scored.append((stmt, score, idx))
 
         # Sort by score descending; break exact ties toward the newer
         # statement (higher store index) so ranking stays deterministic even
@@ -851,8 +894,8 @@ class Engram:
     def pattern_query(
         self,
         text: str,
-        session_id=None,
-        user_id: str | None = None,
+        session_id: str = "",
+        user_id: str = "",
         combine_sentences: bool = True,
     ) -> tuple:
         """Query using AIML-style pattern matching.
@@ -877,8 +920,8 @@ class Engram:
         with self.count_lock:
             self.query_count += 1
 
-        attributed_user_id = None
-        if user_id is not None:
+        attributed_user_id = ""
+        if user_id:
             attributed_user_id = sessions_mod.normalize_user_id(user_id)
             if session_id and session_id != attributed_user_id:
                 raise ValueError("session_id and user_id must identify the same context")
@@ -899,7 +942,7 @@ class Engram:
             return ()
 
         # Get session if provided
-        session = None
+        session = {}
         that = ""
         topic = ""
         active_topic = ""
@@ -921,7 +964,7 @@ class Engram:
 
         # Process each sentence
         responses: list[str] = []
-        first_stmt = None
+        first_stmt = {}
         first_captured: list[str] = []
         candidates: list[dict] = []
         turn_dialogue_acts: list[str] = []
@@ -960,16 +1003,16 @@ class Engram:
             admitted_facts = [fact for fact, decision in fact_decisions if decision["admitted"]]
 
             prior_topic = active_topic
-            sentence_act = classify_dialogue_act(sentence, extracted_facts[0] if extracted_facts else None)
+            sentence_act = classify_dialogue_act(sentence, extracted_facts[0] if extracted_facts else {})
             preliminary_topic = infer_active_topic(
                 sentence,
-                fact=extracted_facts[0] if extracted_facts else None,
+                fact=extracted_facts[0] if extracted_facts else {},
                 previous_topic=prior_topic,
             )
             sentence_entities = (
                 extract_dialogue_entities(
                     sentence,
-                    fact=admitted_facts[0] if admitted_facts else None,
+                    fact=admitted_facts[0] if admitted_facts else {},
                     topic=preliminary_topic,
                 )
                 if session
@@ -977,7 +1020,7 @@ class Engram:
             )
             inferred_topic = infer_active_topic(
                 sentence,
-                fact=extracted_facts[0] if extracted_facts else None,
+                fact=extracted_facts[0] if extracted_facts else {},
                 entities=sentence_entities if dialogue_act_clears_unreferenced_topic(sentence_act) else [],
                 previous_topic=prior_topic,
             )
@@ -1053,7 +1096,7 @@ class Engram:
                         # instead -- rotating the phrasing so a teaching session
                         # does not answer identically every turn. A restated or
                         # contradicted known fact surfaces the stored belief.
-                        catchall_render = None
+                        catchall_render = ()
                         if learned and matched_pattern == "*":
                             final_response = random.choice(LEARNED_ACKNOWLEDGMENTS)
                         elif known_response and matched_pattern == "*":
@@ -1086,7 +1129,7 @@ class Engram:
                         )
 
                         # Track first match for return value
-                        if first_stmt is None:
+                        if not first_stmt:
                             first_stmt = selected
                             first_captured = captured
                         # Update 'that' for next sentence (response becomes context)
@@ -1101,7 +1144,7 @@ class Engram:
                     with self.session_lock:
                         session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
                         session_update_context(session, graph_response, text)
-                graph_result_tuple = (None, [], graph_response)
+                graph_result_tuple = ({}, [], graph_response)
                 return graph_result_tuple
 
             # Use fallback response if configured
@@ -1110,7 +1153,7 @@ class Engram:
                     with self.session_lock:
                         session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
                         session_update_context(session, self.config["fallback_response"], text)
-                fallback_tuple = (None, [], self.config["fallback_response"])
+                fallback_tuple = ({}, [], self.config["fallback_response"])
                 return fallback_tuple
             if session:
                 with self.session_lock:
@@ -1281,8 +1324,8 @@ class Engram:
         captured: list[str],
         input_text: str,
         session,
-        thatstars=None,
-        topicstars=None,
+        thatstars=(),
+        topicstars=(),
     ) -> str:
         """Process a statement's template with context.
 
@@ -1300,8 +1343,8 @@ class Engram:
         # Build template context (even for plain text to support {bot:name} etc.)
         context = template_context(
             stars=captured,
-            thatstars=thatstars or [],
-            topicstars=topicstars or [],
+            thatstars=thatstars or (),
+            topicstars=topicstars or (),
             input_text=input_text,
             request_text=input_text,
             bot=self.bot_properties,
@@ -1432,14 +1475,13 @@ class Engram:
                     self.keywords[kw]["hit_count"] += 1
         if statement_id:
             with self.statement_lock:
-                idx = self.statement_index.get(statement_id)
-                if idx is not None:
-                    record_statement_hit(self.statements[idx])
+                if statement_id in self.statement_index:
+                    record_statement_hit(self.statements[self.statement_index[statement_id]])
 
     def learn_fact(
         self,
         fact: dict,
-        introduced_by_user_id: str | None = None,
+        introduced_by_user_id: str = "",
         source_label: str = "",
         tier: Tier = Tier.DYNAMIC,
     ) -> bool:
@@ -1457,8 +1499,8 @@ class Engram:
         Returns:
             True if the fact was learned, False if it was already known.
         """
-        if introduced_by_user_id is not None and not isinstance(introduced_by_user_id, str):
-            raise ValueError("introduced_by_user_id must be a string or None")
+        if not isinstance(introduced_by_user_id, str):
+            raise ValueError("introduced_by_user_id must be a string")
         if not isinstance(source_label, str):
             raise ValueError("source_label must be a string")
 
@@ -1524,7 +1566,7 @@ class Engram:
             for fact in facts:
                 self.learn_fact(
                     fact,
-                    introduced_by_user_id=None,
+                    introduced_by_user_id="",
                     source_label=source_label,
                     tier=tier,
                 )
@@ -1540,7 +1582,7 @@ class Engram:
         return self.store(
             text=fact_text,
             tier=tier,
-            introduced_by_user_id=None,
+            introduced_by_user_id="",
             source_label=source_label,
         )
 
@@ -1554,9 +1596,8 @@ class Engram:
             Statement dict if found, {} otherwise.
         """
         with self.statement_lock:
-            idx = self.statement_index.get(statement_id)
-            if idx is not None:
-                return self.statements[idx]
+            if statement_id in self.statement_index:
+                return self.statements[self.statement_index[statement_id]]
         return {}
 
     def retire_statement(self, statement_id: str) -> bool:
@@ -1575,10 +1616,9 @@ class Engram:
             True if a statement was removed, False if the id was not present.
         """
         with self.statement_lock:
-            idx = self.statement_index.get(statement_id)
-            if idx is None:
+            if statement_id not in self.statement_index:
                 return False
-            return eviction_mod.evict_statement_at(self, idx)
+            return eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
 
     # =========================================================================
     # Initialization Patterns
@@ -1662,10 +1702,10 @@ class Engram:
                 self.store(
                     text,
                     tier=tier,
-                    pattern=pattern or None,
-                    that=that or None,
-                    topic=topic or None,
-                    template=template or None,
+                    pattern=pattern,
+                    that=that,
+                    topic=topic,
+                    template=template,
                 )
                 added += 1
 
@@ -1700,8 +1740,8 @@ class Engram:
     def fork(
         cls,
         parent: "Engram",
-        static_corpus=None,
-        config=None,
+        static_corpus=(),
+        config=(),
     ) -> "Engram":
         """Create a new ENGRAM forked from a parent.
 

@@ -37,8 +37,8 @@ def match_result(
     pattern: str,
     score: int,  # Higher = more specific match
     captured: list[str],  # Text captured by wildcards
-    thatstars=None,  # Captures from that pattern
-    topicstars=None,  # Captures from topic pattern
+    thatstars=(),  # Captures from that pattern
+    topicstars=(),  # Captures from topic pattern
 ) -> dict:
     """Build a pattern-match result dict."""
     result = {
@@ -46,8 +46,8 @@ def match_result(
         "pattern": pattern,
         "score": score,
         "captured": captured,
-        "thatstars": thatstars if thatstars is not None else [],
-        "topicstars": topicstars if topicstars is not None else [],
+        "thatstars": list(thatstars or ()),
+        "topicstars": list(topicstars or ()),
     }
     return result
 
@@ -118,8 +118,8 @@ def normalize_pattern(pattern: str) -> str:
 
 def pattern_to_regex(
     pattern: str,
-    sets=None,
-    bot_properties=None,
+    sets=(),
+    bot_properties=(),
 ) -> tuple[re.Pattern, int]:
     """Convert AIML-style pattern to regex.
 
@@ -267,7 +267,7 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
         text: User input text.
 
     Returns:
-        Tuple of (pattern, response, captured) or None if no match.
+        Tuple of (pattern, response, captured), or an empty tuple if no match.
     """
     best_match: tuple = ()
 
@@ -290,10 +290,10 @@ def pattern_entry(
     regex,
     specificity: int,
     that: str = "",  # Pattern for bot's previous response
-    that_regex=None,
+    that_regex=(),
     that_specificity: int = 0,
     topic: str = "",  # Topic scope (exact match or pattern)
-    topic_regex=None,
+    topic_regex=(),
     topic_specificity: int = 0,
 ) -> dict:
     """Build a pattern entry dict with optional context constraints."""
@@ -324,8 +324,8 @@ class PatternMatcher:
 
     def __init__(
         self,
-        sets=None,
-        bot_properties=None,
+        sets=(),
+        bot_properties=(),
         use_stemming: bool = False,
         use_lemmatization: bool = False,
         use_spacy_lemmatization: bool = False,
@@ -349,9 +349,9 @@ class PatternMatcher:
         # Index for lemmatized first words (when lemmatization enabled)
         self._lemmatized_first_word_index: dict[str, list[int]] = {}
         self._wildcard_patterns: list[int] = []  # Patterns starting with * or _
-        # Use 'is not None' to preserve reference to passed dict even if empty
-        self._sets = sets if sets is not None else {}
-        self._bot_properties = bot_properties if bot_properties is not None else {}
+        # Preserve caller-owned dict references, including explicitly empty maps.
+        self._sets = sets if isinstance(sets, dict) else {}
+        self._bot_properties = bot_properties if isinstance(bot_properties, dict) else {}
         self._use_stemming = use_stemming
         self._use_lemmatization = use_lemmatization
         # Select the lemmatizer used for the lemmatized index and fallback.
@@ -375,13 +375,13 @@ class PatternMatcher:
         regex, specificity = pattern_to_regex(pattern, self._sets, self._bot_properties)
 
         # Build that regex if provided
-        that_regex = None
+        that_regex = ()
         that_specificity = 0
         if that:
             that_regex, that_specificity = pattern_to_regex(that, self._sets, self._bot_properties)
 
         # Build topic regex if provided (topics can have wildcards too)
-        topic_regex = None
+        topic_regex = ()
         topic_specificity = 0
         if topic:
             topic_regex, topic_specificity = pattern_to_regex(topic, self._sets, self._bot_properties)
@@ -493,7 +493,7 @@ class PatternMatcher:
             topic: Current topic.
 
         Returns:
-            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
+            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that), or ().
         """
         normalized = normalize(text)
         words = normalized.split()
@@ -599,7 +599,7 @@ class PatternMatcher:
                 or "stemmed".
 
         Returns:
-            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
+            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that), or ().
         """
         # Get candidate patterns using first-word index
         candidate_indices = self._get_candidate_indices(first_word, index_kind)

@@ -30,6 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SEED_PATH = REPO_ROOT / "data" / "seed.json"
 PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1000
+EMPTY_CONFIG: dict = {}
+EMPTY_METADATA: dict = {}
 REGULATOR_OUTCOMES = frozenset(
     {
         "accepted",
@@ -70,15 +72,15 @@ class EngramCore:
 
     def __init__(
         self,
-        engram: Engram | None = None,
-        store_path: str | Path = "",
+        engram=(),
+        store_path: str = "",
         *,
         checkpoint_on_mutation: bool = True,
     ) -> None:
         if not isinstance(checkpoint_on_mutation, bool):
             raise InvalidRequestError("checkpoint_on_mutation must be a boolean")
         self.engram = engram or Engram()
-        self.store_path = Path(store_path).resolve() if store_path else None
+        self.store_path = str(Path(store_path).resolve()) if store_path else ""
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
         self.lock = threading.RLock()
@@ -87,27 +89,30 @@ class EngramCore:
         self._dirty = False
         self._last_checkpoint_at = ""
         self._last_persistence_error = ""
+        self._component_status = deepcopy(self.engram.component_status)
         self._reset_regulated_state()
 
     @classmethod
     def open(
         cls,
         *,
-        config: dict | None = None,
-        store_path: str | Path = "",
-        seed_path: str | Path = "",
+        config: dict = EMPTY_CONFIG,
+        store_path: str = "",
+        seed_path: str = "",
         checkpoint_on_mutation: bool = True,
     ) -> "EngramCore":
         """Load or create a core, optionally synchronizing a seed corpus."""
-        resolved_store = Path(store_path).resolve() if store_path else None
-        if resolved_store and resolved_store.exists():
+        if not isinstance(config, dict):
+            raise InvalidRequestError("config must be an object")
+        resolved_store = str(Path(store_path).resolve()) if store_path else ""
+        if resolved_store and Path(resolved_store).exists():
             try:
                 engram = persistence.load_engram(resolved_store, config=config)
             except Exception as error:
                 raise PersistenceError("store load", error, state_changed=False) from error
         else:
             try:
-                core_config = config if config is not None else engram_config()
+                core_config = config or engram_config()
                 engram = Engram(config=core_config)
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
@@ -157,14 +162,16 @@ class EngramCore:
                 "last_persistence_error": self._last_persistence_error,
                 "active_conversations": len(self.conversations),
                 "store_path": str(self.store_path) if self.store_path else "",
+                "components": deepcopy(self._component_status),
             }
 
     def start_conversation(
         self,
         user_id: str = "0",
         initial_bot_text: str = "",
-        transcript_path: str | Path = "",
-        random_seed: int | None = None,
+        transcript_path: str = "",
+        random_seed: int = 0,
+        random_seed_present: bool = False,
     ) -> dict:
         """Create one observable conversation for a user context."""
         with self.lock:
@@ -178,7 +185,8 @@ class EngramCore:
                     user_id=normalized_user_id,
                     initial_bot_text=initial_bot_text,
                     random_seed=random_seed,
-                    transcript_path=transcript_path or None,
+                    random_seed_present=random_seed_present,
+                    transcript_path=str(transcript_path) if transcript_path else "",
                 )
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
@@ -200,8 +208,8 @@ class EngramCore:
         with self.lock:
             self._require_running()
             normalized_user_id = self._normalize_user_id(user_id)
-            runtime = self.conversations.get(normalized_user_id)
-            if runtime is None:
+            runtime = self.conversations.get(normalized_user_id, {})
+            if not runtime:
                 raise ResourceNotFoundError(f"no active conversation for user_id: {normalized_user_id}")
             return runtime
 
@@ -241,7 +249,7 @@ class EngramCore:
             self._checkpoint()
             return result
 
-    def finish_conversation(self, user_id: str, output_prefix: str | Path = "engram-transcript") -> dict:
+    def finish_conversation(self, user_id: str, output_prefix: str = "engram-transcript") -> dict:
         """Persist the store and write reports without ending a conversation."""
         with self.lock:
             self._require_running()
@@ -257,7 +265,7 @@ class EngramCore:
             report = runtime.report()
             if flush:
                 self.flush()
-            self.conversations.pop(runtime.user_id, None)
+            self.conversations.pop(runtime.user_id, {})
             return {
                 "stopped": True,
                 "user_id": report["user_id"],
@@ -283,7 +291,7 @@ class EngramCore:
             self._require_running()
             normalized_user_id = self._normalize_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
-            if session is None:
+            if not session:
                 return default
             with self.engram.session_lock:
                 return session["predicates"].get(name, default)
@@ -295,11 +303,13 @@ class EngramCore:
             return self._flush_store()
 
     def warm_vector_recall(self) -> bool:
-        """Warm and verify optional graph-vector retrieval before serving."""
+        """Re-run component preflight and report whether vector recall is ready."""
         with self.lock:
             self._require_running()
             try:
-                return self.engram.warm_vector_recall()
+                self._component_status = self.engram.preflight_components()
+                self.engram.component_status = deepcopy(self._component_status)
+                return self._component_status["vector"]["ready"] and self._component_status["vector"]["enabled"]
             except Exception as error:
                 raise InvalidRequestError(f"unable to initialize vector recall: {error}") from error
 
@@ -330,7 +340,7 @@ class EngramCore:
         namespace: str = "",
         context_fingerprint: str = "",
         limit: int = 1,
-        required_metadata: dict | None = None,
+        required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
         """Create a speculative, uncredited response-cache proposal."""
@@ -344,10 +354,9 @@ class EngramCore:
             self._require_string(required_source_label, "required_source_label")
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
                 raise InvalidRequestError("limit must be an integer from 1 through 10")
-            if required_metadata is None:
-                required_metadata = {}
             if not isinstance(required_metadata, dict):
-                raise InvalidRequestError("required_metadata must be an object or None")
+                raise InvalidRequestError("required_metadata must be an object")
+            required_metadata = dict(required_metadata)
             normalized_user_id = self._normalize_user_id(user_id)
             signature = self._signature(
                 request=request,
@@ -448,7 +457,7 @@ class EngramCore:
                 "signature": signature,
                 "proposal": proposal,
                 "candidate_responses": {candidate["statement_id"]: candidate["response"] for candidate in candidates},
-                "resolution": None,
+                "resolution": {},
             }
             self.proposal_requests[request_id] = proposal_id
             self.regulated_metrics["proposals"] += 1
@@ -472,11 +481,11 @@ class EngramCore:
                 supported = ", ".join(sorted(REGULATOR_OUTCOMES))
                 raise InvalidRequestError(f"outcome must be one of: {supported}")
 
-            record = self.proposals.get(proposal_id)
-            if record is None:
+            record = self.proposals.get(proposal_id, {})
+            if not record:
                 raise ResourceNotFoundError("unknown or expired proposal_id")
             resolution_signature = self._signature(outcome=outcome, statement_id=statement_id, reason=reason)
-            if record["resolution"] is not None:
+            if record["resolution"]:
                 if record["resolution_signature"] != resolution_signature:
                     raise ConflictError("proposal has already been resolved with a different verdict")
                 self.regulated_metrics["idempotent_retries"] += 1
@@ -527,7 +536,7 @@ class EngramCore:
         namespace: str = "",
         context_fingerprint: str = "",
         source_label: str = "tapestry:actor",
-        metadata: dict | None = None,
+        metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Cache an Actor response, replacing only within its exact scope."""
         with self.lock:
@@ -541,10 +550,9 @@ class EngramCore:
             self._require_string(source_label, "source_label")
             if normalize(response) == "idk":
                 raise InvalidRequestError("IDK is not a cacheable response")
-            if metadata is None:
-                metadata = {}
             if not isinstance(metadata, dict):
-                raise InvalidRequestError("metadata must be an object or None")
+                raise InvalidRequestError("metadata must be an object")
+            metadata = dict(metadata)
             normalized_user_id = self._normalize_user_id(user_id)
             signature = self._signature(
                 request=request,
@@ -555,8 +563,8 @@ class EngramCore:
                 source_label=source_label,
                 metadata=metadata,
             )
-            previous = self.learn_requests.get(request_id)
-            if previous is not None:
+            previous = self.learn_requests.get(request_id, {})
+            if previous:
                 if previous["signature"] != signature:
                     raise ConflictError("request_id is already associated with a different learned response")
                 self.regulated_metrics["idempotent_retries"] += 1
@@ -579,7 +587,7 @@ class EngramCore:
                 request,
                 response,
                 template={"tapestry": tapestry_metadata},
-                introduced_by_user_id=None,
+                introduced_by_user_id="",
                 source_label=source_label,
             )
             action = "replaced" if statement_id in statement_ids_before else "created"
@@ -616,8 +624,8 @@ class EngramCore:
             self._require_text(reason, "reason")
             self._require_text(request_id, "request_id")
             signature = self._signature(statement_id=statement_id, reason=reason)
-            previous = self.retire_requests.get(request_id)
-            if previous is not None:
+            previous = self.retire_requests.get(request_id, {})
+            if previous:
                 if previous["signature"] != signature:
                     raise ConflictError("request_id is already associated with a different retirement")
                 self.regulated_metrics["idempotent_retries"] += 1
@@ -658,7 +666,7 @@ class EngramCore:
             self._cleanup_transient()
             return {
                 **deepcopy(self.regulated_metrics),
-                "pending_proposals": sum(1 for record in self.proposals.values() if record["resolution"] is None),
+                "pending_proposals": sum(1 for record in self.proposals.values() if not record["resolution"]),
                 "retained_proposals": len(self.proposals),
             }
 
@@ -690,7 +698,7 @@ class EngramCore:
             "hit_count": statement["hit_count"],
             "query_count": statement["query_count"],
             "source_label": statement.get("source_label", ""),
-            "introduced_by_user_id": statement.get("introduced_by_user_id"),
+            "introduced_by_user_id": statement.get("introduced_by_user_id") or "",
             "metadata": deepcopy(statement.get("template", {})),
         }
 
@@ -721,15 +729,16 @@ class EngramCore:
             self._flush_store()
 
     def _flush_store(self) -> bool:
-        if self.store_path is None:
+        if not self.store_path:
             self._durability = DurabilityState.DISABLED
             self._dirty = False
             return False
         try:
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path = Path(self.store_path)
+            store_path.parent.mkdir(parents=True, exist_ok=True)
             with contextlib.suppress(OSError):
-                self.store_path.parent.chmod(0o700)
-            persistence.save(self.engram, self.store_path)
+                store_path.parent.chmod(0o700)
+            persistence.save(self.engram, store_path)
         except Exception as error:
             self._durability = DurabilityState.DEGRADED
             self._last_persistence_error = str(error)
@@ -745,7 +754,7 @@ class EngramCore:
             raise LifecycleError(f"core is {self._state.value}; operation requires running state")
 
     @staticmethod
-    def _normalize_user_id(user_id: str | None) -> str:
+    def _normalize_user_id(user_id: str) -> str:
         try:
             return sessions.normalize_user_id(user_id)
         except ValueError as error:
@@ -759,7 +768,7 @@ class EngramCore:
         for records in (self.learn_requests, self.retire_requests):
             expired_request_ids = [request_id for request_id, record in records.items() if record["created_at"] < cutoff]
             for request_id in expired_request_ids:
-                records.pop(request_id, None)
+                records.pop(request_id, {})
 
     def _enforce_transient_bound(self) -> None:
         while len(self.proposals) > MAX_TRANSIENT_RECORDS:
@@ -769,9 +778,9 @@ class EngramCore:
                 records.pop(next(iter(records)))
 
     def _remove_proposal(self, proposal_id: str) -> None:
-        record = self.proposals.pop(proposal_id, None)
-        if record is None:
+        record = self.proposals.pop(proposal_id, {})
+        if not record:
             return
         request_id = record["proposal"]["request_id"]
         if self.proposal_requests.get(request_id) == proposal_id:
-            self.proposal_requests.pop(request_id, None)
+            self.proposal_requests.pop(request_id, "")

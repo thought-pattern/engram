@@ -626,7 +626,7 @@ class TestEngramPersistence:
         assert sushi["source_label"] == ""
 
         research = loaded.get_statement(research_id)
-        assert research["introduced_by_user_id"] is None
+        assert research["introduced_by_user_id"] == ""
         assert research["source_label"] == "research-tool"
         assert "Alice" in loaded.sessions
 
@@ -644,7 +644,7 @@ class TestEngramPersistence:
         loaded = persistence.load_engram_from_dict(data)
         statement = loaded.statements[0]
 
-        assert statement["introduced_by_user_id"] is None
+        assert statement["introduced_by_user_id"] == ""
         assert statement["source_label"] == ""
 
     def test_persistence_preserves_statistics(self) -> None:
@@ -696,7 +696,7 @@ class TestEngramPersistence:
         assert loaded.config["capacity"] == 456
 
     def test_persistence_omits_graph_password(self) -> None:
-        config = engram_config(graph=graph_config(enabled=True, username="reader", password="secret"))
+        config = engram_config(graph=graph_config(username="reader", password="secret"))
         engram = Engram(config=config)
 
         data = persistence.to_dict(engram)
@@ -1157,7 +1157,7 @@ class TestEngramSetsAndBotProperties:
         engram.sets["colors"] = ["red", "blue", "green"]
 
         assert engram.sets.get("colors") == ["red", "blue", "green"]
-        assert engram.sets.get("unknown") is None
+        assert engram.sets.get("unknown", []) == []
 
     def test_remove_set(self) -> None:
         """Test removing word sets."""
@@ -1165,7 +1165,7 @@ class TestEngramSetsAndBotProperties:
         engram.sets["colors"] = ["red", "blue"]
 
         del engram.sets["colors"]
-        assert engram.sets.get("colors") is None
+        assert engram.sets.get("colors", []) == []
 
     def test_list_sets(self) -> None:
         """Test listing all set names."""
@@ -1202,7 +1202,7 @@ class TestEngramSetsAndBotProperties:
         # Custom property
         engram.bot_properties["master"] = "Alice"
         assert engram.bot_properties.get("master") == "Alice"
-        assert engram.bot_properties.get("unknown") is None
+        assert engram.bot_properties.get("unknown", "") == ""
 
     def test_get_bot_properties(self) -> None:
         """Test getting all bot properties."""
@@ -1779,7 +1779,7 @@ class TestExternalFactIngestion:
         )
 
         stmt = engram.get_statement(stmt_id)
-        assert stmt["introduced_by_user_id"] is None
+        assert stmt["introduced_by_user_id"] == ""
         assert stmt["source_label"] == "research-tool"
         assert engram.sessions == {}
         assert engram.pattern_query("What is Tokyo?", user_id="carol")[2] == ("Tokyo is the capital of Japan.")
@@ -1821,7 +1821,7 @@ class TestExternalFactIngestion:
         with pytest.raises(ValueError):
             engram.add_fact("")
         with pytest.raises(ValueError):
-            engram.add_fact("A fact", source_label=None)
+            engram.add_fact("A fact", source_label=())
 
 
 class TestKnownFactResponses:

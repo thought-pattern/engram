@@ -23,6 +23,7 @@ from engram.constants import (
     SPELL_LONG_TOKEN_LENGTH,
     SUBJECT_PRONOUNS,
 )
+from engram.lexical import select_lexical_terms
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
 
@@ -149,25 +150,7 @@ def extract_keywords(
         except Exception:
             pass  # Fall through to regular filtering
 
-    seen: set[str] = set()
-    keywords: list[str] = []
-
-    for token in tokens:
-        # Normalize to lowercase
-        word = token.lower()
-
-        # Skip if not alphanumeric, is stopword, or already seen
-        if not word.isalnum():
-            continue
-        if word in stopwords:
-            continue
-        if word in seen:
-            continue
-
-        keywords.append(word)
-        seen.add(word)
-
-    return keywords
+    return select_lexical_terms(tokens, stopwords)
 
 
 def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:

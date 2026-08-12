@@ -42,18 +42,19 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--capacity",
         type=int,
-        default=None,
+        default=0,
         help="Override maximum DYNAMIC statements (default: from config)",
     )
     parser.add_argument(
         "--eviction",
         type=str,
         choices=["fifo", "lru", "lfu", "hit_rate"],
-        default=None,
+        default="",
         help="Override eviction policy (default: from config)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    parser.set_defaults(command="")
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new engram store")
@@ -71,6 +72,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--pattern",
         "-p",
         type=str,
+        default="",
         help="Pattern to match (default: extracted from text)",
     )
     store_parser.add_argument(
@@ -101,6 +103,7 @@ def create_parser() -> argparse.ArgumentParser:
     query_parser.add_argument(
         "--session",
         type=str,
+        default="",
         help="Session ID for context expansion",
     )
     query_parser.add_argument(
@@ -112,9 +115,10 @@ def create_parser() -> argparse.ArgumentParser:
     # session commands
     session_parser = subparsers.add_parser("session", help="Session management")
     session_sub = session_parser.add_subparsers(dest="session_command")
+    session_parser.set_defaults(session_command="")
 
     session_create = session_sub.add_parser("create", help="Create a new session")
-    session_create.add_argument("--id", type=str, help="Session ID (generated if omitted)")
+    session_create.add_argument("--id", type=str, default="", help="Session ID (generated if omitted)")
 
     session_sub.add_parser("list", help="List sessions")
 
@@ -218,6 +222,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--output",
         "-o",
         type=str,
+        default="",
         help="Output file (default: stdout)",
     )
     export_parser.add_argument(
@@ -243,6 +248,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--user-id",
         dest="session",
         type=str,
+        default="",
         help="Caller-owned user/session label (created if absent)",
     )
     interactive_parser.add_argument(
@@ -279,9 +285,9 @@ def get_eviction_policy(name: str) -> EvictionPolicy:
 def resolve_config(args: argparse.Namespace) -> dict:
     """Build the EngramConfig from the config file, applying CLI flag overrides."""
     config = load_config(args.config)
-    if args.capacity is not None:
+    if args.capacity:
         config["capacity"] = args.capacity
-    if args.eviction is not None:
+    if args.eviction:
         config["eviction_policy"] = get_eviction_policy(args.eviction)
     return config
 
@@ -355,7 +361,7 @@ def cmd_store(args: argparse.Namespace) -> int:
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
-    template = None
+    template = {}
     text = args.text
     if args.text.startswith("{"):
         try:
@@ -693,8 +699,8 @@ class InteractiveChat:
 
     def __init__(
         self,
-        core_or_engram: EngramCore | Engram,
-        session_id=None,
+        core_or_engram,
+        session_id: str = "",
         enable_graph: bool = False,
         store_path: str = "",
         initial_bot_text: str = "",
@@ -714,7 +720,7 @@ class InteractiveChat:
         self.core.start_conversation(
             user_id=self.session_id,
             initial_bot_text=initial_bot_text,
-            transcript_path=transcript_path or None,
+            transcript_path=transcript_path,
         )
         self.runtime = self.core.get_conversation(self.session_id)
         self.session = sessions.get_session(self.engram, self.session_id, create_if_missing=True)
@@ -847,7 +853,7 @@ def cmd_interactive(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv=()) -> int:
     """Main entry point.
 
     Args:
@@ -857,10 +863,10 @@ def main(argv=None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    if args.command is None:
+    if not args.command:
         args.command = "interactive"
         # Set defaults for interactive mode arguments when no subcommand was used
-        args.session = None
+        args.session = ""
         args.graph = False
         args.initial_bot_text = ""
         args.transcript = ""
@@ -891,7 +897,7 @@ def main(argv=None) -> int:
         "interactive": cmd_interactive,
     }
 
-    handler = commands.get(args.command)
+    handler = commands.get(args.command, ())
     if handler:
         try:
             return handler(args)
@@ -904,4 +910,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

@@ -164,11 +164,11 @@ class TestCalculateAverageHitRate:
 class TestScoreStatement:
     """Tests for calibrated statement scoring."""
 
-    def _score(self, stmt, query_keywords, keyword_index=None, synonyms=None, total=1):
+    def _score(self, stmt, query_keywords, keyword_index=(), synonyms=(), total=1):
         return score_statement(
             statement=stmt,
             query_keywords=query_keywords,
-            keyword_index=keyword_index if keyword_index is not None else {},
+            keyword_index=dict(keyword_index or ()),
             total_statements=total,
             weight_base=0.5,
             weight_recency=0.3,

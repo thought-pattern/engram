@@ -68,7 +68,7 @@ class TestStatement:
     def test_unattributed_statement_defaults(self) -> None:
         stmt = statement("Shared fact")
 
-        assert stmt["introduced_by_user_id"] is None
+        assert stmt["introduced_by_user_id"] == ""
         assert stmt["source_label"] == ""
         assert stmt["pattern_aliases"] == []
 
@@ -210,5 +210,5 @@ class TestQueryResult:
 
     def test_empty_matches(self) -> None:
         result = query_result(matches=[], keywords=["test"])
-        top = result["matches"][0][0] if result["matches"] else None
-        assert top is None
+        top = result["matches"][0][0] if result["matches"] else {}
+        assert top == {}

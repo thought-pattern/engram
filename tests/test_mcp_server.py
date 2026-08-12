@@ -12,7 +12,7 @@ from engram import service as engram_service
 from engram.config import engram_config
 from engram.constants import VERSION
 from engram.core import Engram
-from engram.errors import ConflictError, LifecycleError
+from engram.errors import ConflictError, InvalidRequestError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 from engram.service import EngramCore
 
@@ -83,7 +83,7 @@ def test_service_restart_without_config_path_restores_stored_config(tmp_path) ->
     service = MCPConversationService()
     service.start(seed_path="", store_path=str(store))
 
-    assert service.core is not None
+    assert service.core
     assert service.core.engram.config["capacity"] == 37
     assert service.core.engram.config["use_synonyms"] is False
 
@@ -95,7 +95,7 @@ def test_service_adds_unattributed_shared_fact_without_context_change(tmp_path) 
 
     fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research-tool")
 
-    assert fact["introduced_by_user_id"] is None
+    assert fact["introduced_by_user_id"] == ""
     assert fact["source_label"] == "research-tool"
     assert service.inspect()["session"] == session_before
     assert service.send("What is Tokyo?")["response"] == "Tokyo is the capital of Japan."
@@ -111,6 +111,16 @@ def test_service_requires_an_explicit_lifecycle(tmp_path) -> None:
     service.start(seed_path=str(_seed_file(tmp_path)))
     with pytest.raises(ConflictError, match="already active"):
         service.start(seed_path=str(_seed_file(tmp_path)))
+
+
+def test_mcp_start_propagates_transport_neutral_component_preflight(tmp_path, monkeypatch) -> None:
+    config = tmp_path / "graph.yml"
+    config.write_text("graph:\n  enabled: true\n", encoding="utf-8")
+    unavailable_client = type("UnavailableGraph", (), {"available": False})()
+    monkeypatch.setattr("engram.core.create_graph_client", lambda **kwargs: unavailable_client)
+
+    with pytest.raises(InvalidRequestError, match="MemGraph service is unavailable"):
+        MCPConversationService().start(seed_path="", config_path=str(config))
 
 
 def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:

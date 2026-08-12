@@ -96,6 +96,8 @@ must be fixed in the host command configuration.
 Starts one persistent conversation. Starting a second conversation before
 `engram_stop` returns an MCP tool error.
 
+Startup runs the same transport-neutral component preflight as Python and gRPC. Enabled graph access must connect, enabled vector recall must load its local model and probe its configured index, and enabled spaCy-backed behavior must load the pre-provisioned English model before the tool reports success.
+
 | Argument | Default | Meaning |
 | --- | --- | --- |
 | `user_id` | `"0"` | Arbitrary caller-owned, case-sensitive user label. Empty values normalize to `"0"`. |
@@ -104,7 +106,8 @@ Starts one persistent conversation. Starting a second conversation before
 | `store_path` | `""` | Optional persistent Engram JSON store. An existing store is loaded; a missing path is created when saved. |
 | `config_path` | `""` | Optional YAML configuration path. |
 | `transcript_path` | `""` | Optional JSON recovery transcript updated after every turn. |
-| `random_seed` | `null` | Optional deterministic per-turn random seed for reproducible testing. |
+| `random_seed` | `0` | Deterministic per-turn random seed value. Nonzero values enable seeding automatically. |
+| `random_seed_present` | `false` | Explicitly enables the seed, preserving seed `0` as a meaningful value. |
 
 The result includes `started`, normalized `user_id`, `initial_bot_text`,
 `turn_count`, `statement_count`, and the resolved `store_path`.
@@ -176,7 +179,9 @@ All other tools require an active conversation established by `engram_start`.
 `engram_inspect` includes `core_status`, the transport-neutral lifecycle and
 durability snapshot. Its fields include `state`, `ready`, `healthy`,
 `durability`, `dirty`, the last checkpoint/error information, and the number
-of active conversations.
+of active conversations. The bounded `components` object reports `enabled` and
+`ready` Booleans for graph, vector, and spaCy without exposing endpoints,
+credentials, model paths, or index names.
 
 ## Required lifecycle
 
@@ -319,7 +324,7 @@ Output:
       "hit_count": 3,
       "query_count": 5,
       "source_label": "tapestry:actor",
-      "introduced_by_user_id": null,
+      "introduced_by_user_id": "",
       "metadata": {
         "tapestry": {
           "namespace": "support",
@@ -385,7 +390,7 @@ The result returns `learned`, `statement_id`, `action` (`created` or
 `replaced`), scope, provenance, and `idempotent`. Responses replace in place
 only when their query keyword set, namespace, and context fingerprint all
 match. Actor responses remain shared knowledge (`introduced_by_user_id` is
-null), while the calling user's previous-response context is updated.
+`""`), while the calling user's previous-response context is updated.
 `request_id` makes retries idempotent and conflicting reuse is an error.
 
 ### `engram_retire_response`

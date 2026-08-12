@@ -30,10 +30,10 @@ def pipeline_result(
     response: str,
     source: str,
     score: float = 0.0,
-    matches=None,
-    keywords=None,
+    matches=(),
+    keywords=(),
     pattern: str = "",
-    captured=None,
+    captured=(),
     user_id: str = "",
 ) -> dict:
     """Build a pipeline response dict.
@@ -48,10 +48,10 @@ def pipeline_result(
         "response": response,
         "source": source,
         "score": score,
-        "matches": matches if matches is not None else [],
-        "keywords": keywords if keywords is not None else [],
+        "matches": list(matches or ()),
+        "keywords": list(keywords or ()),
         "pattern": pattern,
-        "captured": captured if captured is not None else [],
+        "captured": list(captured or ()),
         "user_id": user_id,
         "dialogue_act": "",
         "active_topic": "",
@@ -66,7 +66,7 @@ def _attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
     if not session_id:
         return result
     with engram.session_lock:
-        session = engram.sessions.get(session_id)
+        session = engram.sessions.get(session_id, {})
         if not session:
             return result
         history = session.get("dialogue_act_history", [])
@@ -90,7 +90,7 @@ def _retract_response(engram, session_id: str, response: str) -> None:
     if not session_id or not response:
         return
     with engram.session_lock:
-        session = engram.sessions.get(session_id)
+        session = engram.sessions.get(session_id, {})
         if not session:
             return
         if session["response_history"] and session["response_history"][0] == response:
@@ -114,11 +114,11 @@ def respond(
     engram,
     text: str,
     session_id: str = "",
-    llm_fn=None,
+    llm_fn=(),
     high_confidence: float = 0.7,
     context_limit: int = 3,
     learn: bool = True,
-    user_id: str | None = None,
+    user_id: str = "",
 ) -> dict:
     """Answer text through the tiered strategy: pattern, cache, then LLM.
 
@@ -161,8 +161,8 @@ def respond(
         raise ValueError("context_limit must be non-negative")
 
     context_id = session_id
-    attributed_user_id = None
-    if user_id is not None:
+    attributed_user_id = ""
+    if user_id:
         attributed_user_id = sessions_mod.normalize_user_id(user_id)
         if session_id and session_id != attributed_user_id:
             raise ValueError("session_id and user_id must identify the same context")
@@ -280,7 +280,7 @@ def chat(
     engram,
     text: str,
     user_id: str = "0",
-    llm_fn=None,
+    llm_fn=(),
     high_confidence: float = 0.7,
     context_limit: int = 3,
     learn: bool = True,

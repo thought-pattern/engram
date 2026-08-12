@@ -1,11 +1,6 @@
 """Tests for AIML-style pattern matching."""
 
-from engram.pattern import (
-    PatternMatcher,
-    match_pattern,
-    normalize_pattern,
-    pattern_to_regex,
-)
+from engram.pattern import PatternMatcher, match_pattern, normalize_pattern, pattern_to_regex
 
 
 class TestNormalizePattern:
