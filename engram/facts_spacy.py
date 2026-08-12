@@ -16,6 +16,8 @@ Copulas keep their surface form (is/are); prepositional links use the
 preposition; action verbs use the verb lemma so relations are normalized.
 """
 
+from spacy.tokens import Token
+
 from engram.constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
 from engram.nlp import extracted_fact
 from engram.spacy_setup import get_nlp
@@ -45,7 +47,7 @@ def _first_child(token, deps) -> object:
     return ()
 
 
-def _prep_link(verb):
+def _prep_link(verb) -> tuple[str, object]:
     """Return (preposition_text, pobj_token) for a verb's first prep child.
 
     Returns ("", ()) when there is no prepositional object.
@@ -75,7 +77,7 @@ def _extract_from_sentence(sent) -> dict:
         return {}
 
     subject_token = _first_child(root, SUBJECT_DEPS)
-    if not subject_token:
+    if not isinstance(subject_token, Token):
         return {}
 
     subject = _phrase(subject_token)
@@ -86,20 +88,20 @@ def _extract_from_sentence(sent) -> dict:
 
     if is_copula:
         obj_token = _first_child(root, OBJECT_DEPS)
-        if obj_token:
+        if isinstance(obj_token, Token):
             predicate = root.text  # keep surface "is"/"are"/"was"/"were"
         else:
             prep_text, obj_token = _prep_link(root)
-            if not obj_token:
+            if not isinstance(obj_token, Token):
                 return {}
             predicate = prep_text  # "Paris is in France" -> (Paris, in, France)
     else:
         obj_token = _first_child(root, OBJECT_DEPS)
-        if obj_token:
+        if isinstance(obj_token, Token):
             predicate = root.lemma_  # normalized relation: develop, have, chase
         else:
             prep_text, obj_token = _prep_link(root)
-            if not obj_token:
+            if not isinstance(obj_token, Token):
                 return {}
             predicate = f"{root.lemma_} {prep_text}"  # "belong to"
 

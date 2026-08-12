@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
+from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -91,7 +92,7 @@ def _measure(operation: Callable[[], object], iterations: int) -> dict:
     }
 
 
-def _memory_build(builder: Callable[[], object]) -> tuple[object, dict]:
+def _memory_build[BuildValue](builder: Callable[[], BuildValue]) -> tuple[BuildValue, dict]:
     gc.collect()
     tracemalloc.start()
     value = builder()
@@ -200,9 +201,10 @@ def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCor
             )
         engram.config["graph"]["enabled"] = True
         engram.config["graph"]["vector_enabled"] = True
-        engram._graph_client = SyntheticVectorGraph(claim_id)
-        engram._graph_embedding_model = object()
-        engram._encode_graph_query = lambda text: [0.0] * 384
+        benchmark_engram = cast(Any, engram)
+        benchmark_engram._graph_client = SyntheticVectorGraph(claim_id)
+        benchmark_engram._graph_embedding_model = object()
+        benchmark_engram._encode_graph_query = lambda text: [0.0] * 384
         return EngramCore(engram, checkpoint_on_mutation=False)
 
     core, memory = _memory_build(build)

@@ -20,8 +20,8 @@ def _production_modules() -> list[Path]:
     return sorted(path for root in PRODUCTION_ROOTS for path in root.rglob("*.py") if path.name not in GENERATED_MODULES)
 
 
-def _annotations(tree: ast.AST) -> list[ast.AST]:
-    annotations = []
+def _annotations(tree: ast.AST) -> list[ast.expr]:
+    annotations: list[ast.expr] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]

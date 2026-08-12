@@ -2,6 +2,7 @@
 
 import re
 from functools import lru_cache
+from typing import Any, cast
 
 from nltk.corpus import wordnet, words
 from nltk.metrics.distance import edit_distance
@@ -647,7 +648,8 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
 
     synonyms = {word.lower()}
     try:
-        for syn in wordnet.synsets(word):
+        wordnet_reader = cast(Any, wordnet)
+        for syn in wordnet_reader.synsets(word):
             for lemma in syn.lemmas():
                 name = lemma.name().lower().replace("_", " ")
                 if name != word.lower():

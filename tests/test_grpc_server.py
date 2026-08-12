@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import grpc
 import pytest
@@ -45,8 +46,13 @@ def _running_server(core: EngramCore, **kwargs):
 
 
 def _health_status(channel: grpc.Channel) -> int:
-    health_stub = health_pb2_grpc.HealthStub(channel)
+    health_stub = cast(Any, health_pb2_grpc.HealthStub(channel))
     return health_stub.Check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5).status
+
+
+def _trailing_metadata(error: grpc.RpcError) -> dict[str, str]:
+    metadata = cast(tuple[tuple[str, str], ...], error.trailing_metadata())
+    return dict(metadata)
 
 
 def test_conversation_fact_predicate_report_and_health_protocol(tmp_path) -> None:
@@ -148,7 +154,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
         with pytest.raises(grpc.RpcError) as invalid:
             stub.Resolve(engram_pb2.ResolveRequest(proposal_id=proposal["proposal_id"]))
         assert invalid.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-        assert dict(invalid.value.trailing_metadata())["engram-error-type"] == "InvalidRequestError"
+        assert _trailing_metadata(invalid.value)["engram-error-type"] == "InvalidRequestError"
 
         with pytest.raises(grpc.RpcError) as missing:
             stub.Chat(engram_pb2.ChatRequest(user_id="Missing", text="hello"))
@@ -186,7 +192,7 @@ def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monke
         with pytest.raises(grpc.RpcError) as failed:
             stub.LearnResponse(request)
 
-        metadata = dict(failed.value.trailing_metadata())
+        metadata = _trailing_metadata(failed.value)
         assert failed.value.code() == grpc.StatusCode.UNAVAILABLE
         assert metadata["engram-error-type"] == "PersistenceError"
         assert metadata["engram-operation"] == "store checkpoint"

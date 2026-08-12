@@ -1,6 +1,6 @@
 # Engram Project Tracking
 
-**Audience: Internal | Status: Enhancement program In Progress, 18/145 | 12 August 2026**
+**Audience: Internal | Status: Enhancement program In Progress, 29/148 | 12 August 2026**
 
 Last updated: 2026-08-12
 
@@ -53,7 +53,7 @@ Deferred work remains Not Started. Blocked means a named external decision, depe
 | --- | --- | --- | --- | --- | ---: |
 | 0 | Source reconciliation and baseline | P0 | — | Done | 6/6 |
 | 1 | Query identity and retrieval aliases | P0 | §0 | Done | 12/12 |
-| 2 | Exact, alias, and support indexes | P0 | §§0-1 | Not Started | 0/8 |
+| 2 | Exact, alias, and support indexes | P0 | §§0-1 | Done | 11/11 |
 | 3 | Accepted response commit and lifecycle | P0 | §§1-2 | Not Started | 0/9 |
 | 4 | Unified resolution pipeline | P0 | §§1-3 | Not Started | 0/10 |
 | 5 | Candidate fusion and ambiguity | P1 | §4 | Not Started | 0/8 |
@@ -68,7 +68,7 @@ Deferred work remains Not Started. Blocked means a named external decision, depe
 | 14 | Utility resolver plugins | P3 | §§4-5 | Not Started | 0/6 |
 | 15 | Interfaces, migration, security, and operations | Continuous | Cross-cutting | Not Started | 0/10 |
 | 16 | Evaluation, rollout, and release | Continuous | Cross-cutting | Not Started | 0/10 |
-| | **Program total** | | | **In Progress** | **18/145** |
+| | **Program total** | | | **In Progress** | **29/148** |
 
 P0 establishes correctness and the shared architecture. P1 uses those contracts to improve regulated recall and evidence handoff. P2 adds structured graph depth after unified resolution is stable. P3 work is optional and advances independently only when held-out evaluation justifies its resource and operating cost. §§15-16 apply throughout.
 
@@ -76,7 +76,7 @@ Sections 0 and 1 are complete. The current build order continues with §2 and th
 
 ## Documented Baseline
 
-These behaviors are reported by the source documentation and were reconciled in §0. They are descriptive baseline capabilities rather than additional items in the 145-item enhancement count. The source documentation identifies a `pdc-3` branch with support-aware sentence embeddings and Schema 3.5 graph behavior; EGR-001 records the audited source state and corrections.
+These behaviors are reported by the source documentation and were reconciled in §0. They are descriptive baseline capabilities rather than additional items in the 148-item enhancement count. The source documentation identifies a `pdc-3` branch with support-aware sentence embeddings and Schema 3.5 graph behavior; EGR-001 records the audited source state and corrections.
 
 | Baseline area | Reported current capability |
 | --- | --- |
@@ -147,7 +147,7 @@ All six deliverables exist and verify in the current worktree. Section 0 is Done
 
 **Evidence required:** typed schema documentation, golden normalization fixtures, deterministic dictionary and JSON codec round trips, property tests for normalization and scoped keys, authoritative-input validation tests, concrete-absence checks, and the identity conformance corpus. Every task carries focused tests; EGR-112 supplies cross-contract coverage rather than deferring earlier verification.
 
-**Ownership boundary:** §1 owns pure surface identity, representations, validation, and retrieval-key construction. Section 2 owns cross-artifact key mappings, collision discovery, and index atomicity. Section 3 owns commit-time rejection and explicit supersession. Section 8 owns contextual and graph-backed canonical entity/predicate resolution. Section 15 owns persistence and transport integration, and §16 owns held-out release gates.
+**Ownership boundary:** §1 owns pure surface identity, representations, validation, and retrieval-key construction. Section 2 owns the index projection boundary, cross-artifact key mappings, collision discovery, generic index mutation, and atomic index state. Section 3 owns artifact projection, lifecycle eligibility, commit-time rejection, and explicit supersession. Section 8 owns contextual and graph-backed canonical entity/predicate resolution. Section 15 owns persistence, startup, operator, and transport integration, and §16 owns held-out release gates.
 
 ### Section 1 evidence
 
@@ -161,22 +161,38 @@ All six deliverables exist and verify in the current worktree. Section 0 is Done
 
 All twelve identity tasks meet the Section 1 exit condition after remediation of symbolic comparison collisions, prose-dash operator loss, trailing-token relation guesses, falsey non-object mapping inputs, and enabled-component readiness. Normalization remains version 1 because no identity key had been released, persisted, indexed, or exposed through an integration boundary before correction. Gate B remains open because it also requires the §2 indexes and §3 accepted-response commit/lifecycle integration.
 
-## §2. Exact, alias, and support indexes (0/8)
+## §2. Exact, alias, and support indexes (11/11)
 
 **Priority:** P0  
 **Depends on:** §§0-1.  
-**Exit:** Exact lookup is constant-time relative to statement corpus size, and Claim-supported lookup scales with matched Claim IDs and fan-out rather than all statements.
+**Exit:** Given validated index projections, exact ownership and direct lookup are constant-time relative to statement corpus size; Claim-supported lookup scales with matched Claim IDs and fan-out rather than all statements. Forward and inverse maps remain equivalent under rebuild and generic mutation, readers observe one checked `IndexState`, and collisions or unindexable legacy records produce explicit bounded reports rather than an arbitrary answer.
 
-1. [ ] **EGR-201: Add the scoped exact retrieval index and collision report.** Map each §1 `ScopedRetrievalKey` to ordered ACTIVE statement IDs; expose every existing statement ID to commit validation and quarantine legacy multi-artifact mappings instead of selecting a winner.
-2. [ ] **EGR-202: Add the statement-to-retrieval-key index.** Support efficient replace, supersede, invalidate, retire, eviction, and repair operations.
-3. [ ] **EGR-203: Add the Claim-to-statement reverse index.** Map each opaque support Claim ID to all attached response statement IDs.
-4. [ ] **EGR-204: Add the statement-to-Claim index.** Preserve efficient support updates, removal, audit, and reverse-index validation.
-5. [ ] **EGR-205: Make index mutation and collision discovery atomic in live state.** Store, replace, lifecycle transition, eviction, load, and retirement must observe collision state and must not expose half-updated indexes to concurrent readers.
-6. [ ] **EGR-206: Implement deterministic index rebuild.** Reconstruct every derived index from authoritative persisted artifacts with an atomic completed-index swap.
-7. [ ] **EGR-207: Add index consistency and repair tooling.** Report missing, extra, ineligible, and conflicting mappings; support dry-run and explicit repair without changing authoritative response content.
-8. [ ] **EGR-208: Prove index scalability and invariants.** Benchmark representative corpus sizes and add canonical/alias collision, concurrency, property, corrupt-index, interrupted-rebuild, legacy-quarantine, and startup compatibility tests.
+1. [x] **EGR-201: Define the index projection and state contracts.** Add bounded concrete `IndexProjection`, `IndexState`, typed exact-lookup result, build report, and collision report contracts. Carry statement ID, generation, retrieval-key provenance, support Claim IDs, direct-answer eligibility, exclusion reason, schema version, and normalization version without depending on §3 artifact or lifecycle types.
+2. [x] **EGR-202: Implement the bidirectional exact and alias index.** Build scoped retrieval-key-to-statement and statement-to-retrieval-key maps as one invariant; retain canonical-versus-alias provenance, deduplicate representations within an artifact, expose every indexable owner to validation, and return explicit `FOUND`, `MISS`, or `COLLISION` lookup results without selecting a winner.
+3. [x] **EGR-203: Implement the bidirectional support index.** Build Claim-to-statement and statement-to-Claim maps as one invariant with bounded opaque identifiers and explicit matched-Claim lookup.
+4. [x] **EGR-204: Implement deterministic off-live index construction.** Build a complete candidate `IndexState` from validated projections without altering live state; deterministically classify missing identity, unsupported versions, malformed support, ineligible records, within-artifact duplicates, and cross-artifact collisions.
+5. [x] **EGR-205: Add the complete index consistency checker.** Compare every forward and inverse mapping and reproducible build diagnostic; report missing, extra, asymmetric, ineligible, unindexable, conflicting, or corrupt-report entries without mutation. Self-check and explicit authoritative comparison are distinct, and an explicit empty projection set means empty.
+6. [x] **EGR-206: Add the atomic live index owner.** Establish the re-entrant mutation boundary, lock order, immutable reader snapshot, and atomic completed-state swap so readers never observe half-updated maps or a rebuild with inconsistent maps or reproducible diagnostics.
+7. [x] **EGR-207: Add generic incremental index mutations.** Support add, replace, remove, and support-update projections without lifecycle-specific verbs; prove each result equals a clean deterministic rebuild so §3 can safely compose commit and lifecycle operations.
+8. [x] **EGR-208: Replace the support-aware statement scan.** Use the Claim-to-statement index after vector Claim matching, apply scope before bounded top-k scoring, remove work proportional to the complete statement corpus, and abstain without partial ranking when the configured matched-edge scan bound is exhausted.
+9. [x] **EGR-209: Add transport-neutral index check, rebuild, and repair operations.** Return bounded dry-run diffs and perform an explicit checked atomic repair without changing authoritative response content; distinguish current-statement operations from explicit projection collections, including empty; leave persistence/startup wiring, adapter exposure, authorization, and operator procedures to §15.
+10. [x] **EGR-210: Prove index invariants and concurrency safety.** Add rebuild-equivalence properties, canonical/alias collision cases, reader/writer tests, stale-state injection, abandoned candidate builds, legacy missing-identity classification, and compatibility tests for current support metadata. Each earlier task retains focused tests rather than deferring its verification here.
+11. [x] **EGR-211: Prove index scalability and resource bounds.** Benchmark exact lookup through 100,000 projections, matched-Claim fan-out, rebuild, incremental mutations, and peak memory with p50, p95, workload shape, and comparison to the approved ADR 0004 engineering gates.
 
-**Evidence required:** complexity benchmark, invariant test output, rebuild equivalence artifact, and operator documentation.
+**Evidence required:** typed projection/state documentation, focused tests for every task, invariant and concurrency output, rebuild-equivalence artifact, collision and legacy-classification fixture, support-path integration results, complexity and memory benchmark, and transport-neutral check/repair documentation. Persistence/startup, adapter, operational, and release evidence remains assigned to applicable §§15-16 tasks.
+
+**Ownership boundary:** §2 accepts projections and owns derived-index mechanics only. It does not infer lifecycle from tier, manufacture exact identity for legacy records, persist authoritative artifacts, or expose adapter operations. Section 3 creates projections and composes generic mutations into commit and lifecycle transactions; §15 integrates persistence, startup/readiness, adapters, authorization, and operator procedures; §16 evaluates release-scale gates.
+
+### Section 2 evidence
+
+- [Version 1 index contracts and transport-neutral repair behavior](documentation/indexes/contracts-v1.md)
+- [Collision, legacy, unsupported-version, and malformed-support fixture](documentation/indexes/classification-v1.json)
+- [Focused, full-suite, static-analysis, and benchmark results](documentation/indexes/test-results-2026-08-12.md): 36 focused tests passed; full suite 963 passed with the Section 3 legacy replacement defect retained as one strict expected failure
+- Implementation: `engram/indexes.py`; live integration in `engram/core.py`, `engram/eviction.py`, and `engram/persistence.py`
+- Invariant and integration suite: `tests/test_indexes.py`, with completed-boundary updates in `tests/test_baseline_gaps.py`
+- [100,000-projection and full 5,000-artifact support-proposal benchmark](documentation/indexes/benchmark-2026-08-12.json) and harness at `scripts/benchmark_indexes.py`
+
+All eleven tasks meet the Section 2 exit condition after the 12 August remediation. Exact lookup remained constant-time relative to corpus size with a measured 0.2251x p95 slope from 10,000 to 100,000 projections. The full 5,000-artifact regulated support proposal measured p95 0.6818/1.0115/1.6250 ms at fan-out 1/10/100 and passed both the 30 ms absolute and 125%-of-baseline gates. Scope filtering precedes bounded top-k selection, scan exhaustion abstains without a partial answer, explicit empty projection sets remain meaningful, reproducible diagnostic corruption blocks publication, forward/inverse equivalence holds under rebuild and every generic mutation, and collision or legacy exclusion never selects an arbitrary response. Persistence schema/startup policy and adapter/operator exposure remain assigned to §15 rather than being counted here.
 
 ## §3. Accepted response commit and lifecycle (0/9)
 
@@ -184,17 +200,19 @@ All twelve identity tasks meet the Section 1 exit condition after remediation of
 **Depends on:** §§1-2.  
 **Exit:** An authoritative caller can commit an unchanged accepted response as STATIC or DYNAMIC, then explicitly supersede, invalidate, or retire it without confusing validity with eviction.
 
-1. [ ] **EGR-301: Add `CachedResponseArtifact`.** Persist exact response text, query identity, retrieval representations, tier, lifecycle, scope, support, temporal validity, knowledge epoch, supersession, provenance, and bounded metadata.
-2. [ ] **EGR-302: Implement transport-neutral `commit_response`.** Validate the artifact and any authoritative identity, reject empty and normalized complete `IDK`, reject scoped canonical or alias collisions with the existing statement IDs, update indexes, checkpoint once, and return a stable mutation result.
-3. [ ] **EGR-303: Support explicit STATIC accepted outputs.** STATIC commit must protect against ordinary capacity eviction without implying permanent truth or eligibility.
-4. [ ] **EGR-304: Add lifecycle states and eligibility checks.** Implement ACTIVE, SUPERSEDED, INVALIDATED, and RETIRED separately from tier and eviction state.
-5. [ ] **EGR-305: Add explicit lifecycle transition operations.** Require typed reason, caller identity or provenance, idempotent request identity, legal transition checks, and audit fields.
-6. [ ] **EGR-306: Add validity and knowledge-epoch fields.** Enforce half-open `valid_from`/`valid_until` bounds and caller-configured epoch eligibility without inferring truth.
-7. [ ] **EGR-307: Implement concurrency-safe explicit supersession.** Require the expected current statement ID or generation, reject implicit last-writer-wins replacement, create the replacement, update retrieval mappings, and name `superseded_by` atomically.
-8. [ ] **EGR-308: Preserve `LearnResponse` compatibility.** Implement it as a DYNAMIC ACTIVE convenience over the new commit path while retaining retry, proposal, user-context, and `IDK` behavior.
-9. [ ] **EGR-309: Migrate legacy response state.** Preserve text, tier, scope, support, provenance, and statistics; default live entries conservatively; quarantine ambiguous exact keys; make migration idempotent and recoverable.
+Tasks are listed in dependency order while retaining their stable EGR identifiers.
 
-**Evidence required:** lifecycle transition matrix tests, persistence fixtures across every supported schema, exact-text byte or Unicode equality checks, idempotency tests, and migration recovery instructions.
+1. [ ] **EGR-304: Define lifecycle states and base eligibility.** Implement ACTIVE, SUPERSEDED, INVALIDATED, and RETIRED separately from tier and eviction state; publish the legal transition matrix and the lifecycle portion of `direct_answer_eligible` before artifact projection or mutation operations use it.
+2. [ ] **EGR-301: Add `CachedResponseArtifact` and its index projection.** Define deterministic concrete codecs for exact response text, query identity, retrieval representations, tier, lifecycle, scope, support, temporal validity, knowledge epoch, supersession, generation, provenance, statistics, and bounded metadata. Project only the fields required by §2 without making the projection authoritative.
+3. [ ] **EGR-306: Enforce validity and knowledge-epoch eligibility.** Validate half-open `valid_from`/`valid_until` bounds and caller-configured epoch eligibility without inferring truth; combine these rules with lifecycle into the artifact's §2 projection.
+4. [ ] **EGR-309: Add the response persistence schema and migrate legacy state.** Preserve text, tier, scope, support, provenance, and statistics; make migration idempotent, recoverable, and compatible with explicit backup or output behavior. Legacy entries with no recoverable request identity remain unindexed with a concrete reason, while ambiguous recoverable keys are excluded from direct lookup rather than assigned a winner. Execute this feature slice with EGR-1505 before a configured commit path claims durable checkpoint support.
+5. [ ] **EGR-302: Implement transport-neutral `commit_response`.** Validate the artifact and authoritative identity, reject empty and normalized complete `IDK`, reject scoped canonical or alias collisions with named existing statement IDs, compose §2 generic index mutations atomically, checkpoint once, and return a stable mutation result.
+6. [ ] **EGR-303: Support explicit STATIC accepted outputs.** STATIC commit must protect against ordinary capacity eviction without implying permanent truth, lifecycle, or eligibility.
+7. [ ] **EGR-305: Add explicit lifecycle transition operations.** Require typed reason, caller identity or provenance, idempotent request identity, expected generation, legal transition checks, audit fields, one §2 index mutation, and one configured checkpoint.
+8. [ ] **EGR-307: Implement concurrency-safe explicit supersession.** Require the expected current statement ID and generation, reject implicit last-writer-wins replacement, create the replacement, update retrieval mappings, and name `superseded_by` atomically.
+9. [ ] **EGR-308: Preserve `LearnResponse` compatibility.** Implement it as a DYNAMIC ACTIVE convenience over the new commit path while retaining retry, proposal, user-context, and `IDK` behavior.
+
+**Evidence required:** artifact and projection codec fixtures, lifecycle and eligibility matrices, persistence fixtures across every supported schema, exact-text byte or Unicode equality checks, index-mutation equivalence, checkpoint and idempotency tests, concurrent-transition tests, and migration recovery instructions.
 
 ## §4. Unified resolution pipeline (0/10)
 

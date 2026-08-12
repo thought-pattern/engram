@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import cast
 
 import pytest
 from mcp.client import Client
@@ -11,10 +12,15 @@ from mcp.client import Client
 from engram import service as engram_service
 from engram.config import engram_config
 from engram.constants import VERSION
+from engram.conversation import ConversationRuntime
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 from engram.service import EngramCore
+
+
+def _runtime(service: MCPConversationService) -> ConversationRuntime:
+    return cast(ConversationRuntime, service.runtime)
 
 
 def _seed_file(tmp_path):
@@ -163,7 +169,7 @@ def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:
     )
     assert rejected["idempotent"] is False
     assert retry["idempotent"] is True
-    assert service.runtime.engram.get_statement(candidate["statement_id"])["hit_count"] == 0
+    assert _runtime(service).engram.get_statement(candidate["statement_id"])["hit_count"] == 0
     with pytest.raises(ValueError, match="different verdict"):
         service.resolve(rejected_proposal["proposal_id"], "accepted", statement_id=candidate["statement_id"])
 
@@ -182,7 +188,7 @@ def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:
     )
 
     assert accepted["resolved"] is True
-    assert service.runtime.engram.get_statement(candidate["statement_id"])["hit_count"] == 1
+    assert _runtime(service).engram.get_statement(candidate["statement_id"])["hit_count"] == 1
     snapshot = service.inspect()
     assert snapshot["session"]["previous_response"] == "Support is open from nine to five."
     assert snapshot["regulated_cache"]["accepted"] == 1
@@ -277,7 +283,7 @@ def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
         results = list(executor.map(lambda _: accept(), range(8)))
 
     assert sum(result["idempotent"] is False for result in results) == 1
-    assert service.runtime.engram.get_statement(learned["statement_id"])["hit_count"] == 1
+    assert _runtime(service).engram.get_statement(learned["statement_id"])["hit_count"] == 1
 
 
 def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
@@ -290,8 +296,10 @@ def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
 
     assert retired["retired"] is True
     assert retry["idempotent"] is True
-    assert service.runtime.engram.get_statement(learned["statement_id"]) == {}
-    static_pattern_id = next(statement["id"] for statement in service.runtime.engram.statements if statement["pattern"] == "HELLO")
+    assert _runtime(service).engram.get_statement(learned["statement_id"]) == {}
+    static_pattern_id = next(
+        statement["id"] for statement in _runtime(service).engram.statements if statement["pattern"] == "HELLO"
+    )
     with pytest.raises(ValueError, match="dynamic, patternless"):
         service.retire_response(static_pattern_id, "not allowed", "retire-static")
     with pytest.raises(ValueError, match="different retirement"):

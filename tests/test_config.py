@@ -85,6 +85,10 @@ class TestEngramConfig:
         with pytest.raises(ValueError):
             graph_config(vector_limit=0)
         with pytest.raises(ValueError):
+            graph_config(vector_support_scan_limit=0)
+        with pytest.raises(ValueError):
+            graph_config(vector_support_scan_limit=1_000_001)
+        with pytest.raises(ValueError):
             graph_config(vector_min_similarity=1.1)
         with pytest.raises(ValueError):
             graph_config(vector_weight=-0.1)
@@ -106,12 +110,14 @@ class TestEngramConfig:
             vector_index_name="claim_premise_embeddings",
             vector_model_path="/models/minilm",
             vector_limit=75,
+            vector_support_scan_limit=50000,
             vector_min_similarity=0.52,
             vector_weight=0.8,
         )
 
         assert config["vector_enabled"] is True
         assert config["vector_limit"] == 75
+        assert config["vector_support_scan_limit"] == 50000
         assert config["vector_min_similarity"] == 0.52
         assert config["vector_weight"] == 0.8
 

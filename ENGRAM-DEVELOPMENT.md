@@ -239,7 +239,34 @@ On commit, Engram normalizes each representation into a retrieval key, removes d
 
 The frame is not automatically persisted as user knowledge. A compact previous frame may be kept in user context for bounded follow-up inheritance.
 
-### 7.5 CachedResponseArtifact
+### 7.5 IndexProjection and IndexState
+
+Section 2 indexes consume a bounded internal projection rather than depending on the Section 3 artifact or lifecycle implementation. An `IndexProjection` contains only the fields required to construct and validate derived indexes:
+
+```json
+{
+  "schema_version": 1,
+  "statement_id": "stmt-...",
+  "generation": 1,
+  "retrieval_keys": [
+    {
+      "key": {},
+      "provenance": "canonical",
+      "representation": "Who acquired GitHub?"
+    }
+  ],
+  "support_claim_ids": ["claim-1"],
+  "direct_answer_eligible": true,
+  "exclusion_reason": "",
+  "normalization_version": 1
+}
+```
+
+All fields use concrete values. Section 3 projects validated `CachedResponseArtifact` records into this contract and owns the lifecycle, validity, and epoch rules that determine `direct_answer_eligible`. A legacy record with no recoverable identity produces a projection with empty retrieval keys and an explicit exclusion reason; index construction must not manufacture an exact key from lexical keywords or response text.
+
+`IndexState` owns the complete retrieval-key and support-index pairs, their schema and normalization versions, and the associated build and collision reports. Readers observe one completed state. Builders and repair operations construct a candidate state off-live, check it, and swap it atomically rather than mutating individual maps into visibility.
+
+### 7.6 CachedResponseArtifact
 
 The accepted write object should contain at least:
 
@@ -264,7 +291,9 @@ The accepted write object should contain at least:
 
 `response` is stored once. Canonical and alias representations point to its statement ID. Support Claims remain opaque identifiers in standalone storage and are interpreted only through the graph integration contract.
 
-### 7.6 Candidate
+Every valid artifact supplies one `IndexProjection`; the projection is disposable derived input and is not a second authoritative record.
+
+### 7.7 Candidate
 
 Every resolver should emit the common candidate contract.
 
@@ -298,7 +327,7 @@ Every resolver should emit the common candidate contract.
 
 Unavailable features are omitted from `features.values` and named in `features.unavailable`; an empty feature set is represented by empty containers, not `null`. This distinguishes an unavailable measurement from a measured zero without introducing optional value types. Candidate IDs are proposal-local. Statement and Claim identifiers remain stable evidence references where available.
 
-### 7.7 ResolutionResult
+### 7.8 ResolutionResult
 
 The core returns one of three outcomes:
 
@@ -356,45 +385,76 @@ The test corpus must include:
 
 ### 8.3 Exact index
 
-The primary exact lookup key should be logically equivalent to:
+The exact ownership and direct-lookup views should be logically equivalent to:
 
 ```text
 (scope_key, normalization_version, normalized_retrieval_key)
-    -> ordered active statement IDs
+    -> ordered indexable owner IDs
+    -> one eligible statement ID, or a typed miss/collision result
 ```
 
-The common case should contain one active statement. An ordered collection permits detection and repair of legacy collisions instead of hiding them. Eligibility still checks lifecycle, validity, required metadata, and support policy before returning a candidate.
+The derived state keeps two distinct views. An ownership view exposes every indexable artifact carrying a key to collision validation and audit. A direct-lookup view exposes only an eligible, unambiguous mapping. The common case contains one statement; zero is a miss, and more than one is an explicit collision that cannot produce a direct answer. Deterministic ordering supports reproducible reports and repair but must never select a winner.
+
+Exact lookup returns a concrete typed result such as `FOUND`, `MISS`, or `COLLISION` with bounded statement IDs and canonical-versus-alias provenance. Section 3 supplies lifecycle eligibility through `IndexProjection`; Section 4 adapts a `FOUND` result into the common candidate contract.
 
 Exact lookup should bypass tokenization, synonym expansion, vector encoding, and graph access when an eligible unambiguous result is found.
 
 ## 9. Persistence and secondary indexes
 
-Persisted response artifacts remain authoritative. The following secondary indexes should be built and maintained under the same core mutation lock:
+Persisted response artifacts remain authoritative. Section 2 consumes validated `IndexProjection` values so it does not depend on the later artifact, lifecycle, persistence, or transport implementations. The following secondary index pairs are built and maintained together under one re-entrant core mutation boundary:
 
 | Index | Purpose |
 | --- | --- |
-| scoped retrieval key to statement IDs | Constant-time canonical and alias lookup. |
-| statement ID to retrieval keys | Efficient update, retirement, supersession, and validation. |
-| Claim ID to statement IDs | Support-aware semantic lookup proportional to matching Claims. |
-| statement ID to Claim IDs | Efficient lifecycle checks and reverse-index repair. |
-| lifecycle and validity eligibility | Avoid ranking ineligible statements. |
+| scoped retrieval key to statement IDs | Constant-time ownership, canonical and alias lookup, and explicit collision discovery. |
+| statement ID to retrieval keys | Efficient generic replacement, removal, audit, and exact-index validation. |
+| Claim ID to statement IDs | Support-aware semantic lookup proportional to matching Claims and fan-out. |
+| statement ID to Claim IDs | Efficient support replacement, removal, audit, and reverse-index validation. |
 | sparse field index | Optional BM25 or FTS retrieval over canonical, alias, entity, relation, identifier, and answer fields. |
 
-Every index implementation must provide:
+The exact forward and inverse maps form one invariant, as do the support forward and inverse maps. Neither half is independently mutable or considered complete. Section 2 provides:
 
-- add, replace, supersede, invalidate, retire, and restore operations;
-- deterministic rebuild from persisted artifacts;
-- a consistency checker that reports missing, extra, and conflicting mappings;
-- schema and normalization version recording;
-- startup behavior for legacy state;
-- an atomic swap from a completed rebuilt index; and
-- tests that inject interrupted or stale derived state.
+- an explicit lookup operation for exact keys and matched Claim IDs;
+- deterministic off-live construction from validated projections;
+- a consistency checker that reports missing, extra, asymmetric, ineligible, unindexable, and conflicting mappings;
+- distinct self-check and explicit authoritative-comparison operations so an empty authoritative projection set is not confused
+  with omitted input, plus validation of every build diagnostic reproducible from retained projections;
+- schema and normalization version recording in `IndexState`;
+- one atomic swap from a completed and checked candidate state;
+- generic add, replace, remove, and support-update mutations whose result equals a clean rebuild; and
+- tests that abandon candidate builds or inject stale live state without exposing partial maps to readers.
 
-Persisting a secondary index is an optimization, not a second source of truth. If an index is missing, incompatible, or corrupt, Engram should rebuild it before declaring the affected resolver ready.
+Index construction classifies legacy records rather than guessing. Missing identity, unsupported versions, malformed support, lifecycle exclusion, within-artifact duplicate representations, and cross-artifact collisions have distinct bounded reason codes. Duplicate canonical or alias representations inside one artifact are deduplicated; a key owned by multiple eligible artifacts remains a collision group and is omitted from direct lookup.
+
+The existing support-aware semantic path must consume the Claim-to-statement index after vector Claim matching. Its work after graph lookup must scale with matched Claim IDs and their response fan-out rather than iterating the statement corpus. Scope and other caller filters are applied before bounded top-k selection. A configured Claim-edge scan bound applies to the complete matched fan-out; exhaustion returns no partial candidate set and abstains with a stable diagnostic.
+
+Section 2 owns the transport-neutral check, rebuild, dry-run diff, explicit repair, and live-state mutation primitives. Section 3 owns artifact projection, commit-time rejection, lifecycle calls into those primitives, and feature-specific migration. Section 15 owns persistence schema integration, startup/readiness wiring, adapter exposure, authorization, and operator procedures. Section 16 owns release-scale performance and failure gates; Section 2 still supplies engineering complexity and resource benchmarks.
+
+Section 2 was completed and independently remediated on 12 August 2026. The implementation is in `engram/indexes.py`, with the core mutation boundary and support-aware lookup integration in `engram/core.py`, eviction synchronization in `engram/eviction.py`, and current persistence compatibility rebuilding support-only legacy projections in `engram/persistence.py`. The remediation prevents pre-filter fan-out truncation, abstains on scan exhaustion, gives explicit empty authoritative sets precise check and repair semantics, and rejects reproducible diagnostic-report corruption before publication. The exact contract, bounds, lock order, checker semantics, and transport-neutral repair behavior are documented in [the version 1 index contract](documentation/indexes/contracts-v1.md). Its [classification fixture](documentation/indexes/classification-v1.json), [verification report](documentation/indexes/test-results-2026-08-12.md), and [100,000-projection and full-proposal benchmark](documentation/indexes/benchmark-2026-08-12.json) provide the required invariant, concurrency, compatibility, complexity, and memory evidence. All applicable ADR 0004 Section 2 engineering gates passed, including the full 5,000-artifact support-aware proposal's absolute and baseline-relative gates; Section 16 still owns held-out release evaluation.
+
+Persisting a secondary index is an optimization, not a second source of truth. If a future index snapshot is missing, incompatible, or corrupt, Engram rebuilds from authoritative artifacts before declaring the affected resolver ready. The initial implementation keeps `IndexState` rebuildable in memory as required by ADR 0003.
 
 ## 10. Accepted response commit and lifecycle
 
-### 10.1 Commit operation
+### 10.1 Artifact and eligibility prerequisites
+
+The lifecycle vocabulary lands before the artifact projection, and both land before mutation operations. The initial lifecycle states are:
+
+| State | Retrieval eligibility | Meaning |
+| --- | --- | --- |
+| ACTIVE | Eligible when all other checks pass. | Current response artifact. |
+| SUPERSEDED | Ineligible. | Replaced by a named newer artifact. |
+| INVALIDATED | Ineligible. | Known to be unsupported, false, unsafe, or outside its validity contract. |
+| RETIRED | Ineligible. | Administratively removed from service without asserting a replacement or falsehood. |
+
+Temporal eligibility uses half-open bounds when supplied: `valid_from <= evaluation_time < valid_until`. A missing bound is open. Knowledge epoch mismatch follows caller policy and must not be interpreted as a date comparison. Lifecycle, temporal validity, and epoch policy together determine the concrete projection eligibility before an artifact reaches an index mutation.
+
+After the lifecycle vocabulary is fixed, the artifact codec and `IndexProjection` conversion implement the concrete fields described in Section 7. Validity and epoch enforcement then complete the projection's eligibility calculation before persistence migration or commit work begins.
+
+### 10.2 Persistence prerequisite
+
+Before a configured commit path promises a durable checkpoint, the new response schema and idempotent legacy migration must be available through the applicable Section 15 persistence work. Migration preserves existing response text, tier, scope, support, provenance, and statistics. A legacy record without recoverable request identity remains present but exact-unindexable with a concrete reason; recoverable ambiguous keys remain excluded from direct lookup until repaired. Migration never guesses from lexical keywords or response text.
+
+### 10.3 Commit operation
 
 Introduce a transport-neutral operation conceptually equivalent to:
 
@@ -411,28 +471,19 @@ The operation should:
 1. validate response, identity, aliases, scope, tier, lifecycle, support, temporal fields, metadata size, and idempotency identity;
 2. reject empty and complete normalized `IDK` responses;
 3. preserve the response bytes or Unicode scalar sequence accepted by the caller;
-4. detect scoped retrieval collisions;
+4. project the artifact through the Section 2 index contract and detect scoped retrieval collisions;
 5. create or explicitly supersede one artifact;
-6. update all secondary indexes in the same live-state mutation;
+6. update all secondary indexes through the generic Section 2 mutation primitives in the same live-state mutation;
 7. checkpoint once when persistence is configured; and
 8. return created, unchanged, or superseded state with stable identifiers.
 
 `LearnResponse` should remain as a backward-compatible convenience that constructs a DYNAMIC ACTIVE artifact from its existing inputs. Tapestry can migrate to the richer commit method when the wire contract is available.
 
-### 10.2 Lifecycle
-
-The initial lifecycle states are:
-
-| State | Retrieval eligibility | Meaning |
-| --- | --- | --- |
-| ACTIVE | Eligible when all other checks pass. | Current response artifact. |
-| SUPERSEDED | Ineligible. | Replaced by a named newer artifact. |
-| INVALIDATED | Ineligible. | Known to be unsupported, false, unsafe, or outside its validity contract. |
-| RETIRED | Ineligible. | Administratively removed from service without asserting a replacement or falsehood. |
+### 10.4 Lifecycle transitions
 
 Lifecycle transitions must be explicit, idempotent, audited, and caller-authorized. Engram enforces supplied lifecycle but does not autonomously decide truth. Eviction of a DYNAMIC artifact is a storage event and should remain distinguishable from an authoritative lifecycle decision.
 
-Temporal eligibility uses half-open bounds when supplied: `valid_from <= evaluation_time < valid_until`. A missing bound is open. Knowledge epoch mismatch follows caller policy and must not be interpreted as a date comparison.
+Every transition requires the expected generation and invokes one generic Section 2 index mutation under the same live-state boundary. Supersession additionally names the expected current statement, creates the replacement, links `superseded_by`, and changes the visible exact mapping atomically; it never falls back to last-writer-wins replacement.
 
 ## 11. Resolver framework
 
@@ -802,8 +853,9 @@ No fixed production threshold is asserted in this plan. The baseline work packag
 
 1. Reconcile source and capture baseline benchmarks.
 2. Implement `QueryIdentity`, retrieval representations, and collision tests.
-3. Add exact, alias, and Claim-support reverse indexes with rebuild and consistency checks.
-4. Add accepted response commit, STATIC support, validity metadata, and lifecycle.
+3. Define the index projection boundary; add paired exact/alias and Claim-support indexes, typed lookups, off-live rebuild, consistency checking, atomic state ownership, and repair operations.
+4. Replace the support-aware statement scan with Claim fan-out lookup and prove exact, support, rebuild, mutation, concurrency, and memory bounds.
+5. Add the authoritative accepted-response artifact, lifecycle and validity eligibility, persistence migration, commit, STATIC support, explicit transitions, and compatibility wrappers.
 
 **Exit:** Distinct questions cannot overwrite each other; accepted aliases resolve one unchanged response; exact lookup is constant-time relative to corpus size; and authoritative callers can commit, supersede, invalidate, and retire accepted outputs.
 
@@ -872,30 +924,34 @@ Any direct-answer change also requires a false-direct-answer comparison against 
 | Protocol evolution breaks existing clients | Core-first contracts, additive fields, versioned protobuf when needed, compatibility tests, and staged migration. |
 | Improved cache availability is mistaken for authority | Preserve current support validation and Regulator acceptance in the Tapestry path. |
 
-## 26. Decisions required before implementation
+## 26. Decisions governing implementation
 
-The following decisions should be recorded as short architecture decision records during Increment A:
+Section 0 recorded the Increment A decisions in [ADR 0001](documentation/decisions/0001-authoritative-response-artifact-and-absence.md), [ADR 0002](documentation/decisions/0002-normalization-collisions-and-lifecycle.md), [ADR 0003](documentation/decisions/0003-derived-indexes-and-evidence-wire.md), and [ADR 0004](documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md):
 
-1. Whether response artifacts remain statement dictionaries or gain a typed persisted record with a compatibility projection.
-2. The exact canonical and alias normalization algorithm and versioning policy.
-3. Whether exact-index collisions are rejected universally or can coexist in a quarantined legacy state.
-4. The compatibility path from `LearnResponse` to `CommitResponse` and whether gRPC uses additive v1 fields or a v2 service.
-5. The lifecycle transition authorization and optimistic-concurrency contract.
-6. Whether derived indexes are memory-only, optionally persisted, or rebuilt at every startup by corpus size.
-7. The evidence-only wire representation and maximum payload.
-8. The source of evaluation time and knowledge epoch in standalone and Tapestry deployments.
-9. The first numerical latency, memory, evidence-usefulness, and false-direct-answer release gates.
+1. Accepted responses gain a typed authoritative persisted record with a compatibility projection; general statement dictionaries are not extended indefinitely.
+2. Canonical and alias normalization is explicitly versioned, with the remediated normalization v1 defining the first releasable keyspace.
+3. Conflicting active exact keys are rejected; legacy ambiguity may coexist only as an excluded collision group and never selects a direct answer.
+4. `LearnResponse` becomes a compatibility wrapper over the transport-neutral commit path; adapter wire evolution is additive only where semantics remain compatible.
+5. Lifecycle mutations are authorized, idempotent, audited, and guarded by expected statement identity and generation.
+6. The first exact and support `IndexState` is memory-only, deterministically rebuilt, consistency-checked, and atomically swapped; snapshots require later benchmark justification.
+7. Evidence-only output uses a bounded versioned wire record with explicit truncation and no unrestricted graph content.
+8. Each request captures one evaluation time and namespace knowledge epoch under the documented standalone and trusted-integration rules.
+9. Initial numerical latency, memory, evidence-usefulness, and false-direct-answer gates are fixed before feature tuning and evaluated through Section 16.
 
-These decisions constrain implementation. They do not delay baseline measurement, adversarial corpus construction, or source reconciliation.
+These accepted decisions constrain Sections 2 and 3. A change requires a superseding ADR rather than an implementation-local reinterpretation.
 
 ## 27. Immediate next work
 
-The baseline and identity foundation are complete, including the 11 August remediation for symbolic comparison collisions, conservative relation extraction, strict concrete mapping inputs, and transport-neutral enabled-component preflight. The next implementation cycle is Section 2:
+The baseline, identity foundation, and exact/alias/support index foundation are complete. Section 2 supplies bounded projections, immutable paired indexes, collision-safe typed lookup, off-live construction, complete checking, atomic ownership, generic mutation, Claim fan-out retrieval, repair, concurrency evidence, and the approved engineering benchmark.
 
-1. add scoped exact and statement-to-key indexes with explicit legacy collision reporting;
-2. add Claim-to-statement and statement-to-Claim support indexes;
-3. make every live index mutation atomic under the existing core mutation lock;
-4. implement deterministic rebuild, consistency checking, dry-run repair, and startup compatibility behavior; and
-5. prove constant-time exact lookup and support-fan-out scaling with invariant, concurrency, corruption, and interrupted-rebuild tests.
+The next implementation cycle is Section 3. It will turn authoritative accepted-response artifacts into Section 2 projections and consume only the generic index operations. Its dependency order is:
 
-Section 3 commit and lifecycle work remains blocked on those index foundations. Later resolver work must not bypass them.
+1. define lifecycle vocabulary, transition legality, and base eligibility independently of tier;
+2. add the authoritative artifact and its disposable `IndexProjection` conversion;
+3. enforce validity intervals and knowledge-epoch eligibility during projection;
+4. add the response persistence schema and idempotent legacy migration with the applicable Section 15 durability slice;
+5. implement transport-neutral commit and explicit STATIC behavior;
+6. add audited, idempotent lifecycle transitions and concurrency-safe supersession; and
+7. make `LearnResponse` a compatibility wrapper over the new commit path.
+
+Section 15 still supplies persistence/startup policy, adapter exposure, authorization, and operator integration; Section 16 owns release-scale held-out gates. Later resolver work must consume the completed identity and index contracts rather than bypassing them.

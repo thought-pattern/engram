@@ -105,6 +105,11 @@ known_first_party = ["engram"]
 combine_as_imports = true
 skip_glob = ["engram/v1/engram_pb2*"]
 
+[tool.pyright]
+# Compiler-generated gRPC code is verified by reproducible regeneration. The
+# grpc runtime exposes experimental attributes that are absent from its stubs.
+ignore = ["engram/v1/engram_pb2_grpc.py"]
+
 [tool.vulture]
 paths = ["engram", "scripts", "eval"]
 min_confidence = 65

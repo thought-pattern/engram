@@ -3,6 +3,7 @@
 import ast
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -210,7 +211,7 @@ class TestScopedRetrievalAndRepresentations:
 
     def test_representation_enforces_bounds_and_concrete_tuple_input(self) -> None:
         with pytest.raises(IdentityValidationError, match="must be a tuple"):
-            RetrievalRepresentation("request", aliases=["alias"])
+            RetrievalRepresentation("request", aliases=cast(tuple[str, ...], ["alias"]))
         with pytest.raises(IdentityValidationError, match="exceed"):
             RetrievalRepresentation("request", aliases=tuple(f"alias {index}" for index in range(MAX_RETRIEVAL_ALIASES + 1)))
         with pytest.raises(IdentityValidationError, match="non-whitespace"):

@@ -19,6 +19,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_PATH = os.path.join(REPO_ROOT, "scripts", "cli.py")
 
 _spec = util.spec_from_file_location("engram_cli", CLI_PATH)
+if not _spec or not _spec.loader:
+    raise RuntimeError(f"could not load CLI module from {CLI_PATH}")
 cli = util.module_from_spec(_spec)
 sys.modules.setdefault("engram_cli", cli)
 _spec.loader.exec_module(cli)

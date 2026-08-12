@@ -296,7 +296,7 @@ def normalize_retrieval_key(text: str, normalization_version: int = RETRIEVAL_NO
     return " ".join(token for token in tokens if token)
 
 
-def _validate_canonical_id(value: str, name: str) -> str:
+def _validate_canonical_id(value: object, name: str) -> str:
     canonical_id = _require_text(value, name, MAX_CANONICAL_ID_BYTES, allow_empty=True)
     if canonical_id and not _CANONICAL_ID_RE.fullmatch(canonical_id):
         raise IdentityValidationError(f"{name} must use a URI-like scheme and contain no whitespace")
@@ -626,8 +626,11 @@ class RetrievalRepresentation:
             "RetrievalRepresentation",
         )
         aliases = _require_list(data["aliases"], "retrieval aliases")
-        if not all(isinstance(alias, str) for alias in aliases):
-            raise IdentityValidationError("every retrieval alias must be a string")
+        validated_aliases = []
+        for alias in aliases:
+            if not isinstance(alias, str):
+                raise IdentityValidationError("every retrieval alias must be a string")
+            validated_aliases.append(alias)
         return cls(
             schema_version=_require_version(
                 data["schema_version"],
@@ -645,7 +648,7 @@ class RetrievalRepresentation:
                 MAX_RETRIEVAL_REPRESENTATION_BYTES,
                 allow_empty=False,
             ),
-            aliases=tuple(aliases),
+            aliases=tuple(validated_aliases),
         )
 
     @classmethod
@@ -757,8 +760,11 @@ class QueryIdentity:
         entities = _require_list(data["entities"], "identity entities")
         qualifiers = _require_list(data["qualifiers"], "identity qualifiers")
         lexical_terms = _require_list(data["lexical_terms"], "identity lexical_terms")
-        if not all(isinstance(term, str) for term in lexical_terms):
-            raise IdentityValidationError("every identity lexical term must be a string")
+        validated_lexical_terms = []
+        for term in lexical_terms:
+            if not isinstance(term, str):
+                raise IdentityValidationError("every identity lexical term must be a string")
+            validated_lexical_terms.append(term)
         return cls(
             schema_version=_require_version(data["schema_version"], IDENTITY_SCHEMA_VERSION, "identity schema_version"),
             normalization_version=_require_version(
@@ -778,7 +784,7 @@ class QueryIdentity:
             qualifiers=tuple(
                 IdentityQualifier.from_dict(_require_mapping(qualifier, "identity qualifier")) for qualifier in qualifiers
             ),
-            lexical_terms=tuple(lexical_terms),
+            lexical_terms=tuple(validated_lexical_terms),
             scope=ScopeKey.from_dict(_require_mapping(data["scope"], "identity scope")),
         )
 

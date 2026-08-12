@@ -3,6 +3,7 @@
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -1821,7 +1822,7 @@ class TestExternalFactIngestion:
         with pytest.raises(ValueError):
             engram.add_fact("")
         with pytest.raises(ValueError):
-            engram.add_fact("A fact", source_label=())
+            engram.add_fact("A fact", source_label=cast(str, ()))
 
 
 class TestKnownFactResponses:

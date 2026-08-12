@@ -26,6 +26,7 @@ def graph_config(
     vector_model_path: str = "",
     vector_dimension: int = 384,
     vector_limit: int = 250,
+    vector_support_scan_limit: int = 100000,
     vector_min_similarity: float = 0.45,
     vector_weight: float = 0.75,
 ) -> dict:
@@ -59,6 +60,12 @@ def graph_config(
     if not isinstance(vector_limit, int) or isinstance(vector_limit, bool) or not 1 <= vector_limit <= 1000:
         raise ValueError("graph vector_limit must be an integer from 1 through 1000")
     if (
+        not isinstance(vector_support_scan_limit, int)
+        or isinstance(vector_support_scan_limit, bool)
+        or not 1 <= vector_support_scan_limit <= 1_000_000
+    ):
+        raise ValueError("graph vector_support_scan_limit must be an integer from 1 through 1000000")
+    if (
         not isinstance(vector_min_similarity, (int, float))
         or isinstance(vector_min_similarity, bool)
         or not math.isfinite(vector_min_similarity)
@@ -85,6 +92,7 @@ def graph_config(
         "vector_model_path": vector_model_path.strip(),
         "vector_dimension": vector_dimension,
         "vector_limit": vector_limit,
+        "vector_support_scan_limit": vector_support_scan_limit,
         "vector_min_similarity": float(vector_min_similarity),
         "vector_weight": float(vector_weight),
     }
@@ -274,6 +282,7 @@ def load_config(path: str = "config.yml") -> dict:
             "vector_model_path",
             "vector_dimension",
             "vector_limit",
+            "vector_support_scan_limit",
             "vector_min_similarity",
             "vector_weight",
         }

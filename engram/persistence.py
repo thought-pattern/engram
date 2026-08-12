@@ -289,4 +289,8 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         sess = session_from_dict(sess_data)
         instance.sessions[sess["session_id"]] = sess
 
+    # Current persistence has no authoritative request identity. Restore the
+    # support index and classify exact lookup as missing identity rather than
+    # manufacturing keys from statement text, patterns, or keywords.
+    instance.rebuild_indexes(apply=True)
     return instance

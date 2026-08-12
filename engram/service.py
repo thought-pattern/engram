@@ -208,10 +208,9 @@ class EngramCore:
         with self.lock:
             self._require_running()
             normalized_user_id = self._normalize_user_id(user_id)
-            runtime = self.conversations.get(normalized_user_id, {})
-            if not runtime:
+            if normalized_user_id not in self.conversations:
                 raise ResourceNotFoundError(f"no active conversation for user_id: {normalized_user_id}")
-            return runtime
+            return self.conversations[normalized_user_id]
 
     def chat(self, user_id: str, text: str) -> dict:
         """Submit one chatbot turn to an active user conversation."""

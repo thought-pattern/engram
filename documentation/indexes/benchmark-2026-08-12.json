@@ -1,0 +1,216 @@
+{
+  "adr_0004_comparison": {
+    "build_memory_gate_passed": true,
+    "build_memory_limit_bytes": 11534336,
+    "exact_100000_p95_limit_ms": 5.0,
+    "exact_100000_p95_passed": true,
+    "exact_10000_to_100000_p95_slope": 0.2251,
+    "exact_slope_limit": 1.5,
+    "exact_slope_passed": true,
+    "mutation_latency": "informational; ADR 0004 defines no mutation latency threshold",
+    "rebuild_gate_passed": true,
+    "rebuild_p95_limit_ms": 1000.0,
+    "support_engineering_gate_passed": true,
+    "support_p95_limit_ms": 30.0,
+    "support_proposal": {
+      "1": {
+        "absolute_gate_passed": true,
+        "absolute_limit_ms": 30.0,
+        "baseline_p95_ms": 19.7156,
+        "baseline_relative_gate_passed": true,
+        "baseline_relative_limit_ms": 24.6445,
+        "observed_p95_ms": 0.6818
+      },
+      "10": {
+        "absolute_gate_passed": true,
+        "absolute_limit_ms": 30.0,
+        "baseline_p95_ms": 20.7476,
+        "baseline_relative_gate_passed": true,
+        "baseline_relative_limit_ms": 25.9345,
+        "observed_p95_ms": 1.0115
+      },
+      "100": {
+        "absolute_gate_passed": true,
+        "absolute_limit_ms": 30.0,
+        "baseline_p95_ms": 19.7959,
+        "baseline_relative_gate_passed": true,
+        "baseline_relative_limit_ms": 24.744875,
+        "observed_p95_ms": 1.625
+      }
+    },
+    "support_proposal_gate_passed": true
+  },
+  "artifact_schema_version": 1,
+  "build_memory_at_5000": {
+    "current_bytes": 1571436,
+    "peak_bytes": 3981121
+  },
+  "captured_at": "2026-08-12T07:13:03.148095+00:00",
+  "correctness": {
+    "all_lookup_expectations_met": true,
+    "checker_omitted_issue_count": 0,
+    "full_proposal_candidates_correct": true,
+    "largest_state_consistent": true,
+    "lookup_output_truncates_after_complete_scan": true,
+    "scan_exhaustion_abstains": true
+  },
+  "environment": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "python": "3.12.2"
+  },
+  "exact_lookup": {
+    "10000": {
+      "batch_size": 1000,
+      "maximum_ms": 0.036596,
+      "minimum_ms": 0.006468,
+      "p50_ms": 0.006827,
+      "p95_ms": 0.031549,
+      "samples": 30
+    },
+    "100000": {
+      "batch_size": 1000,
+      "maximum_ms": 0.00724,
+      "minimum_ms": 0.006409,
+      "p50_ms": 0.006634,
+      "p95_ms": 0.007102,
+      "samples": 30
+    }
+  },
+  "incremental_mutations": {
+    "add": {
+      "batch_size": 1,
+      "maximum_ms": 74.2274,
+      "minimum_ms": 54.4247,
+      "p50_ms": 57.1337,
+      "p95_ms": 72.6678,
+      "samples": 30
+    },
+    "remove": {
+      "batch_size": 1,
+      "maximum_ms": 59.4155,
+      "minimum_ms": 55.9702,
+      "p50_ms": 57.0606,
+      "p95_ms": 59.4137,
+      "samples": 30
+    },
+    "replace": {
+      "batch_size": 1,
+      "maximum_ms": 122.7944,
+      "minimum_ms": 55.7144,
+      "p50_ms": 57.1198,
+      "p95_ms": 99.3789,
+      "samples": 30
+    },
+    "support_update": {
+      "batch_size": 1,
+      "maximum_ms": 59.8714,
+      "minimum_ms": 55.7876,
+      "p50_ms": 56.8389,
+      "p95_ms": 59.2904,
+      "samples": 30
+    }
+  },
+  "method": {
+    "clock": "time.perf_counter_ns",
+    "exact_corpus_sizes": [
+      10000,
+      100000
+    ],
+    "external_services": "none",
+    "latency_unit": "milliseconds per operation",
+    "lookup_batch_size": 1000,
+    "percentiles": "nearest observed rank over per-batch operation averages",
+    "rebuild_and_mutation_corpus_size": 5000,
+    "samples": 30,
+    "support_fanouts": [
+      1,
+      10,
+      100
+    ]
+  },
+  "rebuild": {
+    "batch_size": 1,
+    "maximum_ms": 465.4142,
+    "minimum_ms": 190.6677,
+    "p50_ms": 198.2844,
+    "p95_ms": 434.1384,
+    "samples": 30
+  },
+  "support_lookup": {
+    "1": {
+      "batch_size": 1000,
+      "maximum_ms": 0.014676,
+      "minimum_ms": 0.012797,
+      "p50_ms": 0.013402,
+      "p95_ms": 0.014483,
+      "samples": 30
+    },
+    "10": {
+      "batch_size": 1000,
+      "maximum_ms": 0.032516,
+      "minimum_ms": 0.029995,
+      "p50_ms": 0.030835,
+      "p95_ms": 0.032184,
+      "samples": 30
+    },
+    "100": {
+      "batch_size": 1000,
+      "maximum_ms": 0.25463,
+      "minimum_ms": 0.201559,
+      "p50_ms": 0.205317,
+      "p95_ms": 0.236671,
+      "samples": 30
+    }
+  },
+  "support_proposal": [
+    {
+      "all_candidates_supported": true,
+      "candidate_count": 1,
+      "candidate_count_stable": true,
+      "candidate_limit": 10,
+      "corpus_size": 5000,
+      "proposal": {
+        "batch_size": 1,
+        "maximum_ms": 0.696,
+        "minimum_ms": 0.3098,
+        "p50_ms": 0.3374,
+        "p95_ms": 0.6818,
+        "samples": 30
+      },
+      "support_fanout": 1
+    },
+    {
+      "all_candidates_supported": true,
+      "candidate_count": 10,
+      "candidate_count_stable": true,
+      "candidate_limit": 10,
+      "corpus_size": 5000,
+      "proposal": {
+        "batch_size": 1,
+        "maximum_ms": 1.1424,
+        "minimum_ms": 0.7923,
+        "p50_ms": 0.8144,
+        "p95_ms": 1.0115,
+        "samples": 30
+      },
+      "support_fanout": 10
+    },
+    {
+      "all_candidates_supported": true,
+      "candidate_count": 10,
+      "candidate_count_stable": true,
+      "candidate_limit": 10,
+      "corpus_size": 5000,
+      "proposal": {
+        "batch_size": 1,
+        "maximum_ms": 2.0241,
+        "minimum_ms": 1.1341,
+        "p50_ms": 1.2165,
+        "p95_ms": 1.625,
+        "samples": 30
+      },
+      "support_fanout": 100
+    }
+  ]
+}

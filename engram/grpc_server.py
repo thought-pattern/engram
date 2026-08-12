@@ -116,7 +116,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         try:
             return operation()
         except EngramCoreError as error:
-            metadata = [("engram-error-type", type(error).__name__)]
+            metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
             if isinstance(error, PersistenceError):
                 metadata.extend(
                     [
@@ -124,7 +124,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                         ("engram-state-changed", str(error.state_changed).lower()),
                     ]
                 )
-            context.set_trailing_metadata(metadata)
+            context.set_trailing_metadata(tuple(metadata))
             context.abort(_status_code(error), str(error))
         except Exception:
             LOGGER.exception("Unhandled Engram gRPC operation failure")
@@ -289,7 +289,7 @@ class EngramGrpcServer:
         health_pb2_grpc.add_HealthServicer_to_server(self.health_servicer, self._server)
 
         if tls_certificate and tls_private_key:
-            credentials = grpc.ssl_server_credentials(((tls_private_key, tls_certificate),))
+            credentials = grpc.ssl_server_credentials([(tls_private_key, tls_certificate)])
             self.bound_port = self._server.add_secure_port(bind_address, credentials)
         else:
             self.bound_port = self._server.add_insecure_port(bind_address)

@@ -46,9 +46,10 @@ def is_connection_error(err: Exception) -> bool:
     Query-level errors (storage timeouts, lock contention, syntax errors) return
     False -- the socket is still usable and the reconnect cooldown does not apply.
     """
-    if isinstance(err, (mgclient.InterfaceError, ConnectionError, BrokenPipeError, OSError)):  # noqa: UP038
+    error_name = type(err).__name__
+    if isinstance(err, (ConnectionError, BrokenPipeError, OSError)) or error_name == "InterfaceError":
         return True
-    if isinstance(err, mgclient.OperationalError):
+    if error_name == "OperationalError":
         err_str = str(err).lower()
         return any(marker in err_str for marker in CONNECTION_LOST_MARKERS)
     return False
@@ -235,11 +236,14 @@ class MemGraphConnection:
         """Execute a query already constrained to a read-only internal shape."""
 
         with self._lock:
-            if not self.conn and not self._connect_unlocked():
-                return []
+            connection = self.conn
+            if not connection:
+                connection = self._connect_unlocked()
+                if not connection:
+                    return []
 
             try:
-                cursor = self.conn.cursor()
+                cursor = connection.cursor()
                 cursor.execute(query, coerce_params(parameters) or {})
                 columns = [desc.name for desc in cursor.description] if cursor.description else []
                 rows = cursor.fetchall()

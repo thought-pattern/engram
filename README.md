@@ -830,6 +830,7 @@ graph:
   vector_model_path: /path/to/all-MiniLM-L6-v2
   vector_dimension: 384
   vector_limit: 250
+  vector_support_scan_limit: 100000
   vector_min_similarity: 0.45
   vector_weight: 0.75
 ```

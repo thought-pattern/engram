@@ -1,4 +1,4 @@
-"""Section 0 characterization tests for confirmed pre-enhancement gaps."""
+"""Section 0 characterizations retained across enhancement increments."""
 
 import json
 from pathlib import Path
@@ -10,6 +10,8 @@ from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
+from engram.identity import ScopedRetrievalKey, ScopeKey
+from engram.indexes import ExactLookupOutcome, IndexIssueReason
 from engram.service import EngramCore
 
 REPOSITORY = Path(__file__).resolve().parent.parent
@@ -30,7 +32,7 @@ def _baseline_engram() -> Engram:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="EGR-004: equal keyword sets replace one another before query identity exists",
+    reason="EGR-308: legacy LearnResponse still replaces equal keyword sets before Section 3 artifact commit",
 )
 def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
     engram = _baseline_engram()
@@ -53,13 +55,15 @@ def test_baseline_has_no_non_executable_retrieval_alias_storage() -> None:
     assert stored["pattern_aliases"] == []
 
 
-def test_baseline_has_no_scoped_exact_lookup_index() -> None:
+def test_section2_exact_lookup_does_not_invent_a_legacy_key() -> None:
     engram = _baseline_engram()
-    engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
+    statement_id = engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
+    guessed_key = ScopedRetrievalKey.build(ScopeKey(), "What are the support hours?")
 
     assert not hasattr(engram, "exact_retrieval_index")
-    assert not hasattr(engram, "exact_lookup")
-    assert set(engram.statement_index) == {engram.statements[0]["id"]}
+    assert engram.exact_lookup(guessed_key).outcome == ExactLookupOutcome.MISS
+    assert engram.index_snapshot().statement_to_retrieval[statement_id] == ()
+    assert IndexIssueReason.MISSING_IDENTITY in {issue.reason for issue in engram.index_snapshot().build_report.issues}
 
 
 def test_baseline_couples_eviction_to_tier_without_lifecycle_state() -> None:
@@ -79,16 +83,17 @@ def test_baseline_couples_eviction_to_tier_without_lifecycle_state() -> None:
         core.retire_response(static_id, "baseline characterization", "retire-static")
 
 
-def test_baseline_has_no_claim_support_reverse_index() -> None:
+def test_section2_claim_support_reverse_index_preserves_current_metadata() -> None:
     engram = _baseline_engram()
-    engram.store(
+    statement_id = engram.store(
         "A response supported by a synthetic Claim.",
         keyword_source="synthetic support",
         template={"tapestry": {"support": [{"claim_id": "claim-synthetic"}]}},
     )
 
-    assert not hasattr(engram, "claim_to_statement_ids")
-    assert not hasattr(engram, "statement_to_claim_ids")
+    state = engram.index_snapshot()
+    assert state.claim_to_statements == {"claim-synthetic": (statement_id,)}
+    assert state.statement_to_claims == {statement_id: ("claim-synthetic",)}
 
 
 def test_sanitized_regulated_response_fixture_matches_persistence_v1() -> None:

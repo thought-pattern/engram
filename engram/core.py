@@ -1,5 +1,6 @@
 """Core ENGRAM implementation."""
 
+import heapq
 import logging
 import random
 import threading
@@ -50,6 +51,18 @@ from engram.dialogue import (
 )
 from engram.facts_spacy import extract_facts
 from engram.graph import create_graph_client, is_write_cypher
+from engram.identity import ScopedRetrievalKey
+from engram.indexes import (
+    MAX_INDEX_SUPPORT_SCAN_EDGES,
+    ExactLookupResult,
+    IndexCheckReport,
+    IndexOwner,
+    IndexProjection,
+    IndexRepairResult,
+    IndexState,
+    SupportLookupResult,
+    projection_from_statement,
+)
 from engram.models import (
     keyword_entry,
     query_result,
@@ -207,15 +220,21 @@ class Engram:
         # Template processor
         self.template_processor = TemplateProcessor(srai_limit=self.config.get("srai_depth_limit", 100))
 
-        # Concurrency control. statement_lock also guards the pattern matcher
+        # Concurrency control. Mutations acquire locks in this order:
+        # mutation_lock, statement_lock, keyword_lock, then the private index
+        # owner lock. Index readers retain an immutable snapshot after the
+        # owner lock is released, so they never nest it with statement_lock.
+        # statement_lock also guards the pattern matcher
         # and pattern_to_statement map (mutated on store/evict, read on match),
         # and thereby the shared template processor, whose recursion counters
         # are only touched while the pattern pipeline holds statement_lock.
         # count_lock guards the top-level metrics counters.
+        self.mutation_lock = threading.RLock()
         self.statement_lock = threading.RLock()
         self.keyword_lock = threading.RLock()
         self.session_lock = threading.RLock()
         self.count_lock = threading.Lock()
+        self._index_owner = IndexOwner()
 
         # Metrics
         self.query_count = 0
@@ -359,12 +378,13 @@ class Engram:
             return []
         try:
             embedding = self._encode_graph_query(text)
-            return search(
+            rows = search(
                 embedding,
                 index_name=graph_config["vector_index_name"],
                 limit=(max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])),
                 min_similarity=float(graph_config["vector_min_similarity"]),
             )
+            return rows if isinstance(rows, list) else []
         except Exception as err:
             logger.warning("Vector graph recall unavailable; using keyword fallback: %s", err)
             return []
@@ -411,6 +431,81 @@ class Engram:
             if isinstance(reference, dict) and str(reference.get("claim_id") or "").strip()
         }
 
+    def index_snapshot(self) -> IndexState:
+        """Return the currently visible immutable index state."""
+        return self._index_owner.snapshot()
+
+    def exact_lookup(self, key: ScopedRetrievalKey) -> ExactLookupResult:
+        """Look up one scoped exact key against a single immutable snapshot."""
+        return self.index_snapshot().exact_lookup(key)
+
+    def support_lookup(self, claim_ids: tuple[str, ...]) -> SupportLookupResult:
+        """Find statements supported by the supplied matched Claim IDs."""
+        return self.index_snapshot().support_lookup(claim_ids)
+
+    def check_indexes(self) -> IndexCheckReport:
+        """Compare live indexes with projections from current statements."""
+        with self.mutation_lock:
+            with self.statement_lock:
+                sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
+            return self._index_owner.check_against(sources)
+
+    def check_index_projections(self, projections) -> IndexCheckReport:
+        """Compare live indexes with one explicit projection set, including empty."""
+        return self._index_owner.check_against(tuple(projections))
+
+    def repair_indexes(self, *, dry_run: bool = True) -> IndexRepairResult:
+        """Repair indexes from current authoritative statements."""
+        with self.mutation_lock, self.statement_lock:
+            sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
+            return self._index_owner.repair(sources, dry_run=dry_run)
+
+    def repair_index_projections(self, projections, *, dry_run: bool = True) -> IndexRepairResult:
+        """Repair indexes from one explicit projection set, including empty."""
+        with self.mutation_lock:
+            return self._index_owner.repair(tuple(projections), dry_run=dry_run)
+
+    def rebuild_indexes(self, *, apply: bool = False) -> IndexRepairResult:
+        """Alias current-statement repair with rebuild-oriented wording."""
+        if not isinstance(apply, bool):
+            raise ValueError("index rebuild apply must be a boolean")
+        return self.repair_indexes(dry_run=not apply)
+
+    def add_index_projection(self, projection: IndexProjection) -> IndexState:
+        """Atomically add one generic index projection."""
+        if not isinstance(projection, IndexProjection):
+            raise ValueError("projection must be an IndexProjection")
+        with self.mutation_lock:
+            return self._index_owner.add(projection)
+
+    def replace_index_projection(self, projection: IndexProjection) -> IndexState:
+        """Atomically replace one generic index projection."""
+        if not isinstance(projection, IndexProjection):
+            raise ValueError("projection must be an IndexProjection")
+        with self.mutation_lock:
+            return self._index_owner.replace(projection)
+
+    def remove_index_projection(self, statement_id: str) -> IndexState:
+        """Atomically remove one generic index projection."""
+        with self.mutation_lock:
+            return self._index_owner.remove(statement_id)
+
+    def update_index_support(self, statement_id: str, support_claim_ids: tuple[str, ...]) -> IndexState:
+        """Atomically replace only one projection's support Claim IDs."""
+        with self.mutation_lock:
+            return self._index_owner.update_support(statement_id, support_claim_ids)
+
+    def _replace_statement_index_projection(self, statement_value: dict) -> None:
+        projection = projection_from_statement(statement_value)
+        if projection.statement_id in self.index_snapshot().projections:
+            self._index_owner.replace(projection)
+        else:
+            self._index_owner.add(projection)
+
+    def _remove_index_projection_if_present(self, statement_id: str) -> None:
+        if statement_id in self.index_snapshot().projections:
+            self._index_owner.remove(statement_id)
+
     def vector_supported_matches(
         self,
         text: str,
@@ -423,23 +518,49 @@ class Engram:
         support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
         if not support_scores:
             return []
-        vector_weight = float((self.config.get("graph") or {})["vector_weight"])
-        scored: list[tuple[dict, float, int]] = []
+        graph_settings = self.config.get("graph") or {}
+        vector_weight = float(graph_settings["vector_weight"])
+        scan_limit = int(graph_settings.get("vector_support_scan_limit", MAX_INDEX_SUPPORT_SCAN_EDGES))
+        state = self.index_snapshot()
+        scan_plan = state.support_scan_plan(tuple(support_scores), scan_limit)
+        if not scan_plan.complete:
+            logger.warning(
+                "vector_support_scan_incomplete: matched support fan-out %s exceeds configured limit %s; abstaining",
+                scan_plan.edge_count,
+                scan_plan.scan_limit,
+            )
+            return []
+        if limit < 1:
+            return []
+        scored: list[tuple[float, int, dict]] = []
+        seen_statement_ids = set()
         with self.statement_lock:
-            for index, statement_value in enumerate(self.statements):
-                if statement_filter and not statement_filter(statement_value):
-                    continue
-                similarities = [
-                    support_scores[claim_id]
-                    for claim_id in self._statement_support_ids(statement_value)
-                    if claim_id in support_scores
-                ]
-                if not similarities:
-                    continue
-                score = max(similarities) * vector_weight + float(statement_value.get("priority", 0))
-                scored.append((statement_value, score, index))
-        scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
-        return [(statement_value, score) for statement_value, score, _ in scored[:limit]]
+            for claim_id in scan_plan.queried_claim_ids:
+                for statement_id in state.claim_to_statements.get(claim_id, ()):
+                    if statement_id in seen_statement_ids:
+                        continue
+                    seen_statement_ids.add(statement_id)
+                    index = self.statement_index.get(statement_id, -1)
+                    if index < 0:
+                        continue
+                    statement_value = self.statements[index]
+                    if statement_filter and not statement_filter(statement_value):
+                        continue
+                    similarities = [
+                        support_scores[support_id]
+                        for support_id in state.statement_to_claims.get(statement_id, ())
+                        if support_id in support_scores
+                    ]
+                    if not similarities:
+                        continue
+                    score = max(similarities) * vector_weight + float(statement_value.get("priority", 0))
+                    ranked = (score, index, statement_value)
+                    if len(scored) < limit:
+                        heapq.heappush(scored, ranked)
+                    elif (score, index) > (scored[0][0], scored[0][1]):
+                        heapq.heapreplace(scored, ranked)
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [(statement_value, score) for score, _, statement_value in scored]
 
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
@@ -572,7 +693,7 @@ class Engram:
         # instead of accumulating duplicates. Unscoped callers retain the
         # original behavior without colliding with scoped cache entries.
         if keyword_set:
-            with self.statement_lock, self.keyword_lock:
+            with self.mutation_lock, self.statement_lock, self.keyword_lock:
                 candidate_ids: set[str] = set()
                 for kw in keywords:
                     if kw in self.keywords:
@@ -595,6 +716,7 @@ class Engram:
                         stmt["hit_count"] = 0
                         stmt["query_count"] = 0
                         stmt["last_hit"] = ""
+                        self._replace_statement_index_projection(stmt)
                         return stmt["id"]
 
         stmt_id = self.store(
@@ -693,8 +815,9 @@ class Engram:
             introduced_by_user_id=introduced_by_user_id,
             source_label=source_label,
         )
+        index_projection = projection_from_statement(stmt)
 
-        with self.statement_lock:
+        with self.mutation_lock, self.statement_lock, self.keyword_lock:
             if stmt["id"] in self.statement_index:
                 raise ValueError(f"duplicate statement id: {stmt['id']}")
 
@@ -719,13 +842,11 @@ class Engram:
             # Add statement
             self.statement_index[stmt["id"]] = len(self.statements)
             self.statements.append(stmt)
-
-        # Index keywords
-        with self.keyword_lock:
             for kw in keywords:
                 if kw not in self.keywords:
                     self.keywords[kw] = keyword_entry(keyword=kw)
                 self.keywords[kw]["statement_ids"].add(stmt["id"])
+            self._index_owner.add(index_projection)
 
         return stmt["id"]
 
@@ -1615,7 +1736,7 @@ class Engram:
         Returns:
             True if a statement was removed, False if the id was not present.
         """
-        with self.statement_lock:
+        with self.mutation_lock, self.statement_lock:
             if statement_id not in self.statement_index:
                 return False
             return eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
@@ -1677,7 +1798,7 @@ class Engram:
             topic = pair.get("topic", "")
 
             existing: dict = {}
-            with self.statement_lock:
+            with self.mutation_lock, self.statement_lock:
                 for stmt in self.statements:
                     if stmt["tier"] != tier:
                         continue
@@ -1696,6 +1817,7 @@ class Engram:
                     else:
                         existing["text"] = text
                         existing["template"] = template
+                        self._replace_statement_index_projection(existing)
                         updated += 1
 
             if not existing:
@@ -1719,7 +1841,7 @@ class Engram:
                     desired_triples.add((pattern, pair.get("that", ""), pair.get("topic", "")))
                 else:
                     desired_texts.add(pair.get("response") or pair.get("text") or "")
-            with self.statement_lock:
+            with self.mutation_lock, self.statement_lock:
                 stale_ids = []
                 for stmt in self.statements:
                     if stmt["tier"] != tier:

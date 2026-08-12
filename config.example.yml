@@ -60,5 +60,6 @@ graph:
   vector_model_path: ""
   vector_dimension: 384
   vector_limit: 250
+  vector_support_scan_limit: 100000 # Abstain when matched Claim fan-out exceeds this bound
   vector_min_similarity: 0.45
   vector_weight: 0.75

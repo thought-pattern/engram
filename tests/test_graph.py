@@ -426,8 +426,8 @@ class TestReadOnlyGraphWiring:
         client = MemGraphConnection()
         captured = {}
 
-        def execute(query, params):
-            captured.update({"query": query, "params": params})
+        def execute(query: str, parameters=()) -> list[dict]:
+            captured.update({"query": query, "params": parameters})
             return [{"claim_id": "claim-1", "similarity": 0.8}]
 
         client._execute_read_query = execute

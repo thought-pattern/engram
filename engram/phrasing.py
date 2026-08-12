@@ -74,7 +74,7 @@ def frame_for_label(label: str) -> str:
     doc = nlp(normalized)
     head = doc[0]
     ends_prep = doc[-1].pos_ == "ADP"
-    verb_form = head.morph.get("VerbForm")
+    verb_form = head.morph.get("VerbForm", [])
 
     if normalized.endswith(" by"):
         return "{s} was " + label + " {o}"
