@@ -73,7 +73,7 @@ The remediation audit found that `engram/spacy_setup.py:get_nlp` was still first
 | --- | --- | --- | --- |
 | BASE-001 | Source documentation reported branch `pdc-3` and Schema 3.5; the active branch is `graph` and schema is 3.8. | Git metadata and `schema.cypher` | README and gRPC schema references corrected to 3.8; the tracker retains the reported baseline as historical input. |
 | BASE-002 | `requirements.txt` has contradictory NumPy pins and differs from installed sentence-transformers/NLTK versions; dev requirements also drift. | Dependency table above | Open packaging defect; do not describe the file as a lock. |
-| BASE-003 | Equal-keyword `when`/`where` learned responses replace one another. | Strict expected failure in `test_baseline_gaps.py` | Planned by §§1-3; must turn green without removing the assertion. |
+| BASE-003 | Equal-keyword `when`/`where` learned responses replaced one another. | Resolved by EGR-308 through artifact base commit and exact scoped proposal lookup; the regression is a normal passing test. | Resolved 2026-08-12. |
 | BASE-004 | No retrieval aliases, normalization version, or scoped exact index exists. | Passing characterization tests | Planned by §§1-2. |
 | BASE-005 | Tier gates retirement and lifecycle/validity/supersession fields are absent. | Passing characterization test | Planned by §3. |
 | BASE-006 | Support recall scans all statements because no Claim reverse index exists. | Passing characterization test and scaling benchmark | Planned by §2. |

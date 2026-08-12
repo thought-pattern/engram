@@ -30,19 +30,18 @@ def _baseline_engram() -> Engram:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="EGR-308: legacy LearnResponse still replaces equal keyword sets before Section 3 artifact commit",
-)
 def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
     engram = _baseline_engram()
+    core = EngramCore(engram, checkpoint_on_mutation=False)
 
-    when_id = engram.learn_from_response("When was Ada Lovelace born?", "Ada Lovelace was born in 1815.")
-    where_id = engram.learn_from_response("Where was Ada Lovelace born?", "Ada Lovelace was born in London.")
+    when = core.learn_response("When was Ada Lovelace born?", "Ada Lovelace was born in 1815.", "learn-when")
+    where = core.learn_response("Where was Ada Lovelace born?", "Ada Lovelace was born in London.", "learn-where")
+    when_proposal = core.propose("When was Ada Lovelace born?", "propose-when")
+    where_proposal = core.propose("Where was Ada Lovelace born?", "propose-where")
 
-    assert when_id != where_id
-    assert engram.query("When was Ada Lovelace born?")["matches"][0][0]["text"] == "Ada Lovelace was born in 1815."
-    assert engram.query("Where was Ada Lovelace born?")["matches"][0][0]["text"] == "Ada Lovelace was born in London."
+    assert when["statement_id"] != where["statement_id"]
+    assert when_proposal["candidates"][0]["response"] == "Ada Lovelace was born in 1815."
+    assert where_proposal["candidates"][0]["response"] == "Ada Lovelace was born in London."
 
 
 def test_baseline_has_no_non_executable_retrieval_alias_storage() -> None:

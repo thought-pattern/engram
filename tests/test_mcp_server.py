@@ -195,7 +195,7 @@ def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:
     assert snapshot["regulated_cache"]["rejections"]["rejected_quality"] == 1
 
 
-def test_regulated_learning_is_scoped_replaceable_and_idempotent(tmp_path) -> None:
+def test_regulated_learning_is_scoped_nonreplacing_and_idempotent(tmp_path) -> None:
     service = MCPConversationService()
     service.start(seed_path=str(_seed_file(tmp_path)))
     shared = {
@@ -235,14 +235,13 @@ def test_regulated_learning_is_scoped_replaceable_and_idempotent(tmp_path) -> No
             namespace="support",
         )
 
-    replacement = service.learn_response(
-        **shared,
-        response="Updated support hours.",
-        request_id="learn-support-replacement",
-        namespace="support",
-    )
-    assert replacement["action"] == "replaced"
-    assert replacement["statement_id"] == support["statement_id"]
+    with pytest.raises(ValueError, match=support["statement_id"]):
+        service.learn_response(
+            **shared,
+            response="Updated support hours.",
+            request_id="learn-support-replacement",
+            namespace="support",
+        )
     support_proposal = service.propose(
         "When are you open?",
         "proposal-support",
@@ -263,7 +262,7 @@ def test_regulated_learning_is_scoped_replaceable_and_idempotent(tmp_path) -> No
         required_metadata={"actor_version": "actor-8"},
     )
 
-    assert support_proposal["candidates"][0]["response"] == "Updated support hours."
+    assert support_proposal["candidates"][0]["response"] == "Support hours."
     assert billing_proposal["candidates"][0]["response"] == "Billing hours."
     assert version_miss["candidates"] == []
     with pytest.raises(ValueError, match="IDK"):
@@ -296,7 +295,9 @@ def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
 
     assert retired["retired"] is True
     assert retry["idempotent"] is True
-    assert _runtime(service).engram.get_statement(learned["statement_id"]) == {}
+    retired_artifact = _runtime(service).engram.response_repository.get_artifact(learned["statement_id"])
+    assert retired_artifact.lifecycle.value == "RETIRED"
+    assert service.propose("What is stale?", "proposal-retired")["candidates"] == []
     static_pattern_id = next(
         statement["id"] for statement in _runtime(service).engram.statements if statement["pattern"] == "HELLO"
     )

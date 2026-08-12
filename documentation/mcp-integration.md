@@ -387,11 +387,14 @@ of `IDK` are rejected.
 ```
 
 The result returns `learned`, `statement_id`, `action` (`created` or
-`replaced`), scope, provenance, and `idempotent`. Responses replace in place
-only when their query keyword set, namespace, and context fingerprint all
-match. Actor responses remain shared knowledge (`introduced_by_user_id` is
-`""`), while the calling user's previous-response context is updated.
-`request_id` makes retries idempotent and conflicting reuse is an error.
+`rejected_capacity`), scope, provenance, and `idempotent`. The compatibility
+operation never implicitly replaces or supersedes existing knowledge. A
+canonical or alias collision in the same exact scope names the existing owner
+and is rejected; replacement requires the transport-neutral explicit
+supersession operation. Actor responses remain shared knowledge
+(`introduced_by_user_id` is `""`), while the calling user's previous-response
+context is updated. `request_id` makes retries idempotent and conflicting reuse
+is an error.
 
 ### `engram_retire_response`
 

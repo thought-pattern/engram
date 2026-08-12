@@ -25,6 +25,8 @@ tests\test_concrete_absence.py ....
 
 The strict expected failure is `test_when_and_where_requests_keep_distinct_cached_responses`. It reproduces the current semantic replacement defect and will become an unexpected pass, failing the suite, when the assertion turns green so the marker cannot be forgotten.
 
+EGR-308 remediation on 2026-08-12 replaced the adapter write path with artifact base commit and contextually revalidated exact proposal lookup. The same when/where assertion is now a normal passing regression; the completed full suite records 1,170 passed with no expected failures.
+
 The passing cases characterize absence of retrieval aliases, normalization version, exact lookup, independent lifecycle/validity/supersession, and Claim reverse indexes. They also load the sanitized persistence fixture through the production version-1 loader. The concrete-absence tests reject optional union annotations, non-procedural `None` literals, and representative `None`/JSON `null` output while checking legacy-null boundary normalization.
 
 ## Full repository suite

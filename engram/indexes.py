@@ -903,9 +903,7 @@ def _check_build_report(state: IndexState, expected: IndexState, issues: list[In
         (str(actual_report.omitted_collision_count),),
     )
 
-    expected_issues = tuple(
-        sorted(_report_issue_signature(issue) for issue in expected_report.issues if not issue.input_only)
-    )
+    expected_issues = tuple(sorted(_report_issue_signature(issue) for issue in expected_report.issues if not issue.input_only))
     actual_issues = tuple(sorted(_report_issue_signature(issue) for issue in actual_report.issues if not issue.input_only))
     source_input_loss = actual_report.input_count != actual_report.projection_count
     if not source_input_loss or actual_report.omitted_issue_count == 0:
@@ -1316,6 +1314,61 @@ class IndexOwner:
                 raise ConflictError("candidate support-update state failed consistency checking")
             self._state = candidate
             return self._state
+
+    def atomic_refresh_exact_lookup(
+        self,
+        key: ScopedRetrievalKey,
+        refreshed_projections: tuple[IndexProjection, ...],
+        expected_state_generation: int,
+    ) -> tuple[ExactLookupResult, bool, int]:
+        """Atomically refresh every current owner of one exact key, then look up.
+
+        Section 3 calculates the projections from authoritative artifacts and
+        a captured eligibility context.  Section 2 only verifies complete owner
+        coverage and publishes a checked generic index state.
+        """
+
+        if not isinstance(key, ScopedRetrievalKey):
+            raise InvalidRequestError("exact refresh key must be a ScopedRetrievalKey")
+        if not isinstance(refreshed_projections, tuple) or not all(
+            isinstance(projection, IndexProjection) for projection in refreshed_projections
+        ):
+            raise InvalidRequestError("refreshed_projections must be a tuple of IndexProjection values")
+        if isinstance(expected_state_generation, bool) or not isinstance(expected_state_generation, int):
+            raise InvalidRequestError("expected_state_generation must be an integer")
+        with self._lock:
+            if self._state.state_generation != expected_state_generation:
+                raise ConflictError(
+                    f"stale index state generation: expected {expected_state_generation}, found {self._state.state_generation}"
+                )
+            owner_ids = tuple(dict.fromkeys(owner.statement_id for owner in self._state.retrieval_to_owners.get(key, ())))
+            refreshed_ids = tuple(dict.fromkeys(projection.statement_id for projection in refreshed_projections))
+            if len(refreshed_ids) != len(refreshed_projections):
+                raise InvalidRequestError("refreshed_projections must contain unique statement IDs")
+            if set(refreshed_ids) != set(owner_ids):
+                raise ConflictError("exact refresh must cover every current owner and no unrelated projection")
+            replacements = {projection.statement_id: projection for projection in refreshed_projections}
+            for statement_id in owner_ids:
+                current = self._state.projections[statement_id]
+                refreshed = replacements[statement_id]
+                if (
+                    current.statement_id != refreshed.statement_id
+                    or current.generation != refreshed.generation
+                    or current.retrieval_keys != refreshed.retrieval_keys
+                    or current.support_claim_ids != refreshed.support_claim_ids
+                    or current.normalization_version != refreshed.normalization_version
+                    or current.schema_version != refreshed.schema_version
+                ):
+                    raise InvalidRequestError("exact refresh may change only direct_answer_eligible and exclusion_reason")
+            changed = any(self._state.projections[statement_id] != replacements[statement_id] for statement_id in owner_ids)
+            if changed:
+                projections = dict(self._state.projections)
+                projections.update(replacements)
+                candidate = build_index_state(projections.values(), self._state.state_generation + 1)
+                if not check_index_state(candidate).consistent:
+                    raise ConflictError("candidate exact refresh state failed consistency checking")
+                self._state = candidate
+            return self._state.exact_lookup(key), changed, self._state.state_generation
 
     def repair(self, projections: Iterable[object], *, dry_run: bool = True) -> IndexRepairResult:
         if not isinstance(dry_run, bool):

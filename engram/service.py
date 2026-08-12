@@ -7,6 +7,7 @@ this module contains no transport-specific types or behavior.
 """
 
 import contextlib
+import hashlib
 import json
 import threading
 import time
@@ -21,9 +22,21 @@ from engram import persistence, sessions
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.conversation import ConversationRuntime, statement_view
+from engram.coordination import (
+    AtomicMutationCoordinator,
+    CheckpointFailureError,
+    CheckpointFailureKind,
+    CoordinatedResponseState,
+    MutationCoordinationError,
+)
 from engram.core import Engram
+from engram.eligibility import EligibilityContextFactory, EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
+from engram.identity import ScopedRetrievalKey, ScopeKey
+from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_query
+from engram.repository import TierAdmissionPolicy
+from engram.responses import AcceptedResponseService, LifecycleMutationReason
 from engram.text import normalize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +104,22 @@ class EngramCore:
         self._last_persistence_error = ""
         self._component_status = deepcopy(self.engram.component_status)
         self._reset_regulated_state()
+        self._response_coordinator = AtomicMutationCoordinator(
+            self.engram.response_repository,
+            self.engram.namespace_epochs,
+            self.engram.mutation_receipts,
+            checkpoint_configured=bool(self.store_path and self.checkpoint_on_mutation),
+            checkpoint=self._checkpoint_response_state,
+            recovery_loader=self._recover_response_state,
+        )
+        self._response_mutations = AcceptedResponseService(
+            self._response_coordinator,
+            TierAdmissionPolicy(
+                self.engram.config["capacity"],
+                self.engram.config["eviction_policy"],
+                self.engram.config["min_hit_rate"],
+            ),
+        )
 
     @classmethod
     def open(
@@ -373,13 +402,15 @@ class EngramCore:
                 if existing["signature"] != signature:
                     raise ConflictError("request_id is already associated with a different proposal request")
                 self.regulated_metrics["idempotent_retries"] += 1
-                self._checkpoint()
                 return self._proposal_result(existing, idempotent=True)
 
             def statement_matches_scope(statement: dict) -> bool:
                 if statement["pattern"]:
                     return False
                 template = statement.get("template", {})
+                response_artifact = template.get("response_artifact", {}) if isinstance(template, dict) else {}
+                if response_artifact and response_artifact.get("lifecycle", "") != "ACTIVE":
+                    return False
                 tapestry_metadata = template.get("tapestry", {}) if isinstance(template, dict) else {}
                 if not isinstance(tapestry_metadata, dict):
                     return False
@@ -389,7 +420,10 @@ class EngramCore:
                     return False
                 if required_source_label and statement.get("source_label", "") != required_source_label:
                     return False
-                return all(tapestry_metadata.get(key) == value for key, value in required_metadata.items())
+                artifact_metadata = tapestry_metadata.get("metadata", {})
+                if not isinstance(artifact_metadata, dict):
+                    return False
+                return all(artifact_metadata.get(key) == value for key, value in required_metadata.items())
 
             query_result = self.engram.query(
                 request,
@@ -398,16 +432,40 @@ class EngramCore:
                 statement_filter=statement_matches_scope,
                 record_candidates=False,
             )
-            vector_matches = self.engram.vector_supported_matches(
-                request,
-                limit=limit,
-                statement_filter=statement_matches_scope,
+            exact_statement_id = ""
+            try:
+                scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
+                eligibility_context = EligibilityContextFactory(
+                    lambda: datetime.now(UTC),
+                    self.engram.namespace_epochs,
+                ).capture_standalone(scope, True)
+                exact = self.engram.response_repository.exact_lookup(
+                    ScopedRetrievalKey.build(scope, request),
+                    eligibility_context,
+                    EpochEligibilityPolicy.MATCH_WHEN_ARTIFACT_AVAILABLE,
+                )
+                if exact.lookup.outcome == ExactLookupOutcome.FOUND:
+                    exact_statement_id = exact.lookup.statement_id
+                    if not statement_matches_scope(self.engram.get_statement(exact_statement_id)):
+                        exact_statement_id = ""
+            except InvalidRequestError:
+                exact_statement_id = ""
+            vector_matches = (
+                ()
+                if exact_statement_id
+                else self.engram.vector_supported_matches(
+                    request,
+                    limit=limit,
+                    statement_filter=statement_matches_scope,
+                )
             )
             merged = {}
-            for source, matches in (
-                ("keyword", query_result["matches"]),
-                ("vector", vector_matches),
-            ):
+            match_sources = (
+                (("exact", ((self.engram.get_statement(exact_statement_id), 1.0),)),)
+                if exact_statement_id
+                else (("keyword", query_result["matches"]), ("vector", vector_matches))
+            )
+            for source, matches in match_sources:
                 for statement, score in matches:
                     entry = merged.setdefault(
                         statement["id"],
@@ -417,7 +475,8 @@ class EngramCore:
                             "vector_score": 0.0,
                         },
                     )
-                    entry[f"{source}_score"] = max(float(entry[f"{source}_score"]), float(score))
+                    score_field = "keyword_score" if source == "exact" else f"{source}_score"
+                    entry[score_field] = max(float(entry[score_field]), float(score))
             ranked = sorted(
                 merged.values(),
                 key=lambda entry: (
@@ -428,16 +487,27 @@ class EngramCore:
                 reverse=True,
             )[:limit]
             candidates = []
+            response_artifact_ids = set(self.engram.response_repository.snapshot().artifacts)
+            queried_response_ids = []
             with self.engram.statement_lock:
                 for entry in ranked:
                     statement = entry["statement"]
                     selected_score = max(entry["keyword_score"], entry["vector_score"])
-                    record_statement_query(statement)
+                    if statement["id"] in response_artifact_ids:
+                        queried_response_ids.append(statement["id"])
+                    else:
+                        record_statement_query(statement)
                     candidate = self._candidate_result(statement, selected_score)
+                    if statement["id"] in response_artifact_ids:
+                        candidate["query_count"] += 1
                     candidate["retrieval"] = {
                         "keyword_score": entry["keyword_score"],
                         "vector_score": entry["vector_score"],
-                        "selected": ("vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"),
+                        "selected": (
+                            "exact"
+                            if exact_statement_id
+                            else "vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"
+                        ),
                     }
                     candidates.append(candidate)
             proposal_id = f"proposal_{uuid4().hex[:16]}"
@@ -463,8 +533,18 @@ class EngramCore:
             if not candidates:
                 self.regulated_metrics["misses"] += 1
             self._enforce_transient_bound()
-            self._dirty = True
-            self._checkpoint()
+            if queried_response_ids:
+                previous_response_ids = tuple(sorted(response_artifact_ids))
+                accounting = self._response_mutations.record_response_queries(
+                    tuple(sorted(queried_response_ids)),
+                    self._accounting_request_id("response-query", request_id),
+                )
+                if not accounting.replayed:
+                    persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                self._dirty = bool(self.store_path and not accounting.durable)
+            else:
+                self._dirty = True
+                self._checkpoint()
             return self._proposal_result(self.proposals[proposal_id], idempotent=False)
 
     def resolve(self, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
@@ -490,13 +570,12 @@ class EngramCore:
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(record["resolution"])
                 result["idempotent"] = True
-                if outcome == "accepted":
-                    self._checkpoint()
                 return result
 
             candidate_responses = record["candidate_responses"]
             if statement_id and statement_id not in candidate_responses:
                 raise InvalidRequestError("statement_id is not a candidate in this proposal")
+            response_artifact_ids: set[str] = set()
             if outcome == "accepted":
                 if not statement_id:
                     raise InvalidRequestError("accepted outcomes require statement_id")
@@ -504,6 +583,7 @@ class EngramCore:
                 if not current or current["text"] != candidate_responses[statement_id]:
                     raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
                 proposal = record["proposal"]
+                response_artifact_ids = set(self.engram.response_repository.snapshot().artifacts)
                 self.engram.record_hit(proposal["keywords"], statement_id=statement_id)
                 sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
                 sessions.update_session_context(self.engram, proposal["user_id"], current["text"])
@@ -523,7 +603,17 @@ class EngramCore:
             record["resolution_signature"] = resolution_signature
             record["resolution"] = resolution
             if outcome == "accepted":
-                self._checkpoint()
+                if statement_id in response_artifact_ids:
+                    previous_response_ids = tuple(sorted(response_artifact_ids))
+                    accounting = self._response_mutations.record_response_hit(
+                        statement_id,
+                        self._accounting_request_id("response-hit", proposal_id),
+                    )
+                    if not accounting.replayed:
+                        persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                    self._dirty = bool(self.store_path and not accounting.durable)
+                else:
+                    self._checkpoint()
             return deepcopy(resolution)
 
     def learn_response(
@@ -537,7 +627,7 @@ class EngramCore:
         source_label: str = "tapestry:actor",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache an Actor response, replacing only within its exact scope."""
+        """Create one DYNAMIC ACTIVE response artifact through base commit."""
         with self.lock:
             self._require_running()
             self._cleanup_transient()
@@ -553,65 +643,54 @@ class EngramCore:
                 raise InvalidRequestError("metadata must be an object")
             metadata = dict(metadata)
             normalized_user_id = self._normalize_user_id(user_id)
-            signature = self._signature(
-                request=request,
-                response=response,
-                user_id=normalized_user_id,
-                namespace=namespace,
-                context_fingerprint=context_fingerprint,
-                source_label=source_label,
-                metadata=metadata,
-            )
-            previous = self.learn_requests.get(request_id, {})
-            if previous:
-                if previous["signature"] != signature:
-                    raise ConflictError("request_id is already associated with a different learned response")
+            previous_response_ids = tuple(sorted(self.engram.response_repository.snapshot().artifacts))
+            try:
+                mutation = self._response_mutations.learn_response(
+                    request,
+                    response,
+                    request_id,
+                    normalized_user_id,
+                    namespace,
+                    context_fingerprint,
+                    source_label,
+                    metadata,
+                )
+            except MutationCoordinationError as error:
+                if error.checkpoint_count:
+                    raise PersistenceError("store checkpoint", error, state_changed=error.live_state_changed) from error
+                raise
+            receipt_result = mutation.receipt.to_dict()["result"]
+            if not isinstance(receipt_result, dict):
+                raise LifecycleError("response mutation receipt result is not an object")
+            receipt_statement_id = receipt_result.get("statement_id")
+            evicted_statement_ids = receipt_result.get("evicted_statement_ids")
+            if not isinstance(receipt_statement_id, str) or not isinstance(evicted_statement_ids, list):
+                raise LifecycleError("response mutation receipt result is malformed")
+            learned = mutation.receipt.result_code.value != "REJECTED_CAPACITY"
+            if learned and not mutation.replayed:
+                persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                self.engram.eviction_count += len(evicted_statement_ids)
+            if learned:
+                sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
+                sessions.update_session_context(self.engram, normalized_user_id, response)
+            if mutation.replayed:
                 self.regulated_metrics["idempotent_retries"] += 1
-                result = deepcopy(previous["result"])
-                result["idempotent"] = True
-                self._checkpoint()
-                return result
-
-            tapestry_metadata = deepcopy(metadata)
-            tapestry_metadata.update(
-                {
-                    "namespace": namespace,
-                    "context_fingerprint": context_fingerprint,
-                    "request_id": request_id,
-                }
-            )
-            with self.engram.statement_lock:
-                statement_ids_before = set(self.engram.statement_index)
-            statement_id = self.engram.learn_from_response(
-                request,
-                response,
-                template={"tapestry": tapestry_metadata},
-                introduced_by_user_id="",
-                source_label=source_label,
-            )
-            action = "replaced" if statement_id in statement_ids_before else "created"
-            sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
-            sessions.update_session_context(self.engram, normalized_user_id, response)
+            elif learned:
+                self.regulated_metrics["learned_created"] += 1
+            self._dirty = bool(self.store_path and not mutation.durable)
             result = {
-                "learned": True,
-                "statement_id": statement_id,
-                "action": action,
+                "learned": learned,
+                "statement_id": receipt_statement_id,
+                "action": "created" if learned else "rejected_capacity",
                 "request_id": request_id,
                 "user_id": normalized_user_id,
                 "namespace": namespace,
                 "context_fingerprint": context_fingerprint,
                 "source_label": source_label,
-                "idempotent": False,
+                "idempotent": mutation.replayed,
+                "result_code": mutation.receipt.result_code.value,
+                "evicted_statement_ids": evicted_statement_ids,
             }
-            self.learn_requests[request_id] = {
-                "created_at": time.monotonic(),
-                "signature": signature,
-                "result": result,
-            }
-            self.regulated_metrics[f"learned_{action}"] += 1
-            self._enforce_transient_bound()
-            self._dirty = True
-            self._checkpoint()
             return deepcopy(result)
 
     def retire_response(self, statement_id: str, reason: str, request_id: str) -> dict:
@@ -622,6 +701,48 @@ class EngramCore:
             self._require_text(statement_id, "statement_id")
             self._require_text(reason, "reason")
             self._require_text(request_id, "request_id")
+            response_artifacts = self.engram.response_repository.snapshot().artifacts
+            if statement_id in response_artifacts:
+                previous = self.retire_requests.get(request_id, {})
+                if previous and (previous["result"]["statement_id"] != statement_id or previous["result"]["reason"] != reason):
+                    raise ConflictError("request_id is already associated with a different retirement")
+                expected_generation = previous["expected_generation"] if previous else response_artifacts[statement_id].generation
+                previous_response_ids = tuple(sorted(response_artifacts))
+                mutation = self._response_mutations.retire_response(
+                    statement_id,
+                    expected_generation,
+                    LifecycleMutationReason.ADMINISTRATIVE,
+                    "legacy:RetireResponse",
+                    request_id,
+                    reason,
+                )
+                if not mutation.replayed:
+                    persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                    self.regulated_metrics["retired"] += 1
+                else:
+                    self.regulated_metrics["idempotent_retries"] += 1
+                self._dirty = bool(self.store_path and not mutation.durable)
+                receipt_result = mutation.receipt.to_dict()["result"]
+                if not isinstance(receipt_result, dict):
+                    raise LifecycleError("response mutation receipt result is not an object")
+                generation = receipt_result.get("generation")
+                if isinstance(generation, bool) or not isinstance(generation, int):
+                    raise LifecycleError("response mutation receipt generation is malformed")
+                result = {
+                    "retired": True,
+                    "statement_id": statement_id,
+                    "reason": reason,
+                    "request_id": request_id,
+                    "idempotent": mutation.replayed,
+                    "generation": generation,
+                }
+                self.retire_requests[request_id] = {
+                    "created_at": time.monotonic(),
+                    "expected_generation": expected_generation,
+                    "result": result,
+                }
+                self._enforce_transient_bound()
+                return deepcopy(result)
             signature = self._signature(statement_id=statement_id, reason=reason)
             previous = self.retire_requests.get(request_id, {})
             if previous:
@@ -687,6 +808,13 @@ class EngramCore:
             raise InvalidRequestError("metadata and request values must be JSON-compatible") from error
 
     @staticmethod
+    def _accounting_request_id(kind: str, external_id: str) -> str:
+        """Derive a bounded, non-disclosing identity for internal accounting."""
+
+        digest = hashlib.sha256(external_id.encode("utf-8")).hexdigest()
+        return f"internal:{kind}:sha256:{digest}"
+
+    @staticmethod
     def _candidate_result(statement: dict, score: float) -> dict:
         return {
             "statement_id": statement["id"],
@@ -726,6 +854,25 @@ class EngramCore:
     def _checkpoint(self) -> None:
         if self.checkpoint_on_mutation:
             self._flush_store()
+
+    def _checkpoint_response_state(self, state: CoordinatedResponseState) -> None:
+        try:
+            store_path = Path(self.store_path)
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(OSError):
+                store_path.parent.chmod(0o700)
+            persistence.save_response_state(self.engram, state, store_path)
+        except Exception as error:
+            self._durability = DurabilityState.DEGRADED
+            self._last_persistence_error = str(error)
+            raise CheckpointFailureError(CheckpointFailureKind.INDETERMINATE, str(error)) from error
+        self._durability = DurabilityState.HEALTHY
+        self._dirty = False
+        self._last_checkpoint_at = datetime.now(UTC).isoformat()
+        self._last_persistence_error = ""
+
+    def _recover_response_state(self) -> CoordinatedResponseState:
+        return persistence.load_coordinated_response_state(self.store_path, config=self.engram.config)
 
     def _flush_store(self) -> bool:
         if not self.store_path:

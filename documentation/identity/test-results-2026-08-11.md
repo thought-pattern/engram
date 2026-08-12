@@ -38,6 +38,8 @@ collected 928 items
 
 The remaining strict expected failure is the Section 0 characterization of the legacy `learn_from_response` equal-keyword replacement path. Section 1 deliberately supplies pure identity and retrieval-key contracts; Sections 2 and 3 own index integration and commit-time replacement prevention. The expected failure remains executable until that integration turns it green.
 
+EGR-308 completed that integration on 2026-08-12. The when/where regression is now a normal passing test through the artifact-backed LearnResponse path and exact scoped proposal lookup.
+
 ## Static, formatting, security, and artifact checks
 
 ```text

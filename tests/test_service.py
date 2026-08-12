@@ -2,6 +2,7 @@
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import cast
 
 import pytest
 
@@ -89,6 +90,99 @@ def test_regulated_mapping_arguments_copy_concrete_empty_objects() -> None:
     assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
 
 
+def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -> None:
+    core = EngramCore(checkpoint_on_mutation=False)
+
+    learned = core.learn_response(
+        "What is cached?",
+        "Exact café response ☕.",
+        "learn-artifact",
+        user_id="Alice",
+        namespace="support",
+        context_fingerprint="tier:pro",
+        source_label="actor:test",
+        metadata={"actor_version": "actor-7"},
+    )
+
+    artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
+    assert artifact.response == "Exact café response ☕."
+    assert artifact.tier == Tier.DYNAMIC
+    assert artifact.lifecycle.value == "ACTIVE"
+    assert artifact.generation == 1
+    assert artifact.scope.namespace == "support"
+    assert artifact.scope.context_fingerprint == "tier:pro"
+    assert artifact.provenance.caller_id == "Alice"
+    assert artifact.provenance.source_label == "actor:test"
+    assert artifact.metadata == {"actor_version": "actor-7"}
+    assert core.engram.sessions["Alice"]["previous_response"] == artifact.response
+    assert core.engram.response_repository.check().consistent is True
+
+
+def test_learn_response_exact_retry_survives_restart_without_second_checkpoint(tmp_path) -> None:
+    store = tmp_path / "engram.json"
+    first = EngramCore(Engram(), store_path=store)
+    created = first.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
+    durable_before = store.read_bytes()
+
+    restored = EngramCore.open(store_path=store)
+    replay = restored.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
+
+    assert replay["statement_id"] == created["statement_id"]
+    assert replay["idempotent"] is True
+    assert store.read_bytes() == durable_before
+    assert restored.status()["last_checkpoint_at"] == ""
+    assert restored.engram.sessions["Alice"]["previous_response"] == "Persistent exact response."
+
+
+def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -> None:
+    core = EngramCore(checkpoint_on_mutation=False)
+    original = core.learn_response("What is current?", "Original exact response.", "learn-original")
+
+    with pytest.raises(ConflictError, match=original["statement_id"]):
+        core.learn_response("What is current?", "Implicit replacement.", "learn-replacement")
+
+    artifact = core.engram.response_repository.get_artifact(original["statement_id"])
+    assert artifact.response == "Original exact response."
+    assert artifact.lifecycle.value == "ACTIVE"
+    assert artifact.generation == 1
+
+
+def test_proposal_and_resolution_accounting_remain_artifact_view_equivalent() -> None:
+    core = EngramCore(checkpoint_on_mutation=False)
+    learned = core.learn_response("What is counted?", "Counted response.", "learn-counted")
+    epoch_after_commit = core.engram.namespace_epochs.get("").knowledge_epoch
+
+    proposal = core.propose("What is counted?", "proposal-counted")
+    core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+
+    artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
+    compatibility = core.engram.get_statement(learned["statement_id"])
+    assert artifact.generation == 3
+    assert artifact.statistics.query_count == compatibility["query_count"] == 1
+    assert artifact.statistics.hit_count == compatibility["hit_count"] == 1
+    assert artifact.statistics.last_hit_available is True
+    assert core.engram.namespace_epochs.get("").knowledge_epoch == epoch_after_commit
+    assert core.engram.response_repository.check().consistent is True
+    assert core.engram.mutation_receipts.next_sequence == 4
+
+
+def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None:
+    core = EngramCore(checkpoint_on_mutation=False)
+    learned = core.learn_response("What has a bounded receipt?", "A bounded receipt.", "learn-bounded-receipt")
+    external_request_id = "r" * 256
+
+    proposal = core.propose("What has a bounded receipt?", external_request_id)
+    core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+
+    receipt_state = core.engram.mutation_receipts.snapshot()["receipts"]
+    receipt_ids = [receipt["request_id"] for receipt in cast(list[dict[str, str]], receipt_state)]
+    accounting_ids = [request_id for request_id in receipt_ids if request_id.startswith("internal:")]
+    assert len(accounting_ids) == 2
+    assert all(len(request_id.encode("utf-8")) <= 256 for request_id in accounting_ids)
+    assert all(external_request_id not in request_id for request_id in accounting_ids)
+    assert core.engram.response_repository.check().consistent is True
+
+
 def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) -> None:
     store = tmp_path / "engram.json"
     core = EngramCore(Engram(), store_path=store)
@@ -160,7 +254,8 @@ def test_core_checkpoints_each_durable_mutation(tmp_path) -> None:
     assert accepted_state["hit_count"] == 1
 
     core.retire_response(learned["statement_id"], "superseded", "retire-checkpoint")
-    assert EngramCore.open(store_path=store).engram.get_statement(learned["statement_id"]) == {}
+    restored_retired = EngramCore.open(store_path=store).engram
+    assert restored_retired.response_repository.get_artifact(learned["statement_id"]).lifecycle.value == "RETIRED"
 
 
 def test_context_manager_flushes_when_mutation_checkpointing_is_disabled(tmp_path) -> None:
@@ -240,29 +335,29 @@ def test_close_waits_for_an_active_core_operation() -> None:
 def test_checkpoint_failure_reports_degraded_state_and_recovers(tmp_path, monkeypatch) -> None:
     store = tmp_path / "engram.json"
     core = EngramCore(Engram(), store_path=store)
-    real_save = service_module.persistence.save
+    real_save = service_module.persistence.save_response_state
 
-    def fail_save(engram, path) -> None:
+    def fail_save(engram, state, path) -> None:
         raise OSError("disk unavailable")
 
-    monkeypatch.setattr(service_module.persistence, "save", fail_save)
+    monkeypatch.setattr(service_module.persistence, "save_response_state", fail_save)
     with pytest.raises(PersistenceError) as failure:
         core.learn_response("What is cached?", "A durable answer.", "learn-degraded")
 
-    assert failure.value.state_changed is True
+    assert failure.value.state_changed is False
     assert failure.value.operation == "store checkpoint"
     degraded = core.status()
     assert degraded["state"] == "running"
     assert degraded["ready"] is True
     assert degraded["healthy"] is False
     assert degraded["durability"] == "degraded"
-    assert degraded["dirty"] is True
+    assert degraded["dirty"] is False
     assert "disk unavailable" in degraded["last_persistence_error"]
 
-    monkeypatch.setattr(service_module.persistence, "save", real_save)
+    monkeypatch.setattr(service_module.persistence, "save_response_state", real_save)
     retry = core.learn_response("What is cached?", "A durable answer.", "learn-degraded")
 
-    assert retry["idempotent"] is True
+    assert retry["idempotent"] is False
     recovered = core.status()
     assert recovered["healthy"] is True
     assert recovered["durability"] == "healthy"

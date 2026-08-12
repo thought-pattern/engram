@@ -49,6 +49,7 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
+from engram.eligibility import NamespaceEpochState
 from engram.facts_spacy import extract_facts
 from engram.graph import create_graph_client, is_write_cypher
 from engram.identity import ScopedRetrievalKey
@@ -74,10 +75,12 @@ from engram.models import (
     session_update_dialogue,
     statement,
 )
+from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
+from engram.repository import ArtifactRepository
 from engram.scoring import score_statement
 from engram.spacy_setup import get_nlp
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
@@ -235,6 +238,10 @@ class Engram:
         self.session_lock = threading.RLock()
         self.count_lock = threading.Lock()
         self._index_owner = IndexOwner()
+        self.response_repository = ArtifactRepository()
+        self.namespace_epochs = NamespaceEpochState()
+        self.mutation_receipts = MutationReceiptLedger()
+        self.response_quarantine: tuple[object, ...] = ()
 
         # Metrics
         self.query_count = 0

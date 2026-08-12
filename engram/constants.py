@@ -515,4 +515,4 @@ WILDCARD_TOKENS = {"*", "_", "#", "^"}
 # =============================================================================
 
 # Version constant for persistence format
-PERSISTENCE_VERSION = 1
+PERSISTENCE_VERSION = 2

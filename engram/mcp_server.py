@@ -149,7 +149,7 @@ class MCPConversationService:
         source_label: str = "tapestry:actor",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache an Actor response, replacing only within its exact scope."""
+        """Cache an Actor response without implicitly replacing existing knowledge."""
         with self.lock:
             core, _ = self._require_active()
             return core.learn_response(

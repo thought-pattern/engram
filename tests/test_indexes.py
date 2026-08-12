@@ -83,6 +83,58 @@ def test_projection_codec_round_trip_is_deterministic() -> None:
     assert decoded.support_claim_ids == ("claim-1", "claim-2")
 
 
+def test_atomic_exact_refresh_changes_only_eligibility_fields() -> None:
+    original = projection("stmt-1", "Who acquired GitHub?")
+    owner = IndexOwner((original,))
+    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+    generation = owner.snapshot().state_generation
+    ineligible = replace(original, direct_answer_eligible=False, exclusion_reason="expired")
+
+    lookup, changed, updated_generation = owner.atomic_refresh_exact_lookup(key, (ineligible,), generation)
+
+    assert lookup.outcome == ExactLookupOutcome.MISS
+    assert changed is True
+    assert updated_generation == generation + 1
+    assert owner.snapshot().projections["stmt-1"] == ineligible
+
+
+def test_atomic_exact_refresh_noop_keeps_generation() -> None:
+    original = projection("stmt-1", "Who acquired GitHub?")
+    owner = IndexOwner((original,))
+    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+    generation = owner.snapshot().state_generation
+
+    lookup, changed, updated_generation = owner.atomic_refresh_exact_lookup(key, (original,), generation)
+
+    assert lookup.outcome == ExactLookupOutcome.FOUND
+    assert changed is False
+    assert updated_generation == generation
+
+
+def test_atomic_exact_refresh_requires_all_and_only_current_owners() -> None:
+    first = projection("stmt-1", "Who acquired GitHub?")
+    second = projection("stmt-2", "Who acquired GitHub?", eligible=False, exclusion_reason="retired")
+    owner = IndexOwner((first, second))
+    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+
+    with pytest.raises(ConflictError, match="cover every current owner"):
+        owner.atomic_refresh_exact_lookup(key, (first,), owner.snapshot().state_generation)
+    with pytest.raises(InvalidRequestError, match="unique statement IDs"):
+        owner.atomic_refresh_exact_lookup(key, (first, first), owner.snapshot().state_generation)
+
+
+def test_atomic_exact_refresh_rejects_non_eligibility_changes_and_stale_generation() -> None:
+    original = projection("stmt-1", "Who acquired GitHub?")
+    owner = IndexOwner((original,))
+    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+
+    changed_support = replace(original, support_claim_ids=("claim-new",))
+    with pytest.raises(InvalidRequestError, match="may change only"):
+        owner.atomic_refresh_exact_lookup(key, (changed_support,), owner.snapshot().state_generation)
+    with pytest.raises(ConflictError, match="stale index state generation"):
+        owner.atomic_refresh_exact_lookup(key, (original,), owner.snapshot().state_generation + 1)
+
+
 def test_exact_and_alias_maps_retain_provenance_and_scope() -> None:
     first = projection("stmt-1", "Who acquired GitHub?", ("GitHub acquirer",), namespace="one")
     second = projection("stmt-2", "Who acquired GitHub?", namespace="two")

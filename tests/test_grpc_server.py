@@ -176,14 +176,14 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
 def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monkeypatch) -> None:
     store = tmp_path / "engram.json"
     core = _core(store)
-    real_save = service_module.persistence.save
+    real_save = service_module.persistence.save_response_state
 
     with _running_server(core) as (_, channel, stub):
 
-        def fail_save(engram, path) -> None:
+        def fail_save(engram, state, path) -> None:
             raise OSError("disk unavailable")
 
-        monkeypatch.setattr(service_module.persistence, "save", fail_save)
+        monkeypatch.setattr(service_module.persistence, "save_response_state", fail_save)
         request = engram_pb2.LearnResponseRequest(
             request="What is durable?",
             response="This answer should persist.",
@@ -196,14 +196,14 @@ def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monke
         assert failed.value.code() == grpc.StatusCode.UNAVAILABLE
         assert metadata["engram-error-type"] == "PersistenceError"
         assert metadata["engram-operation"] == "store checkpoint"
-        assert metadata["engram-state-changed"] == "true"
+        assert metadata["engram-state-changed"] == "false"
         assert _as_dict(stub.GetStatus(empty_pb2.Empty()))["durability"] == "degraded"
         assert _health_status(channel) == health_pb2.HealthCheckResponse.NOT_SERVING
 
-        monkeypatch.setattr(service_module.persistence, "save", real_save)
+        monkeypatch.setattr(service_module.persistence, "save_response_state", real_save)
         recovered = _as_dict(stub.LearnResponse(request))
 
-        assert recovered["idempotent"] is True
+        assert recovered["idempotent"] is False
         assert _as_dict(stub.GetStatus(empty_pb2.Empty()))["durability"] == "healthy"
         assert _health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 

@@ -48,6 +48,8 @@ replaces equal lexical-keyword sets until Section 3 supplies authoritative respo
 obsolete Section 0 assertions for absent exact and support indexes were converted into positive Section 2 compatibility tests:
 legacy exact lookup is an explicit `MISS`, and current Tapestry support metadata populates both support maps.
 
+EGR-308 supplied that artifact-backed wrapper and exact scoped proposal integration later on 2026-08-12. The regression is now a normal passing test; the completed suite records no expected failures.
+
 ## Static, formatting, security, and artifact checks
 
 ```text
@@ -89,20 +91,20 @@ abstention, and measured rebuild, add, replace, remove, support-update, and trac
 
 | Measure | Observed p95 | ADR 0004 comparison |
 | --- | ---: | --- |
-| Exact lookup, 10,000 projections | 0.031549 ms | slope baseline |
-| Exact lookup, 100,000 projections | 0.007102 ms | <= 5 ms; passed |
-| 10,000 to 100,000 exact p95 slope | 0.2251x | <= 1.5x; passed |
-| Support lookup, fan-out 1 | 0.014483 ms | engineering measurement |
-| Support lookup, fan-out 10 | 0.032184 ms | engineering measurement |
-| Support lookup, fan-out 100 | 0.236671 ms | engineering measurement |
-| Full support proposal, fan-out 1 | 0.6818 ms | <= 30 ms and <= 24.6445 ms; passed |
-| Full support proposal, fan-out 10 | 1.0115 ms | <= 30 ms and <= 25.9345 ms; passed |
-| Full support proposal, fan-out 100 | 1.6250 ms | <= 30 ms and <= 24.744875 ms; passed |
-| Rebuild, 5,000 projections | 434.1384 ms | <= 1,000 ms; passed |
-| Add mutation, 5,000 projections | 72.6678 ms | informational; no ADR threshold |
-| Replace mutation, 5,000 projections | 99.3789 ms | informational; no ADR threshold |
-| Remove mutation, 5,000 projections | 59.4137 ms | informational; no ADR threshold |
-| Support update, 5,000 projections | 59.2904 ms | informational; no ADR threshold |
+| Exact lookup, 10,000 projections | 0.006717 ms | slope baseline |
+| Exact lookup, 100,000 projections | 0.006554 ms | <= 5 ms; passed |
+| 10,000 to 100,000 exact p95 slope | 0.9757x | <= 1.5x; passed |
+| Support lookup, fan-out 1 | 0.015134 ms | engineering measurement |
+| Support lookup, fan-out 10 | 0.031384 ms | engineering measurement |
+| Support lookup, fan-out 100 | 0.196773 ms | engineering measurement |
+| Full support proposal, fan-out 1 | 0.7611 ms | <= 30 ms and <= 24.6445 ms; passed |
+| Full support proposal, fan-out 10 | 1.3051 ms | <= 30 ms and <= 25.9345 ms; passed |
+| Full support proposal, fan-out 100 | 1.7207 ms | <= 30 ms and <= 24.744875 ms; passed |
+| Rebuild, 5,000 projections | 358.3101 ms | <= 1,000 ms; passed |
+| Add mutation, 5,000 projections | 55.6091 ms | informational; no ADR threshold |
+| Replace mutation, 5,000 projections | 54.4750 ms | informational; no ADR threshold |
+| Remove mutation, 5,000 projections | 54.4362 ms | informational; no ADR threshold |
+| Support update, 5,000 projections | 59.1226 ms | informational; no ADR threshold |
 | Peak traced index-build memory, 5,000 | 3,981,121 bytes | <= 11 MiB; passed |
 
 All lookup and candidate-correctness expectations passed. The 100,000-projection state passed the complete consistency checker
@@ -111,7 +113,7 @@ truncated only after a complete scan, and a deliberately exhausted scan emitted 
 engineering measurements, not the Section 16 held-out release evaluation.
 
 Benchmark: `benchmark-2026-08-12.json`  
-SHA-256: `1d785ddbac21e91d794317d9e11701c2d23900bbcf3089196edaf5b128ebbc24`
+SHA-256: `bed00dccc0b33bad4e48b965a2343d72cca175900c9828ca34598e9f353345a6`
 
 Classification fixture: `classification-v1.json`  
 SHA-256: `1907254d66978db0f1c84ceab3054e1a4f31e4fe09115b66ca48dcdb60999091`
