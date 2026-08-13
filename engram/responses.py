@@ -429,6 +429,79 @@ class AcceptedResponseService:
             candidate = self._coordinator.build_candidate(repository_candidate, (), receipt)
             return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
 
+    def finalize_resolution_accounting(
+        self,
+        statement_ids: tuple[str, ...],
+        accepted_statement_id: str,
+        request_id: str,
+    ) -> ResponseMutationResult:
+        """Atomically record unique candidacy and an optional accepted hit."""
+        if not isinstance(statement_ids, tuple) or not statement_ids:
+            raise InvalidRequestError("resolution statement_ids must be a non-empty tuple")
+        if not all(isinstance(statement_id, str) and statement_id for statement_id in statement_ids):
+            raise InvalidRequestError("resolution statement_ids must contain non-empty strings")
+        normalized_ids = tuple(sorted(set(statement_ids)))
+        if normalized_ids != statement_ids:
+            raise InvalidRequestError("resolution statement_ids must be sorted and unique")
+        normalized_accepted = self._audit_text(
+            accepted_statement_id,
+            "resolution accepted_statement_id",
+            256,
+            allow_empty=True,
+        )
+        if normalized_accepted and normalized_accepted not in normalized_ids:
+            raise InvalidRequestError("resolution accepted_statement_id must be a candidate")
+        payload_signature = canonical_payload_signature(
+            {"statement_ids": list(normalized_ids), "accepted_statement_id": normalized_accepted}
+        )
+        with self._coordinator.mutation():
+            lookup = self._lookup(request_id, MutationOperation.FINALIZE_RESOLUTION_ACCOUNTING, payload_signature)
+            if lookup.outcome == ReceiptLookupOutcome.REPLAY:
+                return ResponseMutationResult(
+                    receipt=lookup.receipt(),
+                    replayed=True,
+                    checkpoint_count=0,
+                    durable=self._coordinator.checkpoint_configured,
+                    recovered=False,
+                )
+            if lookup.outcome != ReceiptLookupOutcome.NEW:
+                raise ConflictError(f"resolution accounting request conflicts or requires recovery: {request_id}")
+            recorded_at = self._clock()
+            updated_artifacts = []
+            effects = []
+            for statement_id in normalized_ids:
+                current = self._coordinator.repository.get_artifact(statement_id)
+                updated = current.to_dict()
+                updated["generation"] = current.generation + 1
+                statistics = _mapping_copy(updated["statistics"], "statistics")
+                statistics["query_count"] = current.statistics.query_count + 1
+                if statement_id == normalized_accepted:
+                    statistics["hit_count"] = current.statistics.hit_count + 1
+                    statistics["last_hit"] = recorded_at
+                    statistics["last_hit_available"] = True
+                updated["statistics"] = statistics
+                artifact = CachedResponseArtifact.from_dict(updated)
+                updated_artifacts.append(artifact)
+                effects.append(ArtifactGenerationChange(statement_id, current.generation, artifact.generation))
+            repository_candidate = self._coordinator.repository.candidate_with_artifacts(tuple(updated_artifacts))
+            receipt = MutationReceipt(
+                sequence=self._coordinator.next_receipt_sequence,
+                request_id=request_id,
+                operation=MutationOperation.FINALIZE_RESOLUTION_ACCOUNTING,
+                payload_signature=payload_signature,
+                result_code=MutationResultCode.RESOLUTION_ACCOUNTING_RECORDED,
+                affected_generations=tuple(effects),
+                result={
+                    "statement_ids": list(normalized_ids),
+                    "accepted_statement_id": normalized_accepted,
+                    "recorded_at": recorded_at,
+                },
+                completion_state=ReceiptCompletionState.COMPLETED,
+                created_at=recorded_at,
+            )
+            candidate = self._coordinator.build_candidate(repository_candidate, (), receipt)
+            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+
     def _transition_response(
         self,
         statement_id: str,

@@ -81,7 +81,7 @@ from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
-from engram.scoring import score_statement
+from engram.scoring import score_statement_components
 from engram.spacy_setup import get_nlp
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
 from engram.template import TemplateProcessor, template_context
@@ -98,6 +98,42 @@ from engram.text import (
 
 logger = logging.getLogger(__name__)
 EMPTY_CONFIG: dict = {}
+
+
+def _run_cooperative_check(check=()) -> None:
+    """Run an optional resolver-owned deadline check without owning its clock."""
+    if check:
+        if not callable(check):
+            raise ValueError("cooperative_check must be callable")
+        check()
+
+
+def _estimate_working_bytes(value: object, seen=()) -> int:
+    """Return a conservative, bounded-size estimate for resolution working data."""
+    visited = seen if isinstance(seen, set) else set()
+    if isinstance(value, str):
+        return len(value.encode("utf-8")) + 49
+    if isinstance(value, bytes):
+        return len(value) + 33
+    if isinstance(value, (bool, int, float)):
+        return 32
+    identity = id(value)
+    if identity in visited:
+        return 0
+    visited.add(identity)
+    if isinstance(value, dict):
+        return 64 + sum(
+            _estimate_working_bytes(key, visited) + _estimate_working_bytes(item, visited) for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return 64 + sum(_estimate_working_bytes(item, visited) for item in value)
+    return len(str(value).encode("utf-8")) + 64
+
+
+def _require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
+    """Raise before retaining work that exceeds a resolver's memory estimate."""
+    if maximum_bytes and estimated_bytes > maximum_bytes:
+        raise MemoryError("resolution working-memory estimate exceeded")
 
 
 def _reports_repetition(text: str) -> bool:
@@ -159,7 +195,7 @@ GRAPH_ENTITY_FACTS_QUERY = (
     "AND proof_predicate.canonical_id <> 'generic_relation' "
     "AND coalesce(c.predicate_canonical, true) = true "
     "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
     "LIMIT 5"
 )
 GRAPH_KEYWORD_FACTS_QUERY = (
@@ -171,7 +207,7 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "AND proof_predicate.canonical_id <> 'generic_relation' "
     "AND coalesce(c.predicate_canonical, true) = true "
     "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
     "LIMIT 3"
 )
 
@@ -521,7 +557,29 @@ class Engram:
         statement_filter=(),
     ) -> list[tuple[dict, float]]:
         """Rank scoped cached responses through their KG support Claims."""
-        rows = self.graph_vector_claims(text)
+        return [
+            (match["statement"], match["retrieval_score"])
+            for match in self.vector_supported_match_components(
+                text,
+                limit=limit,
+                statement_filter=statement_filter,
+            )
+        ]
+
+    def vector_supported_match_components(
+        self,
+        text: str,
+        *,
+        limit: int,
+        statement_filter=(),
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[dict]:
+        """Return support matches with raw similarity separate from legacy ranking."""
+        _run_cooperative_check(cooperative_check)
+        rows = self.graph_vector_claims(text, limit=limit)
+        _run_cooperative_check(cooperative_check)
+        _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
         support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
         if not support_scores:
             return []
@@ -540,13 +598,18 @@ class Engram:
         if limit < 1:
             return []
         scored: list[tuple[float, int, dict]] = []
+        scored_bytes = 64
         seen_statement_ids = set()
+        retained_bytes = _estimate_working_bytes(rows) + _estimate_working_bytes(support_scores)
         with self.statement_lock:
             for claim_id in scan_plan.queried_claim_ids:
                 for statement_id in state.claim_to_statements.get(claim_id, ()):
+                    _run_cooperative_check(cooperative_check)
                     if statement_id in seen_statement_ids:
                         continue
                     seen_statement_ids.add(statement_id)
+                    retained_bytes += _estimate_working_bytes(statement_id)
+                    _require_working_memory(retained_bytes, max_working_memory_bytes)
                     index = self.statement_index.get(statement_id, -1)
                     if index < 0:
                         continue
@@ -560,14 +623,29 @@ class Engram:
                     ]
                     if not similarities:
                         continue
-                    score = max(similarities) * vector_weight + float(statement_value.get("priority", 0))
-                    ranked = (score, index, statement_value)
+                    semantic_similarity = max(similarities)
+                    priority = float(statement_value.get("priority", 0))
+                    score = semantic_similarity * vector_weight + priority
+                    components = {
+                        "statement": statement_value,
+                        "retrieval_score": score,
+                        "semantic_similarity": semantic_similarity,
+                        "vector_weight": vector_weight,
+                        "priority": priority,
+                    }
+                    ranked = (score, index, components)
                     if len(scored) < limit:
+                        ranked_bytes = _estimate_working_bytes(ranked)
                         heapq.heappush(scored, ranked)
+                        scored_bytes += ranked_bytes
                     elif (score, index) > (scored[0][0], scored[0][1]):
-                        heapq.heapreplace(scored, ranked)
+                        ranked_bytes = _estimate_working_bytes(ranked)
+                        removed = heapq.heapreplace(scored, ranked)
+                        scored_bytes += ranked_bytes - _estimate_working_bytes(removed)
+                    _require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [(statement_value, score) for score, _, statement_value in scored]
+        _run_cooperative_check(cooperative_check)
+        return [components for _, _, components in scored]
 
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
@@ -857,6 +935,252 @@ class Engram:
 
         return stmt["id"]
 
+    def query_candidates(
+        self,
+        text: str,
+        limit: int = 5,
+        statement_filter=(),
+        reference_time=(),
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> dict:
+        """Discover lexical candidates without accounting or session mutation."""
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if statement_filter and not callable(statement_filter):
+            raise ValueError("statement_filter must be callable")
+        if (
+            isinstance(max_working_memory_bytes, bool)
+            or not isinstance(max_working_memory_bytes, int)
+            or max_working_memory_bytes < 0
+        ):
+            raise ValueError("max_working_memory_bytes must be a nonnegative integer")
+
+        _run_cooperative_check(cooperative_check)
+        normalized = normalize(text)
+        uncorrected = normalized
+        if self.config["use_spell_correction"]:
+            with self.keyword_lock:
+                vocabulary = set(self.keywords)
+            normalized = correct_spelling(normalized, vocabulary)
+
+        keywords = self._extract_keywords(normalized)
+        if not keywords:
+            result = query_result(matches=[], keywords=[], resolved_query=text)
+            result["features"] = {}
+            result["diagnostics"] = {
+                "spelling_correction_applied": normalized != uncorrected,
+                "phrase_keywords_enabled": bool(self.config["use_phrase_keywords"]),
+                "synonym_expansion_count": 0,
+                "working_memory_bytes": _estimate_working_bytes(keywords),
+            }
+            return result
+
+        search_keywords = keywords
+        synonyms_by_keyword: dict[str, tuple] = {}
+        if self.config["use_synonyms"]:
+            search_keywords = expand_with_synonyms(
+                keywords,
+                max_synonyms_per_word=self.config["max_synonyms_per_word"],
+            )
+            for keyword in keywords:
+                _run_cooperative_check(cooperative_check)
+                synonyms = tuple(
+                    synonym
+                    for synonym in get_synonyms(keyword, max_synonyms=self.config["max_synonyms_per_word"])
+                    if synonym != keyword
+                )
+                if synonyms:
+                    synonyms_by_keyword[keyword] = synonyms
+
+        candidate_ids: set[str] = set()
+        retained_bytes = (
+            _estimate_working_bytes(keywords)
+            + _estimate_working_bytes(search_keywords)
+            + _estimate_working_bytes(synonyms_by_keyword)
+        )
+        _require_working_memory(retained_bytes, max_working_memory_bytes)
+        with self.keyword_lock:
+            for keyword in search_keywords:
+                _run_cooperative_check(cooperative_check)
+                if keyword in self.keywords:
+                    for statement_id in self.keywords[keyword]["statement_ids"]:
+                        if statement_id in candidate_ids:
+                            continue
+                        candidate_ids.add(statement_id)
+                        retained_bytes += _estimate_working_bytes(statement_id)
+                        _require_working_memory(retained_bytes, max_working_memory_bytes)
+        if not candidate_ids:
+            result = query_result(matches=[], keywords=keywords, resolved_query=text)
+            result["features"] = {}
+            result["diagnostics"] = {
+                "spelling_correction_applied": normalized != uncorrected,
+                "phrase_keywords_enabled": bool(self.config["use_phrase_keywords"]),
+                "synonym_expansion_count": sum(len(values) for values in synonyms_by_keyword.values()),
+                "working_memory_bytes": retained_bytes,
+            }
+            return result
+
+        scored: list[tuple[float, int, dict, dict[str, float]]] = []
+        scored_bytes = 64
+        with self.statement_lock, self.keyword_lock:
+            total = len(self.statements)
+            for statement_id in candidate_ids:
+                _run_cooperative_check(cooperative_check)
+                if statement_id not in self.statement_index:
+                    continue
+                index = self.statement_index[statement_id]
+                statement_value = self.statements[index]
+                if statement_filter and not statement_filter(statement_value):
+                    continue
+                components = score_statement_components(
+                    statement=statement_value,
+                    query_keywords=keywords,
+                    keyword_index=self.keywords,
+                    total_statements=total,
+                    weight_base=self.config["weight_base"],
+                    weight_recency=self.config["weight_recency"],
+                    weight_hit_rate=self.config["weight_hit_rate"],
+                    recency_half_life_seconds=self.config["recency_half_life_seconds"],
+                    synonyms=synonyms_by_keyword,
+                    current_time=reference_time,
+                )
+                score = components["score"]
+                if score > 0:
+                    ranked = (score, index, statement_value, components)
+                    if len(scored) < limit:
+                        ranked_bytes = _estimate_working_bytes(ranked)
+                        heapq.heappush(scored, ranked)
+                        scored_bytes += ranked_bytes
+                    elif (score, index) > (scored[0][0], scored[0][1]):
+                        ranked_bytes = _estimate_working_bytes(ranked)
+                        removed = heapq.heapreplace(scored, ranked)
+                        scored_bytes += ranked_bytes - _estimate_working_bytes(removed)
+                    _require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
+        scored.sort(key=lambda value: (value[0], value[1]), reverse=True)
+        _run_cooperative_check(cooperative_check)
+        result = query_result(
+            matches=[(statement_value, score) for score, _, statement_value, _ in scored],
+            keywords=keywords,
+            resolved_query=text,
+        )
+        result["features"] = {statement_value["id"]: components for _, _, statement_value, components in scored}
+        result["diagnostics"] = {
+            "spelling_correction_applied": normalized != uncorrected,
+            "phrase_keywords_enabled": bool(self.config["use_phrase_keywords"]),
+            "synonym_expansion_count": sum(len(values) for values in synonyms_by_keyword.values()),
+            "working_memory_bytes": retained_bytes + scored_bytes,
+        }
+        return result
+
+    def pattern_candidates(
+        self,
+        text: str,
+        *,
+        limit: int = 5,
+        that: str = "",
+        topic: str = "",
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[dict]:
+        """Discover statement-backed pattern candidates without graph fallback or mutation."""
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        if (
+            isinstance(max_working_memory_bytes, bool)
+            or not isinstance(max_working_memory_bytes, int)
+            or max_working_memory_bytes < 0
+        ):
+            raise ValueError("max_working_memory_bytes must be a nonnegative integer")
+        _run_cooperative_check(cooperative_check)
+        processed_text = text
+        sentences = split_sentences(processed_text) or ([processed_text] if processed_text.strip() else [])
+        values = []
+        retained_bytes = _estimate_working_bytes(sentences)
+        _require_working_memory(retained_bytes, max_working_memory_bytes)
+        for sentence in sentences:
+            _run_cooperative_check(cooperative_check)
+            match_text = sentence
+            if self.config["use_spell_correction"]:
+                with self.keyword_lock:
+                    vocabulary = set(self.keywords)
+                match_text = correct_spelling(normalize(sentence), vocabulary)
+            with self.statement_lock:
+                matched = self.pattern_matcher.match(match_text, that=that, topic=topic)
+                _run_cooperative_check(cooperative_check)
+                if not matched:
+                    continue
+                response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = matched
+                selected: dict = {}
+                for statement_value in self.statements:
+                    carries_pattern = (
+                        statement_value["pattern"] == matched_pattern or matched_pattern in statement_value["pattern_aliases"]
+                    )
+                    triple_match = (
+                        carries_pattern and statement_value["topic"] == matched_topic and statement_value["that"] == matched_that
+                    )
+                    if triple_match and (not selected or statement_value["priority"] > selected["priority"]):
+                        selected = statement_value
+                if not selected:
+                    continue
+                discovery = {
+                    "statement": selected,
+                    "response": response_text,
+                    "captured": restore_capture_case(captured, sentence),
+                    "thatstars": list(thatstars),
+                    "topicstars": list(topicstars),
+                    "pattern": matched_pattern,
+                    "topic": matched_topic,
+                    "that": matched_that,
+                }
+                retained_bytes += _estimate_working_bytes(discovery)
+                _require_working_memory(retained_bytes, max_working_memory_bytes)
+                values.append(discovery)
+            if len(values) >= limit:
+                break
+        return values
+
+    def structured_graph_evidence(
+        self,
+        text: str,
+        *,
+        row_limit: int = 5,
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[dict]:
+        """Return bounded raw legacy graph rows without phrasing or pattern fallback."""
+        if not isinstance(row_limit, int) or isinstance(row_limit, bool) or row_limit < 0:
+            raise ValueError("row_limit must be a nonnegative integer")
+        if (
+            isinstance(max_working_memory_bytes, bool)
+            or not isinstance(max_working_memory_bytes, int)
+            or max_working_memory_bytes < 0
+        ):
+            raise ValueError("max_working_memory_bytes must be a nonnegative integer")
+        if not row_limit or not self.graph_client:
+            return []
+        _run_cooperative_check(cooperative_check)
+        rows = []
+        entities = extract_entities(text)
+        if entities:
+            for entity in entities:
+                _run_cooperative_check(cooperative_check)
+                rows.extend(self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]}))
+                _run_cooperative_check(cooperative_check)
+                _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
+                if len(rows) >= row_limit:
+                    break
+        else:
+            keywords = extract_keywords(normalize(text), self.config["stopwords"])
+            for keyword in keywords[:3]:
+                _run_cooperative_check(cooperative_check)
+                rows.extend(self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": keyword}))
+                _run_cooperative_check(cooperative_check)
+                _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
+                if len(rows) >= row_limit:
+                    break
+        return [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
+
     def query(
         self,
         text: str,
@@ -920,104 +1244,21 @@ class Engram:
                         session["previous_response"],
                     )
 
-        # Normalize and extract keywords
-        normalized = normalize(expanded_text)
-
-        # Input cleanup: correct out-of-vocabulary typos toward the store's
-        # own vocabulary, so a near-miss like "abotu" still retrieves.
-        if self.config["use_spell_correction"]:
-            with self.keyword_lock:
-                vocabulary = set(self.keywords)
-            normalized = correct_spelling(normalized, vocabulary)
-
-        keywords = self._extract_keywords(normalized)
-
-        if not keywords:
-            empty_result = query_result(matches=[], keywords=[], resolved_query=expanded_text)
-            return empty_result
-
-        # Expand the candidate search with synonyms if enabled. The synonym
-        # map also feeds scoring, where a synonym-only match earns partial
-        # overlap credit (SYNONYM_OVERLAP_WEIGHT) instead of scoring zero.
-        search_keywords = keywords
-        synonyms_by_keyword: dict[str, tuple] = {}
-        if self.config["use_synonyms"]:
-            search_keywords = expand_with_synonyms(
-                keywords,
-                max_synonyms_per_word=self.config["max_synonyms_per_word"],
-            )
-            for kw in keywords:
-                syns = tuple(s for s in get_synonyms(kw, max_synonyms=self.config["max_synonyms_per_word"]) if s != kw)
-                if syns:
-                    synonyms_by_keyword[kw] = syns
-
-        # Increment query counts for original keywords only
+        discovery = self.query_candidates(expanded_text, limit=limit, statement_filter=statement_filter)
+        keywords = discovery["keywords"]
         with self.keyword_lock:
-            for kw in keywords:
-                if kw in self.keywords:
-                    self.keywords[kw]["query_count"] += 1
-
-        # Find candidates using expanded keywords
-        candidate_ids: set[str] = set()
-        with self.keyword_lock:
-            for kw in search_keywords:
-                if kw in self.keywords:
-                    candidate_ids.update(self.keywords[kw]["statement_ids"])
-
-        if not candidate_ids:
-            no_candidates = query_result(
-                matches=[],
-                keywords=keywords,
-                resolved_query=expanded_text,
-            )
-            return no_candidates
-
-        # Score candidates
-        scored: list[tuple[dict, float, int]] = []
-        with self.statement_lock, self.keyword_lock:
-            total = len(self.statements)
-            for stmt_id in candidate_ids:
-                if stmt_id not in self.statement_index:
-                    continue
-                idx = self.statement_index[stmt_id]
-                stmt = self.statements[idx]
-                if statement_filter and not statement_filter(stmt):
-                    continue
-                score = score_statement(
-                    statement=stmt,
-                    query_keywords=keywords,
-                    keyword_index=self.keywords,
-                    total_statements=total,
-                    weight_base=self.config["weight_base"],
-                    weight_recency=self.config["weight_recency"],
-                    weight_hit_rate=self.config["weight_hit_rate"],
-                    recency_half_life_seconds=self.config["recency_half_life_seconds"],
-                    synonyms=synonyms_by_keyword,
-                )
-                if score > 0:
-                    scored.append((stmt, score, idx))
-
-        # Sort by score descending; break exact ties toward the newer
-        # statement (higher store index) so ranking stays deterministic even
-        # when statement timestamps collide within one clock tick.
-        scored.sort(key=lambda x: (x[1], x[2]), reverse=True)
-        matches = [(stmt, score) for stmt, score, _ in scored[:limit]]
-
-        # Statement-level candidacy stats: each returned match was presented to
-        # the caller, so it counts as a query against that statement. Paired
-        # with record_hit(statement_id=...), this feeds the hit-rate-aware
-        # eviction policies (LRU / LFU / HIT_RATE) and min_hit_rate protection.
+            for keyword in keywords:
+                if keyword in self.keywords:
+                    self.keywords[keyword]["query_count"] += 1
         if record_candidates:
             with self.statement_lock:
-                for stmt, _ in matches:
-                    record_statement_query(stmt)
-
-        result = query_result(
-            matches=matches,
+                for statement_value, _ in discovery["matches"]:
+                    record_statement_query(statement_value)
+        return query_result(
+            matches=discovery["matches"],
             keywords=keywords,
-            resolved_query=expanded_text,
+            resolved_query=discovery["resolved_query"],
         )
-        return result
 
     def pattern_query(
         self,

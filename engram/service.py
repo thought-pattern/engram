@@ -32,10 +32,22 @@ from engram.coordination import (
 from engram.core import Engram
 from engram.eligibility import EligibilityContextFactory, EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
-from engram.identity import ScopedRetrievalKey, ScopeKey
+from engram.identity import QueryIdentity, ScopedRetrievalKey, ScopeKey
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_query
 from engram.repository import TierAdmissionPolicy
+from engram.resolution import QueryFrameBuilder, ResolutionBudget, ResolutionResult
+from engram.resolvers import (
+    ExactResolver,
+    LexicalResolver,
+    PatternResolver,
+    ResolutionAccountingFinalizer,
+    ResolutionOrchestrator,
+    ResolverExecutor,
+    ResolverRegistry,
+    StructuredGraphResolver,
+    SupportSemanticResolver,
+)
 from engram.responses import AcceptedResponseService, LifecycleMutationReason
 from engram.text import normalize
 
@@ -96,6 +108,7 @@ class EngramCore:
         self.store_path = str(Path(store_path).resolve()) if store_path else ""
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
+        self._resolution_requests: dict[str, tuple[str, ResolutionResult]] = {}
         self.lock = threading.RLock()
         self._state = CoreState.RUNNING
         self._durability = DurabilityState.HEALTHY if self.store_path else DurabilityState.DISABLED
@@ -119,6 +132,26 @@ class EngramCore:
                 self.engram.config["eviction_policy"],
                 self.engram.config["min_hit_rate"],
             ),
+        )
+        self._query_frame_builder = QueryFrameBuilder(self.engram, time.monotonic_ns, lambda: datetime.now(UTC))
+        self._resolver_registry = ResolverRegistry(
+            (
+                ExactResolver(self.engram, time.monotonic_ns),
+                PatternResolver(self.engram, time.monotonic_ns),
+                LexicalResolver(self.engram, time.monotonic_ns),
+                StructuredGraphResolver(self.engram, time.monotonic_ns),
+                SupportSemanticResolver(self.engram, time.monotonic_ns),
+            )
+        )
+        self._resolution_accounting = ResolutionAccountingFinalizer(
+            self.engram,
+            self._response_mutations,
+            lambda previous_ids: persistence.synchronize_response_compatibility_views(self.engram, previous_ids),
+        )
+        self._resolution_orchestrator = ResolutionOrchestrator(
+            self._resolver_registry,
+            ResolverExecutor(time.monotonic_ns),
+            self._resolution_accounting,
         )
 
     @classmethod
@@ -193,6 +226,82 @@ class EngramCore:
                 "store_path": str(self.store_path) if self.store_path else "",
                 "components": deepcopy(self._component_status),
             }
+
+    def resolve_request(
+        self,
+        request: str,
+        request_id: str,
+        *,
+        namespace: str = "",
+        context_fingerprint: str = "",
+        identity=(),
+        required_metadata: dict = EMPTY_METADATA,
+        required_source_label: str = "",
+        budget=(),
+        configured_resolvers: tuple[str, ...] = (),
+        accept_exact: bool = False,
+    ) -> ResolutionResult:
+        """Run one transport-neutral bounded resolution pipeline."""
+        with self.lock:
+            self._require_running()
+            self._require_text(request, "request")
+            self._require_text(request_id, "request_id")
+            self._require_string(namespace, "namespace")
+            self._require_string(context_fingerprint, "context_fingerprint")
+            self._require_string(required_source_label, "required_source_label")
+            if identity and not isinstance(identity, QueryIdentity):
+                raise InvalidRequestError("identity must be a QueryIdentity")
+            if budget and not isinstance(budget, ResolutionBudget):
+                raise InvalidRequestError("budget must be a ResolutionBudget")
+            if not isinstance(required_metadata, dict):
+                raise InvalidRequestError("required_metadata must be an object")
+            if not isinstance(configured_resolvers, tuple) or not all(
+                isinstance(name, str) and name for name in configured_resolvers
+            ):
+                raise InvalidRequestError("configured_resolvers must be a tuple of non-empty strings")
+            if not isinstance(accept_exact, bool):
+                raise InvalidRequestError("accept_exact must be a boolean")
+            signature_budget = (budget if isinstance(budget, ResolutionBudget) else ResolutionBudget()).to_dict()
+            signature_budget.pop("started_ns")
+            signature_budget.pop("deadline_ns")
+            signature = self._signature(
+                request=request,
+                namespace=namespace,
+                context_fingerprint=context_fingerprint,
+                identity=identity.to_dict() if isinstance(identity, QueryIdentity) else {},
+                required_metadata=required_metadata,
+                required_source_label=required_source_label,
+                budget=signature_budget,
+                configured_resolvers=list(configured_resolvers),
+                accept_exact=accept_exact,
+            )
+            if request_id in self._resolution_requests:
+                prior_signature, prior_result = self._resolution_requests[request_id]
+                if prior_signature != signature:
+                    raise ConflictError("resolution request_id is associated with different input")
+                return prior_result
+            scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
+            frame = self._query_frame_builder.build(
+                request,
+                scope,
+                identity=identity,
+                required_metadata=required_metadata,
+                required_source_label=required_source_label,
+                diagnostic_seed=request_id,
+                budget=budget,
+            )
+            result, _ = self._resolution_orchestrator.resolve(
+                frame,
+                request_id,
+                configured_names=configured_resolvers,
+                accept_exact=accept_exact,
+            )
+            self._resolution_requests[request_id] = (signature, result)
+            while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
+                evicted_request_id = next(iter(self._resolution_requests))
+                self._resolution_requests.pop(evicted_request_id)
+                self._resolution_accounting.discard(evicted_request_id)
+            return result
 
     def start_conversation(
         self,

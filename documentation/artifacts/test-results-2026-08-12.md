@@ -279,3 +279,58 @@ The fresh benchmark measured exact lookup p95 0.006717/0.006554 ms at 10,000/100
 The recorded official MCP client run called `engram_start`, issued 1,000 sequential `engram_send` calls, then called `engram_inspect` and `engram_stop`. Turn numbering, nonempty response presence, inspection count, and final exchange count all equaled 1,000. Evidence is in `mcp-conversation-1000-turns-2026-08-12.json`; the reproducible runner stores no raw prompt or response bodies.
 
 The complete evidence matrix, remediation narrative, benchmark hashes, and exit assessment are in `section3-conformance-2026-08-12.md`. Operational response for definite and indeterminate checkpoint failures, post-publication recovery, startup corruption, migration quarantine, index repair, capacity, time/epoch exclusions, and retry conflicts is in `section3-recovery-runbook.md`.
+
+## EGR-417 Section 4 unified resolution conformance gate
+
+Implementation and evidence:
+
+- versioned resolution contracts and frame construction in `engram/resolution.py`;
+- pure resolver adapters, deterministic planning, bounded fail-soft execution, centralized accounting, and baseline orchestration in `engram/resolvers.py`;
+- side-effect-free discovery and score components in `engram/core.py` and `engram/scoring.py` with unchanged legacy wrappers;
+- atomic accepted-response query/success finalization in `engram/responses.py` and `engram/mutations.py`;
+- transport-neutral `EngramCore.resolve_request` in `engram/service.py`;
+- `documentation/artifacts/resolution-contract-v1.md` and `documentation/artifacts/section4-conformance-2026-08-12.md`;
+- `scripts/benchmark_resolution.py`; and
+- expanded contract, resolver, core, persistence, accounting, and wrapper tests.
+
+| Command | Result |
+| --- | --- |
+| `python -m pytest tests/test_resolution_contracts.py tests/test_resolvers.py -q` | 52 passed |
+| `python -m pytest -q` | 1,223 passed in 68.48 seconds; no expected failures |
+| `python -m ruff check engram scripts eval tests` | all checks passed |
+| isolated-cache `python -m black --check -q -W 1 -l 132 -t py311 <Section 4 files>` | all files unchanged |
+| `npx --yes pyright@1.1.411` | 0 errors, 0 warnings, 0 informations |
+| `python -m vulture engram scripts eval --min-confidence 65` | no findings |
+| `python -m bandit -q -lll <Section 4 production files>` | no high-severity findings |
+| `python -m compileall -q engram scripts eval tests` | passed |
+| `git diff --check` | passed |
+| `python scripts/benchmark_resolution.py` | all seven gates passed |
+| Section 4 invocation of `scripts/run_section3_mcp_conformance.py` | 1,000/1,000 turns passed; 1,003 protocol calls |
+
+The benchmark measured frame construction p95 1.2112 ms, exact adapter p95 1.0181 ms, lexical adapter p95 48.2692 ms over 1,000 statements, completed/failed executor p95 0.1860/0.1149 ms, resolver-result codec p95 0.9917 ms, and peak traced lexical memory 599,396 bytes. All declared engineering gates passed.
+
+The official MCP client run called the persistent server for 1,000 sequential conversation turns plus start, inspect, and stop. Turn numbering, nonempty response presence, inspection count, and stop exchange count all equaled 1,000; p95 turn latency was 10.6658 ms. Evidence is in `section4-mcp-conversation-1000-turns-2026-08-12.json` and contains no raw prompt or response bodies.
+
+The comprehensive review additionally remediated stale caller deadlines, availability-check exceptions, nested and over-reported resource bounds, complete serialized-result envelope measurement and truncation, a two-receipt accounting crash window, restart replay credit, vector limit pushdown, duplicate preprocessing, leaked compatibility result keys, private matcher access, nested JSON bounds, and every pinned type-check finding. The complete matrix is in `section4-conformance-2026-08-12.md`.
+
+## 13 August 2026 independent Section 4 evaluation remediation
+
+The independent evaluation found six additional correctness and contract gaps. The implementation now determines the final output-budget outcome before accepted-success accounting; checks deadlines cooperatively inside resolver work, rejects late returned results, and bounds retained local working sets; uses bounded, cache-synchronized retry retention with elapsed-independent signatures; enforces lossless `ResolutionResult` state invariants; preserves unavailable resource measurements; and exposes semantic similarity independently from priority, vector weight, and the legacy combined retrieval score. The development plan and tracker now advance to Section 5 rather than describing completed Section 4 work as next.
+
+| Command | Result |
+| --- | --- |
+| `python -m pytest tests/test_resolution_contracts.py tests/test_resolvers.py -q` | 60 passed |
+| `python -m pytest tests/test_concrete_absence.py tests/test_resolution_contracts.py tests/test_resolvers.py -q` | 64 passed |
+| `python -m pytest -q` | 1,231 passed in 75.83 seconds; no expected failures |
+| `python -m ruff check engram scripts eval tests` | all checks passed |
+| isolated-cache `python -m black --check -q -W 1 -l 132 -t py311 <Section 4 files>` | all files unchanged |
+| `npx --yes pyright@1.1.411` | 0 errors, 0 warnings, 0 informations |
+| `python -m vulture <Section 4 production files> --min-confidence 65` | no findings |
+| `python -m bandit -q -lll <Section 4 production files>` | no high-severity findings |
+| `python -m compileall -q engram scripts eval tests` | passed |
+| `git diff --check` | passed |
+| `python scripts/benchmark_resolution.py` | all seven gates passed |
+
+The fresh 200-sample benchmark measured frame construction p95 1.0460 ms, exact adapter p95 1.2379 ms, lexical adapter p95 53.1342 ms over 1,000 statements, completed/failed executor p95 0.2686/0.1475 ms, resolver-result codec p95 0.9209 ms, and peak traced lexical memory 108,950 bytes. The timestamped result is in `section4-benchmark-2026-08-12.json`; all declared engineering gates passed.
+
+The 12 August MCP evidence remains the transport regression for Section 4. Unified resolution is intentionally not exposed on the wire until Section 15, so these remediations do not alter the MCP request path.

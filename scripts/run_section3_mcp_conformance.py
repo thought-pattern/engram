@@ -53,7 +53,11 @@ def _percentile(samples: list[float], fraction: float) -> float:
     return ordered[index]
 
 
-async def _run(turns: int) -> dict:
+async def _run(
+    turns: int,
+    gate: str = "EGR-315 MCP long-conversation conformance",
+    user_id: str = "Section 3 MCP Conformance",
+) -> dict:
     server = create_mcp_server()
     latencies_ms = []
     sources: Counter[str] = Counter()
@@ -70,7 +74,7 @@ async def _run(turns: int) -> dict:
             await client.call_tool(
                 "engram_start",
                 {
-                    "user_id": "Section 3 MCP Conformance",
+                    "user_id": user_id,
                     "initial_bot_text": ".",
                     "seed_path": str(REPOSITORY / "data" / "seed.json"),
                     "random_seed": 315,
@@ -115,7 +119,7 @@ async def _run(turns: int) -> dict:
     finished_at = datetime.now(UTC)
     duration_seconds = time.perf_counter() - started_clock
     return {
-        "gate": "EGR-315 MCP long-conversation conformance",
+        "gate": gate,
         "passed": response_count == turns,
         "minimum_required_turns": MINIMUM_CONFORMANCE_TURNS,
         "requested_turns": turns,
@@ -150,6 +154,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--turns", type=int, default=MINIMUM_CONFORMANCE_TURNS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--gate", default="EGR-315 MCP long-conversation conformance")
+    parser.add_argument("--user-id", default="Section 3 MCP Conformance")
     return parser
 
 
@@ -157,7 +163,7 @@ def main(argv: Sequence[str] = ()) -> int:
     args = _parser().parse_args(argv)
     if args.turns < MINIMUM_CONFORMANCE_TURNS:
         raise ValueError(f"Section 3 conformance requires at least {MINIMUM_CONFORMANCE_TURNS} turns")
-    result = asyncio.run(_run(args.turns))
+    result = asyncio.run(_run(args.turns, args.gate, args.user_id))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)

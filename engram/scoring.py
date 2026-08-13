@@ -118,7 +118,7 @@ def calculate_overlap(
     return overlap
 
 
-def calculate_recency(statement: dict, half_life_seconds: float) -> float:
+def calculate_recency(statement: dict, half_life_seconds: float, current_time=()) -> float:
     """Exponential time-decay recency of a statement's last activity.
 
     1.0 for a statement created or hit this instant, 0.5 one half-life ago,
@@ -134,7 +134,8 @@ def calculate_recency(statement: dict, half_life_seconds: float) -> float:
         Recency score from 0.0 to 1.0.
     """
     last_active = statement["last_hit"] or statement["created_at"]
-    age_seconds = (datetime.now(UTC) - last_active).total_seconds()
+    observed_at = current_time if isinstance(current_time, datetime) else datetime.now(UTC)
+    age_seconds = (observed_at - last_active).total_seconds()
     if age_seconds <= 0:
         return 1.0
     recency = 0.5 ** (age_seconds / half_life_seconds)
@@ -180,6 +181,7 @@ def score_statement(
     weight_hit_rate: float,
     recency_half_life_seconds: float,
     synonyms=(),
+    current_time=(),
 ) -> float:
     """Calculate the calibrated score for a statement against a query.
 
@@ -205,17 +207,59 @@ def score_statement(
     Returns:
         Numeric score (0.0 when the statement does not match; higher = better).
     """
+    return score_statement_components(
+        statement,
+        query_keywords,
+        keyword_index,
+        total_statements,
+        weight_base,
+        weight_recency,
+        weight_hit_rate,
+        recency_half_life_seconds,
+        synonyms,
+        current_time,
+    )["score"]
+
+
+def score_statement_components(
+    statement: dict,
+    query_keywords: list[str],
+    keyword_index: dict[str, dict],
+    total_statements: int,
+    weight_base: float,
+    weight_recency: float,
+    weight_hit_rate: float,
+    recency_half_life_seconds: float,
+    synonyms=(),
+    current_time=(),
+) -> dict[str, float]:
+    """Return the aggregate lexical score and its existing scoring inputs."""
     match = keyword_match_weights(query_keywords, statement["keywords"], synonyms)
     overlap = calculate_overlap(match, keyword_index, total_statements)
-
+    exact_matches = sum(1 for weight in match.values() if weight == 1.0)
+    synonym_matches = sum(1 for weight in match.values() if 0.0 < weight < 1.0)
+    denominator = max(1, len(match))
     if overlap == 0.0:
-        return 0.0
-
-    matched = [kw for kw, weight in match.items() if weight > 0]
-    recency = calculate_recency(statement, recency_half_life_seconds)
+        return {
+            "score": 0.0,
+            "overlap": 0.0,
+            "recency": 0.0,
+            "keyword_hit_rate": 0.0,
+            "priority": float(statement["priority"]),
+            "exact_match_ratio": exact_matches / denominator,
+            "synonym_match_ratio": synonym_matches / denominator,
+        }
+    matched = [keyword for keyword, weight in match.items() if weight > 0]
+    recency = calculate_recency(statement, recency_half_life_seconds, current_time)
     hit_rate = calculate_average_hit_rate(matched, keyword_index)
-
     total_weight = weight_base + weight_recency + weight_hit_rate
     relevance = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate) / total_weight
-    score = relevance + statement["priority"]
-    return score
+    return {
+        "score": relevance + statement["priority"],
+        "overlap": overlap,
+        "recency": recency,
+        "keyword_hit_rate": hit_rate,
+        "priority": float(statement["priority"]),
+        "exact_match_ratio": exact_matches / denominator,
+        "synonym_match_ratio": synonym_matches / denominator,
+    }
