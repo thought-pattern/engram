@@ -1053,14 +1053,14 @@ class ResolutionResult:
         if not isinstance(self.budget, BudgetConsumption):
             raise InvalidRequestError("resolution budget must be a BudgetConsumption")
         if self.outcome == ResolutionOutcome.ANSWER:
-            if not self.selected_candidate_available or self.selected_candidate.source != CandidateSource.EXACT:
-                raise InvalidRequestError("baseline ANSWER requires one selected exact candidate")
+            if not self.selected_candidate_available:
+                raise InvalidRequestError("ANSWER requires one selected candidate")
             if self.response_candidates != (self.selected_candidate,):
-                raise InvalidRequestError("baseline ANSWER response_candidates must contain only the selected candidate")
+                raise InvalidRequestError("ANSWER response_candidates must contain only the selected candidate")
             if self.evidence:
-                raise InvalidRequestError("baseline ANSWER cannot contain top-level evidence")
-            if not self.confidence_available or self.confidence != 1.0:
-                raise InvalidRequestError("baseline ANSWER requires available confidence 1.0")
+                raise InvalidRequestError("ANSWER cannot contain top-level evidence")
+            if not self.confidence_available or self.confidence <= 0.0:
+                raise InvalidRequestError("ANSWER requires available positive confidence")
         else:
             if self.selected_candidate_available:
                 raise InvalidRequestError("only ANSWER can make selected_candidate available")

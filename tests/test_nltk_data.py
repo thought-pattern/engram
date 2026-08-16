@@ -3,7 +3,9 @@
 import os
 
 import nltk
+import pytest
 
+from engram import nltk_data
 from engram.constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
 from engram.nltk_data import configure_path, ensure_nltk_data
 
@@ -59,3 +61,22 @@ class TestEnsure:
         """ensure_nltk_data(download=False) reports missing packages as a list."""
         missing = ensure_nltk_data(download=False)
         assert isinstance(missing, list)
+
+    def test_runtime_resource_check_never_downloads(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The default resource path is offline and reports absence."""
+        calls = []
+        monkeypatch.setattr(nltk_data, "_is_available", lambda _path: False)
+        monkeypatch.setattr(nltk_data.nltk, "download", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+        assert nltk_data.ensure_resource("corpora/missing", "missing") is False
+        assert calls == []
+
+    def test_explicit_bootstrap_can_download(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only an explicit setup-time flag authorizes acquisition."""
+        availability = iter((False, True))
+        calls = []
+        monkeypatch.setattr(nltk_data, "_is_available", lambda _path: next(availability))
+        monkeypatch.setattr(nltk_data.nltk, "download", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+        assert nltk_data.ensure_resource("corpora/missing", "missing", download=True) is True
+        assert len(calls) == 1

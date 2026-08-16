@@ -398,6 +398,7 @@ class TestReadOnlyGraphWiring:
         core = EngramCore(engram)
 
         assert core.status()["components"] == {
+            "nltk": {"enabled": True, "ready": True},
             "graph": {"enabled": True, "ready": True},
             "vector": {"enabled": False, "ready": False},
             "spacy": {"enabled": True, "ready": True},

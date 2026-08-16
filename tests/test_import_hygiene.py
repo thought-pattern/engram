@@ -14,6 +14,7 @@ import ast
 import os
 
 ENGRAM_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engram")
+REPOSITORY_ROOT = os.path.dirname(ENGRAM_DIR)
 
 
 def _engram_files() -> list[str]:
@@ -86,3 +87,21 @@ def test_import_graph_is_acyclic() -> None:
             visit(node)
 
     assert not cycles, "Circular imports detected: " + "; ".join(cycles)
+
+
+def test_requirements_have_one_pin_per_distribution() -> None:
+    """The reproducibility input cannot contain contradictory exact pins."""
+    requirements_path = os.path.join(REPOSITORY_ROOT, "requirements.txt")
+    observed: dict[str, str] = {}
+    duplicates = []
+    with open(requirements_path, encoding="utf-8") as requirements:
+        for raw_line in requirements:
+            line = raw_line.split("#", 1)[0].strip()
+            if not line or "==" not in line:
+                continue
+            name, version = (value.strip() for value in line.split("==", 1))
+            normalized = name.lower().replace("_", "-")
+            if normalized in observed:
+                duplicates.append(f"{normalized}=={observed[normalized]} and {version}")
+            observed[normalized] = version
+    assert not duplicates, "requirements.txt contains duplicate exact pins: " + ", ".join(duplicates)

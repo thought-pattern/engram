@@ -1,6 +1,6 @@
 # Engram Development Plan
 
-**Audience: Internal | Status: Proposed implementation plan | Baseline: 10 August 2026**
+**Audience: Internal | Status: Active implementation plan through Section 5 | Baseline: 10 August 2026 | Updated: 15 August 2026**
 
 Implementation status for this plan is maintained in [ENGRAM-PROJECT-TRACKING.md](ENGRAM-PROJECT-TRACKING.md). This document defines the intended architecture, sequencing, contracts, and acceptance gates. It does not mark proposed work as implemented.
 
@@ -25,9 +25,9 @@ Current implementation context comes from the active [README](README.md), [MCP](
 
 Section 0 reconciled those claims against the active source and recorded the audited revision, discrepancies, tests, and measurements in [the source audit](documentation/baseline/source-audit-2026-08-11.md). Current-state statements below remain baseline descriptions; implementation completion is governed by the tracker and its linked evidence.
 
-Sections 0 through 4 have since been completed under that authority. The executable Section 4 substrate and its reviewed boundaries are published in the [unified resolution contract v1](documentation/artifacts/resolution-contract-v1.md), with requirement, compatibility, benchmark, static-analysis, and 1,000-turn MCP evidence in the [Section 4 conformance report](documentation/artifacts/section4-conformance-2026-08-12.md). The target architecture below remains prospective for Sections 5 onward; completion of the substrate does not claim fusion, response-less Claim packaging, contextual relation planning, or wire exposure.
+Sections 0 through 5 have since been completed under that authority. The executable Section 4 substrate and its reviewed boundaries are published in the [unified resolution contract v1](documentation/artifacts/resolution-contract-v1.md), with requirement, compatibility, benchmark, static-analysis, and 1,000-turn MCP evidence in the [Section 4 conformance report](documentation/artifacts/section4-conformance-2026-08-12.md). Section 5 feature semantics, authoritative revalidation, fusion, ambiguity, and policy boundaries are published in the [candidate-fusion contract v1](documentation/fusion/contracts-v1.md), with verification and benchmark evidence in the [Section 5 conformance report](documentation/fusion/section5-conformance-2026-08-15.md). The target architecture below remains prospective for Sections 6 onward; completed fusion does not claim feedback learning, response-less Claim packaging, contextual relation planning, or wire exposure.
 
-The local Tapestry integration design and trackers were used only to preserve the existing process boundary and acceptance contract. They do not assign Engram work status. Tapestry milestone and implementation authority remains with `tapestry-source/PDC-PROJECT-TRACKING.md`.
+The local Tapestry integration design and trackers were used only to preserve the existing process boundary and acceptance contract. They do not assign Engram work status. In an integration workspace, Tapestry milestone and implementation authority remains with `tapestry-source/PDC-PROJECT-TRACKING.md`; that external source tree is not vendored in this repository.
 
 ## 3. Documented baseline
 
@@ -681,6 +681,10 @@ rejected_stale
 rejected_policy
 ```
 
+One versioned transport-neutral feedback operation should bind each observation to an immutable target: the authoritative request or proposal reference, typed query identity and normalization version, exact `ScopeKey`, canonical bounded constraint fingerprint, statement ID and generation when applicable, observation kind, external Regulator outcome, relevant contract and policy fingerprints, and injected observation time. Candidate observations should consume Section 4's already deduplicated accounting set. Verdict receipts must be durable, idempotent, and conflict-detecting so transport retries, restarts, and checkpoint recovery cannot double-credit an observation. Engram's own ANSWER selection is not an external acceptance label.
+
+Statement history is keyed by statement generation rather than response text. Query-relationship history additionally includes the exact identity, scope, a canonical bounded fingerprint of relevant request constraints, and the version partition. `ScopeKey` already contains namespace and context fingerprint; implementations should not create a looser parallel scope representation. Existing artifact hit and query counters remain accepted-use compatibility statistics unless an explicit migration places them in a named legacy partition; they are not silently reinterpreted as typed Regulator feedback.
+
 The initial application policy should be:
 
 | Outcome | Effect |
@@ -688,30 +692,40 @@ The initial application policy should be:
 | `accepted` | Strengthen the scoped query-to-statement relationship and the statement's reliability history. |
 | `rejected_quality` | Weaken the statement broadly, subject to policy/version partitioning. |
 | `rejected_context` | Weaken only the observed query, scope, or context relationship. Do not retire globally valid content. |
-| `rejected_stale` | Make the candidate ineligible for the applicable validity state and request an authoritative lifecycle decision. |
+| `rejected_stale` | Exclude the targeted generation through feedback state and request an authoritative expected-generation lifecycle decision through Section 3. |
 | `rejected_policy` | Suppress within the relevant namespace or policy version. Do not infer global falsehood. |
 
-Raw counters should be retained for inspection. Derived acceptance features should use minimum sample sizes, aging, and bounded priors so one outcome cannot dominate permanently.
+Raw aggregate counters and bounded time buckets should be retained for inspection rather than an unbounded observation event log. Derived acceptance features should use an injected clock, deterministic aging and compaction, minimum sample sizes, explicit availability, and bounded priors so one outcome cannot dominate permanently. Operational metrics must not use raw query, statement, namespace, or context identifiers as unbounded labels.
 
 After sufficient labeled traffic exists, an offline evaluation may compare the hand-authored formula with logistic regression or a small learning-to-rank model. A learned model must be versioned, locally available, explainable through feature output, and no less conservative on the false-direct-answer gate.
 
 ### 13.2 Negative resolution
 
-A short-lived negative record may memoize that the same scoped request could not be resolved under the same knowledge state:
+A short-lived negative record may memoize that the same scoped request could not be resolved under the same knowledge and resolution-policy state:
 
 ```json
 {
+  "schema_version": 1,
   "query_identity": {},
-  "namespace": "...",
-  "context_fingerprint": "...",
-  "knowledge_epoch": 0,
-  "knowledge_epoch_available": false,
+  "scope": {
+    "schema_version": 1,
+    "namespace": "...",
+    "context_fingerprint": "..."
+  },
+  "constraint_fingerprint": "sha256:...",
+  "knowledge_epoch": 42,
+  "knowledge_epoch_available": true,
+  "resolver_plan_fingerprint": "...",
+  "capability_readiness_fingerprint": "...",
+  "policy_fingerprint": "...",
   "reason": "insufficient_knowledge",
   "expires_at": "..."
 }
 ```
 
-Negative records are not statements, facts, or `IDK` answers. They should be bounded, short-lived, inspectable, and invalidated by relevant knowledge-epoch changes. Policy, safety, transient transport failure, and authorization failure require separate reason handling and should not be generalized into knowledge misses.
+The lookup key includes the typed query identity, exact `ScopeKey`, a canonical bounded constraint fingerprint, an available knowledge epoch, and the normalization, resolver-plan, capability-readiness, and policy fingerprints; `reason` and expiry are record values. The first implementation is memory-only, fixed-TTL, capacity-bounded, deterministically evicted, and non-sliding so repeated hits cannot preserve a miss indefinitely. An unavailable knowledge epoch cannot admit or reuse a negative record. Persistence requires separate benchmark and migration justification.
+
+Negative records are not statements, facts, evidence, or `IDK` answers. Admission is limited to `insufficient_knowledge` after the configured resolver plan completed sufficiently to establish a knowledge miss with required authoritative dependencies available. Policy, safety, authorization, transport, dependency-unavailable, timeout, exhaustion, truncation, and indeterminate failures are not reusable knowledge misses. Lookup occurs only after trusted frame construction and knowledge-state capture; a hit may bypass expensive resolvers but must return a typed bounded MISS with accurate consumption, no candidacy or success accounting, and fail-open behavior that never blocks the ordinary Actor or Tapestry path. Relevant epoch, normalization, resolver-plan, readiness, or policy changes invalidate the record.
 
 ## 14. Evidence-only handoff
 
@@ -1054,8 +1068,8 @@ These accepted decisions constrain Sections 2 and 3. A change requires a superse
 
 ## 27. Immediate next work
 
-The baseline, identity, exact/alias/support index, accepted-response lifecycle, and unified resolution substrate are complete. Section 4 now supplies deterministic transport-neutral frames and result contracts, pure adapters for every existing retrieval path, a cost-aware resolver plan, cooperative deadline and bounded-working-set enforcement, conservative exact-only ANSWER policy, output-budget fitting before success accounting, and bounded retry-safe centralized accounting. Its post-evaluation remediation gate passed contract, resolver, concrete-absence, full-suite, type, static, and benchmark verification.
+The baseline, identity, exact/alias/support index, accepted-response lifecycle, unified resolution substrate, and candidate-fusion policy are complete. Section 4 supplies deterministic transport-neutral frames and result contracts, pure adapters for every existing retrieval path, a cost-aware resolver plan, cooperative deadline and bounded-working-set enforcement, output-budget fitting before success accounting, and bounded retry-safe centralized accounting. Section 5 adds source-specific normalization, authoritative revalidation, deduplication, independent agreement, transparent scoring, ambiguity abstention, and a conservative unfitted policy. Its remediation gate now reserves only post-resolver working memory for fusion and includes the deterministic fusion estimate in complete budget consumption.
 
-The next implementation cycle is Section 5, candidate fusion and ambiguity. It must consume Section 4 candidates without treating unrelated raw scales as comparable. In particular, support-semantic output now exposes raw semantic similarity, configured vector weight, statement priority, and the legacy combined retrieval score separately; Section 5 must define their stable semantics, normalization, deduplication, agreement, eligibility, margin, thresholds, and reason codes before any non-exact candidate may become an ANSWER.
+The next implementation cycle is Section 6, feedback learning and negative resolution. Each track begins with versioned bounded contracts after the common Sections 3 through 5 entry condition. The feedback track fixes immutable targets, exact scope and version keys, durable retry receipts, exactly-once ingestion, statement-generation and scoped query-relationship aggregates, feature-owned persistence and migration, typed outcome effects, deterministic aging, and the bounded `HISTORY` producer. The independent negative-resolution track fixes negative-record identity and conservative admission before adding a memory-only fixed-TTL owner, exact invalidation, and fail-open orchestration integration. Both tracks converge on bounded core inspection and a Section 6 conformance gate. Section 16 evaluation partitions must be established before feedback coefficients, priors, sample floors, or thresholds are empirically selected.
 
-Section 3 retains ownership of feature-level artifact and receipt persistence, migration, and startup derivation. Section 5 owns feature semantics, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 7 owns response-less Claim evidence and packaging; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; and Section 9 owns graph temporal query interpretation, Claim validity, trust, and conflicts. Section 15 owns cross-feature schema/startup orchestration, adapter exposure, authorization, migration and backup operator experience, downgrade and rollback, and operational integration; Section 16 owns release-scale held-out gates.
+Section 3 retains ownership of artifact generations, lifecycle, epoch mutation, accepted-response and mutation-receipt persistence, migration, and startup derivation. Section 4 retains unique candidacy and accepted-success finalization. Section 5 owns the common feature vocabulary, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 6 owns feedback targets and receipts, scoped aggregates, their feature-owned codecs and migration contract, aging, the history producer, negative resolution, and bounded core inspection; Section 7 owns response-less Claim evidence and packaging; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; and Section 9 owns graph temporal query interpretation, Claim validity, trust, and conflicts. Section 15 owns cross-feature schema/startup orchestration, adapter exposure, authorization, migration and backup operator experience, downgrade and rollback, operational telemetry, and deployment; its runtime-acquisition slice is complete and serving paths are offline. Section 16 owns independently partitioned calibration and release-scale held-out gates.

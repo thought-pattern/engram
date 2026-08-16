@@ -77,6 +77,7 @@ from engram.models import (
 )
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
+from engram.nltk_data import ensure_nltk_data
 from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
@@ -317,7 +318,11 @@ class Engram:
             self.config.get(name, False) for name in ("use_spacy_facts", "use_spacy_lemmatization", "use_phrase_keywords")
         )
         spacy_phrasing_enabled = graph_enabled
+        missing_nltk = ensure_nltk_data(download=False)
 
+        if missing_nltk:
+            missing_names = ", ".join(download_name for _, download_name in missing_nltk)
+            raise RuntimeError(f"required NLTK resources are unavailable: {missing_names}")
         if vector_enabled and not graph_enabled:
             raise RuntimeError("vector recall requires graph access to be enabled")
         if graph_enabled and (not self._graph_client or getattr(self._graph_client, "available", True) is False):
@@ -330,6 +335,7 @@ class Engram:
             raise RuntimeError("enabled graph phrasing requires the pre-provisioned spaCy English model")
 
         return {
+            "nltk": {"enabled": True, "ready": True},
             "graph": {"enabled": graph_enabled, "ready": graph_enabled},
             "vector": {"enabled": vector_enabled, "ready": vector_enabled},
             "spacy": {

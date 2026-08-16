@@ -12,6 +12,7 @@ from typing import Protocol, cast
 from engram.artifacts import CachedResponseArtifact, LifecycleState
 from engram.eligibility import EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.identity import ScopedRetrievalKey, ScopeKey
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_hit, record_statement_query
@@ -847,6 +848,11 @@ class ResolverExecutor:
             raise InvalidRequestError("executor clock_ns must be callable")
         self._clock_ns = clock_ns
 
+    @property
+    def clock_ns(self) -> Callable[[], int]:
+        """Expose the injected request clock to post-execution policy stages."""
+        return self._clock_ns
+
     def _lease(self, frame: QueryFrame, ledger: BudgetLedger) -> ResolverBudget:
         consumed = ledger.snapshot()
         started_ns = self._clock_ns()
@@ -1112,6 +1118,11 @@ class ResolutionAccountingFinalizer:
         self._lock = threading.RLock()
         self._requests: dict[str, tuple[str, AccountingFinalization]] = {}
 
+    @property
+    def candidate_authority(self) -> EngramCandidateAuthority:
+        """Return current-state authority bound to the same Engram as accounting."""
+        return EngramCandidateAuthority(self._engram)
+
     @staticmethod
     def _signature(results: tuple[ResolverResult, ...], accepted_statement_id: str) -> str:
         stable_results = []
@@ -1238,21 +1249,30 @@ class ResolutionAccountingFinalizer:
 
 
 class ResolutionOrchestrator:
-    """Conservative Section 4 ANSWER/EVIDENCE/MISS orchestration."""
+    """Section 5 fused ANSWER/EVIDENCE/MISS orchestration."""
 
     def __init__(
         self,
         registry: ResolverRegistry,
         executor: ResolverExecutor,
         accounting: ResolutionAccountingFinalizer,
+        fusion: object = (),
     ) -> None:
         if not isinstance(registry, ResolverRegistry) or not isinstance(executor, ResolverExecutor):
             raise InvalidRequestError("orchestrator registry and executor have invalid types")
         if not isinstance(accounting, ResolutionAccountingFinalizer):
             raise InvalidRequestError("orchestrator accounting has an invalid type")
+        if fusion != () and not isinstance(fusion, CandidateFusionEngine):
+            raise InvalidRequestError("orchestrator fusion has an invalid type")
         self._registry = registry
         self._executor = executor
         self._accounting = accounting
+        self._clock_ns = executor.clock_ns
+        self._fusion = (
+            fusion
+            if isinstance(fusion, CandidateFusionEngine)
+            else CandidateFusionEngine(authority=accounting.candidate_authority, clock_ns=self._clock_ns)
+        )
 
     def resolve(
         self,
@@ -1270,48 +1290,29 @@ class ResolutionOrchestrator:
         for result in execution.results:
             candidates.extend(result.candidates)
             evidence.extend(result.evidence)
-        unique_candidates = []
-        seen_candidates = set()
-        for candidate in candidates:
-            if candidate.statement_id in seen_candidates:
-                continue
-            seen_candidates.add(candidate.statement_id)
-            unique_candidates.append(candidate)
-        unique_evidence = []
-        seen_evidence = set()
-        for reference in evidence:
-            if reference.evidence_id in seen_evidence:
-                continue
-            seen_evidence.add(reference.evidence_id)
-            unique_evidence.append(reference)
-        exact = tuple(candidate for candidate in unique_candidates if candidate.source == CandidateSource.EXACT)
-        if len(exact) == 1 and execution.exact_short_circuited:
-            outcome = ResolutionOutcome.ANSWER
-            selected = exact[0]
-            selected_available = True
-            response_candidates = (selected,)
-            reason_codes = ("exact_unique_eligible", "accounting_finalized")
-            confidence = 1.0
-            confidence_available = True
-            accepted_statement_id = selected.statement_id if accept_exact else ""
-        elif unique_candidates or unique_evidence:
-            outcome = ResolutionOutcome.EVIDENCE
-            selected = EMPTY_CANDIDATE
-            selected_available = False
-            response_candidates = tuple(unique_candidates)
-            reason_codes = ("non_answer_output", "accounting_finalized")
-            confidence = 0.0
-            confidence_available = False
-            accepted_statement_id = ""
-        else:
-            outcome = ResolutionOutcome.MISS
-            selected = EMPTY_CANDIDATE
-            selected_available = False
-            response_candidates = ()
-            reason_codes = ("no_usable_output", "accounting_finalized")
-            confidence = 0.0
-            confidence_available = False
-            accepted_statement_id = ""
+        fusion_memory_limit = max(
+            0,
+            frame.budget.max_working_memory_bytes - execution.consumption.working_memory_bytes,
+        )
+        decision = self._fusion.decide(
+            frame,
+            tuple(candidates),
+            tuple(evidence),
+            working_memory_limit=fusion_memory_limit,
+            working_memory_limit_available=True,
+        )
+        outcome = decision.outcome
+        selected = decision.selected_candidate
+        selected_available = decision.selected_candidate_available
+        response_candidates = decision.response_candidates
+        reason_codes = (*decision.reason_codes, "accounting_finalized")
+        confidence = decision.confidence
+        confidence_available = decision.confidence_available
+        accepted_statement_id = (
+            selected.statement_id
+            if outcome == ResolutionOutcome.ANSWER and selected.source == CandidateSource.EXACT and accept_exact
+            else ""
+        )
         preview_ids = tuple(sorted({observation.statement_id for result in execution.results for observation in result.accounting}))
         accounting_preview = AccountingFinalization(
             preview_ids,
@@ -1324,10 +1325,11 @@ class ResolutionOrchestrator:
             "diagnostic_id": frame.diagnostic_id,
             "plan": plan.to_dict(),
             "reservations": [reservation.to_dict() for reservation in execution.reservations],
+            "fusion": decision.report,
             "accounting": accounting_preview.to_dict(),
         }
         resolver_results = execution.results
-        response_evidence = tuple(unique_evidence)
+        response_evidence = decision.evidence
 
         def make_result(consumption: BudgetConsumption) -> ResolutionResult:
             return ResolutionResult(
@@ -1349,6 +1351,11 @@ class ResolutionOrchestrator:
             reason_codes = (*reason_codes, "output_truncated")
             frame_diagnostics = {
                 "diagnostic_id": frame.diagnostic_id,
+                "fusion": {
+                    "policy_version": self._fusion.policy.policy_version,
+                    "candidate_count": decision.report["candidate_count"],
+                    "output_truncated": True,
+                },
                 "accounting": {
                     "candidate_count": len(accounting_preview.candidate_statement_ids),
                     "accepted_present": False,
@@ -1400,9 +1407,22 @@ class ResolutionOrchestrator:
         exhausted = set(execution.consumption.exhausted_dimensions)
         if "output_truncated" in reason_codes:
             exhausted.add("output_bytes")
+        fusion_exhaustion = decision.report.get("budget_exhausted", "")
+        if fusion_exhaustion == "fusion_deadline_exhausted":
+            exhausted.add("fusion_deadline")
+        if fusion_exhaustion == "fusion_memory_exhausted":
+            exhausted.add("working_memory_bytes")
+        elapsed_ns = execution.consumption.elapsed_ns
+        if frame.budget.started_ns:
+            current_ns = self._clock_ns()
+            if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
+                raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
+            elapsed_ns = max(elapsed_ns, max(0, current_ns - frame.budget.started_ns))
         consumption = replace(
             execution.consumption,
+            elapsed_ns=elapsed_ns,
             output_bytes=0,
+            working_memory_bytes=execution.consumption.working_memory_bytes + decision.working_memory_bytes,
             exhausted_dimensions=tuple(sorted(exhausted)),
         )
         for _ in range(4):

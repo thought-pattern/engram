@@ -31,7 +31,7 @@ There is no resolver-generated lock file. `pyproject.toml` contains compatible r
 | Package | Declared runtime value | Installed value | Finding |
 | --- | --- | --- | --- |
 | PyYAML | `>=6.0.3`; pin `6.0.3` | 6.0.3 | Aligned |
-| NumPy | transitive; pins `2.4.4` and `2.5.1` | 2.2.6 | Defect: contradictory pins and environment drift |
+| NumPy | tested pin `2.2.6` | 2.2.6 | Aligned by the 15 August packaging remediation; duplicate exact pins are regression-tested |
 | sentence-transformers | `>=5.6.0`; pin `5.6.0` | 5.7.0 | Environment drift; model construction is eager when vector recall is enabled |
 | NLTK | `>=3.10.1`; pin `3.10.1` | 3.10.2 | Environment drift |
 | spaCy | `>=3.8.14`; pin `3.8.15` | 3.8.15 | Aligned |
@@ -72,7 +72,7 @@ The remediation audit found that `engram/spacy_setup.py:get_nlp` was still first
 | ID | Discrepancy | Evidence | Disposition |
 | --- | --- | --- | --- |
 | BASE-001 | Source documentation reported branch `pdc-3` and Schema 3.5; the active branch is `graph` and schema is 3.8. | Git metadata and `schema.cypher` | README and gRPC schema references corrected to 3.8; the tracker retains the reported baseline as historical input. |
-| BASE-002 | `requirements.txt` has contradictory NumPy pins and differs from installed sentence-transformers/NLTK versions; dev requirements also drift. | Dependency table above | Open packaging defect; do not describe the file as a lock. |
+| BASE-002 | `requirements.txt` had contradictory NumPy pins and differs from installed sentence-transformers/NLTK versions; dev requirements also drift. | Dependency table above and `test_requirements_have_one_pin_per_distribution` | Duplicate NumPy pins resolved on 2026-08-15 with one tested `2.2.6` pin. The file remains a maintained exact-pin input rather than a resolver-generated lock; unrelated environment drift remains visible in this historical audit. |
 | BASE-003 | Equal-keyword `when`/`where` learned responses replaced one another. | Resolved by EGR-308 through artifact base commit and exact scoped proposal lookup; the regression is a normal passing test. | Resolved 2026-08-12. |
 | BASE-004 | No retrieval aliases, normalization version, or scoped exact index exists. | Passing characterization tests | Planned by §§1-2. |
 | BASE-005 | Tier gates retirement and lifecycle/validity/supersession fields are absent. | Passing characterization test | Planned by §3. |

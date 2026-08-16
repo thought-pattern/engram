@@ -32,6 +32,7 @@ from engram.coordination import (
 from engram.core import Engram
 from engram.eligibility import EligibilityContextFactory, EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
+from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.identity import QueryIdentity, ScopedRetrievalKey, ScopeKey
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_query
@@ -152,6 +153,7 @@ class EngramCore:
             self._resolver_registry,
             ResolverExecutor(time.monotonic_ns),
             self._resolution_accounting,
+            CandidateFusionEngine(authority=EngramCandidateAuthority(self.engram), clock_ns=time.monotonic_ns),
         )
 
     @classmethod

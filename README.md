@@ -66,9 +66,10 @@ python -m spacy download en_core_web_sm
 ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
 maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon). They are managed
 centrally by `engram/nltk_data.py`, which stores them in `data/nltk_data`
-(gitignored) and puts that directory first on NLTK's search path. If a dataset
-is missing at runtime it is fetched on demand as a fallback, but pre-fetching
-keeps normal operation offline and fast.
+(gitignored) and puts that directory first on NLTK's search path. Startup
+preflight fails with a bounded readiness error when a required dataset is
+missing. Serving and request paths never download data; acquisition is
+available only through the explicit setup command above.
 
 ## Quick Start
 

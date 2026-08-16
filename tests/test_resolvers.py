@@ -11,6 +11,7 @@ from engram.artifacts import ArtifactProvenance, ArtifactStatistics, CachedRespo
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError
+from engram.fusion import PERMISSIVE_CANDIDATE_AUTHORITY, CandidateFusionEngine, FusionPolicyReason
 from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
 from engram.repository import ArtifactRepository
 from engram.resolution import (
@@ -137,13 +138,14 @@ def candidate(
     source: CandidateSource = CandidateSource.LEXICAL,
     response: str = "Candidate response",
     evidence: tuple[EvidenceReference, ...] = (),
+    features: Mapping[str, float] = {"score": 1.0},
 ) -> Candidate:
     return Candidate(
         candidate_id=f"candidate:{source.value}:{statement_id}",
         statement_id=statement_id,
         response=response,
         source=source,
-        features=FeatureSet(values={"score": 1.0}),
+        features=FeatureSet(values=features),
         evidence=evidence,
         scope=ScopeKey(),
         lifecycle=LifecycleState.ACTIVE,
@@ -768,6 +770,7 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
         ResolverRegistry((lexical,)),
         ResolverExecutor(lambda: START_NS),
         evidence_accounting,
+        CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS),
     )
     evidence_result, _ = evidence_orchestrator.resolve(query_frame, "request-evidence")
     empty = FakeResolver("empty", ResolverResult("empty", ResolverState.COMPLETED))
@@ -780,10 +783,139 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
 
     assert evidence_result.outcome == ResolutionOutcome.EVIDENCE
     assert evidence_result.selected_candidate_available is False
-    assert evidence_result.response_candidates == (lexical_candidate,)
+    assert tuple(candidate.statement_id for candidate in evidence_result.response_candidates) == (lexical_candidate.statement_id,)
+    assert evidence_result.response_candidates[0].features.values["lexical"] == 1.0
     assert miss_result.outcome == ResolutionOutcome.MISS
     assert miss_result.response_candidates == ()
     assert miss_result.evidence == ()
+
+
+def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit_acceptance() -> None:
+    engine = Engram()
+    statement_id = engine.store("Candidate response")
+    reference = EvidenceReference("claim-fused", "semantic", EvidenceKind.SUPPORT, ScopeKey())
+    lexical_candidate = candidate(
+        statement_id,
+        source=CandidateSource.LEXICAL,
+        features={"lexical_score": 0.95},
+    )
+    semantic_candidate = candidate(
+        statement_id,
+        source=CandidateSource.SUPPORT_SEMANTIC,
+        evidence=(reference,),
+        features={"semantic_score": 0.92, "support_coverage": 1.0},
+    )
+    observation = AccountingObservation(statement_id, ("candidate",))
+    failed = FakeResolver("failed", ResolverResult("failed", ResolverState.COMPLETED), error=True)
+    lexical = FakeResolver(
+        "lexical",
+        ResolverResult(
+            "lexical",
+            ResolverState.COMPLETED,
+            candidates=(lexical_candidate,),
+            accounting=(observation,),
+        ),
+    )
+    semantic = FakeResolver(
+        "semantic",
+        ResolverResult(
+            "semantic",
+            ResolverState.COMPLETED,
+            candidates=(semantic_candidate,),
+            accounting=(observation,),
+        ),
+    )
+    orchestrator = ResolutionOrchestrator(
+        ResolverRegistry((failed, lexical, semantic)),
+        ResolverExecutor(lambda: START_NS),
+        ResolutionAccountingFinalizer(engine),
+    )
+    query_frame = frame(engine, namespace="")
+
+    result, first = orchestrator.resolve(query_frame, "request-fused", accept_exact=True)
+    replay_result, replay = orchestrator.resolve(query_frame, "request-fused", accept_exact=True)
+
+    assert result.outcome == ResolutionOutcome.ANSWER
+    assert replay_result.selected_candidate == result.selected_candidate
+    assert [value.state for value in result.resolver_results] == [
+        ResolverState.FAILED,
+        ResolverState.COMPLETED,
+        ResolverState.COMPLETED,
+    ]
+    assert first.candidate_statement_ids == (statement_id,)
+    assert first.accepted_statement_id == ""
+    assert first.success_applied is False
+    assert replay.idempotent is True
+    assert engine.get_statement(statement_id)["query_count"] == 1
+    assert engine.get_statement(statement_id)["hit_count"] == 0
+
+
+def test_fusion_deadline_exhaustion_is_typed_in_complete_resolution_budget() -> None:
+    engine = Engram()
+    query_frame = frame(engine, namespace="")
+    value = candidate(features={"lexical_score": 0.9})
+    resolver = FakeResolver(
+        "lexical",
+        ResolverResult(
+            "lexical",
+            ResolverState.COMPLETED,
+            candidates=(value,),
+            accounting=(AccountingObservation(value.statement_id),),
+        ),
+    )
+    orchestrator = ResolutionOrchestrator(
+        ResolverRegistry((resolver,)),
+        ResolverExecutor(lambda: START_NS),
+        ResolutionAccountingFinalizer(engine),
+        CandidateFusionEngine(
+            authority=PERMISSIVE_CANDIDATE_AUTHORITY,
+            clock_ns=lambda: query_frame.budget.deadline_ns,
+        ),
+    )
+
+    result, finalization = orchestrator.resolve(query_frame, "request-fusion-deadline")
+
+    assert result.outcome == ResolutionOutcome.MISS
+    assert FusionPolicyReason.FUSION_DEADLINE_EXHAUSTED.value in result.reason_codes
+    assert "fusion_deadline" in result.budget.exhausted_dimensions
+    assert finalization.candidate_statement_ids == (value.statement_id,)
+    assert finalization.success_applied is False
+
+
+def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption() -> None:
+    engine = Engram()
+    query_frame = frame(engine, namespace="")
+    value = candidate(features={"lexical_score": 0.9})
+    raw = ResolverResult(
+        "lexical",
+        ResolverState.COMPLETED,
+        candidates=(value,),
+        accounting=(AccountingObservation(value.statement_id),),
+    )
+    executor = ResolverExecutor(lambda: START_NS)
+    probe_resolver = FakeResolver("lexical", raw)
+    probe_execution = executor.execute(query_frame, ResolverRegistry((probe_resolver,)).plan(query_frame))
+    fusion = CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS)
+    fusion_required = fusion.decide(query_frame, (value,)).working_memory_bytes
+    total_limit = probe_execution.consumption.working_memory_bytes + fusion_required - 1
+    constrained_frame = replace(
+        query_frame,
+        budget=replace(query_frame.budget, max_working_memory_bytes=total_limit),
+    )
+    orchestrator = ResolutionOrchestrator(
+        ResolverRegistry((FakeResolver("lexical", raw),)),
+        executor,
+        ResolutionAccountingFinalizer(engine),
+        fusion,
+    )
+
+    result, finalization = orchestrator.resolve(constrained_frame, "request-fusion-memory")
+
+    assert result.outcome == ResolutionOutcome.MISS
+    assert FusionPolicyReason.FUSION_MEMORY_EXHAUSTED.value in result.reason_codes
+    assert "working_memory_bytes" in result.budget.exhausted_dimensions
+    assert result.budget.working_memory_bytes == total_limit
+    assert finalization.success_applied is False
 
 
 def test_complete_result_serialization_obeys_and_reports_output_budget() -> None:
@@ -832,6 +964,7 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
+        CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS),
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-payload")

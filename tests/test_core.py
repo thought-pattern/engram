@@ -15,6 +15,17 @@ from engram.models import record_statement_hit, record_statement_query, session_
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
+def test_component_preflight_requires_offline_nltk_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("engram.core.ensure_nltk_data", lambda download=False: [("corpora/missing", "missing")])
+
+    with pytest.raises(ValueError, match="required NLTK resources are unavailable: missing"):
+        Engram()
+
+
+def test_component_preflight_reports_nltk_readiness() -> None:
+    assert Engram().component_status["nltk"] == {"enabled": True, "ready": True}
+
+
 class TestEngramStore:
     """Tests for statement storage."""
 

@@ -258,9 +258,12 @@ def test_resolution_answer_codec_and_invariants() -> None:
     selected = result.to_dict()["selected_candidate"]
     assert isinstance(selected, dict)
     assert selected["response"] == candidate.response
-    with pytest.raises(InvalidRequestError, match="selected exact"):
-        replace(result, selected_candidate=replace(candidate, source=CandidateSource.LEXICAL))
-    with pytest.raises(InvalidRequestError, match="confidence 1.0"):
+    lexical = replace(candidate, source=CandidateSource.LEXICAL)
+    fused = replace(result, selected_candidate=lexical, response_candidates=(lexical,), confidence=0.81)
+    assert ResolutionResult.from_json(fused.to_json()) == fused
+    with pytest.raises(InvalidRequestError, match="only the selected"):
+        replace(result, selected_candidate=lexical)
+    with pytest.raises(InvalidRequestError, match="positive confidence"):
         replace(result, confidence=0.25, confidence_available=False)
     with pytest.raises(InvalidRequestError, match="top-level evidence"):
         replace(result, evidence=(_evidence(),))

@@ -1,0 +1,128 @@
+{
+  "acceptance": [
+    {
+      "expected": "ANSWER",
+      "scenario": "exact",
+      "section4_baseline": "ANSWER",
+      "section5_fusion_v1": "ANSWER"
+    },
+    {
+      "expected": "ANSWER",
+      "scenario": "reinforced",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "ANSWER"
+    },
+    {
+      "expected": "EVIDENCE",
+      "scenario": "ambiguous",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "EVIDENCE"
+    },
+    {
+      "expected": "EVIDENCE",
+      "scenario": "unsupported",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "EVIDENCE"
+    },
+    {
+      "expected": "MISS",
+      "scenario": "noise",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "MISS"
+    },
+    {
+      "expected": "MISS",
+      "scenario": "empty",
+      "section4_baseline": "MISS",
+      "section5_fusion_v1": "MISS"
+    }
+  ],
+  "all_gates_passed": true,
+  "before_after_reinforced_pair": {
+    "section4_baseline": {
+      "max_ms": 0.0043,
+      "p50_ms": 0.0016,
+      "p95_ms": 0.0019
+    },
+    "section5_fusion_v1": {
+      "max_ms": 12.3161,
+      "p50_ms": 2.7805999999999997,
+      "p95_ms": 4.8659
+    }
+  },
+  "benchmark_version": "section5-fusion-benchmark-v1.1",
+  "environment": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.2"
+  },
+  "gates": {
+    "acceptance_scenarios_correct": true,
+    "hundred_candidates_p95_under_150_ms": true,
+    "reinforced_p95_under_5_ms": true,
+    "thousand_candidates_estimate_within_frame_budget": true,
+    "thousand_candidates_p95_under_1250_ms": true,
+    "thousand_candidates_peak_under_64_mib": true
+  },
+  "policy": {
+    "ambiguity_margin": 0.12,
+    "answer_threshold": 0.78,
+    "evidence_threshold": 0.35,
+    "formula_version": 1,
+    "max_report_candidates": 8,
+    "minimum_independent_sources": 2,
+    "policy_version": "fusion-v1.0.0",
+    "require_support_for_non_exact": true,
+    "schema_version": 1,
+    "weights": {
+      "agreement": 0.9,
+      "authority": 0.5,
+      "entity": 0.4,
+      "exact": 1.0,
+      "freshness": 0.2,
+      "history": 0.2,
+      "lexical": 1.0,
+      "margin": 0.0,
+      "object_type": 0.3,
+      "pattern": 0.75,
+      "relation": 0.5,
+      "semantic": 1.0,
+      "support": 0.8
+    }
+  },
+  "policy_provenance": {
+    "empirical_calibration_owner": "Section 16",
+    "fixture_authority": "explicit_permissive_conformance_only",
+    "selection": "hand_authored_conservative_unfitted",
+    "unit_or_conformance_fixtures_used_for_parameter_selection": false
+  },
+  "recorded_at": "2026-08-15",
+  "scaling": {
+    "1": {
+      "max_ms": 6.5271,
+      "p50_ms": 1.8422,
+      "p95_ms": 3.1501,
+      "samples": 200
+    },
+    "10": {
+      "max_ms": 17.5795,
+      "p50_ms": 12.71085,
+      "p95_ms": 15.3843,
+      "samples": 200
+    },
+    "100": {
+      "max_ms": 289.5612,
+      "p50_ms": 91.03774999999999,
+      "p95_ms": 99.4548,
+      "samples": 100
+    },
+    "1000": {
+      "max_ms": 1162.6054,
+      "p50_ms": 914.10755,
+      "p95_ms": 1161.5992,
+      "samples": 20
+    }
+  },
+  "schema_version": 1,
+  "thousand_candidates_fusion_estimated_bytes": 3580777,
+  "thousand_candidates_peak_bytes": 5808561
+}

@@ -1,0 +1,53 @@
+{
+  "completed_turns": 1000,
+  "duration_seconds": 10.781792,
+  "engram_version": "1.1.11",
+  "finished_at": "2026-08-15T08:04:48.491049+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-510 Section 5 MCP long-conversation conformance",
+  "inspect": {
+    "history_size": 10,
+    "turn_count": 1000,
+    "user_id": "Section 5 MCP Conformance"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "sources": {
+    "cache": 100,
+    "pattern": 900
+  },
+  "started_at": "2026-08-15T08:04:37.719044+00:00",
+  "stop_summary": {
+    "catch_all_turns": 400,
+    "exchanges": 1000,
+    "learned_statements": 0,
+    "learned_unique_texts": 0,
+    "sources": {
+      "cache": 100,
+      "pattern": 900
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_latency_ms": {
+    "maximum": 425.9379,
+    "minimum": 2.1016,
+    "p50": 4.3597,
+    "p95": 10.7685
+  }
+}
