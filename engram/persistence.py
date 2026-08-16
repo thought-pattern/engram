@@ -20,6 +20,7 @@ from engram.coordination import CoordinatedResponseState
 from engram.core import Engram
 from engram.eligibility import NamespaceEpochState
 from engram.errors import InvalidRequestError
+from engram.feedback import FeedbackState, FeedbackStore
 from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
 from engram.models import (
     keyword_entry,
@@ -174,6 +175,28 @@ def save_response_state(engram, response_state: CoordinatedResponseState, path) 
     _write_json_atomic(path, to_dict_with_response_state(engram, response_state))
 
 
+def to_dict_with_feedback_state(engram, feedback_state: FeedbackState) -> dict:
+    """Serialize a complete off-live feedback candidate with current Engram state."""
+
+    if not isinstance(feedback_state, FeedbackState):
+        raise InvalidRequestError("feedback_state candidate must be a FeedbackState")
+    state = to_dict(engram)
+    state["feedback_state"] = feedback_state.to_dict()
+    return state
+
+
+def save_feedback_state(engram, feedback_state: FeedbackState, path) -> None:
+    """Atomically checkpoint one complete feedback candidate."""
+
+    _write_json_atomic(path, to_dict_with_feedback_state(engram, feedback_state))
+
+
+def load_feedback_state(path, config: dict = EMPTY_CONFIG) -> FeedbackState:
+    """Load durable feature-owned feedback state."""
+
+    return load_engram(path, config=config).feedback_store.snapshot()
+
+
 def coordinated_response_state(engram) -> CoordinatedResponseState:
     """Capture the complete authoritative response state from one loaded Engram."""
 
@@ -254,6 +277,7 @@ def to_dict(engram) -> dict:
             "keywords": {kw: keyword_entry_to_dict(entry) for kw, entry in engram.keywords.items()},
             "sessions": [session_to_dict(s) for s in engram.sessions.values()],
             "response_state": _response_state_to_dict(engram),
+            "feedback_state": engram.feedback_store.snapshot().to_dict(),
         }
         return state
 
@@ -666,6 +690,12 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         if "response_state" not in data:
             raise InvalidRequestError("persistence v2 requires response_state")
         _load_response_state(instance, data["response_state"])
+    if "feedback_state" in data:
+        instance.feedback_store = FeedbackStore(FeedbackState.from_dict(data["feedback_state"]))
+    else:
+        # Existing files deliberately leave typed Regulator feedback unavailable;
+        # legacy query/hit statistics are not reinterpreted as external labels.
+        instance.feedback_store = FeedbackStore()
     _install_response_compatibility_views(instance)
 
     # The legacy Engram index remains rebuildable compatibility state. The

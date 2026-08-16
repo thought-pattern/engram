@@ -12,10 +12,13 @@ import json
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from engram import persistence, sessions
@@ -32,12 +35,35 @@ from engram.coordination import (
 from engram.core import Engram
 from engram.eligibility import EligibilityContextFactory, EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
-from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
+from engram.feedback import (
+    FeedbackObservation,
+    FeedbackObservationKind,
+    FeedbackOutcome,
+    FeedbackReferenceKind,
+    FeedbackState,
+    LifecycleHandoffStatus,
+    NegativeResolutionKey,
+    NegativeResolutionStore,
+    canonical_fingerprint,
+    canonical_utc,
+    constraint_fingerprint,
+)
+from engram.fusion import DEFAULT_FUSION_POLICY, CandidateFusionEngine, EngramCandidateAuthority, policy_fingerprint
 from engram.identity import QueryIdentity, ScopedRetrievalKey, ScopeKey
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_query
 from engram.repository import TierAdmissionPolicy
-from engram.resolution import QueryFrameBuilder, ResolutionBudget, ResolutionResult
+from engram.resolution import (
+    EMPTY_CANDIDATE,
+    BudgetConsumption,
+    QueryFrame,
+    QueryFrameBuilder,
+    ResolutionBudget,
+    ResolutionOutcome,
+    ResolutionResult,
+    ResolverResult,
+    ResolverState,
+)
 from engram.resolvers import (
     ExactResolver,
     LexicalResolver,
@@ -102,14 +128,18 @@ class EngramCore:
         store_path: str = "",
         *,
         checkpoint_on_mutation: bool = True,
+        clock: object = (),
     ) -> None:
         if not isinstance(checkpoint_on_mutation, bool):
             raise InvalidRequestError("checkpoint_on_mutation must be a boolean")
+        if clock != () and not callable(clock):
+            raise InvalidRequestError("clock must be callable")
         self.engram = engram or Engram()
         self.store_path = str(Path(store_path).resolve()) if store_path else ""
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
-        self._resolution_requests: dict[str, tuple[str, ResolutionResult]] = {}
+        self._resolution_requests: dict[str, dict[str, object]] = {}
+        self._clock: Callable[[], datetime] = cast(Callable[[], datetime], clock) if callable(clock) else lambda: datetime.now(UTC)
         self.lock = threading.RLock()
         self._state = CoreState.RUNNING
         self._durability = DurabilityState.HEALTHY if self.store_path else DurabilityState.DISABLED
@@ -117,6 +147,7 @@ class EngramCore:
         self._last_checkpoint_at = ""
         self._last_persistence_error = ""
         self._component_status = deepcopy(self.engram.component_status)
+        self._negative_resolutions = NegativeResolutionStore()
         self._reset_regulated_state()
         self._response_coordinator = AtomicMutationCoordinator(
             self.engram.response_repository,
@@ -125,6 +156,7 @@ class EngramCore:
             checkpoint_configured=bool(self.store_path and self.checkpoint_on_mutation),
             checkpoint=self._checkpoint_response_state,
             recovery_loader=self._recover_response_state,
+            publication_hook=self._invalidate_negative_for_response_state,
         )
         self._response_mutations = AcceptedResponseService(
             self._response_coordinator,
@@ -134,7 +166,7 @@ class EngramCore:
                 self.engram.config["min_hit_rate"],
             ),
         )
-        self._query_frame_builder = QueryFrameBuilder(self.engram, time.monotonic_ns, lambda: datetime.now(UTC))
+        self._query_frame_builder = QueryFrameBuilder(self.engram, time.monotonic_ns, self._clock)
         self._resolver_registry = ResolverRegistry(
             (
                 ExactResolver(self.engram, time.monotonic_ns),
@@ -149,12 +181,24 @@ class EngramCore:
             self._response_mutations,
             lambda previous_ids: persistence.synchronize_response_compatibility_views(self.engram, previous_ids),
         )
+        fusion_policy_value = policy_fingerprint(DEFAULT_FUSION_POLICY)
         self._resolution_orchestrator = ResolutionOrchestrator(
             self._resolver_registry,
             ResolverExecutor(time.monotonic_ns),
             self._resolution_accounting,
-            CandidateFusionEngine(authority=EngramCandidateAuthority(self.engram), clock_ns=time.monotonic_ns),
+            CandidateFusionEngine(
+                policy=DEFAULT_FUSION_POLICY,
+                authority=EngramCandidateAuthority(
+                    self.engram,
+                    self.engram.feedback_store,
+                    fusion_policy_value,
+                ),
+                clock_ns=time.monotonic_ns,
+            ),
         )
+
+    def _invalidate_negative_for_response_state(self, state: CoordinatedResponseState) -> None:
+        self._negative_resolutions.invalidate_epoch_snapshot(state.namespace_epochs)
 
     @classmethod
     def open(
@@ -229,6 +273,311 @@ class EngramCore:
                 "components": deepcopy(self._component_status),
             }
 
+    @staticmethod
+    def _feedback_request_id(kind: str, request_id: str) -> str:
+        digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        return f"feedback:{kind}:sha256:{digest}"
+
+    def _candidate_generation(self, statement_id: str, result: ResolutionResult) -> tuple[int, bool]:
+        artifact = self.engram.response_repository.snapshot().artifacts.get(statement_id)
+        if artifact:
+            return artifact.generation, True
+        for resolver_result in result.resolver_results:
+            for candidate in resolver_result.candidates:
+                if candidate.statement_id != statement_id:
+                    continue
+                generation = candidate.provenance.get("generation", 0)
+                if isinstance(generation, int) and not isinstance(generation, bool) and generation > 0:
+                    return generation, True
+        return 0, False
+
+    def _feedback_observations(
+        self,
+        frame: QueryFrame,
+        result: ResolutionResult,
+        statement_ids: tuple[str, ...],
+        *,
+        reference_kind: FeedbackReferenceKind,
+        reference_id: str,
+        kind: FeedbackObservationKind,
+        outcome: FeedbackOutcome,
+        observed_at: str,
+        reason: str = "",
+    ) -> tuple[FeedbackObservation, ...]:
+        policy_value = policy_fingerprint(self._resolution_orchestrator._fusion.policy)
+        constraint = constraint_fingerprint(
+            frame.expected_object_type.value,
+            frame.required_metadata,
+            frame.required_source_label,
+        )
+        observations = []
+        for statement_id in statement_ids:
+            generation, generation_available = self._candidate_generation(statement_id, result)
+            observations.append(
+                FeedbackObservation(
+                    reference_kind=reference_kind,
+                    reference_id=reference_id,
+                    kind=kind,
+                    outcome=outcome,
+                    query_identity=frame.identity,
+                    scope=frame.scope,
+                    constraint_fingerprint=constraint,
+                    statement_id=statement_id,
+                    generation=generation,
+                    generation_available=generation_available,
+                    policy_fingerprint=policy_value,
+                    observed_at=observed_at,
+                    reason=reason,
+                )
+            )
+        return tuple(observations)
+
+    def _apply_feedback(
+        self,
+        request_id: str,
+        observations: tuple[FeedbackObservation, ...],
+        lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
+    ) -> dict[str, object]:
+        candidate = self.engram.feedback_store.prepare(request_id, observations, lifecycle_status)
+        durable = False
+        if not candidate.replayed:
+            if self.store_path and self.checkpoint_on_mutation:
+                try:
+                    persistence.save_feedback_state(self.engram, candidate.after, self.store_path)
+                except Exception as error:
+                    recovered: object = ()
+                    with contextlib.suppress(Exception):
+                        recovered = persistence.load_feedback_state(self.store_path, config=self.engram.config)
+                    recovered_signature = recovered.signature() if isinstance(recovered, FeedbackState) else ""
+                    if recovered_signature == candidate.after.signature():
+                        durable = True
+                    elif recovered_signature == candidate.before.signature():
+                        # The durable file is conclusively still the validated
+                        # before-state.  Live state was not published, so this
+                        # is retryable without declaring divergent durability.
+                        self._durability = DurabilityState.HEALTHY
+                        self._last_persistence_error = str(error)
+                        raise PersistenceError("feedback checkpoint", error, state_changed=False) from error
+                    else:
+                        self._durability = DurabilityState.DEGRADED
+                        self._last_persistence_error = str(error)
+                        raise PersistenceError("feedback checkpoint", error, state_changed=False) from error
+                durable = True
+                self._durability = DurabilityState.HEALTHY
+                self._last_checkpoint_at = canonical_utc(self._clock())
+                self._last_persistence_error = ""
+            self.engram.feedback_store.replace_from_snapshot(candidate.after)
+            self._dirty = bool(self.store_path and not durable)
+        result = candidate.receipt.to_dict()["result"]
+        if not isinstance(result, dict):
+            raise LifecycleError("feedback mutation receipt result is malformed")
+        value = deepcopy(result)
+        value.update(
+            {
+                "request_id": request_id,
+                "result_code": candidate.receipt.result_code.value,
+                "idempotent": candidate.replayed,
+                "durable": durable or bool(candidate.replayed and self.store_path and not self._dirty),
+            }
+        )
+        return value
+
+    def _ensure_resolution_candidacy(self, request_id: str, record: dict[str, object]) -> None:
+        if record["candidacy_applied"]:
+            return
+        observations = record["candidacy_observations"]
+        if not isinstance(observations, tuple):
+            raise LifecycleError("resolution candidacy observations are malformed")
+        self._apply_feedback(self._feedback_request_id("candidacy", request_id), observations)
+        record["candidacy_applied"] = True
+
+    def _ensure_proposal_candidacy(self, proposal_id: str, record: dict[str, object]) -> None:
+        if record["candidacy_applied"]:
+            return
+        observations = record["candidacy_observations"]
+        if not isinstance(observations, tuple):
+            raise LifecycleError("proposal candidacy observations are malformed")
+        self._apply_feedback(self._feedback_request_id("proposal-candidacy", proposal_id), observations)
+        record["candidacy_applied"] = True
+
+    def _proposal_feedback_observations(
+        self,
+        frame: QueryFrame,
+        proposal_id: str,
+        statement_ids: tuple[str, ...],
+    ) -> tuple[FeedbackObservation, ...]:
+        constraint = constraint_fingerprint(
+            frame.expected_object_type.value,
+            frame.required_metadata,
+            frame.required_source_label,
+        )
+        policy_value = policy_fingerprint(self._resolution_orchestrator._fusion.policy)
+        repository = self.engram.response_repository.snapshot().artifacts
+        values = []
+        for statement_id in statement_ids:
+            artifact = repository.get(statement_id)
+            values.append(
+                FeedbackObservation(
+                    reference_kind=FeedbackReferenceKind.REGULATED_PROPOSAL,
+                    reference_id=proposal_id,
+                    kind=FeedbackObservationKind.CANDIDACY,
+                    outcome=FeedbackOutcome.CANDIDATE,
+                    query_identity=frame.identity,
+                    scope=frame.scope,
+                    constraint_fingerprint=constraint,
+                    statement_id=statement_id,
+                    generation=artifact.generation if artifact else 0,
+                    generation_available=bool(artifact),
+                    policy_fingerprint=policy_value,
+                    observed_at=frame.eligibility_context.evaluation_time,
+                )
+            )
+        return tuple(values)
+
+    def _negative_key(self, frame: QueryFrame, plan) -> object:
+        context = frame.eligibility_context
+        if not (context.evaluation_time_available and context.knowledge_epoch_available and context.artifact_repository_available):
+            return ()
+        configured = tuple(entry.resolver.name for entry in plan.entries if entry.configured)
+        plan_entries = plan.to_dict()["entries"]
+        resolver_plan = [
+            {
+                "resolver": value["resolver"],
+                "cost_class": value["cost_class"],
+                "order": value["order"],
+                "configured": value["configured"],
+            }
+            for value in plan_entries
+        ]
+        readiness = [
+            {
+                "resolver": value["resolver"],
+                "configured": value["configured"],
+                "available": value["available"],
+                "reason_code": value["reason_code"],
+            }
+            for value in plan_entries
+        ]
+        key = NegativeResolutionKey(
+            query_identity=frame.identity,
+            scope=frame.scope,
+            constraint_fingerprint=constraint_fingerprint(
+                frame.expected_object_type.value,
+                frame.required_metadata,
+                frame.required_source_label,
+            ),
+            knowledge_epoch=context.knowledge_epoch,
+            knowledge_epoch_available=True,
+            normalization_version=frame.identity.normalization_version,
+            resolver_plan_fingerprint=canonical_fingerprint(resolver_plan),
+            capability_readiness_fingerprint=canonical_fingerprint(readiness),
+            policy_fingerprint=policy_fingerprint(self._resolution_orchestrator._fusion.policy),
+        )
+        # Namespace epochs currently version only the authoritative accepted-
+        # response repository.  Lexical, pattern, graph, and vector knowledge
+        # have independent mutation authorities, so caching their misses could
+        # hide newly available evidence.  V1 is therefore exact-only until a
+        # shared knowledge-version contract is available.  Consulting another
+        # plan also invalidates an older exact-only record for this relationship.
+        if configured != ("exact",):
+            self._negative_resolutions.invalidate_for_key(key)
+            return ()
+        return key
+
+    @staticmethod
+    def _negative_admissible(result: ResolutionResult, plan) -> bool:
+        if result.outcome != ResolutionOutcome.MISS or result.budget.exhausted_dimensions:
+            return False
+        if "output_truncated" in result.reason_codes:
+            return False
+        if any(value.candidates or value.evidence or value.accounting for value in result.resolver_results):
+            return False
+        results = {value.resolver: value for value in result.resolver_results}
+        configured = [entry for entry in plan.entries if entry.configured]
+        if not configured or any(not entry.available for entry in configured):
+            return False
+        knowledge_miss_reasons = {
+            "exact": "exact_MISS",
+            "pattern": "pattern_miss",
+            "lexical": "lexical_miss",
+            "structured_graph": "structured_graph_miss",
+            "support_semantic": "support_semantic_miss",
+        }
+        for entry in configured:
+            resolver_result = results.get(entry.resolver.name, ())
+            if (
+                not isinstance(resolver_result, ResolverResult)
+                or resolver_result.state != ResolverState.COMPLETED
+                or resolver_result.reason_code != knowledge_miss_reasons.get(entry.resolver.name)
+            ):
+                return False
+            if entry.resolver.name == "exact" and (
+                resolver_result.diagnostics.get("owner_count", 0) != 0 or resolver_result.diagnostics.get("truncated", False)
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
+        current_ns = time.monotonic_ns()
+        elapsed_ns = max(0, current_ns - started_ns)
+        exhausted = set()
+        if frame.budget.deadline_ns and current_ns >= frame.budget.deadline_ns:
+            exhausted.add("total_time")
+        diagnostics = {
+            "diagnostic_id": frame.diagnostic_id,
+            "negative_resolution": {
+                "hit": True,
+                "reason": "insufficient_knowledge",
+                "memory_only": True,
+            },
+            "accounting": {
+                "candidate_count": 0,
+                "accepted_present": False,
+                "candidacy_applied": False,
+                "success_applied": False,
+                "idempotent": False,
+            },
+        }
+        diagnostic_bytes = len(json.dumps(diagnostics, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        if diagnostic_bytes > frame.budget.max_diagnostic_bytes:
+            diagnostics = {}
+            diagnostic_bytes = 0
+            exhausted.add("diagnostic_bytes")
+        consumption = BudgetConsumption(
+            elapsed_ns=elapsed_ns,
+            diagnostic_bytes=diagnostic_bytes,
+            exhausted_dimensions=tuple(sorted(exhausted)),
+        )
+
+        def build() -> ResolutionResult:
+            return ResolutionResult(
+                outcome=ResolutionOutcome.MISS,
+                selected_candidate=EMPTY_CANDIDATE,
+                selected_candidate_available=False,
+                response_candidates=(),
+                evidence=(),
+                confidence=0.0,
+                confidence_available=False,
+                reason_codes=("negative_resolution_hit", "insufficient_knowledge"),
+                frame_diagnostics=diagnostics,
+                resolver_results=(),
+                budget=consumption,
+            )
+
+        for _ in range(8):
+            result = build()
+            size = len(result.to_json().encode("utf-8"))
+            if size > frame.budget.max_output_bytes:
+                raise InvalidRequestError("negative resolution result exceeds max_output_bytes")
+            if size > frame.budget.max_working_memory_bytes:
+                raise MemoryError("negative resolution result exceeds max_working_memory_bytes")
+            updated = replace(consumption, output_bytes=size, working_memory_bytes=size)
+            if updated == consumption:
+                return result
+            consumption = updated
+        raise InvalidRequestError("negative resolution budget accounting did not converge")
+
     def resolve_request(
         self,
         request: str,
@@ -278,9 +627,14 @@ class EngramCore:
                 accept_exact=accept_exact,
             )
             if request_id in self._resolution_requests:
-                prior_signature, prior_result = self._resolution_requests[request_id]
+                prior = self._resolution_requests[request_id]
+                prior_signature = prior["signature"]
                 if prior_signature != signature:
                     raise ConflictError("resolution request_id is associated with different input")
+                self._ensure_resolution_candidacy(request_id, prior)
+                prior_result = prior["result"]
+                if not isinstance(prior_result, ResolutionResult):
+                    raise LifecycleError("resolution request cache is malformed")
                 return prior_result
             scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
             frame = self._query_frame_builder.build(
@@ -292,18 +646,181 @@ class EngramCore:
                 diagnostic_seed=request_id,
                 budget=budget,
             )
-            result, _ = self._resolution_orchestrator.resolve(
+            negative_started_ns = time.monotonic_ns()
+            plan = self._resolver_registry.plan(frame, configured_resolvers)
+            negative_key: object = ()
+            try:
+                negative_key = self._negative_key(frame, plan)
+                if isinstance(negative_key, NegativeResolutionKey):
+                    negative_lookup = self._negative_resolutions.lookup(
+                        negative_key,
+                        frame.eligibility_context.evaluation_time,
+                    )
+                    if negative_lookup.hit:
+                        result = self._negative_hit_result(frame, negative_started_ns)
+                        self._resolution_requests[request_id] = {
+                            "signature": signature,
+                            "result": result,
+                            "frame": frame,
+                            "candidate_statement_ids": (),
+                            "candidacy_observations": (),
+                            "candidacy_applied": True,
+                        }
+                        while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
+                            evicted_request_id = next(iter(self._resolution_requests))
+                            self._resolution_requests.pop(evicted_request_id)
+                            self._resolution_accounting.discard(evicted_request_id)
+                        return result
+            except Exception:
+                # Negative resolution is an optimization and always fails open.
+                negative_key = ()
+            result, finalization = self._resolution_orchestrator.resolve(
                 frame,
                 request_id,
                 configured_names=configured_resolvers,
                 accept_exact=accept_exact,
             )
-            self._resolution_requests[request_id] = (signature, result)
+            if isinstance(negative_key, NegativeResolutionKey) and self._negative_admissible(result, plan):
+                with contextlib.suppress(Exception):
+                    self._negative_resolutions.admit(
+                        negative_key,
+                        frame.eligibility_context.evaluation_time,
+                    )
+            candidacy_observations = self._feedback_observations(
+                frame,
+                result,
+                finalization.candidate_statement_ids,
+                reference_kind=FeedbackReferenceKind.RESOLUTION_REQUEST,
+                reference_id=request_id,
+                kind=FeedbackObservationKind.CANDIDACY,
+                outcome=FeedbackOutcome.CANDIDATE,
+                observed_at=frame.eligibility_context.evaluation_time,
+            )
+            record: dict[str, object] = {
+                "signature": signature,
+                "result": result,
+                "frame": frame,
+                "candidate_statement_ids": finalization.candidate_statement_ids,
+                "candidacy_observations": candidacy_observations,
+                "candidacy_applied": not candidacy_observations,
+            }
+            self._resolution_requests[request_id] = record
+            if candidacy_observations:
+                self._ensure_resolution_candidacy(request_id, record)
             while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
                 evicted_request_id = next(iter(self._resolution_requests))
                 self._resolution_requests.pop(evicted_request_id)
                 self._resolution_accounting.discard(evicted_request_id)
             return result
+
+    def record_resolution_feedback(
+        self,
+        resolution_request_id: str,
+        feedback_request_id: str,
+        outcome: str,
+        statement_id: str,
+        reason: str = "",
+    ) -> dict[str, object]:
+        """Apply one explicit external verdict to an observed resolution candidate."""
+
+        with self.lock:
+            self._require_running()
+            self._require_text(resolution_request_id, "resolution_request_id")
+            self._require_text(feedback_request_id, "feedback_request_id")
+            self._require_text(statement_id, "statement_id")
+            self._require_string(reason, "reason")
+            try:
+                verdict = FeedbackOutcome(outcome)
+            except (TypeError, ValueError) as error:
+                supported = ", ".join(value.value for value in FeedbackOutcome if value != FeedbackOutcome.CANDIDATE)
+                raise InvalidRequestError(f"feedback outcome must be one of: {supported}") from error
+            if verdict == FeedbackOutcome.CANDIDATE:
+                raise InvalidRequestError("candidate is an internal observation, not an external feedback outcome")
+            record = self._resolution_requests.get(resolution_request_id)
+            if not record:
+                raise ResourceNotFoundError("unknown or expired resolution_request_id")
+            self._ensure_resolution_candidacy(resolution_request_id, record)
+            candidate_ids = record["candidate_statement_ids"]
+            if not isinstance(candidate_ids, tuple) or statement_id not in candidate_ids:
+                raise InvalidRequestError("statement_id is not a candidate in this resolution request")
+            candidacy = record["candidacy_observations"]
+            if not isinstance(candidacy, tuple):
+                raise LifecycleError("resolution candidacy observations are malformed")
+            target = next(
+                (value for value in candidacy if isinstance(value, FeedbackObservation) and value.statement_id == statement_id),
+                (),
+            )
+            if not isinstance(target, FeedbackObservation):
+                raise LifecycleError("resolution candidate feedback target is unavailable")
+            observed_at = canonical_utc(self._clock())
+            observation = FeedbackObservation(
+                reference_kind=target.reference_kind,
+                reference_id=target.reference_id,
+                kind=FeedbackObservationKind.VERDICT,
+                outcome=verdict,
+                query_identity=target.query_identity,
+                scope=target.scope,
+                constraint_fingerprint=target.constraint_fingerprint,
+                statement_id=target.statement_id,
+                generation=target.generation,
+                generation_available=target.generation_available,
+                policy_fingerprint=target.policy_fingerprint,
+                observed_at=observed_at,
+                contract_fingerprint=target.contract_fingerprint,
+                reason=reason,
+            )
+            lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
+            if verdict == FeedbackOutcome.REJECTED_STALE:
+                probe = self.engram.feedback_store.prepare(feedback_request_id, (observation,))
+                if probe.replayed:
+                    probe_result = probe.receipt.to_dict()["result"]
+                    if not isinstance(probe_result, dict):
+                        raise LifecycleError("feedback replay lifecycle result is malformed")
+                    lifecycle_status = LifecycleHandoffStatus(cast(str, probe_result["lifecycle_status"]))
+                elif target.generation_available:
+                    lifecycle_status = LifecycleHandoffStatus.PENDING
+                    previous_response_ids = tuple(sorted(self.engram.response_repository.snapshot().artifacts))
+                    try:
+                        lifecycle = self._response_mutations.invalidate_response(
+                            statement_id,
+                            target.generation,
+                            LifecycleMutationReason.STALE,
+                            "regulator-feedback",
+                            self._feedback_request_id("stale-lifecycle", feedback_request_id),
+                            "external regulator marked the observed candidate generation stale",
+                        )
+                        if not lifecycle.replayed:
+                            persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                        lifecycle_status = LifecycleHandoffStatus.COMPLETED
+                    except (ConflictError, ResourceNotFoundError, InvalidRequestError):
+                        lifecycle_status = LifecycleHandoffStatus.CONFLICTED
+                    except MutationCoordinationError:
+                        lifecycle_status = LifecycleHandoffStatus.FAILED
+                else:
+                    lifecycle_status = LifecycleHandoffStatus.PENDING
+            result = self._apply_feedback(feedback_request_id, (observation,), lifecycle_status)
+            result.update(
+                {
+                    "resolution_request_id": resolution_request_id,
+                    "outcome": verdict.value,
+                    "statement_id": statement_id,
+                    "reason": reason,
+                }
+            )
+            return result
+
+    def inspect_feedback_learning(self, limit: int = 64) -> dict[str, object]:
+        """Return bounded transport-neutral Section 6 state and counters."""
+
+        with self.lock:
+            self._require_running()
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64:
+                raise InvalidRequestError("feedback inspection limit must be an integer from 1 through 64")
+            return {
+                "schema_version": 1,
+                "feedback": self.engram.feedback_store.inspect(limit),
+                "negative_resolution": self._negative_resolutions.inspect(limit),
+            }
 
     def start_conversation(
         self,
@@ -512,11 +1029,29 @@ class EngramCore:
                 existing = self.proposals[existing_proposal_id]
                 if existing["signature"] != signature:
                     raise ConflictError("request_id is already associated with a different proposal request")
+                self._ensure_proposal_candidacy(existing_proposal_id, existing)
                 self.regulated_metrics["idempotent_retries"] += 1
                 return self._proposal_result(existing, idempotent=True)
 
+            scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
+            feedback_frame = self._query_frame_builder.build(
+                request,
+                scope,
+                required_metadata=required_metadata,
+                required_source_label=required_source_label,
+                diagnostic_seed=f"proposal:{request_id}",
+            )
+            feedback_policy_value = policy_fingerprint(self._resolution_orchestrator._fusion.policy)
+            feedback_artifacts = self.engram.response_repository.snapshot().artifacts
+
             def statement_matches_scope(statement: dict) -> bool:
                 if statement["pattern"]:
+                    return False
+                artifact = feedback_artifacts.get(statement["id"])
+                generation = artifact.generation if artifact else 0
+                if self.engram.feedback_store.stale_excluded(statement["id"], generation, bool(artifact)):
+                    return False
+                if self.engram.feedback_store.policy_suppressed(statement["id"], namespace, feedback_policy_value):
                     return False
                 template = statement.get("template", {})
                 response_artifact = template.get("response_artifact", {}) if isinstance(template, dict) else {}
@@ -545,9 +1080,8 @@ class EngramCore:
             )
             exact_statement_id = ""
             try:
-                scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
                 eligibility_context = EligibilityContextFactory(
-                    lambda: datetime.now(UTC),
+                    self._clock,
                     self.engram.namespace_epochs,
                 ).capture_standalone(scope, True)
                 exact = self.engram.response_repository.exact_lookup(
@@ -638,6 +1172,9 @@ class EngramCore:
                 "proposal": proposal,
                 "candidate_responses": {candidate["statement_id"]: candidate["response"] for candidate in candidates},
                 "resolution": {},
+                "feedback_frame": feedback_frame,
+                "candidacy_observations": (),
+                "candidacy_applied": not candidates,
             }
             self.proposal_requests[request_id] = proposal_id
             self.regulated_metrics["proposals"] += 1
@@ -656,6 +1193,14 @@ class EngramCore:
             else:
                 self._dirty = True
                 self._checkpoint()
+            record = self.proposals[proposal_id]
+            if candidates:
+                record["candidacy_observations"] = self._proposal_feedback_observations(
+                    feedback_frame,
+                    proposal_id,
+                    tuple(sorted(record["candidate_responses"])),
+                )
+                self._ensure_proposal_candidacy(proposal_id, record)
             return self._proposal_result(self.proposals[proposal_id], idempotent=False)
 
     def resolve(self, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
@@ -674,6 +1219,7 @@ class EngramCore:
             record = self.proposals.get(proposal_id, {})
             if not record:
                 raise ResourceNotFoundError("unknown or expired proposal_id")
+            self._ensure_proposal_candidacy(proposal_id, record)
             resolution_signature = self._signature(outcome=outcome, statement_id=statement_id, reason=reason)
             if record["resolution"]:
                 if record["resolution_signature"] != resolution_signature:
@@ -684,15 +1230,78 @@ class EngramCore:
                 return result
 
             candidate_responses = record["candidate_responses"]
-            if statement_id and statement_id not in candidate_responses:
+            if not statement_id:
+                raise InvalidRequestError("Regulator outcomes require statement_id")
+            if statement_id not in candidate_responses:
                 raise InvalidRequestError("statement_id is not a candidate in this proposal")
-            response_artifact_ids: set[str] = set()
             if outcome == "accepted":
-                if not statement_id:
-                    raise InvalidRequestError("accepted outcomes require statement_id")
                 current = self.engram.get_statement(statement_id)
                 if not current or current["text"] != candidate_responses[statement_id]:
                     raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
+            observations = record["candidacy_observations"]
+            if not isinstance(observations, tuple):
+                raise LifecycleError("proposal candidacy observations are malformed")
+            target = next(
+                (value for value in observations if isinstance(value, FeedbackObservation) and value.statement_id == statement_id),
+                (),
+            )
+            if not isinstance(target, FeedbackObservation):
+                raise LifecycleError("proposal candidate feedback target is unavailable")
+            feedback_outcome = FeedbackOutcome(outcome)
+            verdict_observation = FeedbackObservation(
+                reference_kind=target.reference_kind,
+                reference_id=target.reference_id,
+                kind=FeedbackObservationKind.VERDICT,
+                outcome=feedback_outcome,
+                query_identity=target.query_identity,
+                scope=target.scope,
+                constraint_fingerprint=target.constraint_fingerprint,
+                statement_id=target.statement_id,
+                generation=target.generation,
+                generation_available=target.generation_available,
+                policy_fingerprint=target.policy_fingerprint,
+                observed_at=canonical_utc(self._clock()),
+                contract_fingerprint=target.contract_fingerprint,
+                reason=reason,
+            )
+            feedback_request_id = self._feedback_request_id("proposal-verdict", proposal_id)
+            lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
+            if feedback_outcome == FeedbackOutcome.REJECTED_STALE:
+                probe = self.engram.feedback_store.prepare(feedback_request_id, (verdict_observation,))
+                if probe.replayed:
+                    probe_result = probe.receipt.to_dict()["result"]
+                    if not isinstance(probe_result, dict):
+                        raise LifecycleError("proposal feedback replay lifecycle result is malformed")
+                    lifecycle_status = LifecycleHandoffStatus(cast(str, probe_result["lifecycle_status"]))
+                elif target.generation_available:
+                    lifecycle_status = LifecycleHandoffStatus.PENDING
+                    previous_response_ids = tuple(sorted(self.engram.response_repository.snapshot().artifacts))
+                    try:
+                        lifecycle = self._response_mutations.invalidate_response(
+                            statement_id,
+                            target.generation,
+                            LifecycleMutationReason.STALE,
+                            "regulator-feedback",
+                            self._feedback_request_id("proposal-stale-lifecycle", proposal_id),
+                            "external regulator marked the observed proposal candidate generation stale",
+                        )
+                        if not lifecycle.replayed:
+                            persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                        lifecycle_status = LifecycleHandoffStatus.COMPLETED
+                    except (ConflictError, ResourceNotFoundError, InvalidRequestError):
+                        lifecycle_status = LifecycleHandoffStatus.CONFLICTED
+                    except MutationCoordinationError:
+                        lifecycle_status = LifecycleHandoffStatus.FAILED
+                else:
+                    lifecycle_status = LifecycleHandoffStatus.PENDING
+            self._apply_feedback(
+                feedback_request_id,
+                (verdict_observation,),
+                lifecycle_status,
+            )
+            response_artifact_ids: set[str] = set()
+            if outcome == "accepted":
+                current = self.engram.get_statement(statement_id)
                 proposal = record["proposal"]
                 response_artifact_ids = set(self.engram.response_repository.snapshot().artifacts)
                 self.engram.record_hit(proposal["keywords"], statement_id=statement_id)
@@ -708,6 +1317,7 @@ class EngramCore:
                 "outcome": outcome,
                 "statement_id": statement_id,
                 "reason": reason,
+                "lifecycle_status": lifecycle_status.value,
                 "resolved": True,
                 "idempotent": False,
             }

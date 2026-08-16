@@ -1,0 +1,261 @@
+"""Reproducible offline Section 6 feedback and negative-resolution benchmark."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import statistics
+import sys
+import time
+import tracemalloc
+from datetime import UTC, datetime
+from pathlib import Path
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+if str(REPOSITORY) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY))
+
+from engram.core import Engram
+from engram.feedback import (
+    FeedbackObservation,
+    FeedbackObservationKind,
+    FeedbackOutcome,
+    FeedbackReferenceKind,
+    FeedbackState,
+    FeedbackStore,
+    NegativeResolutionKey,
+    NegativeResolutionStore,
+    canonical_fingerprint,
+    constraint_fingerprint,
+)
+from engram.identity import ScopeKey, build_standalone_identity
+from engram.service import EngramCore
+
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "feedback" / "benchmark-2026-08-16.json"
+NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+NOW_TEXT = "2026-08-16T12:00:00Z"
+POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
+
+
+def _latency(values: list[float]) -> dict[str, float]:
+    ordered = sorted(values)
+    p95_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))
+    return {
+        "p50_ms": round(statistics.median(ordered), 4),
+        "p95_ms": round(ordered[p95_index], 4),
+        "max_ms": round(ordered[-1], 4),
+    }
+
+
+def _time(call) -> tuple[object, float]:
+    started = time.perf_counter_ns()
+    value = call()
+    return value, (time.perf_counter_ns() - started) / 1_000_000
+
+
+def _observation(index: int, *, statement_id: str = "statement-benchmark") -> FeedbackObservation:
+    scope = ScopeKey(namespace="section6-benchmark")
+    return FeedbackObservation(
+        reference_kind=FeedbackReferenceKind.RESOLUTION_REQUEST,
+        reference_id=f"resolution-{index}",
+        kind=FeedbackObservationKind.VERDICT,
+        outcome=FeedbackOutcome.ACCEPTED if index % 2 == 0 else FeedbackOutcome.REJECTED_CONTEXT,
+        query_identity=build_standalone_identity("What is the benchmark response?", scope),
+        scope=scope,
+        constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
+        statement_id=statement_id,
+        generation=1,
+        generation_available=True,
+        policy_fingerprint=POLICY_FINGERPRINT,
+        observed_at=NOW_TEXT,
+    )
+
+
+def _apply(store: FeedbackStore, request_id: str, value: FeedbackObservation) -> None:
+    candidate = store.prepare(request_id, (value,))
+    if not candidate.replayed:
+        store.replace_from_snapshot(candidate.after)
+
+
+def _negative_key(index: int) -> NegativeResolutionKey:
+    scope = ScopeKey(namespace="section6-benchmark")
+    return NegativeResolutionKey(
+        query_identity=build_standalone_identity(f"negative benchmark request {index}", scope),
+        scope=scope,
+        constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
+        knowledge_epoch=1,
+        knowledge_epoch_available=True,
+        normalization_version=1,
+        resolver_plan_fingerprint=canonical_fingerprint("exact-only"),
+        capability_readiness_fingerprint=canonical_fingerprint("ready"),
+        policy_fingerprint=POLICY_FINGERPRINT,
+    )
+
+
+def _populated_store(record_count: int, prefix: str) -> FeedbackStore:
+    store = FeedbackStore()
+    for start in range(0, record_count, 1_000):
+        stop = min(record_count, start + 1_000)
+        observations = tuple(_observation(index, statement_id=f"{prefix}-statement-{index}") for index in range(start, stop))
+        candidate = store.prepare(f"{prefix}-batch-{start // 1_000}", observations)
+        store.replace_from_snapshot(candidate.after)
+    return store
+
+
+def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict[str, object]:
+    store = FeedbackStore()
+    ingestion = []
+    for index in range(samples):
+        _, elapsed = _time(lambda index=index: _apply(store, f"feedback-{index}", _observation(index)))
+        ingestion.append(elapsed)
+    target = _observation(0)
+    history = []
+    for _ in range(samples):
+        _, elapsed = _time(
+            lambda: store.history(
+                target.query_identity,
+                target.constraint_fingerprint,
+                target.statement_id,
+                1,
+                POLICY_FINGERPRINT,
+                NOW_TEXT,
+            )
+        )
+        history.append(elapsed)
+
+    state = store.snapshot()
+    encoded = state.to_json()
+    round_trip = []
+    for _ in range(samples):
+        _, elapsed = _time(lambda: FeedbackState.from_json(encoded))
+        round_trip.append(elapsed)
+
+    scale_store = _populated_store(scale_records, "scale")
+    scale_started_ns = time.perf_counter_ns()
+    scale_probe = scale_store.prepare(
+        "scale-probe",
+        (_observation(scale_records, statement_id="scale-probe-statement"),),
+    )
+    scale_prepare_ms = (time.perf_counter_ns() - scale_started_ns) / 1_000_000
+    scale_state = scale_probe.after
+    scale_encoded = scale_state.to_json()
+    _, scale_round_trip_ms = _time(lambda: FeedbackState.from_json(scale_encoded))
+
+    ordinary_engine = Engram()
+    ordinary = EngramCore(ordinary_engine, clock=lambda: NOW)
+    cached_engine = Engram()
+    cached_engine.namespace_epochs.initialize("section6-benchmark", 1)
+    cached = EngramCore(cached_engine, clock=lambda: NOW)
+    request = "Section six repeated benchmark miss"
+    cached.resolve_request(request, "cached-prime", namespace="section6-benchmark", configured_resolvers=("exact",))
+    ordinary_misses = []
+    negative_hits = []
+    for index in range(samples):
+        _, elapsed = _time(
+            lambda index=index: ordinary.resolve_request(
+                request,
+                f"ordinary-{index}",
+                namespace="section6-benchmark",
+                configured_resolvers=("exact",),
+            )
+        )
+        ordinary_misses.append(elapsed)
+        _, elapsed = _time(
+            lambda index=index: cached.resolve_request(
+                request,
+                f"cached-{index}",
+                namespace="section6-benchmark",
+                configured_resolvers=("exact",),
+            )
+        )
+        negative_hits.append(elapsed)
+
+    tracemalloc.start()
+    _memory_feedback = _populated_store(memory_records, "memory")
+    _, feedback_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    tracemalloc.start()
+    negatives = NegativeResolutionStore(max_records=memory_records, ttl_seconds=300)
+    for index in range(memory_records):
+        negatives.admit(_negative_key(index), NOW_TEXT)
+    _, negative_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    ordinary_latency = _latency(ordinary_misses)
+    negative_latency = _latency(negative_hits)
+    ingestion_latency = _latency(ingestion)
+    history_latency = _latency(history)
+    round_trip_latency = _latency(round_trip)
+    gates = {
+        "feedback_ingestion_p95_under_250_ms": ingestion_latency["p95_ms"] < 250.0,
+        "history_lookup_p95_under_25_ms": history_latency["p95_ms"] < 25.0,
+        "feedback_round_trip_p95_under_250_ms": round_trip_latency["p95_ms"] < 250.0,
+        "negative_hit_p95_lower_than_ordinary_miss": negative_latency["p95_ms"] < ordinary_latency["p95_ms"],
+        "feedback_peak_under_64_mib": feedback_peak < 64 * 1024 * 1024,
+        "negative_peak_under_32_mib": negative_peak < 32 * 1024 * 1024,
+        "scale_prepare_under_250_ms": scale_prepare_ms < 250.0,
+        "scale_round_trip_under_5_s": scale_round_trip_ms < 5_000.0,
+        "scale_state_under_64_mib": len(scale_encoded.encode("utf-8")) < 64 * 1024 * 1024,
+    }
+    return {
+        "benchmark_version": "section6-feedback-negative-v1.1",
+        "generated_at": NOW_TEXT,
+        "provenance": "synthetic offline engineering regression; no formula or threshold was fitted from these samples",
+        "environment": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+        "parameters": {"samples": samples, "memory_records": memory_records, "scale_records": scale_records},
+        "latency": {
+            "feedback_ingestion": ingestion_latency,
+            "feedback_history_lookup": history_latency,
+            "feedback_state_json_round_trip": round_trip_latency,
+            "ordinary_completed_exact_miss": ordinary_latency,
+            "negative_resolution_hit": negative_latency,
+            "negative_hit_p95_ratio": round(negative_latency["p95_ms"] / ordinary_latency["p95_ms"], 4),
+            "scale_feedback_prepare_ms": round(scale_prepare_ms, 4),
+            "scale_feedback_state_round_trip_ms": round(scale_round_trip_ms, 4),
+        },
+        "persistence": {
+            "empty_feedback_state_bytes": len(FeedbackState().to_json().encode("utf-8")),
+            "populated_feedback_state_bytes": len(encoded.encode("utf-8")),
+            "statement_records": len(state.statement_records),
+            "relationship_records": len(state.relationship_records),
+            "receipts": store.inspect()["receipt_count"],
+            "scale_feedback_state_bytes": len(scale_encoded.encode("utf-8")),
+            "scale_statement_records": len(scale_state.statement_records),
+            "scale_relationship_records": len(scale_state.relationship_records),
+        },
+        "memory": {
+            "feedback_records": memory_records,
+            "feedback_peak_bytes": feedback_peak,
+            "negative_records": memory_records,
+            "negative_peak_bytes": negative_peak,
+        },
+        "negative_inspection": cached.inspect_feedback_learning()["negative_resolution"],
+        "engineering_gates": gates,
+        "all_engineering_gates_passed": all(gates.values()),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--samples", type=int, default=100)
+    parser.add_argument("--memory-records", type=int, default=100)
+    parser.add_argument("--scale-records", type=int, default=5_000)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    arguments = parser.parse_args()
+    if arguments.samples < 10 or arguments.memory_records < 10 or not 1_000 <= arguments.scale_records <= 9_999:
+        raise SystemExit("samples and memory-records must be at least 10; scale-records must be from 1,000 through 9,999")
+    result = run_benchmark(arguments.samples, arguments.memory_records, arguments.scale_records)
+    arguments.output.parent.mkdir(parents=True, exist_ok=True)
+    arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if not result["all_engineering_gates_passed"]:
+        raise SystemExit("one or more Section 6 engineering gates failed")
+
+
+if __name__ == "__main__":
+    main()

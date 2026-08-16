@@ -51,6 +51,7 @@ from engram.dialogue import (
 )
 from engram.eligibility import NamespaceEpochState
 from engram.facts_spacy import extract_facts
+from engram.feedback import FeedbackStore
 from engram.graph import create_graph_client, is_write_cypher
 from engram.identity import ScopedRetrievalKey
 from engram.indexes import (
@@ -278,6 +279,7 @@ class Engram:
         self.response_repository = ArtifactRepository()
         self.namespace_epochs = NamespaceEpochState()
         self.mutation_receipts = MutationReceiptLedger()
+        self.feedback_store = FeedbackStore()
         self.response_quarantine: tuple[object, ...] = ()
 
         # Metrics

@@ -588,6 +588,40 @@ the calling application's response generator, then pass eligible answers to
 `engram_learn_response`. The same workflow remains available through the
 Python API when a process boundary is unnecessary.
 
+The transport-neutral Python core also provides the unified resolver and its
+typed external-feedback boundary:
+
+```python
+result = core.resolve_request(
+    "What is Engram?",
+    "resolution-42",
+    namespace="support",
+    configured_resolvers=("exact", "pattern", "lexical"),
+)
+if result.response_candidates:
+    core.record_resolution_feedback(
+        "resolution-42",
+        "regulator-verdict-42",
+        "accepted",  # or a typed rejected_* outcome
+        result.response_candidates[0].statement_id,
+    )
+
+snapshot = core.inspect_feedback_learning(limit=32)
+```
+
+Candidate observations and external verdicts use durable replayable receipts,
+bounded aged aggregates, exact scope/generation/policy partitions, and no
+implicit conversion of Engram selection into acceptance. Only completed
+knowledge misses from exact-only resolver plans may be reused through a
+memory-only, fixed-TTL negative record with the same identity, scope,
+constraints, available epoch, resolver plan/readiness, and fusion policy. Plans
+containing lexical, pattern, or graph sources execute normally because those
+knowledge sources do not yet share the accepted-response namespace epoch. These
+Python operations are intentionally not new MCP or gRPC methods; adapter
+exposure remains a later integration concern.
+See [Section 6 feedback and negative-resolution contracts](documentation/feedback/contracts-v1.md)
+for the full targeting, aging, lifecycle, persistence, and admission rules.
+
 ### gRPC Service Interface
 
 The gRPC interface runs as one independent process containing exactly one

@@ -15,6 +15,7 @@ from typing import Protocol
 from engram.artifacts import LifecycleState
 from engram.eligibility import EpochEligibilityPolicy, evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError
+from engram.feedback import FeedbackStore, constraint_fingerprint
 from engram.identity import ScopeKey
 from engram.resolution import (
     EMPTY_CANDIDATE,
@@ -103,6 +104,8 @@ class FusionPolicyReason(StrEnum):
     EXPLICIT_CONFLICT = "explicit_conflict"
     FUSION_DEADLINE_EXHAUSTED = "fusion_deadline_exhausted"
     FUSION_MEMORY_EXHAUSTED = "fusion_memory_exhausted"
+    FEEDBACK_STALE_EXCLUDED = "feedback_stale_excluded"
+    FEEDBACK_POLICY_SUPPRESSED = "feedback_policy_suppressed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -759,8 +762,16 @@ ABSTAINING_CANDIDATE_AUTHORITY = AbstainingCandidateAuthority()
 class EngramCandidateAuthority:
     """Revalidate artifact and legacy candidates against current authoritative state."""
 
-    def __init__(self, engram) -> None:
+    def __init__(self, engram, feedback_store: object = (), policy_fingerprint_value: str = "") -> None:
         self._engram = engram
+        if feedback_store != () and not isinstance(feedback_store, FeedbackStore):
+            raise InvalidRequestError("candidate feedback_store must be FeedbackStore")
+        if feedback_store != () and (
+            len(policy_fingerprint_value) != 64 or any(c not in "0123456789abcdef" for c in policy_fingerprint_value)
+        ):
+            raise InvalidRequestError("candidate feedback policy fingerprint must be lowercase SHA-256")
+        self._feedback_store = feedback_store
+        self._policy_fingerprint = policy_fingerprint_value
 
     @staticmethod
     def _visibility_allowed(metadata: Mapping[str, object], scope: ScopeKey) -> bool:
@@ -776,6 +787,15 @@ class EngramCandidateAuthority:
         snapshot = self._engram.response_repository.snapshot()
         if candidate.statement_id in snapshot.artifacts:
             artifact = snapshot.artifacts[candidate.statement_id]
+            if isinstance(self._feedback_store, FeedbackStore):
+                if self._feedback_store.stale_excluded(artifact.statement_id, artifact.generation):
+                    return CandidateEligibility(False, False, False, (FusionPolicyReason.FEEDBACK_STALE_EXCLUDED,))
+                if self._feedback_store.policy_suppressed(
+                    artifact.statement_id,
+                    frame.scope.namespace,
+                    self._policy_fingerprint,
+                ):
+                    return CandidateEligibility(False, False, False, (FusionPolicyReason.FEEDBACK_POLICY_SUPPRESSED,))
             decision = evaluate_artifact_eligibility(
                 artifact,
                 frame.eligibility_context,
@@ -820,6 +840,27 @@ class EngramCandidateAuthority:
             if artifact.statistics.query_count:
                 feature_values[FusionFeature.HISTORY] = artifact.statistics.hit_count / artifact.statistics.query_count
                 feature_available.append(FusionFeature.HISTORY)
+            if isinstance(self._feedback_store, FeedbackStore):
+                feedback_history = self._feedback_store.history(
+                    frame.identity,
+                    constraint_fingerprint(
+                        frame.expected_object_type.value,
+                        frame.required_metadata,
+                        frame.required_source_label,
+                    ),
+                    artifact.statement_id,
+                    artifact.generation,
+                    self._policy_fingerprint,
+                    frame.eligibility_context.evaluation_time,
+                )
+                if feedback_history.available:
+                    if FusionFeature.HISTORY in feature_available:
+                        feature_values[FusionFeature.HISTORY] = (
+                            feature_values[FusionFeature.HISTORY] + feedback_history.value
+                        ) / 2.0
+                    else:
+                        feature_values[FusionFeature.HISTORY] = feedback_history.value
+                        feature_available.append(FusionFeature.HISTORY)
             authority = artifact.metadata.get("authority")
             if (
                 isinstance(authority, (int, float))
@@ -846,6 +887,15 @@ class EngramCandidateAuthority:
                 feature_values,
                 tuple(feature for feature in FusionFeature if feature in feature_available),
             )
+        if isinstance(self._feedback_store, FeedbackStore):
+            if self._feedback_store.stale_excluded(candidate.statement_id, 0, False):
+                return CandidateEligibility(False, False, False, (FusionPolicyReason.FEEDBACK_STALE_EXCLUDED,))
+            if self._feedback_store.policy_suppressed(
+                candidate.statement_id,
+                frame.scope.namespace,
+                self._policy_fingerprint,
+            ):
+                return CandidateEligibility(False, False, False, (FusionPolicyReason.FEEDBACK_POLICY_SUPPRESSED,))
         statement = self._engram.get_statement(candidate.statement_id)
         if not statement:
             return CandidateEligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
