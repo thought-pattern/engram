@@ -17,10 +17,61 @@ from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 from engram.service import EngramCore
+from scripts.run_section3_mcp_conformance import _evaluate_turn, _run_length_encode_passes
 
 
 def _runtime(service: MCPConversationService) -> ConversationRuntime:
     return cast(ConversationRuntime, service.runtime)
+
+
+def _complete_turn_event() -> dict:
+    return {
+        "turn": 1,
+        "input": "hello",
+        "response": "Hello!",
+        "user_id": "Protocol Agent",
+        "source": "pattern",
+        "score": 1.0,
+        "pattern": "HELLO",
+        "captured": [],
+        "dialogue_act": "greeting",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
+        "elapsed_seconds": 0.001,
+        "context_changes": {},
+        "learned_statements": [],
+    }
+
+
+def test_mcp_long_conversation_evaluator_checks_each_complete_turn_without_retaining_text() -> None:
+    evaluation = _evaluate_turn(_complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
+
+    assert evaluation["passed"] is True
+    assert evaluation["failed_checks"] == []
+    assert evaluation["response_bytes"] == 6
+    assert "Hello!" not in str(evaluation)
+
+
+def test_mcp_long_conversation_evaluator_reports_all_failed_contract_checks() -> None:
+    malformed = {**_complete_turn_event(), "turn": 2, "source": "", "unexpected": True}
+
+    evaluation = _evaluate_turn(malformed, 1, "hello", "Protocol Agent", 2.5)
+
+    assert evaluation["passed"] is False
+    assert evaluation["failed_checks"] == ["exact_fields", "turn_sequence", "source_nonempty"]
+
+
+def test_mcp_turn_evaluation_pass_runs_preserve_every_ordered_turn() -> None:
+    evaluations = [{"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}]
+
+    encoded = _run_length_encode_passes(evaluations)
+
+    assert encoded == [
+        {"bit": "1", "turns": 2},
+        {"bit": "0", "turns": 1},
+        {"bit": "1", "turns": 1},
+    ]
 
 
 def _seed_file(tmp_path):

@@ -73,7 +73,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+# Functional TypedDict declarations keep dictionary contracts precise without
+# introducing stateless class declarations, as required by code-style.md.
+ignore = ["E501", "UP013"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -112,6 +114,7 @@ ignore = ["engram/v1/engram_pb2_grpc.py"]
 
 [tool.vulture]
 paths = ["engram", "scripts", "eval"]
+exclude = ["engram/v1/engram_pb2*.py"]
 min_confidence = 65
 ignore_names = ["exc_type", "exc_value", "traceback"]
 

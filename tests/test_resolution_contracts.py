@@ -19,8 +19,16 @@ from engram.resolution import (
     BudgetLedger,
     Candidate,
     CandidateSource,
+    CanonicalClaimReferences,
+    ClaimEvidenceRecord,
+    ClaimOwnership,
+    ClaimTrustInputs,
+    ClaimValidityInputs,
     CostClass,
+    DisclosureBasis,
+    DisclosureDecision,
     EvidenceKind,
+    EvidencePackage,
     EvidenceReference,
     ExpectedObjectType,
     FeatureSet,
@@ -64,6 +72,34 @@ def _evidence() -> EvidenceReference:
         scope=_scope(),
         provenance={"query": "entity"},
         diagnostics={"row": 1},
+    )
+
+
+def _claim_record() -> ClaimEvidenceRecord:
+    return ClaimEvidenceRecord(
+        claim_id="claim-full",
+        source_resolver="structured_graph",
+        source_contributions=("structured_graph",),
+        features=FeatureSet(
+            values={"canonical_completeness": 1.0, "structured_match": 1.0},
+            unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
+        ),
+        canonical_references=CanonicalClaimReferences("entity:subject", "predicate:relation", "entity:object"),
+        validity=ClaimValidityInputs(
+            evaluation_time="2026-08-12T00:00:00Z",
+            active=True,
+            system_current=True,
+            valid_time_current=True,
+        ),
+        trust=ClaimTrustInputs(),
+        disclosure=DisclosureDecision(
+            ownership=ClaimOwnership.PUBLIC,
+            basis=DisclosureBasis.PUBLIC_RULE,
+            scope=_scope(),
+            policy_version="claim-disclosure-v1",
+        ),
+        path=("claim-full",),
+        selection_reasons=("canonical_complete", "structured_match"),
     )
 
 
@@ -330,7 +366,7 @@ def test_contracts_enforce_nested_byte_and_collection_bounds() -> None:
         lambda: replace(_evidence(), schema_version=2),
         lambda: replace(_candidate(), schema_version=2),
         lambda: replace(AccountingObservation("stmt-1"), schema_version=2),
-        lambda: replace(_resolver_result(), schema_version=2),
+        lambda: replace(_resolver_result(), schema_version=3),
         lambda: replace(
             ResolutionResult(
                 outcome=ResolutionOutcome.MISS,
@@ -345,13 +381,136 @@ def test_contracts_enforce_nested_byte_and_collection_bounds() -> None:
                 resolver_results=(),
                 budget=BudgetConsumption(),
             ),
-            schema_version=2,
+            schema_version=3,
         ),
     ],
 )
 def test_every_versioned_resolution_contract_rejects_unknown_versions(factory) -> None:
     with pytest.raises(InvalidRequestError, match="unsupported"):
         factory()
+
+
+def test_resolver_result_current_field_set_is_exact() -> None:
+    result = replace(_resolver_result(), resolver="structured_graph", claim_evidence=(_claim_record(),))
+
+    assert frozenset(result.to_dict()) == frozenset(
+        {
+            "schema_version",
+            "resolver",
+            "state",
+            "reason_code",
+            "candidates",
+            "evidence",
+            "claim_evidence",
+            "accounting",
+            "diagnostics",
+            "consumption",
+        }
+    )
+    assert result.to_dict()["claim_evidence"] == [_claim_record().to_dict()]
+    assert ResolverResult.from_json(result.to_json()) == result
+    missing = result.to_dict()
+    missing.pop("claim_evidence")
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        ResolverResult.from_dict(missing)
+    added = result.to_dict()
+    added["legacy_projection"] = []
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        ResolverResult.from_dict(added)
+
+
+def test_resolver_result_rejects_mismatched_claim_evidence_source() -> None:
+    with pytest.raises(InvalidRequestError, match="source must match"):
+        replace(_resolver_result(), claim_evidence=(_claim_record(),))
+
+
+def test_resolution_result_current_package_fields_are_exact() -> None:
+    miss = ResolutionResult(
+        outcome=ResolutionOutcome.MISS,
+        selected_candidate=EMPTY_CANDIDATE,
+        selected_candidate_available=False,
+        response_candidates=(),
+        evidence=(),
+        confidence=0.0,
+        confidence_available=False,
+        reason_codes=("miss",),
+        frame_diagnostics={},
+        resolver_results=(),
+        budget=BudgetConsumption(),
+    )
+    package = EvidencePackage.build((_claim_record(),))
+    evidence_result = replace(
+        miss,
+        outcome=ResolutionOutcome.EVIDENCE,
+        reason_codes=("claim_evidence_included",),
+        evidence_package_available=True,
+        evidence_package=package,
+    )
+
+    assert evidence_result.schema_version == 1
+    assert evidence_result.to_dict()["evidence_package_available"] is True
+    assert evidence_result.to_dict()["evidence_package"] == package.to_dict()
+    assert ResolutionResult.from_json(miss.to_json()) == miss
+    assert ResolutionResult.from_json(evidence_result.to_json()) == evidence_result
+
+    missing = evidence_result.to_dict()
+    missing.pop("evidence_package")
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        ResolutionResult.from_dict(missing)
+    added = evidence_result.to_dict()
+    added["compatibility_version"] = 1
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        ResolutionResult.from_dict(added)
+    with pytest.raises(InvalidRequestError, match="unpackaged Claim evidence"):
+        replace(
+            miss,
+            resolver_results=(replace(_resolver_result(), resolver="structured_graph", claim_evidence=(_claim_record(),)),),
+        )
+
+
+def test_resolution_result_answer_and_miss_package_invariants() -> None:
+    candidate = _candidate()
+    answer = ResolutionResult(
+        outcome=ResolutionOutcome.ANSWER,
+        selected_candidate=candidate,
+        selected_candidate_available=True,
+        response_candidates=(candidate,),
+        evidence=(),
+        confidence=1.0,
+        confidence_available=True,
+        reason_codes=("answer",),
+        frame_diagnostics={},
+        resolver_results=(),
+        budget=BudgetConsumption(),
+    )
+    available_empty_miss = ResolutionResult(
+        outcome=ResolutionOutcome.MISS,
+        selected_candidate=EMPTY_CANDIDATE,
+        selected_candidate_available=False,
+        response_candidates=(),
+        evidence=(),
+        confidence=0.0,
+        confidence_available=False,
+        reason_codes=("miss",),
+        frame_diagnostics={},
+        resolver_results=(),
+        budget=BudgetConsumption(),
+        evidence_package_available=True,
+    )
+
+    assert ResolutionResult.from_json(answer.to_json()) == answer
+    assert ResolutionResult.from_json(available_empty_miss.to_json()) == available_empty_miss
+    with pytest.raises(InvalidRequestError, match="ANSWER cannot contain"):
+        replace(
+            answer,
+            evidence_package_available=True,
+            evidence_package=EvidencePackage.build((_claim_record(),)),
+        )
+    with pytest.raises(InvalidRequestError, match="MISS cannot contain"):
+        replace(
+            available_empty_miss,
+            evidence_package=EvidencePackage.build((_claim_record(),)),
+        )
 
 
 def test_closed_vocabularies_are_complete() -> None:

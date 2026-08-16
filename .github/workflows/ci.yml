@@ -50,7 +50,7 @@ jobs:
         run: bandit -q -ii -lll -r engram scripts eval
 
       - name: Dead-code scan
-        run: vulture --config pyproject.toml
+        run: vulture
 
       - name: Test
         run: pytest

@@ -2,13 +2,18 @@
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol
+from typing import TypedDict
 
+from engram.constants import (
+    COORDINATED_MUTATION_CANDIDATE_FIELDS,
+    COORDINATED_RESPONSE_STATE_FIELDS,
+    MUTATION_EXECUTION_RESULT_FIELDS,
+    RESPONSE_STATE_SCHEMA_VERSION,
+)
 from engram.eligibility import EpochChangeReason, NamespaceEpochState
 from engram.errors import ConflictError, EngramCoreError, InvalidRequestError
 from engram.mutations import (
@@ -135,98 +140,222 @@ def _durable_state_signature(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class CoordinatedResponseState:
-    """Complete authoritative response state passed to checkpoint/recovery."""
-
-    repository: RepositoryState
-    namespace_epochs: Mapping[str, object]
-    mutation_receipts: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.repository, RepositoryState):
-            raise InvalidRequestError("coordinated repository must be a RepositoryState")
-        if not check_repository_state(self.repository).consistent:
-            raise ConflictError("coordinated repository state is inconsistent")
-        epochs = _canonical_mapping(self.namespace_epochs, "coordinated namespace_epochs")
-        receipts = _canonical_mapping(self.mutation_receipts, "coordinated mutation_receipts")
-        NamespaceEpochState.from_snapshot(epochs)
-        MutationReceiptLedger.from_snapshot(_thaw_mapping(receipts))
-        object.__setattr__(self, "namespace_epochs", epochs)
-        object.__setattr__(self, "mutation_receipts", receipts)
-
-    def signature(self) -> str:
-        return _state_signature(self.repository, self.namespace_epochs, self.mutation_receipts)
-
-    def durable_signature(self) -> str:
-        """Identify persisted authority while excluding transient owner generations."""
-
-        return _durable_state_signature(self.repository, self.namespace_epochs, self.mutation_receipts)
-
-    def response_state_dict(self, quarantine: tuple[Mapping[str, object], ...] = ()) -> dict[str, object]:
-        if not isinstance(quarantine, tuple) or not all(isinstance(record, Mapping) for record in quarantine):
-            raise InvalidRequestError("coordinated quarantine must be a tuple of objects")
-        return {
-            "schema_version": 1,
-            "artifacts": [self.repository.artifacts[statement_id].to_dict() for statement_id in sorted(self.repository.artifacts)],
-            "namespace_epochs": _thaw(self.namespace_epochs),
-            "mutation_receipts": _thaw(self.mutation_receipts),
-            "quarantine": [_thaw(record) for record in quarantine],
-        }
+CoordinatedResponseState = TypedDict(
+    "CoordinatedResponseState",
+    {
+        "repository": RepositoryState,
+        "namespace_epochs": Mapping[str, object],
+        "mutation_receipts": Mapping[str, object],
+    },
+)
 
 
-@dataclass(frozen=True, slots=True)
-class CoordinatedMutationCandidate:
-    """Validated before/after state and the receipt committed with it."""
-
-    before: CoordinatedResponseState
-    after: CoordinatedResponseState
-    receipt: MutationReceipt
-    affected_epoch_namespaces: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.before, CoordinatedResponseState) or not isinstance(self.after, CoordinatedResponseState):
-            raise InvalidRequestError("coordinated candidate states must be CoordinatedResponseState values")
-        if not isinstance(self.receipt, MutationReceipt):
-            raise InvalidRequestError("coordinated candidate receipt must be a MutationReceipt")
-        if not isinstance(self.affected_epoch_namespaces, tuple) or not all(
-            isinstance(namespace, str) for namespace in self.affected_epoch_namespaces
-        ):
-            raise InvalidRequestError("affected_epoch_namespaces must be a tuple of strings")
-        if tuple(sorted(set(self.affected_epoch_namespaces))) != self.affected_epoch_namespaces:
-            raise InvalidRequestError("affected_epoch_namespaces must be sorted and unique")
-
-
-@dataclass(frozen=True, slots=True)
-class MutationExecutionResult:
-    """Successful live publication result."""
-
-    receipt: MutationReceipt
-    checkpoint_count: int
-    durable: bool
-    published: bool
-    recovered: bool
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "receipt": self.receipt.to_dict(),
-            "checkpoint_count": self.checkpoint_count,
-            "durable": self.durable,
-            "published": self.published,
-            "recovered": self.recovered,
-        }
+def coordinated_response_state(
+    repository: RepositoryState,
+    namespace_epochs: object,
+    mutation_receipts: object,
+) -> CoordinatedResponseState:
+    """Build one validated coordinated response-state dictionary."""
+    if not isinstance(repository, RepositoryState):
+        raise InvalidRequestError("coordinated repository must be a RepositoryState")
+    consistency = check_repository_state(repository)
+    if not consistency.consistent:
+        raise ConflictError("coordinated repository state is inconsistent")
+    epochs = _canonical_mapping(namespace_epochs, "coordinated namespace_epochs")
+    receipts = _canonical_mapping(mutation_receipts, "coordinated mutation_receipts")
+    NamespaceEpochState.from_snapshot(epochs)
+    MutationReceiptLedger.from_snapshot(_thaw_mapping(receipts))
+    result: CoordinatedResponseState = {
+        "repository": repository,
+        "namespace_epochs": epochs,
+        "mutation_receipts": receipts,
+    }
+    return result
 
 
-class CheckpointCallback(Protocol):
-    def __call__(self, state: CoordinatedResponseState, /) -> None: ...
+def validate_coordinated_response_state(value: object) -> CoordinatedResponseState:
+    """Validate and copy one coordinated response-state dictionary."""
+    if not isinstance(value, Mapping):
+        raise InvalidRequestError("coordinated response state must be an object")
+    if set(value) != COORDINATED_RESPONSE_STATE_FIELDS:
+        raise InvalidRequestError("coordinated response state fields are malformed")
+    repository = value.get("repository", ())
+    namespace_epochs = value.get("namespace_epochs", ())
+    mutation_receipts = value.get("mutation_receipts", ())
+    if not isinstance(repository, RepositoryState):
+        raise InvalidRequestError("coordinated repository must be a RepositoryState")
+    result = coordinated_response_state(repository, namespace_epochs, mutation_receipts)
+    return result
 
 
-class RecoveryLoader(Protocol):
-    def __call__(self) -> CoordinatedResponseState: ...
+def coordinated_response_state_signature(value: object) -> str:
+    """Return the complete deterministic signature for coordinated state."""
+    state = validate_coordinated_response_state(value)
+    signature = _state_signature(state["repository"], state["namespace_epochs"], state["mutation_receipts"])
+    return signature
 
 
-class PublicationHook(Protocol):
-    def __call__(self, state: CoordinatedResponseState, /) -> None: ...
+def coordinated_response_state_durable_signature(value: object) -> str:
+    """Identify persisted authority while excluding transient generations."""
+    state = validate_coordinated_response_state(value)
+    signature = _durable_state_signature(state["repository"], state["namespace_epochs"], state["mutation_receipts"])
+    return signature
+
+
+def coordinated_response_state_to_dict(
+    value: object,
+    quarantine: tuple[Mapping[str, object], ...] = (),
+) -> dict[str, object]:
+    """Return the persistent response-state payload for coordinated state."""
+    state = validate_coordinated_response_state(value)
+    if not isinstance(quarantine, tuple) or not all(isinstance(record, Mapping) for record in quarantine):
+        raise InvalidRequestError("coordinated quarantine must be a tuple of objects")
+    repository = state["repository"]
+    artifacts = [repository.artifacts[statement_id].to_dict() for statement_id in sorted(repository.artifacts)]
+    namespace_epochs = _thaw(state["namespace_epochs"])
+    mutation_receipts = _thaw(state["mutation_receipts"])
+    quarantine_records = [_thaw(record) for record in quarantine]
+    result = {
+        "schema_version": RESPONSE_STATE_SCHEMA_VERSION,
+        "artifacts": artifacts,
+        "namespace_epochs": namespace_epochs,
+        "mutation_receipts": mutation_receipts,
+        "quarantine": quarantine_records,
+    }
+    return result
+
+
+CoordinatedMutationCandidate = TypedDict(
+    "CoordinatedMutationCandidate",
+    {
+        "before": CoordinatedResponseState,
+        "after": CoordinatedResponseState,
+        "receipt": MutationReceipt,
+        "affected_epoch_namespaces": tuple[str, ...],
+    },
+)
+
+
+def coordinated_mutation_candidate(
+    before: object,
+    after: object,
+    receipt: MutationReceipt,
+    affected_epoch_namespaces: tuple[str, ...],
+) -> CoordinatedMutationCandidate:
+    """Build one validated coordinated mutation-candidate dictionary."""
+    validated_before = validate_coordinated_response_state(before)
+    validated_after = validate_coordinated_response_state(after)
+    if not isinstance(receipt, MutationReceipt):
+        raise InvalidRequestError("coordinated candidate receipt must be a MutationReceipt")
+    if not isinstance(affected_epoch_namespaces, tuple) or not all(
+        isinstance(namespace, str) for namespace in affected_epoch_namespaces
+    ):
+        raise InvalidRequestError("affected_epoch_namespaces must be a tuple of strings")
+    if tuple(sorted(set(affected_epoch_namespaces))) != affected_epoch_namespaces:
+        raise InvalidRequestError("affected_epoch_namespaces must be sorted and unique")
+    result: CoordinatedMutationCandidate = {
+        "before": validated_before,
+        "after": validated_after,
+        "receipt": receipt,
+        "affected_epoch_namespaces": affected_epoch_namespaces,
+    }
+    return result
+
+
+def validate_coordinated_mutation_candidate(value: object) -> CoordinatedMutationCandidate:
+    """Validate and copy one coordinated mutation-candidate dictionary."""
+    if not isinstance(value, Mapping):
+        raise InvalidRequestError("coordinated mutation candidate must be an object")
+    if set(value) != COORDINATED_MUTATION_CANDIDATE_FIELDS:
+        raise InvalidRequestError("coordinated mutation candidate fields are malformed")
+    before = value.get("before", ())
+    after = value.get("after", ())
+    receipt = value.get("receipt", ())
+    affected_epoch_namespaces = value.get("affected_epoch_namespaces", ())
+    if not isinstance(receipt, MutationReceipt):
+        raise InvalidRequestError("coordinated candidate receipt must be a MutationReceipt")
+    if not isinstance(affected_epoch_namespaces, tuple):
+        raise InvalidRequestError("affected_epoch_namespaces must be a tuple of strings")
+    result = coordinated_mutation_candidate(before, after, receipt, affected_epoch_namespaces)
+    return result
+
+
+MutationExecutionResult = TypedDict(
+    "MutationExecutionResult",
+    {
+        "receipt": MutationReceipt,
+        "checkpoint_count": int,
+        "durable": bool,
+        "published": bool,
+        "recovered": bool,
+    },
+)
+
+
+def mutation_execution_result(
+    receipt: MutationReceipt,
+    checkpoint_count: int,
+    durable: bool,
+    published: bool,
+    recovered: bool,
+) -> MutationExecutionResult:
+    """Build one validated successful mutation-execution dictionary."""
+    if not isinstance(receipt, MutationReceipt):
+        raise InvalidRequestError("mutation execution receipt must be a MutationReceipt")
+    if isinstance(checkpoint_count, bool) or not isinstance(checkpoint_count, int):
+        raise InvalidRequestError("mutation execution checkpoint_count must be an integer")
+    if checkpoint_count < 0 or checkpoint_count > 1:
+        raise InvalidRequestError("mutation execution checkpoint_count must be zero or one")
+    if not all(isinstance(value, bool) for value in (durable, published, recovered)):
+        raise InvalidRequestError("mutation execution disposition flags must be booleans")
+    if durable != bool(checkpoint_count):
+        raise InvalidRequestError("mutation execution durability must agree with checkpoint_count")
+    if not published:
+        raise InvalidRequestError("a successful mutation execution must be published")
+    result: MutationExecutionResult = {
+        "receipt": receipt,
+        "checkpoint_count": checkpoint_count,
+        "durable": durable,
+        "published": published,
+        "recovered": recovered,
+    }
+    return result
+
+
+def validate_mutation_execution_result(value: object) -> MutationExecutionResult:
+    """Validate and copy one mutation-execution dictionary."""
+    if not isinstance(value, Mapping):
+        raise InvalidRequestError("mutation execution result must be an object")
+    if set(value) != MUTATION_EXECUTION_RESULT_FIELDS:
+        raise InvalidRequestError("mutation execution result fields are malformed")
+    receipt = value.get("receipt", ())
+    checkpoint_count = value.get("checkpoint_count", ())
+    durable = value.get("durable", ())
+    published = value.get("published", ())
+    recovered = value.get("recovered", ())
+    if not isinstance(receipt, MutationReceipt):
+        raise InvalidRequestError("mutation execution receipt must be a MutationReceipt")
+    if isinstance(checkpoint_count, bool) or not isinstance(checkpoint_count, int):
+        raise InvalidRequestError("mutation execution checkpoint_count must be an integer")
+    if not isinstance(durable, bool) or not isinstance(published, bool) or not isinstance(recovered, bool):
+        raise InvalidRequestError("mutation execution disposition flags must be booleans")
+    result = mutation_execution_result(receipt, checkpoint_count, durable, published, recovered)
+    return result
+
+
+def mutation_execution_result_to_dict(value: object) -> dict[str, object]:
+    """Return the stable serializable form of one mutation execution."""
+    validated = validate_mutation_execution_result(value)
+    receipt = validated["receipt"]
+    receipt_value = receipt.to_dict()
+    result = {
+        "receipt": receipt_value,
+        "checkpoint_count": validated["checkpoint_count"],
+        "durable": validated["durable"],
+        "published": validated["published"],
+        "recovered": validated["recovered"],
+    }
+    return result
 
 
 def _no_checkpoint(_state: CoordinatedResponseState) -> None:
@@ -291,9 +420,9 @@ class AtomicMutationCoordinator:
         mutation_receipts: MutationReceiptLedger,
         *,
         checkpoint_configured: bool = False,
-        checkpoint: CheckpointCallback = _no_checkpoint,
-        recovery_loader: RecoveryLoader = _no_recovery,
-        publication_hook: PublicationHook = _no_publication_hook,
+        checkpoint: Callable[[CoordinatedResponseState], None] = _no_checkpoint,
+        recovery_loader: Callable[[], CoordinatedResponseState] = _no_recovery,
+        publication_hook: Callable[[CoordinatedResponseState], None] = _no_publication_hook,
     ) -> None:
         if not isinstance(repository, ArtifactRepository):
             raise InvalidRequestError("coordinator repository must be an ArtifactRepository")
@@ -490,10 +619,11 @@ class AtomicMutationCoordinator:
                         recovery_required=False,
                     ) from error
             recovered_publication = self._publish(candidate)
-            return MutationExecutionResult(
+            result = mutation_execution_result(
                 receipt=candidate.receipt,
                 checkpoint_count=checkpoint_count,
                 durable=self._checkpoint_configured,
                 published=True,
                 recovered=recovered_checkpoint or recovered_publication,
             )
+            return result

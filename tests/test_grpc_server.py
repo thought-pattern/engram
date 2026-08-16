@@ -55,6 +55,41 @@ def _trailing_metadata(error: grpc.RpcError) -> dict[str, str]:
     return dict(metadata)
 
 
+def test_section7_keeps_current_grpc_v1_as_proposal_resolution_only() -> None:
+    service = engram_pb2.DESCRIPTOR.services_by_name["EngramService"]
+    resolve = service.methods_by_name["Resolve"]
+
+    assert tuple(method.name for method in service.methods) == (
+        "StartConversation",
+        "Chat",
+        "InspectConversation",
+        "FinishConversation",
+        "StopConversation",
+        "AddFact",
+        "SetPredicate",
+        "GetPredicate",
+        "Propose",
+        "Resolve",
+        "LearnResponse",
+        "RetireResponse",
+        "GetStatus",
+        "Flush",
+    )
+    assert resolve.input_type.full_name == "engram.v1.ResolveRequest"
+    assert resolve.output_type.full_name == "google.protobuf.Struct"
+    assert tuple((field.name, field.number) for field in resolve.input_type.fields) == (
+        ("proposal_id", 1),
+        ("outcome", 2),
+        ("statement_id", 3),
+        ("reason", 4),
+    )
+    assert not {
+        "ClaimEvidenceRecord",
+        "EvidencePackage",
+        "ResolutionResult",
+    }.intersection(engram_pb2.DESCRIPTOR.message_types_by_name)
+
+
 def test_conversation_fact_predicate_report_and_health_protocol(tmp_path) -> None:
     store = tmp_path / "state" / "engram.json"
     transcript_directory = tmp_path / "transcripts"

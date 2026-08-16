@@ -10,14 +10,17 @@ from types import MappingProxyType
 from typing import Protocol, cast
 
 from engram.artifacts import CachedResponseArtifact, LifecycleState
+from engram.constants import CLAIM_EVIDENCE_PRODUCERS
 from engram.eligibility import EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.evidence import ClaimEligibilityEvaluator, EvidenceUsefulnessPolicy, canonicalize_claim_evidence, claim_evidence_record
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.identity import ScopedRetrievalKey, ScopeKey
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_hit, record_statement_query
 from engram.resolution import (
     EMPTY_CANDIDATE,
+    EMPTY_EVIDENCE_PACKAGE,
     AccountingObservation,
     BudgetConsumption,
     BudgetLedger,
@@ -25,6 +28,7 @@ from engram.resolution import (
     CandidateSource,
     CostClass,
     EvidenceKind,
+    EvidencePackage,
     EvidenceReference,
     FeatureSet,
     QueryFrame,
@@ -240,26 +244,51 @@ class ResolutionPlan:
         return {"entries": [entry.to_dict() for entry in self.entries]}
 
 
+def _json_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    return value
+
+
 def _json_size(value: object) -> int:
-    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
+    return len(
+        json.dumps(
+            _json_value(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+
+
+def _working_size(value: object, seen=()) -> int:
+    """Conservatively estimate retained runtime values, including non-wire types."""
+    visited = seen if isinstance(seen, set) else set()
+    if isinstance(value, str):
+        return len(value.encode("utf-8")) + 49
+    if isinstance(value, bytes):
+        return len(value) + 33
+    if isinstance(value, (bool, int, float)):
+        return 32
+    identity = id(value)
+    if identity in visited:
+        return 0
+    visited.add(identity)
+    if isinstance(value, Mapping):
+        return 64 + sum(_working_size(key, visited) + _working_size(item, visited) for key, item in value.items())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return 64 + sum(_working_size(item, visited) for item in value)
+    return len(str(value).encode("utf-8")) + 64
 
 
 def _candidate_id(source: CandidateSource, statement_id: str, diagnostic_id: str) -> str:
     digest = hashlib.sha256(f"{diagnostic_id}:{source.value}:{statement_id}".encode()).hexdigest()
     return f"candidate:sha256:{digest}"
-
-
-def _evidence_id(row: Mapping[str, object]) -> tuple[str, bool]:
-    claim_id = row.get("claim_id", "")
-    if isinstance(claim_id, str) and claim_id:
-        return claim_id, False
-    bounded = {
-        "subject": str(row.get("subject", ""))[:512],
-        "predicate": str(row.get("predicate", ""))[:512],
-        "object": str(row.get("object", ""))[:512],
-    }
-    digest = hashlib.sha256(json.dumps(bounded, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    return f"legacy-graph:sha256:{digest}", True
 
 
 def _statement_metadata(statement: Mapping[str, object]) -> tuple[Mapping[str, object], ScopeKey, LifecycleState]:
@@ -606,25 +635,40 @@ class LexicalResolver:
 
 
 class StructuredGraphResolver:
-    """Pure minimal-evidence adapter over the existing read-only graph path."""
+    """Pure full-Claim evidence adapter over fixed structured graph projections."""
 
     name = "structured_graph"
     cost_class = CostClass.STANDARD
 
-    def __init__(self, engram, clock_ns: Callable[[], int]) -> None:
+    def __init__(self, engram, clock_ns: Callable[[], int], eligibility_evaluator: object = ()) -> None:
         self._engram = engram
         self._clock_ns = clock_ns
+        if eligibility_evaluator == ():
+            selected_evaluator = ClaimEligibilityEvaluator(getattr(engram, "claim_visibility_authority", ()))
+        elif isinstance(eligibility_evaluator, ClaimEligibilityEvaluator):
+            selected_evaluator = eligibility_evaluator
+        else:
+            raise InvalidRequestError("structured graph eligibility_evaluator must be ClaimEligibilityEvaluator")
+        self._eligibility_evaluator: ClaimEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: QueryFrame) -> bool:
         return bool(self._engram.graph_client)
 
     def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
-        if not budget.max_graph_rows or not budget.max_evidence or not budget.max_working_memory_bytes:
+        if (
+            budget.max_graph_rows < 2
+            or not budget.max_evidence
+            or not budget.max_evidence_bytes
+            or not budget.max_output_bytes
+            or not budget.max_working_memory_bytes
+        ):
             dimensions = tuple(
                 name
                 for name, value in (
                     ("evidence", budget.max_evidence),
-                    ("graph_rows", budget.max_graph_rows),
+                    ("evidence_bytes", budget.max_evidence_bytes),
+                    ("graph_rows", budget.max_graph_rows if budget.max_graph_rows >= 2 else 0),
+                    ("output_bytes", budget.max_output_bytes),
                     ("working_memory_bytes", budget.max_working_memory_bytes),
                 )
                 if not value
@@ -632,66 +676,108 @@ class StructuredGraphResolver:
             return _exhausted_result(self.name, dimensions)
         started = self._clock_ns()
         try:
-            rows = self._engram.structured_graph_evidence(
+            projections = self._engram.structured_claim_projections(
                 frame.resolved_text,
-                row_limit=min(budget.max_graph_rows, budget.max_evidence),
+                row_limit=min(budget.max_graph_rows // 2, budget.max_evidence),
                 cooperative_check=lambda: _cooperative_deadline_check(self._clock_ns, budget),
                 max_working_memory_bytes=budget.max_working_memory_bytes,
             )
         except (TimeoutError, MemoryError) as error:
             return _resource_exhausted_result(self.name, error)
-        evidence = []
-        seen = set()
-        for row in rows:
-            evidence_id, synthesized = _evidence_id(row)
-            if evidence_id in seen:
+        records = []
+        exclusion_counts: dict[str, int] = {}
+        revalidation_rows = 0
+        for projection in projections:
+            _cooperative_deadline_check(self._clock_ns, budget)
+            initial = self._eligibility_evaluator.evaluate(projection, frame)
+            if not initial.eligible:
+                exclusion_counts[initial.reason.value] = exclusion_counts.get(initial.reason.value, 0) + 1
                 continue
-            seen.add(evidence_id)
-            evidence.append(
-                EvidenceReference(
-                    evidence_id=evidence_id,
-                    resolver=self.name,
-                    kind=EvidenceKind.GRAPH_FACT,
-                    scope=frame.scope,
-                    provenance={"legacy_identifier_synthesized": synthesized},
-                    diagnostics={"structured_match": True},
-                )
-            )
+            decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram)
+            _cooperative_deadline_check(self._clock_ns, budget)
+            if decision.revalidated:
+                revalidation_rows += 1
+            if not decision.eligible:
+                exclusion_counts[decision.reason.value] = exclusion_counts.get(decision.reason.value, 0) + 1
+                continue
+            records.append(claim_evidence_record(projection, decision, frame, self.name))
+        records.sort(key=lambda record: record.claim_id)
+        exhausted = set()
+
+        def record_bytes() -> int:
+            return _json_size([record.to_dict() for record in records]) if records else 0
+
+        while records and record_bytes() > budget.max_evidence_bytes:
+            records.pop()
+            exhausted.add("evidence_bytes")
+        while records and record_bytes() > budget.max_output_bytes:
+            records.pop()
+            exhausted.add("output_bytes")
+        working_memory = _json_size([projection.to_dict() for projection in projections]) + record_bytes()
+        if working_memory > budget.max_working_memory_bytes:
+            return _resource_exhausted_result(self.name, MemoryError("resolution working-memory estimate exceeded"))
+        evidence_bytes = record_bytes()
         return ResolverResult(
             resolver=self.name,
             state=ResolverState.COMPLETED,
-            reason_code="structured_graph_evidence" if evidence else "structured_graph_miss",
-            evidence=tuple(evidence),
-            diagnostics={"rows": len(rows)},
+            reason_code="structured_claim_evidence" if records else "structured_graph_miss",
+            claim_evidence=tuple(records),
+            diagnostics={
+                "discovery_rows": len(projections),
+                "revalidation_rows": revalidation_rows,
+                "exclusion_counts": exclusion_counts,
+            },
             consumption=BudgetConsumption(
                 elapsed_ns=max(0, self._clock_ns() - started),
                 resolvers=1,
-                graph_rows=len(rows),
-                evidence=len(evidence),
+                graph_rows=len(projections) + revalidation_rows,
+                evidence=len(records),
+                evidence_bytes=evidence_bytes,
+                output_bytes=evidence_bytes,
+                working_memory_bytes=working_memory,
+                exhausted_dimensions=tuple(sorted(exhausted)),
             ),
         )
 
 
 class SupportSemanticResolver:
-    """Pure adapter over fixed Claim-vector support-to-artifact intersection."""
+    """Pure fixed-vector adapter for support candidates and full Claim evidence."""
 
     name = "support_semantic"
     cost_class = CostClass.EXPENSIVE
 
-    def __init__(self, engram, clock_ns: Callable[[], int]) -> None:
+    def __init__(self, engram, clock_ns: Callable[[], int], eligibility_evaluator: object = ()) -> None:
         self._engram = engram
         self._clock_ns = clock_ns
+        if eligibility_evaluator == ():
+            selected_evaluator = ClaimEligibilityEvaluator(getattr(engram, "claim_visibility_authority", ()))
+        elif isinstance(eligibility_evaluator, ClaimEligibilityEvaluator):
+            selected_evaluator = eligibility_evaluator
+        else:
+            raise InvalidRequestError("support semantic eligibility_evaluator must be ClaimEligibilityEvaluator")
+        self._eligibility_evaluator: ClaimEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: QueryFrame) -> bool:
         graph = self._engram.config.get("graph") or {}
         return bool(graph.get("enabled") and graph.get("vector_enabled"))
 
     def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
-        if not budget.max_candidates or not budget.max_vector_results or not budget.max_working_memory_bytes:
+        claim_capacity = bool(
+            budget.max_graph_rows and budget.max_evidence and budget.max_evidence_bytes and budget.max_output_bytes
+        )
+        if (
+            not budget.max_vector_results
+            or not budget.max_working_memory_bytes
+            or (not budget.max_candidates and not claim_capacity)
+        ):
             dimensions = tuple(
                 name
                 for name, value in (
                     ("candidates", budget.max_candidates),
+                    ("evidence", budget.max_evidence),
+                    ("evidence_bytes", budget.max_evidence_bytes),
+                    ("graph_rows", budget.max_graph_rows),
+                    ("output_bytes", budget.max_output_bytes),
                     ("vector_results", budget.max_vector_results),
                     ("working_memory_bytes", budget.max_working_memory_bytes),
                 )
@@ -709,12 +795,34 @@ class SupportSemanticResolver:
             return _artifact_matches_frame(artifact, frame)
 
         try:
-            matches = self._engram.vector_supported_match_components(
-                frame.resolved_text,
-                limit=min(budget.max_candidates, budget.max_vector_results),
-                statement_filter=statement_filter,
-                cooperative_check=lambda: _cooperative_deadline_check(self._clock_ns, budget),
-                max_working_memory_bytes=budget.max_working_memory_bytes,
+            candidate_limit = min(budget.max_candidates, budget.max_vector_results)
+            legacy_rows = (
+                self._engram.graph_vector_claims(frame.resolved_text, limit=candidate_limit)[:candidate_limit]
+                if candidate_limit
+                else []
+            )
+            _cooperative_deadline_check(self._clock_ns, budget)
+            matches = (
+                self._engram.vector_supported_claim_match_components(
+                    legacy_rows,
+                    limit=candidate_limit,
+                    statement_filter=statement_filter,
+                    cooperative_check=lambda: _cooperative_deadline_check(self._clock_ns, budget),
+                    max_working_memory_bytes=budget.max_working_memory_bytes,
+                )
+                if candidate_limit
+                else []
+            )
+            remaining_vector_results = max(0, budget.max_vector_results - len(legacy_rows))
+            projections = (
+                self._engram.graph_vector_claim_projections(
+                    frame.resolved_text,
+                    limit=remaining_vector_results,
+                    cooperative_check=lambda: _cooperative_deadline_check(self._clock_ns, budget),
+                    max_working_memory_bytes=budget.max_working_memory_bytes,
+                )
+                if remaining_vector_results
+                else []
             )
         except (TimeoutError, MemoryError) as error:
             return _resource_exhausted_result(self.name, error)
@@ -759,18 +867,100 @@ class SupportSemanticResolver:
             )
             candidates.append(candidate)
             accounting.append(AccountingObservation(candidate.statement_id))
+        records = []
+        exclusion_counts: dict[str, int] = {}
+        revalidation_attempts = 0
+        revalidation_rows = 0
+        exhausted = set()
+        remaining_evidence = max(0, budget.max_evidence - evidence_count)
+        if claim_capacity and remaining_evidence:
+            for projection in projections:
+                _cooperative_deadline_check(self._clock_ns, budget)
+                initial = self._eligibility_evaluator.evaluate(projection, frame)
+                if not initial.eligible:
+                    exclusion_counts[initial.reason.value] = exclusion_counts.get(initial.reason.value, 0) + 1
+                    continue
+                if revalidation_attempts >= budget.max_graph_rows:
+                    exhausted.add("graph_rows")
+                    break
+                revalidation_attempts += 1
+                decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram)
+                _cooperative_deadline_check(self._clock_ns, budget)
+                if decision.revalidated:
+                    revalidation_rows += 1
+                if not decision.eligible:
+                    exclusion_counts[decision.reason.value] = exclusion_counts.get(decision.reason.value, 0) + 1
+                    continue
+                records.append(claim_evidence_record(projection, decision, frame, self.name))
+                if len(records) >= remaining_evidence:
+                    break
+        records.sort(key=lambda record: record.claim_id)
+
+        def evidence_values() -> list[dict[str, object]]:
+            return [reference.to_dict() for candidate in candidates for reference in candidate.evidence] + [
+                record.to_dict() for record in records
+            ]
+
+        def evidence_bytes() -> int:
+            values = evidence_values()
+            return _json_size(values) if values else 0
+
+        def output_bytes() -> int:
+            values = [candidate.to_dict() for candidate in candidates] + [record.to_dict() for record in records]
+            return _json_size(values) if values else 0
+
+        while records and evidence_bytes() > budget.max_evidence_bytes:
+            records.pop()
+            exhausted.add("evidence_bytes")
+        while records and output_bytes() > budget.max_output_bytes:
+            records.pop()
+            exhausted.add("output_bytes")
+        working_memory = (
+            _working_size(legacy_rows)
+            + _working_size(projections)
+            + _working_size(matches)
+            + _working_size(candidates)
+            + _working_size(records)
+        )
+        while records and working_memory > budget.max_working_memory_bytes:
+            records.pop()
+            exhausted.add("working_memory_bytes")
+            working_memory = (
+                _working_size(legacy_rows)
+                + _working_size(projections)
+                + _working_size(matches)
+                + _working_size(candidates)
+                + _working_size(records)
+            )
+        if working_memory > budget.max_working_memory_bytes:
+            return _resource_exhausted_result(self.name, MemoryError("resolution working-memory estimate exceeded"))
+        selected_reason = "support_semantic_candidates" if candidates else "semantic_claim_evidence"
+        if not candidates and not records:
+            selected_reason = "support_semantic_miss"
         return ResolverResult(
             resolver=self.name,
             state=ResolverState.COMPLETED,
-            reason_code="support_semantic_candidates" if candidates else "support_semantic_miss",
+            reason_code=selected_reason,
             candidates=tuple(candidates),
+            claim_evidence=tuple(records),
             accounting=tuple(accounting),
+            diagnostics={
+                "projection_rows": len(projections),
+                "revalidation_attempts": revalidation_attempts,
+                "revalidation_rows": revalidation_rows,
+                "exclusion_counts": exclusion_counts,
+            },
             consumption=BudgetConsumption(
                 elapsed_ns=max(0, self._clock_ns() - started),
                 resolvers=1,
                 candidates=len(candidates),
-                vector_results=len(matches),
-                evidence=evidence_count,
+                graph_rows=revalidation_attempts,
+                vector_results=len(legacy_rows) + len(projections),
+                evidence=evidence_count + len(records),
+                evidence_bytes=evidence_bytes(),
+                output_bytes=output_bytes(),
+                working_memory_bytes=working_memory,
+                exhausted_dimensions=tuple(sorted(exhausted)),
             ),
         )
 
@@ -839,6 +1029,15 @@ class ExecutionReport:
     exact_short_circuited: bool
     reservations: tuple[ResolverReservation, ...]
 
+    def canonical_claim_evidence(self, cooperative_check=()) -> tuple:
+        """Return deterministic Claim-only evidence without creating candidacy or accounting."""
+        records = tuple(
+            record for result in self.results if result.resolver in CLAIM_EVIDENCE_PRODUCERS for record in result.claim_evidence
+        )
+        if cooperative_check:
+            return canonicalize_claim_evidence(records, cooperative_check)
+        return canonicalize_claim_evidence(records)
+
 
 class ResolverExecutor:
     """Sequential bounded fail-soft executor for one deterministic plan."""
@@ -874,6 +1073,7 @@ class ResolverExecutor:
     def _bounded_result(result: ResolverResult, lease: ResolverBudget) -> ResolverResult:
         candidates = list(result.candidates[: lease.max_candidates])
         evidence = list(result.evidence)
+        claim_evidence = list(result.claim_evidence)
         exhausted = set(result.consumption.exhausted_dimensions)
         if len(candidates) < len(result.candidates):
             exhausted.add("candidates")
@@ -889,17 +1089,26 @@ class ResolverExecutor:
         if len(retained_evidence) < len(evidence):
             exhausted.add("evidence")
         evidence = retained_evidence
+        remaining_evidence -= len(evidence)
+        retained_claim_evidence = claim_evidence[:remaining_evidence]
+        if len(retained_claim_evidence) < len(claim_evidence):
+            exhausted.add("evidence")
+        claim_evidence = retained_claim_evidence
 
         def evidence_values() -> list[dict[str, object]]:
-            return [reference.to_dict() for candidate in candidates for reference in candidate.evidence] + [
-                reference.to_dict() for reference in evidence
-            ]
+            return (
+                [reference.to_dict() for candidate in candidates for reference in candidate.evidence]
+                + [reference.to_dict() for reference in evidence]
+                + [record.to_dict() for record in claim_evidence]
+            )
 
         def values_size(values: list[dict[str, object]]) -> int:
             return _json_size(values) if values else 0
 
         while values_size(evidence_values()) > lease.max_evidence_bytes:
-            if evidence:
+            if claim_evidence:
+                claim_evidence.pop()
+            elif evidence:
                 evidence.pop()
             else:
                 candidate_index = next(
@@ -913,11 +1122,17 @@ class ResolverExecutor:
             exhausted.add("evidence_bytes")
 
         def output_size() -> int:
-            values = [candidate.to_dict() for candidate in candidates] + [reference.to_dict() for reference in evidence]
+            values = (
+                [candidate.to_dict() for candidate in candidates]
+                + [reference.to_dict() for reference in evidence]
+                + [record.to_dict() for record in claim_evidence]
+            )
             return values_size(values)
 
-        while output_size() > lease.max_output_bytes and (candidates or evidence):
-            if evidence:
+        while output_size() > lease.max_output_bytes and (candidates or evidence or claim_evidence):
+            if claim_evidence:
+                claim_evidence.pop()
+            elif evidence:
                 evidence.pop()
             else:
                 candidates.pop()
@@ -939,13 +1154,17 @@ class ResolverExecutor:
         if vector_results < result.consumption.vector_results:
             exhausted.add("vector_results")
         estimated_memory = max(
-            candidate_bytes + values_size([value.to_dict() for value in evidence]) + diagnostic_bytes,
+            candidate_bytes
+            + values_size([value.to_dict() for value in evidence])
+            + values_size([value.to_dict() for value in claim_evidence])
+            + diagnostic_bytes,
             result.consumption.working_memory_bytes,
         )
         if estimated_memory > lease.max_working_memory_bytes:
             exhausted.add("working_memory_bytes")
             candidates = []
             evidence = []
+            claim_evidence = []
             accounting = ()
             diagnostics = MappingProxyType({})
             candidate_bytes = 0
@@ -958,7 +1177,7 @@ class ResolverExecutor:
             candidates=len(candidates),
             graph_rows=graph_rows,
             vector_results=vector_results,
-            evidence=len(evidence) + sum(len(candidate.evidence) for candidate in candidates),
+            evidence=len(evidence) + len(claim_evidence) + sum(len(candidate.evidence) for candidate in candidates),
             evidence_bytes=evidence_bytes,
             output_bytes=output_size(),
             diagnostic_bytes=diagnostic_bytes,
@@ -972,9 +1191,11 @@ class ResolverExecutor:
             reason_code=result.reason_code,
             candidates=tuple(candidates),
             evidence=tuple(evidence),
+            claim_evidence=tuple(claim_evidence),
             accounting=accounting,
             diagnostics=diagnostics,
             consumption=consumption,
+            schema_version=result.schema_version,
         )
 
     def execute(self, frame: QueryFrame, plan: ResolutionPlan) -> ExecutionReport:
@@ -1016,7 +1237,7 @@ class ResolverExecutor:
                 )
                 continue
             lease = self._lease(frame, ledger)
-            if not lease.max_candidates and entry.resolver.name != "structured_graph":
+            if not lease.max_candidates and entry.resolver.name not in {"structured_graph", "support_semantic"}:
                 results.append(
                     ResolverResult(resolver=entry.resolver.name, state=ResolverState.EXHAUSTED, reason_code="candidate_budget")
                 )
@@ -1201,8 +1422,8 @@ class ResolutionAccountingFinalizer:
                     accepted_artifact_id,
                     self._receipt_id("finalize", request_id),
                 )
-                artifact_query_replayed = accounting_mutation.replayed
-                if not accounting_mutation.replayed and self._compatibility_sync:
+                artifact_query_replayed = accounting_mutation["replayed"]
+                if not accounting_mutation["replayed"] and self._compatibility_sync:
                     self._compatibility_sync(tuple(sorted(repository_ids)))
             with self._engram.statement_lock:
                 for statement_id in legacy_ids:
@@ -1257,6 +1478,7 @@ class ResolutionOrchestrator:
         executor: ResolverExecutor,
         accounting: ResolutionAccountingFinalizer,
         fusion: object = (),
+        evidence_policy: object = (),
     ) -> None:
         if not isinstance(registry, ResolverRegistry) or not isinstance(executor, ResolverExecutor):
             raise InvalidRequestError("orchestrator registry and executor have invalid types")
@@ -1264,6 +1486,8 @@ class ResolutionOrchestrator:
             raise InvalidRequestError("orchestrator accounting has an invalid type")
         if fusion != () and not isinstance(fusion, CandidateFusionEngine):
             raise InvalidRequestError("orchestrator fusion has an invalid type")
+        if evidence_policy != () and not isinstance(evidence_policy, EvidenceUsefulnessPolicy):
+            raise InvalidRequestError("orchestrator evidence_policy has an invalid type")
         self._registry = registry
         self._executor = executor
         self._accounting = accounting
@@ -1272,6 +1496,9 @@ class ResolutionOrchestrator:
             fusion
             if isinstance(fusion, CandidateFusionEngine)
             else CandidateFusionEngine(authority=accounting.candidate_authority, clock_ns=self._clock_ns)
+        )
+        self._evidence_policy = (
+            evidence_policy if isinstance(evidence_policy, EvidenceUsefulnessPolicy) else EvidenceUsefulnessPolicy()
         )
 
     def resolve(
@@ -1305,9 +1532,139 @@ class ResolutionOrchestrator:
         selected = decision.selected_candidate
         selected_available = decision.selected_candidate_available
         response_candidates = decision.response_candidates
-        reason_codes = (*decision.reason_codes, "accounting_finalized")
+        reason_codes = [*decision.reason_codes, "accounting_finalized"]
         confidence = decision.confidence
         confidence_available = decision.confidence_available
+        evidence_package_available = False
+        evidence_package = EMPTY_EVIDENCE_PACKAGE
+        package_source_records = ()
+        package_byte_limit = 256
+        minimal_evidence_values = tuple(
+            reference
+            for result in execution.results
+            for reference in result.evidence + tuple(nested for candidate in result.candidates for nested in candidate.evidence)
+        )
+        minimal_evidence_count = len(minimal_evidence_values)
+        minimal_evidence_bytes = (
+            _json_size([reference.to_dict() for reference in minimal_evidence_values]) if minimal_evidence_values else 0
+        )
+        evidence_working_memory = 0
+        orchestration_exhausted = set()
+        evidence_diagnostics: dict[str, object] = {
+            "policy_version": self._evidence_policy.policy_version,
+            "available": False,
+            "input_count": 0,
+            "normalized_count": 0,
+            "included_count": 0,
+            "excluded_count": 0,
+            "reason_counts": {},
+        }
+
+        def append_reason(reason: str) -> None:
+            if reason not in reason_codes:
+                reason_codes.append(reason)
+
+        def evidence_check() -> None:
+            current_ns = self._clock_ns()
+            if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
+                raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
+            if frame.budget.deadline_ns and current_ns >= frame.budget.deadline_ns:
+                raise TimeoutError("resolution evidence orchestration deadline exhausted")
+
+        unexpected_claim_records = any(
+            result.claim_evidence and result.resolver not in CLAIM_EVIDENCE_PRODUCERS for result in execution.results
+        )
+        if unexpected_claim_records:
+            append_reason("claim_evidence_untrusted_producer")
+        raw_claim_records = tuple(
+            record
+            for result in execution.results
+            if result.resolver in CLAIM_EVIDENCE_PRODUCERS
+            for record in result.claim_evidence
+        )
+        full_producer_available = any(
+            result.resolver in CLAIM_EVIDENCE_PRODUCERS and result.state == ResolverState.COMPLETED and result.claim_evidence
+            for result in execution.results
+        )
+        if outcome != ResolutionOutcome.ANSWER and full_producer_available:
+            evidence_diagnostics["input_count"] = len(raw_claim_records)
+            remaining_working_memory = max(
+                0,
+                frame.budget.max_working_memory_bytes - execution.consumption.working_memory_bytes - decision.working_memory_bytes,
+            )
+            if _working_size(raw_claim_records) * 2 > remaining_working_memory:
+                orchestration_exhausted.add("working_memory_bytes")
+                append_reason("claim_evidence_memory_exhausted")
+            else:
+                try:
+                    normalized_records = canonicalize_claim_evidence(raw_claim_records, evidence_check)
+                    if any(
+                        record.disclosure.scope != frame.scope
+                        or record.validity.evaluation_time != frame.eligibility_context.evaluation_time
+                        for record in normalized_records
+                    ):
+                        raise InvalidRequestError("Claim evidence is not bound to the current frame")
+                    usefulness_decisions = []
+                    included_records = []
+                    reason_counts: dict[str, int] = {}
+                    for record in normalized_records:
+                        evidence_check()
+                        usefulness = self._evidence_policy.evaluate(record)
+                        usefulness_decisions.append(usefulness)
+                        for reason in usefulness.reasons:
+                            reason_counts[reason.value] = reason_counts.get(reason.value, 0) + 1
+                        if usefulness.included:
+                            included_records.append(record)
+                    evidence_check()
+                except TimeoutError:
+                    orchestration_exhausted.add("total_time")
+                    append_reason("claim_evidence_deadline_exhausted")
+                except InvalidRequestError:
+                    append_reason("claim_evidence_conflict")
+                else:
+                    package_source_records = tuple(included_records)
+                    evidence_working_memory = (
+                        _working_size(normalized_records) + _working_size(usefulness_decisions) + _working_size(included_records)
+                    )
+                    evidence_diagnostics.update(
+                        {
+                            "normalized_count": len(normalized_records),
+                            "included_count": len(included_records),
+                            "excluded_count": len(normalized_records) - len(included_records),
+                            "reason_counts": reason_counts,
+                        }
+                    )
+                    remaining_evidence_bytes = max(
+                        0,
+                        frame.budget.max_evidence_bytes - minimal_evidence_bytes,
+                    )
+                    package_byte_limit = min(65_536, max(256, remaining_evidence_bytes))
+                    candidate_package = EvidencePackage.build(
+                        package_source_records,
+                        max_records=min(10, max(0, frame.budget.max_evidence - minimal_evidence_count)),
+                        max_bytes=package_byte_limit,
+                    )
+                    candidate_package_bytes = len(candidate_package.to_json().encode("utf-8"))
+                    if candidate_package_bytes <= remaining_evidence_bytes:
+                        evidence_package_available = True
+                        evidence_package = candidate_package
+                        evidence_working_memory += candidate_package_bytes
+                        evidence_diagnostics["available"] = True
+                    else:
+                        orchestration_exhausted.add("evidence_bytes")
+                        append_reason("claim_evidence_bytes_exhausted")
+                    if evidence_working_memory > remaining_working_memory:
+                        evidence_package_available = False
+                        evidence_package = EMPTY_EVIDENCE_PACKAGE
+                        orchestration_exhausted.add("working_memory_bytes")
+                        append_reason("claim_evidence_memory_exhausted")
+                        evidence_diagnostics["available"] = False
+                    elif evidence_package.records:
+                        append_reason("claim_evidence_included")
+                        if outcome == ResolutionOutcome.MISS:
+                            outcome = ResolutionOutcome.EVIDENCE
+                    elif normalized_records:
+                        append_reason("claim_evidence_excluded")
         accepted_statement_id = (
             selected.statement_id
             if outcome == ResolutionOutcome.ANSWER and selected.source == CandidateSource.EXACT and accept_exact
@@ -1321,14 +1678,54 @@ class ResolutionOrchestrator:
             False,
             False,
         )
-        frame_diagnostics = {
-            "diagnostic_id": frame.diagnostic_id,
-            "plan": plan.to_dict(),
-            "reservations": [reservation.to_dict() for reservation in execution.reservations],
-            "fusion": decision.report,
-            "accounting": accounting_preview.to_dict(),
-        }
-        resolver_results = execution.results
+        evidence_diagnostics.update(
+            {
+                "available": evidence_package_available,
+                "retained_count": evidence_package.retained_count,
+                "omitted_count": evidence_package.omitted_count,
+                "truncated": evidence_package.truncated,
+            }
+        )
+
+        def bound_frame_diagnostics(values: dict[str, object]) -> dict[str, object]:
+            remaining = max(
+                0,
+                frame.budget.max_diagnostic_bytes - execution.consumption.diagnostic_bytes,
+            )
+            if not values or _json_size(values) <= remaining:
+                return values
+            orchestration_exhausted.add("diagnostic_bytes")
+            append_reason("diagnostics_truncated")
+            compact = {
+                "diagnostic_id": frame.diagnostic_id,
+                "claim_evidence": {
+                    "policy_version": self._evidence_policy.policy_version,
+                    "available": evidence_package_available,
+                    "input_count": evidence_diagnostics["input_count"],
+                    "included_count": evidence_diagnostics["included_count"],
+                    "retained_count": evidence_package.retained_count,
+                    "omitted_count": evidence_package.omitted_count,
+                },
+                "truncated": True,
+            }
+            if _json_size(compact) <= remaining:
+                return compact
+            marker: dict[str, object] = {"truncated": True}
+            return marker if _json_size(marker) <= remaining else {}
+
+        frame_diagnostics = bound_frame_diagnostics(
+            {
+                "diagnostic_id": frame.diagnostic_id,
+                "plan": plan.to_dict(),
+                "reservations": [reservation.to_dict() for reservation in execution.reservations],
+                "fusion": decision.report,
+                "claim_evidence": evidence_diagnostics,
+                "accounting": accounting_preview.to_dict(),
+            }
+        )
+        resolver_results = tuple(
+            replace(result, claim_evidence=()) if result.claim_evidence else result for result in execution.results
+        )
         response_evidence = decision.evidence
 
         def make_result(consumption: BudgetConsumption) -> ResolutionResult:
@@ -1340,36 +1737,58 @@ class ResolutionOrchestrator:
                 evidence=response_evidence,
                 confidence=confidence,
                 confidence_available=confidence_available,
-                reason_codes=reason_codes,
+                reason_codes=tuple(reason_codes),
                 frame_diagnostics=frame_diagnostics,
                 resolver_results=resolver_results,
                 budget=consumption,
+                evidence_package_available=evidence_package_available,
+                evidence_package=evidence_package,
             )
 
         result = make_result(execution.consumption)
         if len(result.to_json().encode("utf-8")) > frame.budget.max_output_bytes:
-            reason_codes = (*reason_codes, "output_truncated")
-            frame_diagnostics = {
-                "diagnostic_id": frame.diagnostic_id,
-                "fusion": {
-                    "policy_version": self._fusion.policy.policy_version,
-                    "candidate_count": decision.report["candidate_count"],
+            append_reason("output_truncated")
+            frame_diagnostics = bound_frame_diagnostics(
+                {
+                    "diagnostic_id": frame.diagnostic_id,
+                    "fusion": {
+                        "policy_version": self._fusion.policy.policy_version,
+                        "candidate_count": decision.report["candidate_count"],
+                        "output_truncated": True,
+                    },
+                    "claim_evidence": {
+                        "policy_version": self._evidence_policy.policy_version,
+                        "available": evidence_package_available,
+                        "input_count": evidence_diagnostics["input_count"],
+                        "included_count": evidence_diagnostics["included_count"],
+                        "retained_count": evidence_package.retained_count,
+                        "omitted_count": evidence_package.omitted_count,
+                        "output_truncated": True,
+                    },
+                    "accounting": {
+                        "candidate_count": len(accounting_preview.candidate_statement_ids),
+                        "accepted_present": False,
+                        "candidacy_applied": accounting_preview.candidacy_applied,
+                        "success_applied": accounting_preview.success_applied,
+                        "idempotent": accounting_preview.idempotent,
+                    },
                     "output_truncated": True,
-                },
-                "accounting": {
-                    "candidate_count": len(accounting_preview.candidate_statement_ids),
-                    "accepted_present": False,
-                    "candidacy_applied": accounting_preview.candidacy_applied,
-                    "success_applied": accounting_preview.success_applied,
-                    "idempotent": accounting_preview.idempotent,
-                },
-                "output_truncated": True,
-            }
+                }
+            )
             while (
                 resolver_results
                 and len(make_result(execution.consumption).to_json().encode("utf-8")) > frame.budget.max_output_bytes
             ):
                 resolver_results = resolver_results[:-1]
+            while (
+                evidence_package.records
+                and len(make_result(execution.consumption).to_json().encode("utf-8")) > frame.budget.max_output_bytes
+            ):
+                evidence_package = EvidencePackage.build(
+                    package_source_records,
+                    max_records=len(evidence_package.records) - 1,
+                    max_bytes=package_byte_limit,
+                )
             while (
                 response_evidence
                 and len(make_result(execution.consumption).to_json().encode("utf-8")) > frame.budget.max_output_bytes
@@ -1387,30 +1806,63 @@ class ResolutionOrchestrator:
                 confidence = 0.0
                 confidence_available = False
                 accepted_statement_id = ""
-                reason_codes = (*reason_codes, "answer_exceeds_output_budget")
-            if outcome == ResolutionOutcome.EVIDENCE and not (response_candidates or response_evidence):
+                append_reason("answer_exceeds_output_budget")
+            if outcome == ResolutionOutcome.EVIDENCE and not (response_candidates or response_evidence or evidence_package.records):
                 outcome = ResolutionOutcome.MISS
-                reason_codes = (*reason_codes, "no_usable_output_after_truncation")
+                append_reason("no_usable_output_after_truncation")
+
+        evidence_diagnostics.update(
+            {
+                "available": evidence_package_available,
+                "retained_count": evidence_package.retained_count,
+                "omitted_count": evidence_package.omitted_count,
+                "truncated": evidence_package.truncated,
+            }
+        )
+        visible_evidence_diagnostics = frame_diagnostics.get("claim_evidence", {})
+        if isinstance(visible_evidence_diagnostics, dict):
+            for name in ("available", "retained_count", "omitted_count"):
+                if name in visible_evidence_diagnostics:
+                    visible_evidence_diagnostics[name] = evidence_diagnostics[name]
 
         finalization = self._accounting.finalize(request_id, execution.results, accepted_statement_id)
-        if "output_truncated" in reason_codes:
-            frame_diagnostics["accounting"] = {
-                "candidate_count": len(finalization.candidate_statement_ids),
-                "accepted_present": bool(finalization.accepted_statement_id),
-                "candidacy_applied": finalization.candidacy_applied,
-                "success_applied": finalization.success_applied,
-                "idempotent": finalization.idempotent,
-            }
-        else:
-            frame_diagnostics["accounting"] = finalization.to_dict()
+        if frame_diagnostics:
+            final_accounting_diagnostics: object
+            if "output_truncated" in reason_codes:
+                final_accounting_diagnostics = {
+                    "candidate_count": len(finalization.candidate_statement_ids),
+                    "accepted_present": bool(finalization.accepted_statement_id),
+                    "candidacy_applied": finalization.candidacy_applied,
+                    "success_applied": finalization.success_applied,
+                    "idempotent": finalization.idempotent,
+                }
+            else:
+                final_accounting_diagnostics = finalization.to_dict()
+            revised_diagnostics = dict(frame_diagnostics)
+            revised_diagnostics["accounting"] = final_accounting_diagnostics
+            frame_diagnostics = bound_frame_diagnostics(revised_diagnostics)
 
-        exhausted = set(execution.consumption.exhausted_dimensions)
+        exhausted = set(execution.consumption.exhausted_dimensions).union(orchestration_exhausted)
         if "output_truncated" in reason_codes:
             exhausted.add("output_bytes")
         fusion_exhaustion = decision.report.get("budget_exhausted", "")
         if fusion_exhaustion == "fusion_deadline_exhausted":
             exhausted.add("fusion_deadline")
         if fusion_exhaustion == "fusion_memory_exhausted":
+            exhausted.add("working_memory_bytes")
+        package_evidence_bytes = len(evidence_package.to_json().encode("utf-8")) if evidence_package_available else 0
+        evidence_count = minimal_evidence_count + evidence_package.retained_count
+        evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
+        if evidence_count > frame.budget.max_evidence:
+            exhausted.add("evidence")
+        if evidence_bytes > frame.budget.max_evidence_bytes:
+            exhausted.add("evidence_bytes")
+        frame_diagnostic_bytes = _json_size(frame_diagnostics) if frame_diagnostics else 0
+        diagnostic_bytes = execution.consumption.diagnostic_bytes + frame_diagnostic_bytes
+        if diagnostic_bytes > frame.budget.max_diagnostic_bytes:
+            exhausted.add("diagnostic_bytes")
+        working_memory_bytes = execution.consumption.working_memory_bytes + decision.working_memory_bytes + evidence_working_memory
+        if working_memory_bytes > frame.budget.max_working_memory_bytes:
             exhausted.add("working_memory_bytes")
         elapsed_ns = execution.consumption.elapsed_ns
         if frame.budget.started_ns:
@@ -1421,16 +1873,31 @@ class ResolutionOrchestrator:
         consumption = replace(
             execution.consumption,
             elapsed_ns=elapsed_ns,
+            evidence=evidence_count,
+            evidence_bytes=min(evidence_bytes, frame.budget.max_evidence_bytes),
             output_bytes=0,
-            working_memory_bytes=execution.consumption.working_memory_bytes + decision.working_memory_bytes,
+            diagnostic_bytes=min(diagnostic_bytes, frame.budget.max_diagnostic_bytes),
+            working_memory_bytes=min(working_memory_bytes, frame.budget.max_working_memory_bytes),
             exhausted_dimensions=tuple(sorted(exhausted)),
         )
-        for _ in range(4):
+        for _ in range(8):
             result = make_result(consumption)
             encoded_size = len(result.to_json().encode("utf-8"))
-            if consumption.output_bytes == encoded_size:
+            fixed_exhausted = set(consumption.exhausted_dimensions)
+            if encoded_size > frame.budget.max_working_memory_bytes:
+                fixed_exhausted.add("working_memory_bytes")
+            updated_consumption = replace(
+                consumption,
+                output_bytes=encoded_size,
+                working_memory_bytes=min(
+                    frame.budget.max_working_memory_bytes,
+                    max(consumption.working_memory_bytes, encoded_size),
+                ),
+                exhausted_dimensions=tuple(sorted(fixed_exhausted)),
+            )
+            if updated_consumption == consumption:
                 break
-            consumption = replace(consumption, output_bytes=encoded_size)
+            consumption = updated_consumption
         result = make_result(consumption)
         if len(result.to_json().encode("utf-8")) > frame.budget.max_output_bytes:
             raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")

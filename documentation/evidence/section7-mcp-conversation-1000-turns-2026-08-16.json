@@ -1,0 +1,104 @@
+{
+  "completed_turns": 1000,
+  "duration_seconds": 14.612074,
+  "engram_version": "1.1.11",
+  "evaluated_turns": 1000,
+  "finished_at": "2026-08-16T11:02:20.392864+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-712 Section 7 MCP long-conversation conformance",
+  "inspect": {
+    "history_size": 10,
+    "turn_count": 1000,
+    "user_id": "Section 7 MCP Conformance"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "sources": {
+    "cache": 100,
+    "pattern": 900
+  },
+  "started_at": "2026-08-16T11:02:05.780568+00:00",
+  "stop_summary": {
+    "catch_all_turns": 400,
+    "exchanges": 1000,
+    "learned_statements": 0,
+    "learned_unique_texts": 0,
+    "sources": {
+      "cache": 100,
+      "pattern": 900
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_evaluation": {
+    "check_names": [
+      "active_topic_string",
+      "captured_list",
+      "context_changes_object",
+      "dialogue_act_string",
+      "elapsed_nonnegative",
+      "entities_list",
+      "exact_fields",
+      "fact_admissions_list",
+      "input_continuity",
+      "learned_statements_list",
+      "pattern_string",
+      "response_nonempty",
+      "score_finite",
+      "source_nonempty",
+      "turn_sequence",
+      "user_continuity"
+    ],
+    "checks_per_turn": 16,
+    "detailed_evaluation_sha256": "b358b25b06557030124ca75ab83b5c61b97e1d9274a76374b650b7a9bb8fe458",
+    "failed_turns": [],
+    "failure_counts": {},
+    "first_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 588.6984,
+      "passed": true,
+      "response_bytes": 32,
+      "response_sha256": "fda564ba3f7a0f028106d468420f674898ed99ac5bf2765ac9586206e39d73c5",
+      "source": "pattern",
+      "turn": 1
+    },
+    "last_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 13.7555,
+      "passed": true,
+      "response_bytes": 67,
+      "response_sha256": "967615589aeaf2fc44095b202e80d082672654dbcaa551330fcbd36848c1321a",
+      "source": "pattern",
+      "turn": 1000
+    },
+    "pass_runs": [
+      {
+        "bit": "1",
+        "turns": 1000
+      }
+    ],
+    "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
+    "passed_turns": 1000
+  },
+  "turn_latency_ms": {
+    "maximum": 588.6984,
+    "minimum": 2.7527,
+    "p50": 5.5665,
+    "p95": 13.9455
+  }
+}

@@ -39,6 +39,28 @@ def run_cli(store: str, *args: str) -> int:
     return cli.main(argv)
 
 
+def test_section7_does_not_add_a_cli_resolution_or_evidence_command() -> None:
+    parser = cli.create_parser()
+    command_action = next(action for action in parser._actions if action.dest == "command")
+
+    assert tuple(command_action.choices) == (
+        "init",
+        "store",
+        "load",
+        "query",
+        "session",
+        "sync-seed",
+        "metrics",
+        "decay",
+        "keywords",
+        "coverage",
+        "export",
+        "interactive",
+    )
+    assert "resolve" not in command_action.choices
+    assert "evidence" not in command_action.choices
+
+
 class TestInitAndStore:
     def test_init_creates_store(self, store) -> None:
         assert run_cli(store, "init") == 0

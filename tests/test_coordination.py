@@ -12,9 +12,11 @@ from engram.coordination import (
     CheckpointFailureKind,
     CoordinatedResponseState,
     MutationCoordinationError,
+    mutation_execution_result_to_dict,
+    validate_mutation_execution_result,
 )
 from engram.eligibility import NamespaceEpochState
-from engram.errors import ConflictError
+from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
 from engram.mutations import (
     ArtifactGenerationChange,
@@ -96,10 +98,11 @@ def test_candidate_build_is_off_live_and_in_memory_publication_is_atomic() -> No
 
     result = coordinator.execute(candidate)
 
-    assert result.checkpoint_count == 0
-    assert result.durable is False
-    assert result.published is True
-    assert result.recovered is False
+    assert type(result) is dict
+    assert result["checkpoint_count"] == 0
+    assert result["durable"] is False
+    assert result["published"] is True
+    assert result["recovered"] is False
     assert set(repository.snapshot().artifacts) == {"stmt-1"}
     assert epochs.get("tenant-a").knowledge_epoch == 1
     assert (
@@ -111,6 +114,22 @@ def test_candidate_build_is_off_live_and_in_memory_publication_is_atomic() -> No
         == ReceiptLookupOutcome.REPLAY
     )
     assert coordinator.snapshot().signature() == candidate.after.signature()
+
+
+def test_execution_result_revalidates_plain_dictionary_state() -> None:
+    coordinator = AtomicMutationCoordinator(ArtifactRepository(), NamespaceEpochState(), MutationReceiptLedger())
+    result = coordinator.execute(candidate_for(coordinator, "stmt-1"))
+
+    serialized = mutation_execution_result_to_dict(result)
+
+    assert serialized["receipt"] == result["receipt"].to_dict()
+    malformed = dict(result)
+    malformed["published"] = False
+    with pytest.raises(InvalidRequestError, match="must be published"):
+        validate_mutation_execution_result(malformed)
+    malformed["unexpected"] = False
+    with pytest.raises(InvalidRequestError, match="fields are malformed"):
+        validate_mutation_execution_result(malformed)
 
 
 def test_checkpoint_happens_once_before_any_live_publication() -> None:
@@ -134,8 +153,8 @@ def test_checkpoint_happens_once_before_any_live_publication() -> None:
     assert len(observed) == 1
     assert observed[0][0].artifacts == {}
     assert observed[0][1].signature() == candidate.after.signature()
-    assert result.checkpoint_count == 1
-    assert result.durable is True
+    assert result["checkpoint_count"] == 1
+    assert result["durable"] is True
 
 
 def test_definite_checkpoint_failure_leaves_all_live_state_unchanged() -> None:
@@ -187,8 +206,8 @@ def test_indeterminate_checkpoint_recovers_committed_candidate_without_retrying_
     result = coordinator.execute(candidate)
 
     assert len(attempts) == 1
-    assert result.checkpoint_count == 1
-    assert result.recovered is True
+    assert result["checkpoint_count"] == 1
+    assert result["recovered"] is True
     assert coordinator.snapshot().signature() == candidate.after.signature()
 
 
@@ -269,7 +288,7 @@ def test_post_checkpoint_publication_fault_converges_from_durable_candidate() ->
 
     assert len(attempts) == 1
     assert len(hook_calls) == 1
-    assert result.recovered is True
+    assert result["recovered"] is True
     assert coordinator.snapshot().signature() == candidate.after.signature()
 
 

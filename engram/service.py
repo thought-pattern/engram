@@ -789,7 +789,7 @@ class EngramCore:
                             self._feedback_request_id("stale-lifecycle", feedback_request_id),
                             "external regulator marked the observed candidate generation stale",
                         )
-                        if not lifecycle.replayed:
+                        if not lifecycle["replayed"]:
                             persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
                     except (ConflictError, ResourceNotFoundError, InvalidRequestError):
@@ -1187,9 +1187,9 @@ class EngramCore:
                     tuple(sorted(queried_response_ids)),
                     self._accounting_request_id("response-query", request_id),
                 )
-                if not accounting.replayed:
+                if not accounting["replayed"]:
                     persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
-                self._dirty = bool(self.store_path and not accounting.durable)
+                self._dirty = bool(self.store_path and not accounting["durable"])
             else:
                 self._dirty = True
                 self._checkpoint()
@@ -1285,7 +1285,7 @@ class EngramCore:
                             self._feedback_request_id("proposal-stale-lifecycle", proposal_id),
                             "external regulator marked the observed proposal candidate generation stale",
                         )
-                        if not lifecycle.replayed:
+                        if not lifecycle["replayed"]:
                             persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
                     except (ConflictError, ResourceNotFoundError, InvalidRequestError):
@@ -1330,9 +1330,9 @@ class EngramCore:
                         statement_id,
                         self._accounting_request_id("response-hit", proposal_id),
                     )
-                    if not accounting.replayed:
+                    if not accounting["replayed"]:
                         persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
-                    self._dirty = bool(self.store_path and not accounting.durable)
+                    self._dirty = bool(self.store_path and not accounting["durable"])
                 else:
                     self._checkpoint()
             return deepcopy(resolution)
@@ -1380,25 +1380,26 @@ class EngramCore:
                 if error.checkpoint_count:
                     raise PersistenceError("store checkpoint", error, state_changed=error.live_state_changed) from error
                 raise
-            receipt_result = mutation.receipt.to_dict()["result"]
+            receipt = mutation["receipt"]
+            receipt_result = receipt.to_dict()["result"]
             if not isinstance(receipt_result, dict):
                 raise LifecycleError("response mutation receipt result is not an object")
             receipt_statement_id = receipt_result.get("statement_id")
             evicted_statement_ids = receipt_result.get("evicted_statement_ids")
             if not isinstance(receipt_statement_id, str) or not isinstance(evicted_statement_ids, list):
                 raise LifecycleError("response mutation receipt result is malformed")
-            learned = mutation.receipt.result_code.value != "REJECTED_CAPACITY"
-            if learned and not mutation.replayed:
+            learned = receipt.result_code.value != "REJECTED_CAPACITY"
+            if learned and not mutation["replayed"]:
                 persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
                 self.engram.eviction_count += len(evicted_statement_ids)
             if learned:
                 sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 sessions.update_session_context(self.engram, normalized_user_id, response)
-            if mutation.replayed:
+            if mutation["replayed"]:
                 self.regulated_metrics["idempotent_retries"] += 1
             elif learned:
                 self.regulated_metrics["learned_created"] += 1
-            self._dirty = bool(self.store_path and not mutation.durable)
+            self._dirty = bool(self.store_path and not mutation["durable"])
             result = {
                 "learned": learned,
                 "statement_id": receipt_statement_id,
@@ -1408,8 +1409,8 @@ class EngramCore:
                 "namespace": namespace,
                 "context_fingerprint": context_fingerprint,
                 "source_label": source_label,
-                "idempotent": mutation.replayed,
-                "result_code": mutation.receipt.result_code.value,
+                "idempotent": mutation["replayed"],
+                "result_code": receipt.result_code.value,
                 "evicted_statement_ids": evicted_statement_ids,
             }
             return deepcopy(result)
@@ -1437,13 +1438,14 @@ class EngramCore:
                     request_id,
                     reason,
                 )
-                if not mutation.replayed:
+                if not mutation["replayed"]:
                     persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
                     self.regulated_metrics["retired"] += 1
                 else:
                     self.regulated_metrics["idempotent_retries"] += 1
-                self._dirty = bool(self.store_path and not mutation.durable)
-                receipt_result = mutation.receipt.to_dict()["result"]
+                self._dirty = bool(self.store_path and not mutation["durable"])
+                receipt = mutation["receipt"]
+                receipt_result = receipt.to_dict()["result"]
                 if not isinstance(receipt_result, dict):
                     raise LifecycleError("response mutation receipt result is not an object")
                 generation = receipt_result.get("generation")
@@ -1454,7 +1456,7 @@ class EngramCore:
                     "statement_id": statement_id,
                     "reason": reason,
                     "request_id": request_id,
-                    "idempotent": mutation.replayed,
+                    "idempotent": mutation["replayed"],
                     "generation": generation,
                 }
                 self.retire_requests[request_id] = {

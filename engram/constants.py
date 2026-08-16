@@ -19,6 +19,85 @@ from enum import Enum
 # place, and core.py exposes it as the bot's ``version`` property.
 VERSION = "1.1.11"
 DEFAULT_USER_ID = "0"
+MAX_STRUCTURED_CLAIM_PROJECTION_TERMS = 3
+CLAIM_EVIDENCE_PRODUCERS = frozenset({"structured_graph", "support_semantic"})
+MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
+COORDINATED_RESPONSE_STATE_FIELDS = frozenset(
+    {
+        "repository",
+        "namespace_epochs",
+        "mutation_receipts",
+    }
+)
+COORDINATED_MUTATION_CANDIDATE_FIELDS = frozenset(
+    {
+        "before",
+        "after",
+        "receipt",
+        "affected_epoch_namespaces",
+    }
+)
+MUTATION_EXECUTION_RESULT_FIELDS = frozenset(
+    {
+        "receipt",
+        "checkpoint_count",
+        "durable",
+        "published",
+        "recovered",
+    }
+)
+RESPONSE_STATE_SCHEMA_VERSION = 1
+MCP_CONFORMANCE_MESSAGES = (
+    "hello",
+    "How are you?",
+    "What can you remember?",
+    "Tell me more.",
+    "Why?",
+    "Where are we?",
+    "When is now?",
+    "Who are you?",
+    "What did I say?",
+    "Continue.",
+)
+MCP_TURN_EVENT_FIELDS = frozenset(
+    {
+        "turn",
+        "input",
+        "response",
+        "user_id",
+        "source",
+        "score",
+        "pattern",
+        "captured",
+        "dialogue_act",
+        "active_topic",
+        "entities",
+        "fact_admissions",
+        "elapsed_seconds",
+        "context_changes",
+        "learned_statements",
+    }
+)
+MCP_TURN_EVALUATION_CHECKS = frozenset(
+    {
+        "exact_fields",
+        "turn_sequence",
+        "input_continuity",
+        "user_continuity",
+        "response_nonempty",
+        "source_nonempty",
+        "score_finite",
+        "pattern_string",
+        "captured_list",
+        "dialogue_act_string",
+        "active_topic_string",
+        "entities_list",
+        "fact_admissions_list",
+        "elapsed_nonnegative",
+        "context_changes_object",
+        "learned_statements_list",
+    }
+)
 
 # =============================================================================
 # Enumerations

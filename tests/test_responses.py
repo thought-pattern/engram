@@ -16,7 +16,12 @@ from engram.errors import ConflictError, InvalidRequestError, LifecycleError
 from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
 from engram.mutations import MutationReceiptLedger, MutationResultCode, ReceiptLookupOutcome
 from engram.repository import ArtifactRepository, TierAdmissionPolicy
-from engram.responses import AcceptedResponseService, LifecycleMutationReason
+from engram.responses import (
+    AcceptedResponseService,
+    LifecycleMutationReason,
+    response_mutation_result,
+    response_mutation_result_to_dict,
+)
 
 
 def artifact(
@@ -90,14 +95,40 @@ def test_base_commit_preserves_exact_unicode_and_publishes_complete_state() -> N
 
     result = command.commit_response(accepted, "request-1")
 
-    assert result.receipt.result_code == MutationResultCode.CREATED
-    assert result.replayed is False
-    assert result.checkpoint_count == 0
+    assert isinstance(result, dict)
+    assert result["receipt"].result_code == MutationResultCode.CREATED
+    assert result["replayed"] is False
+    assert result["checkpoint_count"] == 0
     state = command.coordinator.snapshot()
     assert state.repository.artifacts["stmt-1"].response == accepted.response
     assert state.repository.statements["stmt-1"]["text"] == accepted.response
     assert state.repository.index_state.statement_to_retrieval["stmt-1"] == accepted.retrieval.bindings(accepted.scope)
     assert object_mapping(state.namespace_epochs["epochs"])["tenant-a"] == 1
+
+
+def test_response_mutation_result_is_a_revalidated_plain_dictionary() -> None:
+    result = service().commit_response(artifact("stmt-1"), "request-1")
+
+    serialized = response_mutation_result_to_dict(result)
+
+    assert type(result) is dict
+    assert serialized["request_id"] == "request-1"
+    assert serialized["operation"] == "COMMIT_RESPONSE"
+    assert serialized["result_code"] == "CREATED"
+    assert serialized["replayed"] is False
+    with pytest.raises(InvalidRequestError, match="cannot perform a checkpoint"):
+        response_mutation_result(
+            receipt=result["receipt"],
+            replayed=True,
+            checkpoint_count=1,
+            durable=False,
+            recovered=False,
+        )
+
+    malformed = dict(result)
+    malformed["checkpoint_count"] = 2
+    with pytest.raises(InvalidRequestError, match="zero or one"):
+        response_mutation_result_to_dict(cast(Any, malformed))
 
 
 @pytest.mark.parametrize("response", ["", "IDK", "  IdK!  "])
@@ -130,10 +161,10 @@ def test_exact_retry_replays_receipt_without_second_checkpoint() -> None:
     replay = command.commit_response(accepted, "request-1")
 
     assert len(checkpoints) == 1
-    assert created.receipt == replay.receipt
-    assert replay.replayed is True
-    assert replay.checkpoint_count == 0
-    assert replay.durable is True
+    assert created["receipt"] == replay["receipt"]
+    assert replay["replayed"] is True
+    assert replay["checkpoint_count"] == 0
+    assert replay["durable"] is True
 
 
 def test_changed_payload_retry_is_stable_conflict_without_mutation() -> None:
@@ -171,7 +202,7 @@ def test_same_retrieval_representation_in_another_scope_is_not_a_collision() -> 
 
     result = command.commit_response(artifact("stmt-b", namespace="tenant-b"), "request-b")
 
-    assert result.receipt.result_code == MutationResultCode.CREATED
+    assert result["receipt"].result_code == MutationResultCode.CREATED
     assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-a", "stmt-b"}
 
 
@@ -181,10 +212,11 @@ def test_dynamic_admission_evicts_and_receipt_names_both_generation_effects() ->
 
     result = command.commit_response(artifact("stmt-new", request="New", namespace="tenant-new"), "request-new")
 
-    assert result.receipt.result_code == MutationResultCode.CREATED_WITH_EVICTION
-    assert object_mapping(result.receipt.to_dict()["result"])["evicted_statement_ids"] == ["stmt-old"]
+    assert result["receipt"].result_code == MutationResultCode.CREATED_WITH_EVICTION
+    assert object_mapping(result["receipt"].to_dict()["result"])["evicted_statement_ids"] == ["stmt-old"]
     assert [
-        (change.statement_id, change.before_generation, change.after_generation) for change in result.receipt.affected_generations
+        (change.statement_id, change.before_generation, change.after_generation)
+        for change in result["receipt"].affected_generations
     ] == [
         ("stmt-new", 0, 1),
         ("stmt-old", 1, 0),
@@ -203,9 +235,9 @@ def test_capacity_rejection_records_replayable_result_without_repository_or_epoc
     result = command.commit_response(artifact("stmt-new", request="New"), "request-new")
     replay = command.commit_response(artifact("stmt-new", request="New"), "request-new")
 
-    assert result.receipt.result_code == MutationResultCode.REJECTED_CAPACITY
-    assert result.receipt.affected_generations == ()
-    assert replay.replayed is True
+    assert result["receipt"].result_code == MutationResultCode.REJECTED_CAPACITY
+    assert result["receipt"].affected_generations == ()
+    assert replay["replayed"] is True
     assert repository.snapshot() == before_repository
     assert command.coordinator.snapshot().namespace_epochs["epochs"] == {}
 
@@ -230,12 +262,12 @@ def test_concurrent_exact_retry_has_one_checkpoint_and_one_replay() -> None:
 
     assert len(checkpoints) == 1
     assert len(results) == 2
-    assert sum(result.replayed for result in results) == 1
+    assert sum(result["replayed"] for result in results) == 1
     assert (
         command.coordinator.receipt_lookup(
             "request-1",
-            results[0].receipt.operation,
-            results[0].receipt.payload_signature,
+            results[0]["receipt"].operation,
+            results[0]["receipt"].payload_signature,
         ).outcome
         == ReceiptLookupOutcome.REPLAY
     )
@@ -263,15 +295,15 @@ def test_configured_candidate_checkpoint_restarts_with_artifact_epoch_and_receip
     loaded = persistence.load_engram(store, config=engine.config)
     durable = persistence.coordinated_response_state(loaded)
 
-    assert result.checkpoint_count == 1
+    assert result["checkpoint_count"] == 1
     assert durable.durable_signature() == coordinator.snapshot().durable_signature()
     assert loaded.response_repository.get_artifact("stmt-1").response == accepted.response
     assert loaded.namespace_epochs.get("tenant-a").knowledge_epoch == 1
     assert (
         loaded.mutation_receipts.lookup(
             "request-1",
-            result.receipt.operation,
-            result.receipt.payload_signature,
+            result["receipt"].operation,
+            result["receipt"].payload_signature,
         ).outcome
         == ReceiptLookupOutcome.REPLAY
     )
@@ -301,8 +333,8 @@ def test_indeterminate_real_checkpoint_recovers_durable_candidate_by_authority_s
 
     result = command.commit_response(artifact("stmt-1"), "request-1")
 
-    assert result.checkpoint_count == 1
-    assert result.recovered is True
+    assert result["checkpoint_count"] == 1
+    assert result["recovered"] is True
     assert set(coordinator.snapshot().repository.artifacts) == {"stmt-1"}
 
 
@@ -338,17 +370,17 @@ def test_audited_lifecycle_transition_is_atomic_replayable_and_preserves_respons
     replay = transition("stmt-1", 1, reason, "operator-a", "request-transition", "reviewed evidence")
 
     transitioned = command.coordinator.snapshot().repository.artifacts["stmt-1"]
-    assert result.receipt.result_code == result_code
-    assert result.receipt.affected_generations[0].statement_id == "stmt-1"
-    assert result.receipt.affected_generations[0].before_generation == 1
-    assert result.receipt.affected_generations[0].after_generation == 2
-    assert replay.receipt == result.receipt
-    assert replay.replayed is True
+    assert result["receipt"].result_code == result_code
+    assert result["receipt"].affected_generations[0].statement_id == "stmt-1"
+    assert result["receipt"].affected_generations[0].before_generation == 1
+    assert result["receipt"].affected_generations[0].after_generation == 2
+    assert replay["receipt"] == result["receipt"]
+    assert replay["replayed"] is True
     assert transitioned.generation == 2
     assert transitioned.lifecycle == expected_lifecycle
     assert transitioned.response == accepted.response
     assert transitioned.metadata["lifecycle_audit"] == {
-        "operation": result.receipt.operation.value,
+        "operation": result["receipt"].operation.value,
         "reason": reason.value,
         "caller_id": "operator-a",
         "request_id": "request-transition",
@@ -488,8 +520,8 @@ def test_audited_lifecycle_checkpoint_restores_terminal_artifact_and_receipt(tmp
     assert (
         loaded.mutation_receipts.lookup(
             "request-retire",
-            result.receipt.operation,
-            result.receipt.payload_signature,
+            result["receipt"].operation,
+            result["receipt"].payload_signature,
         ).outcome
         == ReceiptLookupOutcome.REPLAY
     )
@@ -526,9 +558,9 @@ def test_explicit_supersession_links_generations_and_reuses_only_expected_owned_
     state = command.coordinator.snapshot()
     old = state.repository.artifacts["stmt-old"]
     new = state.repository.artifacts["stmt-new"]
-    assert result.receipt.result_code == MutationResultCode.SUPERSEDED
-    assert replay.receipt == result.receipt
-    assert replay.replayed is True
+    assert result["receipt"].result_code == MutationResultCode.SUPERSEDED
+    assert replay["receipt"] == result["receipt"]
+    assert replay["replayed"] is True
     assert old.lifecycle == LifecycleState.SUPERSEDED
     assert old.generation == 2
     assert old.superseded_by == "stmt-new"
@@ -538,7 +570,8 @@ def test_explicit_supersession_links_generations_and_reuses_only_expected_owned_
     assert new.generation == 1
     assert new.response == replacement.response
     assert [
-        (effect.statement_id, effect.before_generation, effect.after_generation) for effect in result.receipt.affected_generations
+        (effect.statement_id, effect.before_generation, effect.after_generation)
+        for effect in result["receipt"].affected_generations
     ] == [
         ("stmt-new", 0, 1),
         ("stmt-old", 1, 2),
@@ -601,9 +634,9 @@ def test_dynamic_supersession_rejects_capacity_when_lineage_would_be_evicted() -
         "request-supersede",
     )
 
-    assert result.receipt.result_code == MutationResultCode.REJECTED_CAPACITY
-    assert result.receipt.affected_generations == ()
-    assert replay.replayed is True
+    assert result["receipt"].result_code == MutationResultCode.REJECTED_CAPACITY
+    assert result["receipt"].affected_generations == ()
+    assert replay["replayed"] is True
     assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-old"}
     assert command.coordinator.snapshot().repository.artifacts["stmt-old"].lifecycle == LifecycleState.ACTIVE
 
@@ -627,8 +660,8 @@ def test_supersession_can_evict_unrelated_dynamic_while_retaining_static_lineage
         "request-supersede",
     )
 
-    assert result.receipt.result_code == MutationResultCode.SUPERSEDED
-    assert object_mapping(result.receipt.to_dict()["result"])["evicted_statement_ids"] == ["stmt-victim"]
+    assert result["receipt"].result_code == MutationResultCode.SUPERSEDED
+    assert object_mapping(result["receipt"].to_dict()["result"])["evicted_statement_ids"] == ["stmt-victim"]
     assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-old", "stmt-new"}
     assert command.coordinator.snapshot().namespace_epochs["epochs"] == {"tenant-old": 1, "tenant-victim": 1}
 
@@ -710,8 +743,8 @@ def test_supersession_checkpoint_restores_lineage_replacement_and_receipt(tmp_pa
     assert (
         loaded.mutation_receipts.lookup(
             "request-supersede",
-            result.receipt.operation,
-            result.receipt.payload_signature,
+            result["receipt"].operation,
+            result["receipt"].payload_signature,
         ).outcome
         == ReceiptLookupOutcome.REPLAY
     )

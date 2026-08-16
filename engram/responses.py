@@ -1,10 +1,9 @@
 """Transport-neutral accepted-response mutation operations."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from engram.artifacts import (
@@ -16,7 +15,7 @@ from engram.artifacts import (
     require_lifecycle_transition,
 )
 from engram.constants import Tier
-from engram.coordination import AtomicMutationCoordinator, MutationExecutionResult
+from engram.coordination import AtomicMutationCoordinator, MutationExecutionResult, validate_mutation_execution_result
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity, normalize_retrieval_key
 from engram.mutations import (
@@ -32,20 +31,18 @@ from engram.mutations import (
 from engram.repository import AdmissionOutcome, TierAdmissionPolicy, repository_state_with_artifact_updates
 
 
-class ReceiptClock(Protocol):
-    def __call__(self) -> str: ...
-
-
 def utc_receipt_clock() -> str:
     """Return one canonical UTC receipt timestamp."""
 
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return timestamp
 
 
 def _mapping_copy(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ConflictError(f"authoritative artifact {name} must be an object")
-    return dict(value)
+    copied = dict(value)
+    return copied
 
 
 class LifecycleMutationReason(StrEnum):
@@ -58,50 +55,75 @@ class LifecycleMutationReason(StrEnum):
     ADMINISTRATIVE = "ADMINISTRATIVE"
 
 
-@dataclass(frozen=True, slots=True)
-class ResponseMutationResult:
-    """Stable mutation receipt plus per-invocation execution disposition."""
+ResponseMutationResult = TypedDict(
+    "ResponseMutationResult",
+    {
+        "receipt": MutationReceipt,
+        "replayed": bool,
+        "checkpoint_count": int,
+        "durable": bool,
+        "recovered": bool,
+    },
+)
 
-    receipt: MutationReceipt
-    replayed: bool
-    checkpoint_count: int
-    durable: bool
-    recovered: bool
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.receipt, MutationReceipt):
-            raise InvalidRequestError("response mutation receipt must be a MutationReceipt")
-        if not all(isinstance(value, bool) for value in (self.replayed, self.durable, self.recovered)):
-            raise InvalidRequestError("response mutation disposition flags must be booleans")
-        if isinstance(self.checkpoint_count, bool) or not isinstance(self.checkpoint_count, int):
-            raise InvalidRequestError("response mutation checkpoint_count must be an integer")
-        if self.checkpoint_count < 0 or self.checkpoint_count > 1:
-            raise InvalidRequestError("response mutation checkpoint_count must be zero or one")
-        if self.replayed and self.checkpoint_count:
-            raise InvalidRequestError("a replayed response mutation cannot perform a checkpoint")
+def response_mutation_result(
+    receipt: MutationReceipt,
+    replayed: bool,
+    checkpoint_count: int,
+    durable: bool,
+    recovered: bool,
+) -> ResponseMutationResult:
+    """Build one validated mutation-result dictionary."""
+    if not isinstance(receipt, MutationReceipt):
+        raise InvalidRequestError("response mutation receipt must be a MutationReceipt")
+    if not all(isinstance(value, bool) for value in (replayed, durable, recovered)):
+        raise InvalidRequestError("response mutation disposition flags must be booleans")
+    if isinstance(checkpoint_count, bool) or not isinstance(checkpoint_count, int):
+        raise InvalidRequestError("response mutation checkpoint_count must be an integer")
+    if checkpoint_count < 0 or checkpoint_count > 1:
+        raise InvalidRequestError("response mutation checkpoint_count must be zero or one")
+    if replayed and checkpoint_count:
+        raise InvalidRequestError("a replayed response mutation cannot perform a checkpoint")
+    result: ResponseMutationResult = {
+        "receipt": receipt,
+        "replayed": replayed,
+        "checkpoint_count": checkpoint_count,
+        "durable": durable,
+        "recovered": recovered,
+    }
+    return result
 
-    @classmethod
-    def from_execution(cls, execution: MutationExecutionResult) -> "ResponseMutationResult":
-        return cls(
-            receipt=execution.receipt,
-            replayed=False,
-            checkpoint_count=execution.checkpoint_count,
-            durable=execution.durable,
-            recovered=execution.recovered,
-        )
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "request_id": self.receipt.request_id,
-            "operation": self.receipt.operation.value,
-            "result_code": self.receipt.result_code.value,
-            "result": self.receipt.to_dict()["result"],
-            "receipt_sequence": self.receipt.sequence,
-            "replayed": self.replayed,
-            "checkpoint_count": self.checkpoint_count,
-            "durable": self.durable,
-            "recovered": self.recovered,
-        }
+def response_mutation_result_from_execution(execution: MutationExecutionResult) -> ResponseMutationResult:
+    """Build a mutation-result dictionary from one coordinated execution."""
+    validated = validate_mutation_execution_result(execution)
+    result = response_mutation_result(
+        receipt=validated["receipt"],
+        replayed=False,
+        checkpoint_count=validated["checkpoint_count"],
+        durable=validated["durable"],
+        recovered=validated["recovered"],
+    )
+    return result
+
+
+def response_mutation_result_to_dict(value: ResponseMutationResult) -> dict[str, object]:
+    """Return the stable external dictionary for one validated mutation result."""
+    validated = response_mutation_result(**value)
+    receipt = validated["receipt"]
+    result = {
+        "request_id": receipt.request_id,
+        "operation": receipt.operation.value,
+        "result_code": receipt.result_code.value,
+        "result": receipt.to_dict()["result"],
+        "receipt_sequence": receipt.sequence,
+        "replayed": validated["replayed"],
+        "checkpoint_count": validated["checkpoint_count"],
+        "durable": validated["durable"],
+        "recovered": validated["recovered"],
+    }
+    return result
 
 
 class AcceptedResponseService:
@@ -112,7 +134,7 @@ class AcceptedResponseService:
         coordinator: AtomicMutationCoordinator,
         admission_policy: TierAdmissionPolicy,
         *,
-        clock: ReceiptClock = utc_receipt_clock,
+        clock: Callable[[], str] = utc_receipt_clock,
     ) -> None:
         if not isinstance(coordinator, AtomicMutationCoordinator):
             raise InvalidRequestError("response coordinator must be an AtomicMutationCoordinator")
@@ -126,7 +148,8 @@ class AcceptedResponseService:
 
     @property
     def coordinator(self) -> AtomicMutationCoordinator:
-        return self._coordinator
+        coordinator = self._coordinator
+        return coordinator
 
     def _lookup(
         self,
@@ -134,7 +157,8 @@ class AcceptedResponseService:
         operation: MutationOperation,
         payload_signature: str,
     ) -> ReceiptLookup:
-        return self._coordinator.receipt_lookup(request_id, operation, payload_signature)
+        lookup = self._coordinator.receipt_lookup(request_id, operation, payload_signature)
+        return lookup
 
     @staticmethod
     def _validate_base_artifact(artifact: CachedResponseArtifact) -> None:
@@ -167,7 +191,8 @@ class AcceptedResponseService:
         owners = set()
         for binding in artifact.retrieval.bindings(artifact.scope):
             owners.update(owner.statement_id for owner in state.retrieval_to_owners.get(binding.key, ()))
-        return tuple(sorted(owners))
+        owner_ids = tuple(sorted(owners))
+        return owner_ids
 
     def commit_response(self, artifact: CachedResponseArtifact, request_id: str) -> ResponseMutationResult:
         """Create one accepted-response artifact without implicit replacement."""
@@ -177,20 +202,23 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.COMMIT_RESPONSE, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is in progress and requires recovery: {request_id}")
             if lookup.outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
             if lookup.outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
-            return self._commit_new_locked(artifact, request_id, payload_signature, self._clock())
+            created_at = self._clock()
+            result = self._commit_new_locked(artifact, request_id, payload_signature, created_at)
+            return result
 
     def _commit_new_locked(
         self,
@@ -250,7 +278,9 @@ class AcceptedResponseService:
             plan.affected_epoch_namespaces,
             mutation_receipt,
         )
-        return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+        execution = self._coordinator.execute(candidate)
+        result = response_mutation_result_from_execution(execution)
+        return result
 
     def learn_response(
         self,
@@ -282,13 +312,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.COMMIT_RESPONSE, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is in progress and requires recovery: {request_id}")
             if lookup.outcome == ReceiptLookupOutcome.EXPIRED:
@@ -330,7 +361,8 @@ class AcceptedResponseService:
                 metadata=dict(metadata),
             )
             self._validate_base_artifact(artifact)
-            return self._commit_new_locked(artifact, request_id, payload_signature, accepted_at)
+            result = self._commit_new_locked(artifact, request_id, payload_signature, accepted_at)
+            return result
 
     def record_response_queries(
         self,
@@ -350,13 +382,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.RECORD_RESPONSE_QUERY, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"response query accounting request conflicts or requires recovery: {request_id}")
             updated_artifacts = []
@@ -385,7 +418,9 @@ class AcceptedResponseService:
                 created_at=recorded_at,
             )
             candidate = self._coordinator.build_candidate(repository_candidate, (), receipt)
-            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+            execution = self._coordinator.execute(candidate)
+            result = response_mutation_result_from_execution(execution)
+            return result
 
     def record_response_hit(self, statement_id: str, request_id: str) -> ResponseMutationResult:
         """Increment one authoritative accepted-hit statistic and last-hit time."""
@@ -395,13 +430,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.RECORD_RESPONSE_HIT, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"response hit accounting request conflicts or requires recovery: {request_id}")
             current = self._coordinator.repository.get_artifact(normalized_id)
@@ -427,7 +463,9 @@ class AcceptedResponseService:
                 created_at=recorded_at,
             )
             candidate = self._coordinator.build_candidate(repository_candidate, (), receipt)
-            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+            execution = self._coordinator.execute(candidate)
+            result = response_mutation_result_from_execution(execution)
+            return result
 
     def finalize_resolution_accounting(
         self,
@@ -457,13 +495,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.FINALIZE_RESOLUTION_ACCOUNTING, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"resolution accounting request conflicts or requires recovery: {request_id}")
             recorded_at = self._clock()
@@ -500,7 +539,9 @@ class AcceptedResponseService:
                 created_at=recorded_at,
             )
             candidate = self._coordinator.build_candidate(repository_candidate, (), receipt)
-            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+            execution = self._coordinator.execute(candidate)
+            result = response_mutation_result_from_execution(execution)
+            return result
 
     def _transition_response(
         self,
@@ -535,13 +576,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, mutation_operation, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is in progress and requires recovery: {request_id}")
             if lookup.outcome == ReceiptLookupOutcome.EXPIRED:
@@ -604,7 +646,9 @@ class AcceptedResponseService:
                 (transitioned.scope.namespace,),
                 mutation_receipt,
             )
-            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+            execution = self._coordinator.execute(candidate)
+            result = response_mutation_result_from_execution(execution)
+            return result
 
     def invalidate_response(
         self,
@@ -617,7 +661,7 @@ class AcceptedResponseService:
     ) -> ResponseMutationResult:
         """Invalidate one ACTIVE artifact with a durable audit record."""
 
-        return self._transition_response(
+        result = self._transition_response(
             statement_id,
             expected_generation,
             reason,
@@ -629,6 +673,7 @@ class AcceptedResponseService:
             target=LifecycleState.INVALIDATED,
             result_code=MutationResultCode.INVALIDATED,
         )
+        return result
 
     def retire_response(
         self,
@@ -641,7 +686,7 @@ class AcceptedResponseService:
     ) -> ResponseMutationResult:
         """Retire one ACTIVE artifact with a durable audit record."""
 
-        return self._transition_response(
+        result = self._transition_response(
             statement_id,
             expected_generation,
             reason,
@@ -653,6 +698,7 @@ class AcceptedResponseService:
             target=LifecycleState.RETIRED,
             result_code=MutationResultCode.RETIRED,
         )
+        return result
 
     def supersede_response(
         self,
@@ -694,13 +740,14 @@ class AcceptedResponseService:
         with self._coordinator.mutation():
             lookup = self._lookup(request_id, MutationOperation.SUPERSEDE_RESPONSE, payload_signature)
             if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                return ResponseMutationResult(
+                result = response_mutation_result(
                     receipt=lookup.receipt(),
                     replayed=True,
                     checkpoint_count=0,
                     durable=self._coordinator.checkpoint_configured,
                     recovered=False,
                 )
+                return result
             if lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is in progress and requires recovery: {request_id}")
             if lookup.outcome == ReceiptLookupOutcome.EXPIRED:
@@ -749,7 +796,9 @@ class AcceptedResponseService:
                     created_at=self._clock(),
                 )
                 candidate = self._coordinator.build_candidate(before, (), rejected_receipt)
-                return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+                execution = self._coordinator.execute(candidate)
+                result = response_mutation_result_from_execution(execution)
+                return result
 
             occurred_at = self._clock()
             updated_current = current.to_dict()
@@ -811,4 +860,6 @@ class AcceptedResponseService:
                 affected_namespaces,
                 mutation_receipt,
             )
-            return ResponseMutationResult.from_execution(self._coordinator.execute(candidate))
+            execution = self._coordinator.execute(candidate)
+            result = response_mutation_result_from_execution(execution)
+            return result

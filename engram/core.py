@@ -4,6 +4,7 @@ import heapq
 import logging
 import random
 import threading
+from collections.abc import Mapping
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from engram.constants import (
     KIND_STATEMENT,
     KNOWN_FACT_RESPONSES,
     LEARNED_ACKNOWLEDGMENTS,
+    MAX_STRUCTURED_CLAIM_PROJECTION_TERMS,
     REPETITION_ESCAPE_RESPONSE,
     REPETITION_FEEDBACK_MARKERS,
     REPETITION_HISTORY_SIZE,
@@ -52,7 +54,7 @@ from engram.dialogue import (
 from engram.eligibility import NamespaceEpochState
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
-from engram.graph import create_graph_client, is_write_cypher
+from engram.graph import ClaimProjection, ClaimProjectionQuery, create_graph_client, is_write_cypher
 from engram.identity import ScopedRetrievalKey
 from engram.indexes import (
     MAX_INDEX_SUPPORT_SCAN_EDGES,
@@ -440,6 +442,62 @@ class Engram:
             logger.warning("Vector graph recall unavailable; using keyword fallback: %s", err)
             return []
 
+    def graph_vector_claim_projections(
+        self,
+        text: str,
+        *,
+        limit: int = 0,
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[ClaimProjection]:
+        """Return strictly decoded wire-safe ANN Claim projections."""
+        graph_config = self.config.get("graph") or {}
+        client = self.graph_client
+        if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
+            return []
+        search = getattr(client, "vector_search_claim_projections", ())
+        if not callable(search):
+            return []
+        try:
+            _run_cooperative_check(cooperative_check)
+            embedding = self._encode_graph_query(text)
+            _require_working_memory(_estimate_working_bytes(embedding), max_working_memory_bytes)
+            _run_cooperative_check(cooperative_check)
+            row_limit = max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])
+            rows = search(
+                embedding,
+                index_name=graph_config["vector_index_name"],
+                limit=row_limit,
+                min_similarity=float(graph_config["vector_min_similarity"]),
+            )
+            if not isinstance(rows, list) or len(rows) > row_limit or not all(isinstance(row, ClaimProjection) for row in rows):
+                raise ValueError("vector Claim projection boundary returned an invalid collection")
+            _require_working_memory(
+                _estimate_working_bytes(embedding) + _estimate_working_bytes([row.to_dict() for row in rows]),
+                max_working_memory_bytes,
+            )
+            _run_cooperative_check(cooperative_check)
+            return rows
+        except (TimeoutError, MemoryError):
+            raise
+        except Exception as err:
+            logger.warning(
+                "Vector Claim projection unavailable; omitting response-less evidence (%s)",
+                type(err).__name__,
+            )
+            return []
+
+    def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
+        """Re-read one canonical Claim through the fixed by-ID capability."""
+        client = self.graph_client
+        lookup = getattr(client, "claim_projection_by_id", ())
+        if not client or not callable(lookup):
+            return ()
+        rows = lookup(claim_id)
+        if not isinstance(rows, list) or len(rows) > 1 or not all(isinstance(row, ClaimProjection) for row in rows):
+            raise ValueError("Claim projection revalidation boundary returned an invalid collection")
+        return tuple(rows)
+
     def warm_vector_recall(self) -> bool:
         """Load the query model and verify the configured graph ANN path.
 
@@ -586,9 +644,46 @@ class Engram:
         """Return support matches with raw similarity separate from legacy ranking."""
         _run_cooperative_check(cooperative_check)
         rows = self.graph_vector_claims(text, limit=limit)
+        return self.vector_supported_claim_match_components(
+            rows,
+            limit=limit,
+            statement_filter=statement_filter,
+            cooperative_check=cooperative_check,
+            max_working_memory_bytes=max_working_memory_bytes,
+        )
+
+    def vector_supported_claim_match_components(
+        self,
+        rows: list[dict],
+        *,
+        limit: int,
+        statement_filter=(),
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[dict]:
+        """Apply the legacy support intersection to already-discovered Claim hits."""
         _run_cooperative_check(cooperative_check)
         _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
         support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
+        return self._vector_supported_match_components_from_scores(
+            support_scores,
+            source_working_bytes=_estimate_working_bytes(rows),
+            limit=limit,
+            statement_filter=statement_filter,
+            cooperative_check=cooperative_check,
+            max_working_memory_bytes=max_working_memory_bytes,
+        )
+
+    def _vector_supported_match_components_from_scores(
+        self,
+        support_scores: Mapping[str, float],
+        *,
+        source_working_bytes: int,
+        limit: int,
+        statement_filter=(),
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[dict]:
         if not support_scores:
             return []
         graph_settings = self.config.get("graph") or {}
@@ -608,7 +703,7 @@ class Engram:
         scored: list[tuple[float, int, dict]] = []
         scored_bytes = 64
         seen_statement_ids = set()
-        retained_bytes = _estimate_working_bytes(rows) + _estimate_working_bytes(support_scores)
+        retained_bytes = source_working_bytes + _estimate_working_bytes(support_scores)
         with self.statement_lock:
             for claim_id in scan_plan.queried_claim_ids:
                 for statement_id in state.claim_to_statements.get(claim_id, ()):
@@ -1188,6 +1283,61 @@ class Engram:
                 if len(rows) >= row_limit:
                     break
         return [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
+
+    def structured_claim_projections(
+        self,
+        text: str,
+        *,
+        row_limit: int = 10,
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[ClaimProjection]:
+        """Run only fixed structured Claim projections and reject conflicting rows."""
+        if not isinstance(row_limit, int) or isinstance(row_limit, bool) or not 0 <= row_limit <= 1_000:
+            raise ValueError("row_limit must be an integer from 0 through 1000")
+        if (
+            isinstance(max_working_memory_bytes, bool)
+            or not isinstance(max_working_memory_bytes, int)
+            or max_working_memory_bytes < 0
+        ):
+            raise ValueError("max_working_memory_bytes must be a nonnegative integer")
+        client = self.graph_client
+        search = getattr(client, "structured_claim_projections", ())
+        if not row_limit or not client or not callable(search):
+            return []
+        _run_cooperative_check(cooperative_check)
+        requests: list[tuple[ClaimProjectionQuery, str]] = []
+        entities = extract_entities(text)
+        if entities:
+            requests.extend(
+                (ClaimProjectionQuery.STRUCTURED_ENTITY_V1, str(entity["text"]))
+                for entity in entities[:MAX_STRUCTURED_CLAIM_PROJECTION_TERMS]
+            )
+        else:
+            keywords = extract_keywords(normalize(text), self.config["stopwords"])
+            requests.extend(
+                (ClaimProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
+                for keyword in keywords[:MAX_STRUCTURED_CLAIM_PROJECTION_TERMS]
+            )
+        retained: dict[str, ClaimProjection] = {}
+        for projection_id, value in requests:
+            _run_cooperative_check(cooperative_check)
+            remaining = row_limit - len(retained)
+            if not remaining:
+                break
+            rows = search(value, projection_id=projection_id, limit=remaining)
+            if not isinstance(rows, list) or len(rows) > remaining or not all(isinstance(row, ClaimProjection) for row in rows):
+                raise ValueError("structured Claim projection boundary returned an invalid collection")
+            for row in rows:
+                if row.claim_id in retained and retained[row.claim_id] != row:
+                    raise ValueError(f"conflicting structured Claim projections for Claim ID: {row.claim_id}")
+                retained[row.claim_id] = row
+            _run_cooperative_check(cooperative_check)
+            _require_working_memory(
+                _estimate_working_bytes([projection.to_dict() for projection in retained.values()]),
+                max_working_memory_bytes,
+            )
+        return [retained[claim_id] for claim_id in sorted(retained)]
 
     def query(
         self,
