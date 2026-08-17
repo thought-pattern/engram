@@ -17,6 +17,14 @@ def graph_config(
     username: str = "",
     password: str = "",
     enabled: bool = False,
+    vector_enabled: bool = False,
+    vector_index_name: str = "claim_premise_embeddings",
+    vector_model: str = "all-MiniLM-L6-v2",
+    vector_model_path: str = "",
+    vector_dimension: int = 384,
+    vector_limit: int = 250,
+    vector_min_similarity: float = 0.45,
+    vector_weight: float = 0.75,
 ) -> dict:
     """Build a Knowledge Graph connection configuration dict.
 
@@ -33,6 +41,32 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
+    if not isinstance(vector_enabled, bool):
+        raise ValueError("graph vector_enabled must be a boolean")
+    if not isinstance(vector_index_name, str) or not vector_index_name.strip():
+        raise ValueError("graph vector_index_name must be a non-empty string")
+    if not isinstance(vector_model, str) or not vector_model.strip():
+        raise ValueError("graph vector_model must be a non-empty string")
+    if not isinstance(vector_model_path, str):
+        raise ValueError("graph vector_model_path must be a string")
+    if not isinstance(vector_dimension, int) or isinstance(vector_dimension, bool) or vector_dimension < 1:
+        raise ValueError("graph vector_dimension must be a positive integer")
+    if not isinstance(vector_limit, int) or isinstance(vector_limit, bool) or not 1 <= vector_limit <= 1000:
+        raise ValueError("graph vector_limit must be an integer from 1 through 1000")
+    if (
+        not isinstance(vector_min_similarity, int | float)
+        or isinstance(vector_min_similarity, bool)
+        or not math.isfinite(vector_min_similarity)
+        or not 0.0 <= vector_min_similarity <= 1.0
+    ):
+        raise ValueError("graph vector_min_similarity must be between 0 and 1")
+    if (
+        not isinstance(vector_weight, int | float)
+        or isinstance(vector_weight, bool)
+        or not math.isfinite(vector_weight)
+        or not 0.0 <= vector_weight <= 1.0
+    ):
+        raise ValueError("graph vector_weight must be between 0 and 1")
 
     config = {
         "host": host,
@@ -40,6 +74,14 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
+        "vector_enabled": vector_enabled,
+        "vector_index_name": vector_index_name.strip(),
+        "vector_model": vector_model.strip(),
+        "vector_model_path": vector_model_path.strip(),
+        "vector_dimension": vector_dimension,
+        "vector_limit": vector_limit,
+        "vector_min_similarity": float(vector_min_similarity),
+        "vector_weight": float(vector_weight),
     }
     return config
 
@@ -209,7 +251,21 @@ def load_config(path: str = "config.yml") -> dict:
     if "session_overflow" in data:
         data["session_overflow"] = SessionOverflow(data["session_overflow"])
     if "graph" in data and data["graph"]:
-        graph_keys = {"host", "port", "username", "password", "enabled"}
+        graph_keys = {
+            "host",
+            "port",
+            "username",
+            "password",
+            "enabled",
+            "vector_enabled",
+            "vector_index_name",
+            "vector_model",
+            "vector_model_path",
+            "vector_dimension",
+            "vector_limit",
+            "vector_min_similarity",
+            "vector_weight",
+        }
         unknown_graph = set(data["graph"]) - graph_keys
         if unknown_graph:
             raise ValueError(

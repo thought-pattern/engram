@@ -11,6 +11,45 @@ There is no replication, load balancing, distributed locking, shared
 transaction service, or cross-instance consistency protocol. Deploy one
 server process with one JSON store.
 
+The gRPC contract does not transport Knowledge Graph Claim records. When graph
+recall is enabled, Engram reads the configured Memgraph instance directly. Its
+Schema 3.5 read subset understands Tapestry's half-open Claim times and excludes
+closed or retrieval-only (`generic_relation`) Claims. Consequently Phase A does
+not add protobuf fields or create a separate Engram graph in a Tapestry
+deployment.
+
+Schema 3.5 may also expose `research_leaf_proof_id` on a Claim as an
+application-owned proof receipt. Engram does not interpret or mutate it; recall
+continues to rely on the active canonical Claim and configured vector index.
+
+The subset also indexes the canonical semantic fingerprint and carries Claim
+trust/ownership classification. These are graph properties read from the shared
+Memgraph schema; Engram remains read-only and never assigns identity, temporal
+bounds, trust, or ownership itself.
+
+## Vector-search boundary
+
+When graph vector recall is enabled, `Propose` embeds the request with the
+configured local sentence-transformer and queries Memgraph's Claim-premise
+vector index. ANN results are intersected with the Claim identifiers already
+stored in each exactly scoped cached response. Vector similarity therefore
+helps find a previously verified response whose durable support is semantically
+related to the request; it never returns arbitrary Claim, Passage, proof, or KG
+text as an Engram answer. Keyword retrieval remains active and the two scores
+are merged before candidate selection.
+
+Engram's general read-only Cypher guard still rejects `CALL`. The sole exception
+is an internal, fixed `vector_search.search` query: callers cannot supply its
+Cypher or index name, the configured identifier is validated, the result limit
+is bounded, and inactive, closed, non-canonical, or retrieval-only Claims are
+excluded. The same ANN lookup is available as a fallback for conversational
+graph recall after exact canonical label, alias, and keyword lookup misses.
+
+The standalone server defaults to no graph access unless `--config-path` is
+supplied. With vectors enabled it loads and probes the local embedding model and
+the configured Memgraph vector index before publishing a healthy gRPC service;
+invalid graph, model, index, or dimension configuration fails startup.
+
 ## Installation and launch
 
 ```bash

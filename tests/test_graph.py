@@ -32,6 +32,7 @@ class MockGraphClient:
         """Initialize the mock store."""
         self.claims: list[dict] = []  # {"subject","predicate","object"}
         self.entities: set[str] = set()
+        self.vector_rows: list[dict] = []
 
     def execute(self, query: str, params=None) -> list:
         """Execute a mock query, returning a list of row dicts."""
@@ -92,6 +93,10 @@ class MockGraphClient:
     def execute_read(self, query: str, params=None) -> list:
         """Read alias, matching the real connection's execute_read."""
         return self.execute(query, params)
+
+    def vector_search_claims(self, embedding, **kwargs) -> list:
+        """Return configured ANN rows for vector-recall tests."""
+        return list(self.vector_rows)
 
     def close(self) -> None:
         """Close the mock connection."""
@@ -375,6 +380,96 @@ class TestReadOnlyGraphWiring:
         with pytest.raises(ValueError, match="read-only"):
             client.execute("CREATE (n)")
         assert client.conn is None
+
+    def test_internal_vector_search_is_fixed_and_generic_call_stays_refused(self):
+        client = MemGraphConnection()
+        captured = {}
+
+        def execute(query, params):
+            captured.update({"query": query, "params": params})
+            return [{"claim_id": "claim-1", "similarity": 0.8}]
+
+        client._execute_read_query = execute
+
+        rows = client.vector_search_claims(
+            [0.0, 1.0],
+            index_name="claim_premise_embeddings",
+            limit=25,
+            min_similarity=0.5,
+        )
+
+        assert rows[0]["claim_id"] == "claim-1"
+        assert "CALL vector_search.search" in captured["query"]
+        assert captured["params"]["limit"] == 25
+        with pytest.raises(ValueError, match="read-only"):
+            client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+
+    def test_vector_graph_fallback_phrases_semantic_claim(self):
+        client = MockGraphClient()
+        client.vector_rows = [
+            {
+                "claim_id": "claim-1",
+                "subject": "Water",
+                "predicate": "boils at",
+                "object": "100 degrees Celsius",
+                "similarity": 0.81,
+            }
+        ]
+        config = engram_config(graph=graph_config(enabled=True, vector_enabled=True))
+        engram = Engram(config=config)
+        engram._graph_client = client
+        engram._encode_graph_query = lambda text: [0.0] * 384
+
+        result = engram.graph_lookup("Explain the phase transition temperature")
+
+        assert "Water" in result
+        assert "100 degrees Celsius" in result
+
+    def test_vector_support_retrieves_scoped_response_on_keyword_miss(self):
+        from engram.service import EngramCore
+
+        client = MockGraphClient()
+        client.vector_rows = [
+            {
+                "claim_id": "support-1",
+                "subject": "Western Roman Empire",
+                "predicate": "declined because",
+                "object": "overlapping pressures",
+                "similarity": 0.84,
+            }
+        ]
+        config = engram_config(
+            graph=graph_config(
+                enabled=True,
+                vector_enabled=True,
+                vector_weight=0.75,
+            )
+        )
+        engram = Engram(config=config)
+        engram._graph_client = client
+        engram._encode_graph_query = lambda text: [0.0] * 384
+        core = EngramCore(engram)
+        core.learn_response(
+            "Why did Rome fall?",
+            "Rome declined through overlapping political and military pressures.",
+            request_id="learn-1",
+            namespace="tapestry",
+            context_fingerprint="local-v1",
+            metadata={"support": [{"claim_id": "support-1", "trust": 1.0}]},
+        )
+
+        proposal = core.propose(
+            "zygomatic quasar lattice",
+            request_id="proposal-1",
+            namespace="tapestry",
+            context_fingerprint="local-v1",
+        )
+
+        assert len(proposal["candidates"]) == 1
+        candidate = proposal["candidates"][0]
+        assert candidate["retrieval"]["selected"] == "vector"
+        assert candidate["retrieval"]["keyword_score"] == 0.0
+        assert candidate["retrieval"]["vector_score"] == pytest.approx(0.63)
 
     def test_triple_query_wired_through_response_path(self):
         """A stored `<triple_query>` statement resolves through pattern_query."""

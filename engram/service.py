@@ -23,6 +23,7 @@ from engram.constants import Tier
 from engram.conversation import ConversationRuntime, statement_view
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
+from engram.models import record_statement_query
 from engram.text import normalize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -293,6 +294,15 @@ class EngramCore:
             self._require_running()
             return self._flush_store()
 
+    def warm_vector_recall(self) -> bool:
+        """Warm and verify optional graph-vector retrieval before serving."""
+        with self.lock:
+            self._require_running()
+            try:
+                return self.engram.warm_vector_recall()
+            except Exception as error:
+                raise InvalidRequestError(f"unable to initialize vector recall: {error}") from error
+
     def close(self, *, flush: bool = True) -> bool:
         """Flush and release all transport-independent runtime state."""
         with self.lock:
@@ -378,8 +388,50 @@ class EngramCore:
                 user_id=normalized_user_id,
                 limit=limit,
                 statement_filter=statement_matches_scope,
+                record_candidates=False,
             )
-            candidates = [self._candidate_result(statement, score) for statement, score in query_result["matches"]]
+            vector_matches = self.engram.vector_supported_matches(
+                request,
+                limit=limit,
+                statement_filter=statement_matches_scope,
+            )
+            merged = {}
+            for source, matches in (
+                ("keyword", query_result["matches"]),
+                ("vector", vector_matches),
+            ):
+                for statement, score in matches:
+                    entry = merged.setdefault(
+                        statement["id"],
+                        {
+                            "statement": statement,
+                            "keyword_score": 0.0,
+                            "vector_score": 0.0,
+                        },
+                    )
+                    entry[f"{source}_score"] = max(float(entry[f"{source}_score"]), float(score))
+            ranked = sorted(
+                merged.values(),
+                key=lambda entry: (
+                    max(entry["keyword_score"], entry["vector_score"]),
+                    entry["statement"]["created_at"],
+                    entry["statement"]["id"],
+                ),
+                reverse=True,
+            )[:limit]
+            candidates = []
+            with self.engram.statement_lock:
+                for entry in ranked:
+                    statement = entry["statement"]
+                    selected_score = max(entry["keyword_score"], entry["vector_score"])
+                    record_statement_query(statement)
+                    candidate = self._candidate_result(statement, selected_score)
+                    candidate["retrieval"] = {
+                        "keyword_score": entry["keyword_score"],
+                        "vector_score": entry["vector_score"],
+                        "selected": ("vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"),
+                    }
+                    candidates.append(candidate)
             proposal_id = f"proposal_{uuid4().hex[:16]}"
             proposal = {
                 "proposal_id": proposal_id,

@@ -382,6 +382,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = load_config(args.config_path) if args.config_path else None
     try:
         core = EngramCore.open(config=config, store_path=args.store_path, seed_path=args.seed_path)
+        core.warm_vector_recall()
         server = create_grpc_server(
             core,
             bind_address=args.bind,
