@@ -2,7 +2,6 @@
 
 import json
 import threading
-from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -11,7 +10,15 @@ import pytest
 from engram import persistence
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError
-from engram.identity import RetrievalOrigin, RetrievalRepresentation, ScopedRetrievalKey, ScopeKey
+from engram.identity import (
+    RetrievalOrigin,
+    build_scoped_retrieval_key,
+    retrieval_key_binding,
+    retrieval_representation,
+    retrieval_representation_bindings,
+    scope_key,
+    scoped_retrieval_key_signature,
+)
 from engram.indexes import (
     MAX_INDEX_REPORT_ITEMS,
     MAX_INDEX_SUPPORT_SCAN_EDGES,
@@ -24,10 +31,34 @@ from engram.indexes import (
     build_index_state,
     check_index_state,
     check_index_state_against,
+    exact_lookup_result_to_dict,
+    index_build_report_to_dict,
+    index_check_report_to_dict,
+    index_projection,
+    index_projection_from_json,
+    index_projection_to_dict,
+    index_projection_to_json,
+    index_projection_with_changes,
+    index_repair_result_to_dict,
+    index_state_exact_lookup,
+    index_state_support_lookup,
+    index_state_support_scan_plan,
     projection_from_statement,
     remove_index_projection,
     replace_index_projection,
+    retrieval_owner_to_dict,
+    support_lookup_result_to_dict,
+    support_scan_plan_to_dict,
     update_index_support,
+    validate_exact_lookup_result,
+    validate_index_build_report,
+    validate_index_check_report,
+    validate_index_projection,
+    validate_index_repair_result,
+    validate_index_state,
+    validate_retrieval_owner,
+    validate_support_lookup_result,
+    validate_support_scan_plan,
 )
 from engram.models import statement
 
@@ -42,27 +73,30 @@ def projection(
     eligible: bool = True,
     exclusion_reason: str = "",
 ) -> IndexProjection:
-    scope = ScopeKey(namespace=namespace)
-    bindings = RetrievalRepresentation(canonical, aliases).bindings(scope) if canonical else ()
-    return IndexProjection(
-        statement_id=statement_id,
-        generation=1,
-        retrieval_keys=bindings,
-        support_claim_ids=support,
-        direct_answer_eligible=eligible,
-        exclusion_reason=exclusion_reason,
+    scope = scope_key(namespace=namespace)
+    representation = retrieval_representation(canonical, aliases) if canonical else {}
+    bindings = retrieval_representation_bindings(representation, scope) if representation else ()
+    result = index_projection(
+        statement_id,
+        1,
+        bindings,
+        support,
+        eligible,
+        exclusion_reason,
     )
+    return result
 
 
 def state_signature(state) -> tuple[object, ...]:
-    return (
-        state.retrieval_to_owners,
-        state.statement_to_retrieval,
-        state.claim_to_statements,
-        state.statement_to_claims,
-        state.direct_retrieval,
-        state.projections,
+    result = (
+        state["retrieval_to_owners"],
+        state["statement_to_retrieval"],
+        state["claim_to_statements"],
+        state["statement_to_claims"],
+        state["direct_retrieval"],
+        state["projections"],
     )
+    return result
 
 
 def mutate_mapping(mapping, key, value) -> None:
@@ -70,43 +104,57 @@ def mutate_mapping(mapping, key, value) -> None:
 
 
 def call_support_lookup(state, claim_ids):
-    return state.support_lookup(claim_ids)
+    result = index_state_support_lookup(state, claim_ids)
+    return result
 
 
 def test_projection_codec_round_trip_is_deterministic() -> None:
     original = projection("stmt-1", "Who acquired GitHub?", ("GitHub acquirer",), ("claim-2", "claim-1"))
 
-    decoded = IndexProjection.from_json(original.to_json())
+    encoded = index_projection_to_json(original)
+    decoded = index_projection_from_json(encoded)
+    copied = validate_index_projection(original)
 
+    assert type(original) is dict
     assert decoded == original
-    assert decoded.to_json() == original.to_json()
-    assert decoded.support_claim_ids == ("claim-1", "claim-2")
+    assert index_projection_to_json(decoded) == encoded
+    assert decoded["support_claim_ids"] == ("claim-1", "claim-2")
+    assert copied == original
+    assert copied is not original
+    assert copied["retrieval_keys"][0] is not original["retrieval_keys"][0]
+
+    original["generation"] = 0
+    with pytest.raises(InvalidRequestError, match="positive integer"):
+        validate_index_projection(original)
 
 
 def test_atomic_exact_refresh_changes_only_eligibility_fields() -> None:
     original = projection("stmt-1", "Who acquired GitHub?")
     owner = IndexOwner((original,))
-    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
-    generation = owner.snapshot().state_generation
-    ineligible = replace(original, direct_answer_eligible=False, exclusion_reason="expired")
+    key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
+    generation = owner.snapshot()["state_generation"]
+    ineligible = index_projection_with_changes(
+        original,
+        {"direct_answer_eligible": False, "exclusion_reason": "expired"},
+    )
 
     lookup, changed, updated_generation = owner.atomic_refresh_exact_lookup(key, (ineligible,), generation)
 
-    assert lookup.outcome == ExactLookupOutcome.MISS
+    assert lookup["outcome"] == ExactLookupOutcome.MISS
     assert changed is True
     assert updated_generation == generation + 1
-    assert owner.snapshot().projections["stmt-1"] == ineligible
+    assert owner.snapshot()["projections"]["stmt-1"] == ineligible
 
 
 def test_atomic_exact_refresh_noop_keeps_generation() -> None:
     original = projection("stmt-1", "Who acquired GitHub?")
     owner = IndexOwner((original,))
-    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
-    generation = owner.snapshot().state_generation
+    key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
+    generation = owner.snapshot()["state_generation"]
 
     lookup, changed, updated_generation = owner.atomic_refresh_exact_lookup(key, (original,), generation)
 
-    assert lookup.outcome == ExactLookupOutcome.FOUND
+    assert lookup["outcome"] == ExactLookupOutcome.FOUND
     assert changed is False
     assert updated_generation == generation
 
@@ -115,24 +163,24 @@ def test_atomic_exact_refresh_requires_all_and_only_current_owners() -> None:
     first = projection("stmt-1", "Who acquired GitHub?")
     second = projection("stmt-2", "Who acquired GitHub?", eligible=False, exclusion_reason="retired")
     owner = IndexOwner((first, second))
-    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+    key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
 
     with pytest.raises(ConflictError, match="cover every current owner"):
-        owner.atomic_refresh_exact_lookup(key, (first,), owner.snapshot().state_generation)
+        owner.atomic_refresh_exact_lookup(key, (first,), owner.snapshot()["state_generation"])
     with pytest.raises(InvalidRequestError, match="unique statement IDs"):
-        owner.atomic_refresh_exact_lookup(key, (first, first), owner.snapshot().state_generation)
+        owner.atomic_refresh_exact_lookup(key, (first, first), owner.snapshot()["state_generation"])
 
 
 def test_atomic_exact_refresh_rejects_non_eligibility_changes_and_stale_generation() -> None:
     original = projection("stmt-1", "Who acquired GitHub?")
     owner = IndexOwner((original,))
-    key = ScopedRetrievalKey.build(ScopeKey(), "Who acquired GitHub?")
+    key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
 
-    changed_support = replace(original, support_claim_ids=("claim-new",))
+    changed_support = index_projection_with_changes(original, {"support_claim_ids": ("claim-new",)})
     with pytest.raises(InvalidRequestError, match="may change only"):
-        owner.atomic_refresh_exact_lookup(key, (changed_support,), owner.snapshot().state_generation)
+        owner.atomic_refresh_exact_lookup(key, (changed_support,), owner.snapshot()["state_generation"])
     with pytest.raises(ConflictError, match="stale index state generation"):
-        owner.atomic_refresh_exact_lookup(key, (original,), owner.snapshot().state_generation + 1)
+        owner.atomic_refresh_exact_lookup(key, (original,), owner.snapshot()["state_generation"] + 1)
 
 
 def test_exact_and_alias_maps_retain_provenance_and_scope() -> None:
@@ -140,55 +188,126 @@ def test_exact_and_alias_maps_retain_provenance_and_scope() -> None:
     second = projection("stmt-2", "Who acquired GitHub?", namespace="two")
     state = build_index_state((first, second))
 
-    canonical = ScopedRetrievalKey.build(ScopeKey(namespace="one"), "Who acquired GitHub?")
-    alias = ScopedRetrievalKey.build(ScopeKey(namespace="one"), "GitHub acquirer")
-    other_scope = ScopedRetrievalKey.build(ScopeKey(namespace="two"), "Who acquired GitHub?")
+    canonical = build_scoped_retrieval_key(scope_key(namespace="one"), "Who acquired GitHub?")
+    alias = build_scoped_retrieval_key(scope_key(namespace="one"), "GitHub acquirer")
+    other_scope = build_scoped_retrieval_key(scope_key(namespace="two"), "Who acquired GitHub?")
 
-    assert state.exact_lookup(canonical).outcome == ExactLookupOutcome.FOUND
-    assert state.exact_lookup(canonical).provenance == RetrievalOrigin.CANONICAL.value
-    assert state.exact_lookup(alias).provenance == RetrievalOrigin.ALIAS.value
-    assert state.exact_lookup(other_scope).statement_id == "stmt-2"
-    assert set(state.statement_to_retrieval["stmt-1"]) == set(first.retrieval_keys)
+    assert index_state_exact_lookup(state, canonical)["outcome"] == ExactLookupOutcome.FOUND
+    assert index_state_exact_lookup(state, canonical)["provenance"] == RetrievalOrigin.CANONICAL.value
+    assert index_state_exact_lookup(state, alias)["provenance"] == RetrievalOrigin.ALIAS.value
+    assert index_state_exact_lookup(state, other_scope)["statement_id"] == "stmt-2"
+    retained = {
+        (scoped_retrieval_key_signature(binding["key"]), binding["origin"], binding["representation"])
+        for binding in state["statement_to_retrieval"]["stmt-1"]
+    }
+    expected = {
+        (scoped_retrieval_key_signature(binding["key"]), binding["origin"], binding["representation"])
+        for binding in first["retrieval_keys"]
+    }
+    assert retained == expected
+
+
+def test_exact_lookup_result_is_an_exact_validated_non_aliasing_dictionary() -> None:
+    item = projection("stmt-1", "Who acquired GitHub?")
+    key = item["retrieval_keys"][0]["key"]
+    lookup = index_state_exact_lookup(build_index_state((item,)), key)
+
+    assert type(lookup) is dict
+    assert type(lookup["key"]) is dict
+    assert exact_lookup_result_to_dict(lookup) == {
+        "outcome": "FOUND",
+        "key": {
+            "schema_version": 1,
+            "normalization_version": 1,
+            "scope": {"schema_version": 1, "namespace": "", "context_fingerprint": ""},
+            "normalized_key": "who acquired github",
+        },
+        "statement_id": "stmt-1",
+        "generation": 1,
+        "provenance": "canonical",
+        "representation": "Who acquired GitHub?",
+        "owner_statement_ids": ["stmt-1"],
+        "truncated": False,
+    }
+    copied = validate_exact_lookup_result(lookup)
+    assert copied == lookup
+    assert copied is not lookup
+    assert copied["key"] is not lookup["key"]
+
+    lookup["outcome"] = ExactLookupOutcome.MISS
+    with pytest.raises(InvalidRequestError, match="must be 0"):
+        validate_exact_lookup_result(lookup)
+
+
+def test_retrieval_owner_is_validated_and_snapshot_mutation_is_isolated() -> None:
+    item = projection("stmt-1", "Who acquired GitHub?")
+    index_owner = IndexOwner((item,))
+    snapshot = index_owner.snapshot()
+    owner = next(iter(snapshot["retrieval_to_owners"].values()))[0]
+
+    assert type(owner) is dict
+    assert retrieval_owner_to_dict(owner) == {
+        "statement_id": "stmt-1",
+        "generation": 1,
+        "provenance": "canonical",
+        "representation": "Who acquired GitHub?",
+        "direct_answer_eligible": True,
+    }
+    copied = validate_retrieval_owner(owner)
+    assert copied == owner
+    assert copied is not owner
+
+    owner["generation"] = 0
+    with pytest.raises(InvalidRequestError, match="positive integer"):
+        validate_retrieval_owner(owner)
+    current_owner = next(iter(index_owner.snapshot()["retrieval_to_owners"].values()))[0]
+    assert current_owner["generation"] == 1
 
 
 def test_within_artifact_duplicates_are_reported_and_canonical_wins() -> None:
-    binding = RetrievalRepresentation("same key").bindings(ScopeKey())[0]
-    duplicate_alias = replace(binding, origin=RetrievalOrigin.ALIAS)
-    item = replace(projection("stmt-1", "same key"), retrieval_keys=(duplicate_alias, binding))
+    representation = retrieval_representation("same key")
+    binding = retrieval_representation_bindings(representation, scope_key())[0]
+    duplicate_alias = retrieval_key_binding(binding["key"], RetrievalOrigin.ALIAS, binding["representation"])
+    item = index_projection_with_changes(
+        projection("stmt-1", "same key"),
+        {"retrieval_keys": (duplicate_alias, binding)},
+    )
 
     state = build_index_state((item,))
 
-    reasons = {issue.reason for issue in state.build_report.issues}
+    reasons = {issue["reason"] for issue in state["build_report"]["issues"]}
     assert reasons == {IndexIssueReason.WITHIN_ARTIFACT_DUPLICATE}
-    result = state.exact_lookup(binding.key)
-    assert result.outcome == ExactLookupOutcome.FOUND
-    assert result.provenance == RetrievalOrigin.CANONICAL.value
-    assert len(state.retrieval_to_owners[binding.key]) == 1
+    result = index_state_exact_lookup(state, binding["key"])
+    assert result["outcome"] == ExactLookupOutcome.FOUND
+    assert result["provenance"] == RetrievalOrigin.CANONICAL.value
+    key_signature = scoped_retrieval_key_signature(binding["key"])
+    assert len(state["retrieval_to_owners"][key_signature]) == 1
 
 
 def test_cross_artifact_collision_never_selects_a_winner() -> None:
     first = projection("stmt-a", "same key")
     second = projection("stmt-b", "same key")
     state = build_index_state((second, first))
-    key = first.retrieval_keys[0].key
+    key = first["retrieval_keys"][0]["key"]
 
-    result = state.exact_lookup(key)
+    result = index_state_exact_lookup(state, key)
 
-    assert result.outcome == ExactLookupOutcome.COLLISION
-    assert result.statement_id == ""
-    assert result.owner_statement_ids == ("stmt-a", "stmt-b")
-    assert state.build_report.collisions[0].statement_ids == ("stmt-a", "stmt-b")
-    assert IndexCheckCategory.CONFLICTING in {issue.category for issue in check_index_state(state).issues}
+    assert result["outcome"] == ExactLookupOutcome.COLLISION
+    assert result["statement_id"] == ""
+    assert result["owner_statement_ids"] == ("stmt-a", "stmt-b")
+    assert state["build_report"]["collisions"][0]["statement_ids"] == ("stmt-a", "stmt-b")
+    assert IndexCheckCategory.CONFLICTING in {issue["category"] for issue in check_index_state(state)["issues"]}
 
 
 def test_ineligible_owner_is_auditable_but_not_directly_retrievable() -> None:
     item = projection("stmt-1", "private key", eligible=False, exclusion_reason="retired")
     state = build_index_state((item,))
-    key = item.retrieval_keys[0].key
+    key = item["retrieval_keys"][0]["key"]
+    key_signature = scoped_retrieval_key_signature(key)
 
-    assert state.retrieval_to_owners[key][0].statement_id == "stmt-1"
-    assert state.exact_lookup(key).outcome == ExactLookupOutcome.MISS
-    assert key not in state.direct_retrieval
+    assert state["retrieval_to_owners"][key_signature][0]["statement_id"] == "stmt-1"
+    assert index_state_exact_lookup(state, key)["outcome"] == ExactLookupOutcome.MISS
+    assert key_signature not in state["direct_retrieval"]
 
 
 def test_support_maps_and_matched_claim_lookup_are_bidirectional() -> None:
@@ -199,16 +318,16 @@ def test_support_maps_and_matched_claim_lookup_are_bidirectional() -> None:
         )
     )
 
-    result = state.support_lookup(("claim-3", "claim-2", "claim-2"))
+    result = index_state_support_lookup(state, ("claim-3", "claim-2", "claim-2"))
 
-    assert state.claim_to_statements["claim-2"] == ("stmt-a", "stmt-b")
-    assert state.statement_to_claims["stmt-a"] == ("claim-1", "claim-2")
-    assert result.queried_claim_ids == ("claim-2", "claim-3")
-    assert result.matches[0].matched_claim_ids == ("claim-2",)
-    assert result.matches[1].matched_claim_ids == ("claim-2", "claim-3")
-    assert result.scanned_edge_count == 3
-    assert result.complete is True
-    assert result.reason == ""
+    assert state["claim_to_statements"]["claim-2"] == ("stmt-a", "stmt-b")
+    assert state["statement_to_claims"]["stmt-a"] == ("claim-1", "claim-2")
+    assert result["queried_claim_ids"] == ("claim-2", "claim-3")
+    assert result["matches"][0]["matched_claim_ids"] == ("claim-2",)
+    assert result["matches"][1]["matched_claim_ids"] == ("claim-2", "claim-3")
+    assert result["scanned_edge_count"] == 3
+    assert result["complete"] is True
+    assert result["reason"] == ""
 
 
 def test_support_lookup_reports_output_truncation_only_after_a_complete_scan() -> None:
@@ -218,12 +337,12 @@ def test_support_lookup_reports_output_truncation_only_after_a_complete_scan() -
     )
     state = build_index_state(projections)
 
-    result = state.support_lookup(("claim-shared",))
+    result = index_state_support_lookup(state, ("claim-shared",))
 
-    assert result.complete is True
-    assert result.scanned_edge_count == 1_001
-    assert len(result.matches) == 1_000
-    assert result.omitted_match_count == 1
+    assert result["complete"] is True
+    assert result["scanned_edge_count"] == 1_001
+    assert len(result["matches"]) == 1_000
+    assert result["omitted_match_count"] == 1
 
 
 def test_support_lookup_abstains_before_partial_output_when_scan_limit_is_exceeded() -> None:
@@ -234,33 +353,62 @@ def test_support_lookup_abstains_before_partial_output_when_scan_limit_is_exceed
         )
     )
 
-    incomplete = state.support_lookup(("claim-shared",), scan_limit=1)
-    complete = state.support_lookup(("claim-shared",), scan_limit=2)
+    incomplete = index_state_support_lookup(state, ("claim-shared",), scan_limit=1)
+    complete = index_state_support_lookup(state, ("claim-shared",), scan_limit=2)
 
-    assert incomplete.complete is False
-    assert incomplete.matches == ()
-    assert incomplete.scanned_edge_count == 0
-    assert incomplete.omitted_match_count == 0
-    assert incomplete.omitted_edge_count == 2
-    assert incomplete.reason == "scan_limit_exceeded"
-    assert complete.complete is True
-    assert {match.statement_id for match in complete.matches} == {"stmt-a", "stmt-b"}
+    assert incomplete["complete"] is False
+    assert incomplete["matches"] == ()
+    assert incomplete["scanned_edge_count"] == 0
+    assert incomplete["omitted_match_count"] == 0
+    assert incomplete["omitted_edge_count"] == 2
+    assert incomplete["reason"] == "scan_limit_exceeded"
+    assert complete["complete"] is True
+    assert {match["statement_id"] for match in complete["matches"]} == {"stmt-a", "stmt-b"}
+
+
+def test_support_records_are_exact_validated_non_aliasing_dictionaries() -> None:
+    state = build_index_state((projection("stmt-a", support=("claim-1",)),))
+    plan = index_state_support_scan_plan(state, ("claim-1",))
+    lookup = index_state_support_lookup(state, ("claim-1",))
+
+    assert type(plan) is dict
+    assert type(lookup) is dict
+    assert type(lookup["matches"][0]) is dict
+    assert support_scan_plan_to_dict(plan) == {
+        "queried_claim_ids": ["claim-1"],
+        "edge_count": 1,
+        "scan_limit": MAX_INDEX_SUPPORT_SCAN_EDGES,
+        "complete": True,
+        "reason": "",
+    }
+    assert support_lookup_result_to_dict(lookup)["matches"] == [{"statement_id": "stmt-a", "matched_claim_ids": ["claim-1"]}]
+    assert validate_support_scan_plan(plan) is not plan
+    assert validate_support_lookup_result(lookup) is not lookup
+
+    lookup["matches"][0]["matched_claim_ids"] = ()
+    with pytest.raises(InvalidRequestError, match="must not be empty"):
+        validate_support_lookup_result(lookup)
+
+    malformed_plan = dict(plan)
+    malformed_plan["unexpected"] = True
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        validate_support_scan_plan(malformed_plan)
 
 
 def test_builder_classifies_invalid_and_legacy_inputs_without_guessing() -> None:
     missing = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
-    unsupported_schema = missing.to_dict()
+    unsupported_schema = index_projection_to_dict(missing)
     unsupported_schema["statement_id"] = "schema"
     unsupported_schema["schema_version"] = 99
-    unsupported_normalization = missing.to_dict()
+    unsupported_normalization = index_projection_to_dict(missing)
     unsupported_normalization["statement_id"] = "normalization"
     unsupported_normalization["normalization_version"] = 99
-    malformed_support = missing.to_dict()
+    malformed_support = index_projection_to_dict(missing)
     malformed_support["statement_id"] = "support"
     malformed_support["support_claim_ids"] = "claim-1"
 
     state = build_index_state((missing, unsupported_schema, unsupported_normalization, malformed_support, 42))
-    reasons = {issue.reason for issue in state.build_report.issues}
+    reasons = {issue["reason"] for issue in state["build_report"]["issues"]}
 
     assert reasons == {
         IndexIssueReason.MISSING_IDENTITY,
@@ -269,7 +417,7 @@ def test_builder_classifies_invalid_and_legacy_inputs_without_guessing() -> None
         IndexIssueReason.MALFORMED_SUPPORT,
         IndexIssueReason.MALFORMED_PROJECTION,
     }
-    assert not state.retrieval_to_owners
+    assert not state["retrieval_to_owners"]
 
 
 def test_classification_fixture() -> None:
@@ -278,46 +426,68 @@ def test_classification_fixture() -> None:
 
     for case in fixture["cases"]:
         state = build_index_state(case["projections"])
-        key = ScopedRetrievalKey.build(
-            ScopeKey(namespace="test", context_fingerprint="fixture-v1"),
+        key = build_scoped_retrieval_key(
+            scope_key(namespace="test", context_fingerprint="fixture-v1"),
             case["lookup_representation"],
         )
-        reasons = {issue.reason.value for issue in state.build_report.issues}
+        reasons = {issue["reason"].value for issue in state["build_report"]["issues"]}
         assert reasons == set(case["expected_issue_reasons"]), case["name"]
-        assert len(state.build_report.collisions) == case["expected_collision_count"], case["name"]
-        assert state.exact_lookup(key).outcome == ExactLookupOutcome(case["expected_direct_lookup"]), case["name"]
+        assert len(state["build_report"]["collisions"]) == case["expected_collision_count"], case["name"]
+        assert index_state_exact_lookup(state, key)["outcome"] == ExactLookupOutcome(case["expected_direct_lookup"]), case["name"]
 
 
 def test_malformed_current_support_is_explicitly_excluded() -> None:
     item = projection_from_statement({"id": "legacy", "template": {"tapestry": {"support": "claim-1"}}})
     state = build_index_state((item,))
 
-    assert item.exclusion_reason == IndexIssueReason.MALFORMED_SUPPORT.value
-    assert IndexIssueReason.MALFORMED_SUPPORT in {issue.reason for issue in state.build_report.issues}
+    assert item["exclusion_reason"] == IndexIssueReason.MALFORMED_SUPPORT.value
+    assert IndexIssueReason.MALFORMED_SUPPORT in {issue["reason"] for issue in state["build_report"]["issues"]}
 
 
 def test_reports_are_bounded() -> None:
     state = build_index_state(tuple(42 for _ in range(MAX_INDEX_REPORT_ITEMS + 17)))
 
-    assert len(state.build_report.issues) == MAX_INDEX_REPORT_ITEMS
-    assert state.build_report.omitted_issue_count == 17
+    assert len(state["build_report"]["issues"]) == MAX_INDEX_REPORT_ITEMS
+    assert state["build_report"]["omitted_issue_count"] == 17
+
+
+def test_index_reports_are_exact_validated_non_aliasing_dictionaries() -> None:
+    state = build_index_state((projection("stmt-a", "same"), projection("stmt-b", "same"), 42))
+    build_report = state["build_report"]
+    check_report = check_index_state(state)
+
+    assert type(build_report) is dict
+    assert type(build_report["issues"][0]) is dict
+    assert type(build_report["collisions"][0]) is dict
+    assert type(check_report) is dict
+    assert type(check_report["issues"][0]) is dict
+    assert index_build_report_to_dict(build_report)["projection_count"] == 2
+    assert index_check_report_to_dict(check_report)["consistent"] is True
+    assert validate_index_build_report(build_report) is not build_report
+    assert validate_index_check_report(check_report) is not check_report
+
+    build_report["issues"][0]["reason"] = "malformed"
+    with pytest.raises(InvalidRequestError, match="must be an IndexIssueReason"):
+        validate_index_build_report(build_report)
+
+    check_report["consistent"] = False
+    with pytest.raises(InvalidRequestError, match="retain or omit an error"):
+        validate_index_check_report(check_report)
 
 
 def test_checker_reports_corruption_and_expected_safe_exclusions() -> None:
     active = projection("active", "key", support=("claim-1",))
     legacy = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
     state = build_index_state((active, legacy))
-    corrupt = replace(
-        state,
-        claim_to_statements=MappingProxyType({"claim-extra": ("active",)}),
-        statement_to_claims=MappingProxyType({"active": ("claim-wrong",), "legacy": ()}),
-        direct_retrieval=MappingProxyType({}),
-    )
+    corrupt = state.copy()
+    corrupt["claim_to_statements"] = MappingProxyType({"claim-extra": ("active",)})
+    corrupt["statement_to_claims"] = MappingProxyType({"active": ("claim-wrong",), "legacy": ()})
+    corrupt["direct_retrieval"] = MappingProxyType({})
 
     report = check_index_state(corrupt)
-    categories = {issue.category for issue in report.issues}
+    categories = {issue["category"] for issue in report["issues"]}
 
-    assert report.consistent is False
+    assert report["consistent"] is False
     assert IndexCheckCategory.MISSING in categories
     assert IndexCheckCategory.EXTRA in categories
     assert IndexCheckCategory.ASYMMETRIC in categories
@@ -331,8 +501,8 @@ def test_explicit_empty_projection_set_is_not_self_check_fallback() -> None:
 
     report = check_index_state_against(state, ())
 
-    assert report.consistent is False
-    assert IndexCheckCategory.EXTRA in {issue.category for issue in report.issues if issue.error}
+    assert report["consistent"] is False
+    assert IndexCheckCategory.EXTRA in {issue["category"] for issue in report["issues"] if issue["error"]}
 
 
 def test_empty_projection_repair_is_dry_run_safe_and_atomically_clears() -> None:
@@ -342,44 +512,50 @@ def test_empty_projection_repair_is_dry_run_safe_and_atomically_clears() -> None
 
     dry_run = owner.repair((), dry_run=True)
 
-    assert dry_run.changed is True
-    assert dry_run.live_check.consistent is False
-    assert owner.snapshot() is before
+    assert type(dry_run) is dict
+    assert validate_index_repair_result(dry_run) == dry_run
+    assert validate_index_repair_result(dry_run) is not dry_run
+    assert index_repair_result_to_dict(dry_run)["applied"] is False
+    assert dry_run["changed"] is True
+    assert dry_run["live_check"]["consistent"] is False
+    assert owner.snapshot() == before
 
     applied = owner.repair((), dry_run=False)
 
-    assert applied.applied is True
-    assert owner.snapshot().projections == {}
-    assert owner.snapshot().retrieval_to_owners == {}
-    assert owner.snapshot().claim_to_statements == {}
+    assert applied["applied"] is True
+    assert owner.snapshot()["projections"] == {}
+    assert owner.snapshot()["retrieval_to_owners"] == {}
+    assert owner.snapshot()["claim_to_statements"] == {}
 
 
 def test_checker_and_atomic_swap_reject_corrupt_build_report() -> None:
     item = projection("stmt-a", "a", support=("claim-a",))
     owner = IndexOwner((item,))
     before = owner.snapshot()
-    candidate = build_index_state((item,), before.state_generation + 1)
-    corrupt = replace(candidate, build_report=replace(candidate.build_report, exact_key_count=999))
+    candidate = build_index_state((item,), before["state_generation"] + 1)
+    corrupt = validate_index_state(candidate)
+    corrupt["build_report"]["exact_key_count"] = 999
 
     report = check_index_state(corrupt)
 
-    assert report.consistent is False
-    assert any(issue.index_name == "build_report" and issue.key == "exact_key_count" for issue in report.issues)
+    assert report["consistent"] is False
+    assert any(issue["index_name"] == "build_report" and issue["key"] == "exact_key_count" for issue in report["issues"])
     with pytest.raises(ConflictError, match="failed consistency checking"):
-        owner.atomic_swap(corrupt, before.state_generation)
-    assert owner.snapshot() is before
+        owner.atomic_swap(corrupt, before["state_generation"])
+    assert owner.snapshot() == before
 
 
 def test_checker_rejects_missing_collision_diagnostics() -> None:
     first = projection("stmt-a", "same key")
     second = projection("stmt-b", "same key")
     state = build_index_state((first, second))
-    corrupt = replace(state, build_report=replace(state.build_report, collisions=()))
+    corrupt = validate_index_state(state)
+    corrupt["build_report"]["collisions"] = ()
 
     report = check_index_state(corrupt)
 
-    assert report.consistent is False
-    assert any(issue.index_name == "build_report" and issue.key == "collisions" for issue in report.issues)
+    assert report["consistent"] is False
+    assert any(issue["index_name"] == "build_report" and issue["key"] == "collisions" for issue in report["issues"])
 
 
 def test_checker_rejects_each_reproducible_report_field_mismatch() -> None:
@@ -387,42 +563,78 @@ def test_checker_rejects_each_reproducible_report_field_mismatch() -> None:
     collision = projection("stmt-b", "same key")
     legacy = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
     state = build_index_state((active, collision, legacy))
-    report = state.build_report
-    corrupt_reports = (
-        replace(report, projection_count=report.projection_count + 1),
-        replace(report, exact_key_count=report.exact_key_count + 1),
-        replace(report, support_edge_count=report.support_edge_count + 1),
-        replace(report, issues=()),
-        replace(report, collisions=()),
-        replace(report, omitted_issue_count=report.omitted_issue_count + 1),
-        replace(report, omitted_collision_count=report.omitted_collision_count + 1),
+    report = state["build_report"]
+    corrupt_values = (
+        ("projection_count", report["projection_count"] + 1),
+        ("exact_key_count", report["exact_key_count"] + 1),
+        ("support_edge_count", report["support_edge_count"] + 1),
+        ("issues", ()),
+        ("collisions", ()),
+        ("omitted_issue_count", report["omitted_issue_count"] + 1),
+        ("omitted_collision_count", report["omitted_collision_count"] + 1),
     )
 
-    for corrupt_report in corrupt_reports:
-        check = check_index_state(replace(state, build_report=corrupt_report))
-        assert check.consistent is False
-        assert any(issue.index_name == "build_report" and issue.error for issue in check.issues)
+    for field_name, value in corrupt_values:
+        corrupt_state = validate_index_state(state)
+        corrupt_state["build_report"][field_name] = value
+        check = check_index_state(corrupt_state)
+        assert check["consistent"] is False
+        assert any(issue["index_name"] == "build_report" and issue["error"] for issue in check["issues"])
 
 
 def test_input_only_build_classifications_do_not_make_valid_state_unpublishable() -> None:
     owner = IndexOwner((projection("stmt-a", "a"), 42))
 
-    assert owner.snapshot().build_report.issues[0].input_only is True
-    assert owner.check().consistent is True
+    assert owner.snapshot()["build_report"]["issues"][0]["input_only"] is True
+    assert owner.check()["consistent"] is True
 
 
 def test_omitted_input_only_classifications_do_not_make_valid_state_unpublishable() -> None:
     owner = IndexOwner((projection("stmt-a", "a"), *(42 for _ in range(MAX_INDEX_REPORT_ITEMS + 1))))
 
-    assert owner.snapshot().build_report.omitted_issue_count == 1
-    assert owner.check().consistent is True
+    assert owner.snapshot()["build_report"]["omitted_issue_count"] == 1
+    assert owner.check()["consistent"] is True
 
 
 def test_index_state_maps_are_immutable() -> None:
     state = build_index_state((projection("stmt-1", "key"),))
 
     with pytest.raises(TypeError):
-        mutate_mapping(state.claim_to_statements, "claim-1", ("stmt-1",))
+        mutate_mapping(state["claim_to_statements"], "claim-1", ("stmt-1",))
+
+
+def test_index_state_is_an_exact_validated_non_aliasing_dictionary() -> None:
+    state = build_index_state((projection("stmt-1", "key", support=("claim-1",)),))
+    copied = validate_index_state(state)
+
+    assert type(state) is dict
+    assert copied == state
+    assert copied is not state
+    assert copied["retrieval_to_owners"] is not state["retrieval_to_owners"]
+    assert copied["retrieval_to_owners"] != {}
+    assert next(iter(copied["retrieval_to_owners"].values()))[0] is not next(iter(state["retrieval_to_owners"].values()))[0]
+    assert copied["projections"]["stmt-1"] is not state["projections"]["stmt-1"]
+    assert copied["build_report"] is not state["build_report"]
+
+    malformed: dict[str, object] = dict(state)
+    malformed["unexpected"] = True
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        validate_index_state(malformed)
+
+    state["state_generation"] = 0
+    with pytest.raises(InvalidRequestError, match="positive integer"):
+        validate_index_state(state)
+
+
+def test_pure_index_mutation_does_not_alias_its_input_state() -> None:
+    original = build_index_state((projection("stmt-a", "a"),))
+    added = add_index_projection(original, projection("stmt-b", "b"))
+
+    assert added["projections"]["stmt-a"] is not original["projections"]["stmt-a"]
+    assert next(iter(added["retrieval_to_owners"].values()))[0] is not next(iter(original["retrieval_to_owners"].values()))[0]
+
+    original["projections"]["stmt-a"]["generation"] = 99
+    assert added["projections"]["stmt-a"]["generation"] == 1
 
 
 def test_generic_mutations_equal_clean_rebuild() -> None:
@@ -432,47 +644,49 @@ def test_generic_mutations_equal_clean_rebuild() -> None:
     state = build_index_state((first,))
 
     added = add_index_projection(state, second)
-    assert state_signature(added) == state_signature(build_index_state((first, second), added.state_generation))
+    assert state_signature(added) == state_signature(build_index_state((first, second), added["state_generation"]))
 
     replaced = replace_index_projection(added, replacement)
-    assert state_signature(replaced) == state_signature(build_index_state((replacement, second), replaced.state_generation))
+    assert state_signature(replaced) == state_signature(build_index_state((replacement, second), replaced["state_generation"]))
 
     supported = update_index_support(replaced, "stmt-b", ("claim-d",))
-    expected_second = replace(second, generation=2, support_claim_ids=("claim-d",))
+    expected_second = index_projection_with_changes(second, {"generation": 2, "support_claim_ids": ("claim-d",)})
     assert state_signature(supported) == state_signature(
-        build_index_state((replacement, expected_second), supported.state_generation)
+        build_index_state((replacement, expected_second), supported["state_generation"])
     )
 
     removed = remove_index_projection(supported, "stmt-a")
-    assert state_signature(removed) == state_signature(build_index_state((expected_second,), removed.state_generation))
+    assert state_signature(removed) == state_signature(build_index_state((expected_second,), removed["state_generation"]))
 
 
 def test_atomic_owner_rejects_stale_swap_and_abandoned_build_is_invisible() -> None:
     owner = IndexOwner((projection("stmt-a", "a"),))
     before = owner.snapshot()
-    abandoned = build_index_state((projection("stmt-b", "b"),), before.state_generation + 1)
+    abandoned = build_index_state((projection("stmt-b", "b"),), before["state_generation"] + 1)
 
-    assert owner.snapshot() is before
+    assert owner.snapshot() == before
     owner.add(projection("stmt-b", "b"))
     with pytest.raises(ConflictError, match="stale index state generation"):
-        owner.atomic_swap(abandoned, before.state_generation)
+        owner.atomic_swap(abandoned, before["state_generation"])
 
 
 def test_checked_repair_has_bounded_dry_run_and_atomic_apply() -> None:
     expected = (projection("stmt-a", "a", support=("claim-a",)),)
     owner = IndexOwner(expected)
     original = owner.snapshot()
-    owner._state = replace(original, claim_to_statements=MappingProxyType({}))
+    corrupt = original.copy()
+    corrupt["claim_to_statements"] = MappingProxyType({})
+    owner._state = corrupt
 
     dry_run = owner.repair(expected, dry_run=True)
-    assert dry_run.applied is False
-    assert dry_run.changed is True
-    assert owner.snapshot().claim_to_statements == {}
+    assert dry_run["applied"] is False
+    assert dry_run["changed"] is True
+    assert owner.snapshot()["claim_to_statements"] == {}
 
     applied = owner.repair(expected, dry_run=False)
-    assert applied.applied is True
-    assert owner.snapshot().claim_to_statements == {"claim-a": ("stmt-a",)}
-    assert check_index_state(owner.snapshot()).consistent is True
+    assert applied["applied"] is True
+    assert owner.snapshot()["claim_to_statements"] == {"claim-a": ("stmt-a",)}
+    assert check_index_state(owner.snapshot())["consistent"] is True
 
 
 def test_concurrent_readers_observe_only_complete_checked_states() -> None:
@@ -486,14 +700,14 @@ def test_concurrent_readers_observe_only_complete_checked_states() -> None:
         start.wait()
         for _ in range(30):
             owner.add(changing)
-            owner.remove(changing.statement_id)
+            owner.remove(changing["statement_id"])
 
     def reader() -> None:
         start.wait()
         for _ in range(100):
             snapshot = owner.snapshot()
-            if not check_index_state(snapshot).consistent:
-                errors.append(snapshot.state_generation)
+            if not check_index_state(snapshot)["consistent"]:
+                errors.append(snapshot["state_generation"])
 
     writer_thread = threading.Thread(target=writer)
     first_reader = threading.Thread(target=reader)
@@ -517,9 +731,9 @@ def test_current_statement_support_is_indexed_but_exact_identity_is_not_invented
     )
     state = engram.index_snapshot()
 
-    assert state.claim_to_statements == {"claim-1": (statement_id,)}
-    assert state.statement_to_retrieval[statement_id] == ()
-    assert IndexIssueReason.MISSING_IDENTITY in {issue.reason for issue in state.build_report.issues}
+    assert state["claim_to_statements"] == {"claim-1": (statement_id,)}
+    assert state["statement_to_retrieval"][statement_id] == ()
+    assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in state["build_report"]["issues"]}
 
 
 def test_current_support_metadata_updates_and_eviction_update_both_maps() -> None:
@@ -536,11 +750,11 @@ def test_current_support_metadata_updates_and_eviction_update_both_maps() -> Non
     )
 
     assert same_id == statement_id
-    assert engram.index_snapshot().claim_to_statements == {"claim-2": (statement_id,)}
+    assert engram.index_snapshot()["claim_to_statements"] == {"claim-2": (statement_id,)}
 
     engram.retire_statement(statement_id)
-    assert engram.index_snapshot().claim_to_statements == {}
-    assert engram.index_snapshot().statement_to_claims == {}
+    assert engram.index_snapshot()["claim_to_statements"] == {}
+    assert engram.index_snapshot()["statement_to_claims"] == {}
 
 
 def test_current_support_metadata_rebuilds_after_persistence_load() -> None:
@@ -552,8 +766,8 @@ def test_current_support_metadata_rebuilds_after_persistence_load() -> None:
 
     loaded = persistence.load_engram_json(persistence.save_json(engram))
 
-    assert loaded.index_snapshot().claim_to_statements == {"claim-persisted": (statement_id,)}
-    assert loaded.index_snapshot().statement_to_claims == {statement_id: ("claim-persisted",)}
+    assert loaded.index_snapshot()["claim_to_statements"] == {"claim-persisted": (statement_id,)}
+    assert loaded.index_snapshot()["statement_to_claims"] == {statement_id: ("claim-persisted",)}
 
 
 def test_vector_support_path_does_not_iterate_statement_corpus() -> None:
@@ -674,19 +888,19 @@ def test_core_explicit_empty_projection_operations_preserve_authoritative_statem
         template={"tapestry": {"support": [{"claim_id": "claim-1"}]}},
     )
 
-    assert engram.check_index_projections(()).consistent is False
+    assert engram.check_index_projections(())["consistent"] is False
     dry_run = engram.repair_index_projections((), dry_run=True)
     applied = engram.repair_index_projections((), dry_run=False)
 
-    assert dry_run.changed is True
-    assert applied.applied is True
+    assert dry_run["changed"] is True
+    assert applied["applied"] is True
     assert engram.get_statement(statement_id)["text"] == "A response"
-    assert engram.index_snapshot().projections == {}
-    assert engram.check_indexes().consistent is False
+    assert engram.index_snapshot()["projections"] == {}
+    assert engram.check_indexes()["consistent"] is False
 
     restored = engram.repair_indexes(dry_run=False)
-    assert restored.applied is True
-    assert engram.check_indexes().consistent is True
+    assert restored["applied"] is True
+    assert engram.check_indexes()["consistent"] is True
 
 
 def test_engram_repair_does_not_change_authoritative_statement_content() -> None:
@@ -694,15 +908,17 @@ def test_engram_repair_does_not_change_authoritative_statement_content() -> None
     engram.store("A response", template={"tapestry": {"support": [{"claim_id": "claim-1"}]}})
     before = [dict(statement) for statement in engram.statements]
     state = engram.index_snapshot()
-    engram._index_owner._state = replace(state, claim_to_statements=MappingProxyType({}))
+    corrupt = state.copy()
+    corrupt["claim_to_statements"] = MappingProxyType({})
+    engram._index_owner._state = corrupt
 
     dry_run = engram.repair_indexes(dry_run=True)
     repaired = engram.repair_indexes(dry_run=False)
 
-    assert dry_run.applied is False
-    assert repaired.applied is True
+    assert dry_run["applied"] is False
+    assert repaired["applied"] is True
     assert engram.statements == before
-    assert engram.check_indexes().consistent is True
+    assert engram.check_indexes()["consistent"] is True
 
 
 def test_generic_mutation_validation_is_strict() -> None:
@@ -712,7 +928,7 @@ def test_generic_mutation_validation_is_strict() -> None:
     with pytest.raises(InvalidRequestError):
         remove_index_projection(state, "missing")
     with pytest.raises(InvalidRequestError):
-        state.support_lookup(("claim-1",), scan_limit=0)
+        index_state_support_lookup(state, ("claim-1",), scan_limit=0)
 
 
 def test_default_support_scan_bound_is_explicit() -> None:

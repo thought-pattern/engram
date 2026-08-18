@@ -2,37 +2,67 @@
 
 import json
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
 from engram import persistence, service as service_module
-from engram.artifacts import ArtifactProvenance, ArtifactStatistics, CachedResponseArtifact, LifecycleState
+from engram.artifacts import (
+    CachedResponseArtifact,
+    LifecycleState,
+    artifact_provenance,
+    artifact_statistics,
+    cached_response_artifact,
+)
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError
-from engram.fusion import PERMISSIVE_CANDIDATE_AUTHORITY, CandidateFusionEngine, FusionPolicyReason
-from engram.graph import CLAIM_PROJECTION_FIELDS, ClaimProjection, ClaimProjectionQuery, MemGraphConnection
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
+from engram.fusion import CandidateFusionEngine, FusionPolicyReason, permissive_candidate_authority
+from engram.graph import (
+    CLAIM_PROJECTION_FIELDS,
+    ClaimProjection,
+    ClaimProjectionQuery,
+    MemGraphConnection,
+    claim_projection,
+    claim_projection_from_graph_row,
+    claim_projection_to_dict,
+)
+from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution import (
-    AccountingObservation,
-    BudgetConsumption,
     Candidate,
     CandidateSource,
     CostClass,
     EvidenceKind,
-    EvidencePackage,
     EvidencePackageTruncationReason,
     EvidenceReference,
-    FeatureSet,
     QueryFrame,
     QueryFrameBuilder,
-    ResolutionBudget,
     ResolutionOutcome,
     ResolverResult,
     ResolverState,
+    accounting_observation,
+    budget_consumption,
+    build_evidence_package,
+    candidate as resolution_candidate,
+    canonical_claim_references_with_changes,
+    capture_resolution_budget,
+    claim_evidence_record_to_dict,
+    claim_evidence_record_with_changes,
+    claim_validity_inputs_with_changes,
+    disclosure_decision_with_changes,
+    empty_evidence_package,
+    evidence_package_to_json,
+    evidence_reference,
+    feature_set,
+    query_frame_with_changes,
+    resolution_budget,
+    resolution_budget_with_changes,
+    resolution_result_to_dict,
+    resolution_result_to_json,
+    resolver_result,
+    resolver_result_from_json,
+    resolver_result_to_json,
 )
 from engram.resolvers import (
     ExactResolver,
@@ -43,9 +73,21 @@ from engram.resolvers import (
     ResolverBudget,
     ResolverExecutor,
     ResolverRegistry,
-    ResolverReservation,
     StructuredGraphResolver,
     SupportSemanticResolver,
+    bound_resolver_result,
+    execution_report_canonical_claim_evidence,
+    execution_report_with_changes,
+    resolution_plan_to_dict,
+    resolver_budget as build_resolver_budget,
+    resolver_budget_from_json,
+    resolver_budget_to_json,
+    resolver_budget_with_changes,
+    resolver_contract,
+    resolver_reservation,
+    resolver_reservation_from_json,
+    resolver_reservation_to_json,
+    resolver_reservation_with_changes,
 )
 from engram.service import EngramCore
 
@@ -65,9 +107,9 @@ def artifact(
     support_claim_ids: tuple[str, ...] = (),
     metadata=(),
 ) -> CachedResponseArtifact:
-    scope = ScopeKey(namespace=namespace)
+    scope = scope_key(namespace=namespace)
     selected_metadata = metadata if isinstance(metadata, dict) else {"approved": True}
-    return CachedResponseArtifact(
+    result = cached_response_artifact(
         statement_id=statement_id,
         generation=1,
         response=response,
@@ -84,10 +126,11 @@ def artifact(
         knowledge_epoch=0,
         knowledge_epoch_available=False,
         superseded_by="",
-        provenance=ArtifactProvenance(source_label, "regulator-a", "2026-08-12T16:00:00Z"),
-        statistics=ArtifactStatistics(),
+        provenance=artifact_provenance(source_label, "regulator-a", "2026-08-12T16:00:00Z"),
+        statistics=artifact_statistics(),
         metadata=selected_metadata,
     )
+    return result
 
 
 def engine_with_artifacts(*artifacts: CachedResponseArtifact) -> Engram:
@@ -106,34 +149,36 @@ def frame(
     required_source_label: str = "",
     budget=(),
 ):
-    selected_budget = budget or ResolutionBudget.capture(
+    selected_budget = budget or capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
     )
-    return QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
+    result = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         request,
-        ScopeKey(namespace=namespace),
+        scope_key(namespace=namespace),
         required_metadata=required_metadata if isinstance(required_metadata, dict) else {},
         required_source_label=required_source_label,
         diagnostic_seed=f"test:{request}:{namespace}",
         budget=selected_budget,
     )
+    return result
 
 
 def resolver_budget(query_frame) -> ResolverBudget:
-    budget = query_frame.budget
-    return ResolverBudget(
-        deadline_ns=budget.deadline_ns,
-        max_candidates=budget.max_candidates,
-        max_graph_rows=budget.max_graph_rows,
-        max_vector_results=budget.max_vector_results,
-        max_evidence=budget.max_evidence,
-        max_evidence_bytes=budget.max_evidence_bytes,
-        max_output_bytes=budget.max_output_bytes,
-        max_diagnostic_bytes=budget.max_diagnostic_bytes,
-        max_working_memory_bytes=budget.max_working_memory_bytes,
+    budget = query_frame["budget"]
+    result = build_resolver_budget(
+        deadline_ns=budget["deadline_ns"],
+        max_candidates=budget["max_candidates"],
+        max_graph_rows=budget["max_graph_rows"],
+        max_vector_results=budget["max_vector_results"],
+        max_evidence=budget["max_evidence"],
+        max_evidence_bytes=budget["max_evidence_bytes"],
+        max_output_bytes=budget["max_output_bytes"],
+        max_diagnostic_bytes=budget["max_diagnostic_bytes"],
+        max_working_memory_bytes=budget["max_working_memory_bytes"],
     )
+    return result
 
 
 def candidate(
@@ -144,16 +189,17 @@ def candidate(
     evidence: tuple[EvidenceReference, ...] = (),
     features: Mapping[str, float] = {"score": 1.0},
 ) -> Candidate:
-    return Candidate(
+    result = resolution_candidate(
         candidate_id=f"candidate:{source.value}:{statement_id}",
         statement_id=statement_id,
         response=response,
         source=source,
-        features=FeatureSet(values=features),
+        features=feature_set(values=features),
         evidence=evidence,
-        scope=ScopeKey(),
+        scope=scope_key(),
         lifecycle=LifecycleState.ACTIVE,
     )
+    return result
 
 
 class FakeResolver:
@@ -178,13 +224,15 @@ class FakeResolver:
     def available(self, frame: QueryFrame) -> bool:
         if self._availability_error:
             raise RuntimeError("injected availability failure")
-        return self._available
+        result = self._available
+        return result
 
     def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
         self.calls += 1
         if self._error:
             raise RuntimeError("injected resolver failure")
-        return self._result
+        result = self._result
+        return result
 
 
 def test_exact_adapter_preserves_alias_origin_text_and_hard_filters() -> None:
@@ -199,33 +247,33 @@ def test_exact_adapter_preserves_alias_origin_text_and_hard_filters() -> None:
 
     result = ExactResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert result.state == ResolverState.COMPLETED
-    assert result.reason_code == "exact_found"
-    assert result.candidates[0].response == accepted.response
-    assert result.candidates[0].provenance["retrieval_origin"] == "alias"
-    assert result.accounting == (AccountingObservation(accepted.statement_id),)
+    assert result["state"] == ResolverState.COMPLETED
+    assert result["reason_code"] == "exact_found"
+    assert result["candidates"][0]["response"] == accepted["response"]
+    assert result["candidates"][0]["provenance"]["retrieval_origin"] == "alias"
+    assert result["accounting"] == (accounting_observation(accepted["statement_id"]),)
 
     excluded = ExactResolver(engine, lambda: START_NS).resolve(
-        replace(query_frame, required_metadata={"approved": False}),
+        query_frame_with_changes(query_frame, {"required_metadata": {"approved": False}}),
         resolver_budget(query_frame),
     )
-    assert excluded.candidates == ()
-    assert excluded.reason_code == "exact_required_filter_excluded"
+    assert excluded["candidates"] == ()
+    assert excluded["reason_code"] == "exact_required_filter_excluded"
 
 
 def test_adapter_candidate_ids_are_stable_within_and_distinct_across_requests() -> None:
     accepted = artifact()
     engine = engine_with_artifacts(accepted)
     first_frame = frame(engine, "Explain Engram")
-    second_frame = replace(first_frame, diagnostic_id="resolution:sha256:" + "a" * 64)
+    second_frame = query_frame_with_changes(first_frame, {"diagnostic_id": "resolution:sha256:" + "a" * 64})
     resolver = ExactResolver(engine, lambda: START_NS)
 
-    first = resolver.resolve(first_frame, resolver_budget(first_frame)).candidates[0]
-    replay = resolver.resolve(first_frame, resolver_budget(first_frame)).candidates[0]
-    second = resolver.resolve(second_frame, resolver_budget(second_frame)).candidates[0]
+    first = resolver.resolve(first_frame, resolver_budget(first_frame))["candidates"][0]
+    replay = resolver.resolve(first_frame, resolver_budget(first_frame))["candidates"][0]
+    second = resolver.resolve(second_frame, resolver_budget(second_frame))["candidates"][0]
 
-    assert first.candidate_id == replay.candidate_id
-    assert first.candidate_id != second.candidate_id
+    assert first["candidate_id"] == replay["candidate_id"]
+    assert first["candidate_id"] != second["candidate_id"]
 
 
 def test_exact_adapter_abstains_for_wrong_scope_and_ineligible_lifecycle() -> None:
@@ -236,8 +284,8 @@ def test_exact_adapter_abstains_for_wrong_scope_and_ineligible_lifecycle() -> No
     wrong_scope_frame = frame(engine, namespace="tenant-b")
     wrong_scope = ExactResolver(engine, lambda: START_NS).resolve(wrong_scope_frame, resolver_budget(wrong_scope_frame))
 
-    assert retired_result.candidates == ()
-    assert wrong_scope.candidates == ()
+    assert retired_result["candidates"] == ()
+    assert wrong_scope["candidates"] == ()
 
 
 def test_pattern_discovery_is_pure_and_never_uses_graph_fallback(monkeypatch) -> None:
@@ -254,9 +302,9 @@ def test_pattern_discovery_is_pure_and_never_uses_graph_fallback(monkeypatch) ->
     result = PatternResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
     miss = engine.pattern_candidates("No pattern can match this", limit=3)
 
-    assert result.candidates[0].statement_id == statement_id
-    assert result.candidates[0].diagnostics["captures"] == ("Ada",)
-    assert result.candidates[0].features.values["pattern_specificity"] == 1.0
+    assert result["candidates"][0]["statement_id"] == statement_id
+    assert result["candidates"][0]["diagnostics"]["captures"] == ("Ada",)
+    assert result["candidates"][0]["features"]["values"]["pattern_specificity"] == 1.0
     assert miss == []
     assert before == (
         engine.query_count,
@@ -274,12 +322,12 @@ def test_lexical_discovery_exposes_existing_components_without_accounting() -> N
 
     result = LexicalResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    features = result.candidates[0].features
-    assert result.candidates[0].statement_id == statement_id
-    assert features.values["lexical_score"] > 0.0
-    assert features.values["synonym_match_ratio"] > 0.0
-    assert {"lexical_overlap", "recency", "keyword_hit_rate", "priority"}.issubset(features.values)
-    assert features.unavailable == ("lemma_match_ratio", "stem_match_ratio")
+    features = result["candidates"][0]["features"]
+    assert result["candidates"][0]["statement_id"] == statement_id
+    assert features["values"]["lexical_score"] > 0.0
+    assert features["values"]["synonym_match_ratio"] > 0.0
+    assert {"lexical_overlap", "recency", "keyword_hit_rate", "priority"}.issubset(features["values"])
+    assert features["unavailable"] == ("lemma_match_ratio", "stem_match_ratio")
     assert engine.query_count == 0
     assert engine.get_statement(statement_id)["query_count"] == before_statement["query_count"]
     assert {name: (value["query_count"], value["hit_count"]) for name, value in engine.keywords.items()} == before_keywords
@@ -332,11 +380,19 @@ def _structured_claim_projection(claim_id: str = "claim-1") -> ClaimProjection:
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    return ClaimProjection.from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = claim_projection_from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    return result
+
+
+def _changed_claim_projection(projection: ClaimProjection, **changes) -> ClaimProjection:
+    values = dict(projection)
+    values.update(changes)
+    result = claim_projection(**values)
+    return result
 
 
 def _current_claim_projection(discovered: ClaimProjection, **changes) -> ClaimProjection:
-    return replace(
+    result = _changed_claim_projection(
         discovered,
         projection_id=ClaimProjectionQuery.BY_ID_V1,
         structured_match=0.0,
@@ -347,10 +403,11 @@ def _current_claim_projection(discovered: ClaimProjection, **changes) -> ClaimPr
         vector_index_id_available=False,
         **changes,
     )
+    return result
 
 
 def _semantic_claim_projection(claim_id: str = "claim-1", similarity: float = 0.9) -> ClaimProjection:
-    return replace(
+    result = _changed_claim_projection(
         _structured_claim_projection(claim_id),
         projection_id=ClaimProjectionQuery.VECTOR_V1,
         structured_match=0.0,
@@ -360,11 +417,13 @@ def _semantic_claim_projection(claim_id: str = "claim-1", similarity: float = 0.
         vector_index_id="claim_premise_embeddings",
         vector_index_id_available=True,
     )
+    return result
 
 
 def _claim_projection_graph_row(projection: ClaimProjection) -> dict[str, object]:
-    encoded = projection.to_dict()
-    return {field: encoded[field] for field in CLAIM_PROJECTION_FIELDS}
+    encoded = claim_projection_to_dict(projection)
+    result = {field: encoded[field] for field in CLAIM_PROJECTION_FIELDS}
+    return result
 
 
 def test_claim_resolvers_reject_falsey_invalid_eligibility_evaluator() -> None:
@@ -390,25 +449,26 @@ def test_structured_graph_adapter_emits_full_claim_in_current_core_result(monkey
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert result.candidates == ()
-    assert result.schema_version == 1
-    assert result.evidence == ()
-    assert len(result.claim_evidence) == 1
-    record = result.claim_evidence[0]
-    assert record.claim_id == "claim-1"
-    assert record.canonical_references.subject_entity_id == "entity:ada"
-    assert record.features.values["structured_match"] == 1.0
-    assert record.features.unavailable == ("semantic_similarity", "source_agreement", "supplied_trust")
-    assert record.disclosure.scope == query_frame.scope
-    assert "response" not in record.to_dict()
-    assert not {"subject", "predicate", "object", "proof", "cypher", "embedding"}.intersection(record.to_dict())
-    assert ResolverResult.from_json(result.to_json()) == result
+    assert result["candidates"] == ()
+    assert result["schema_version"] == 1
+    assert result["evidence"] == ()
+    assert len(result["claim_evidence"]) == 1
+    record = result["claim_evidence"][0]
+    assert record["claim_id"] == "claim-1"
+    assert record["canonical_references"]["subject_entity_id"] == "entity:ada"
+    assert record["features"]["values"]["structured_match"] == 1.0
+    assert record["features"]["unavailable"] == ("semantic_similarity", "source_agreement", "supplied_trust")
+    assert record["disclosure"]["scope"] == query_frame["scope"]
+    serialized = claim_evidence_record_to_dict(record)
+    assert "response" not in serialized
+    assert not {"subject", "predicate", "object", "proof", "cypher", "embedding"}.intersection(serialized)
+    assert resolver_result_from_json(resolver_result_to_json(result)) == result
 
 
 def test_structured_graph_adapter_excludes_ineligible_and_changed_claims(monkeypatch) -> None:
     engine = Engram()
     eligible = _structured_claim_projection("claim-eligible")
-    inactive = replace(
+    inactive = _changed_claim_projection(
         _structured_claim_projection("claim-inactive"),
         invalidated_at="2026-08-01T00:00:00Z",
         invalidated_at_available=True,
@@ -421,10 +481,12 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_claims(monkeyp
     )
 
     def current(claim_id):
-        if claim_id == eligible.claim_id:
-            return (_current_claim_projection(eligible),)
-        if claim_id == changed.claim_id:
-            return (_current_claim_projection(changed, object_entity_id="entity:changed"),)
+        if claim_id == eligible["claim_id"]:
+            result = (_current_claim_projection(eligible),)
+            return result
+        if claim_id == changed["claim_id"]:
+            result = (_current_claim_projection(changed, object_entity_id="entity:changed"),)
+            return result
         raise AssertionError("initially ineligible Claim must not be revalidated")
 
     monkeypatch.setattr(engine, "current_claim_projection", current)
@@ -432,15 +494,15 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_claims(monkeyp
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert tuple(record.claim_id for record in result.claim_evidence) == ("claim-eligible",)
-    assert result.diagnostics["discovery_rows"] == 3
-    assert result.diagnostics["revalidation_rows"] == 2
-    assert result.diagnostics["exclusion_counts"] == {
+    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-eligible",)
+    assert result["diagnostics"]["discovery_rows"] == 3
+    assert result["diagnostics"]["revalidation_rows"] == 2
+    assert result["diagnostics"]["exclusion_counts"] == {
         "claim_inactive": 1,
         "revalidation_identity_conflict": 1,
     }
-    assert result.consumption.graph_rows == 5
-    assert result.consumption.evidence == 1
+    assert result["consumption"]["graph_rows"] == 5
+    assert result["consumption"]["evidence"] == 1
 
 
 def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkeypatch) -> None:
@@ -455,13 +517,16 @@ def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkey
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
-    lease = replace(resolver_budget(query_frame), max_evidence_bytes=256, max_output_bytes=256)
+    lease = resolver_budget_with_changes(
+        resolver_budget(query_frame),
+        {"max_evidence_bytes": 256, "max_output_bytes": 256},
+    )
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    assert result.claim_evidence == ()
-    assert result.reason_code == "structured_graph_miss"
-    assert result.consumption.exhausted_dimensions == ("evidence_bytes",)
+    assert result["claim_evidence"] == ()
+    assert result["reason_code"] == "structured_graph_miss"
+    assert result["consumption"]["exhausted_dimensions"] == ("evidence_bytes",)
     assert before == (engine.query_count, engine.hit_count, tuple(engine.statements))
 
 
@@ -479,13 +544,13 @@ def test_executor_defensively_bounds_full_claim_evidence_in_current_schema(monke
     lease = resolver_budget(query_frame)
     raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    bounded = ResolverExecutor._bounded_result(raw, replace(lease, max_evidence=0))
+    bounded = bound_resolver_result(raw, resolver_budget_with_changes(lease, {"max_evidence": 0}))
 
-    assert bounded.schema_version == 1
-    assert bounded.claim_evidence == ()
-    assert bounded.evidence == ()
-    assert bounded.consumption.evidence == 0
-    assert "evidence" in bounded.consumption.exhausted_dimensions
+    assert bounded["schema_version"] == 1
+    assert bounded["claim_evidence"] == ()
+    assert bounded["evidence"] == ()
+    assert bounded["consumption"]["evidence"] == 0
+    assert "evidence" in bounded["consumption"]["exhausted_dimensions"]
 
 
 def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypatch) -> None:
@@ -494,7 +559,7 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     engine.config["graph"]["enabled"] = True
     engine.config["graph"]["vector_enabled"] = True
     engine.config["graph"]["vector_weight"] = 1.0
-    engine.statements[engine.statement_index[accepted.statement_id]]["priority"] = 3
+    engine.statements[engine.statement_index[accepted["statement_id"]]]["priority"] = 3
     projections = [_semantic_claim_projection("unlinked", 1.0)]
     monkeypatch.setattr(
         engine,
@@ -509,21 +574,21 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
         "graph_vector_claim_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: projections[:limit],
     )
-    by_id = {projection.claim_id: _current_claim_projection(projection) for projection in projections}
+    by_id = {projection["claim_id"]: _current_claim_projection(projection) for projection in projections}
     monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (by_id[claim_id],))
     query_frame = frame(engine)
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert len(result.candidates) == 1
-    assert result.candidates[0].statement_id == accepted.statement_id
-    assert result.candidates[0].source == CandidateSource.SUPPORT_SEMANTIC
-    assert tuple(reference.evidence_id for reference in result.candidates[0].evidence) == ("claim-support",)
-    assert result.candidates[0].features.values["semantic_score"] == pytest.approx(0.9)
-    assert result.candidates[0].features.values["priority"] == pytest.approx(3.0)
-    assert result.candidates[0].features.values["legacy_retrieval_score"] == pytest.approx(3.9)
-    assert tuple(record.claim_id for record in result.claim_evidence) == ("unlinked",)
-    assert result.consumption.vector_results == 3
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["statement_id"] == accepted["statement_id"]
+    assert result["candidates"][0]["source"] == CandidateSource.SUPPORT_SEMANTIC
+    assert tuple(reference["evidence_id"] for reference in result["candidates"][0]["evidence"]) == ("claim-support",)
+    assert result["candidates"][0]["features"]["values"]["semantic_score"] == pytest.approx(0.9)
+    assert result["candidates"][0]["features"]["values"]["priority"] == pytest.approx(3.0)
+    assert result["candidates"][0]["features"]["values"]["legacy_retrieval_score"] == pytest.approx(3.9)
+    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("unlinked",)
+    assert result["consumption"]["vector_results"] == 3
 
 
 def test_support_semantic_emits_unlinked_full_claim_without_response_candidate(monkeypatch) -> None:
@@ -543,19 +608,19 @@ def test_support_semantic_emits_unlinked_full_claim_without_response_candidate(m
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert result.schema_version == 1
-    assert result.candidates == ()
-    assert result.accounting == ()
-    assert tuple(record.claim_id for record in result.claim_evidence) == ("claim-unlinked",)
-    assert result.claim_evidence[0].features.values["semantic_similarity"] == pytest.approx(0.73)
-    assert result.claim_evidence[0].features.unavailable == (
+    assert result["schema_version"] == 1
+    assert result["candidates"] == ()
+    assert result["accounting"] == ()
+    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-unlinked",)
+    assert result["claim_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.73)
+    assert result["claim_evidence"][0]["features"]["unavailable"] == (
         "source_agreement",
         "structured_match",
         "supplied_trust",
     )
-    assert result.consumption.vector_results == 1
-    assert result.consumption.graph_rows == 1
-    assert result.consumption.evidence == 1
+    assert result["consumption"]["vector_results"] == 1
+    assert result["consumption"]["graph_rows"] == 1
+    assert result["consumption"]["evidence"] == 1
 
 
 def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> None:
@@ -567,10 +632,13 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
     def execute(query: str, parameters=()):
         calls.append((query, parameters))
         if "claim.subject AS subject" in query:
-            return [{"claim_id": discovered.claim_id, "similarity": discovered.semantic_similarity}]
+            result = [{"claim_id": discovered["claim_id"], "similarity": discovered["semantic_similarity"]}]
+            return result
         if "query_embedding" in parameters:
-            return [_claim_projection_graph_row(discovered)]
-        return [_claim_projection_graph_row(current)]
+            result = [_claim_projection_graph_row(discovered)]
+            return result
+        result = [_claim_projection_graph_row(current)]
+        return result
 
     client._execute_read_query = execute
     engine = Engram()
@@ -590,18 +658,18 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert tuple(record.claim_id for record in result.claim_evidence) == ("claim-vertical",)
-    assert result.claim_evidence[0].features.values["semantic_similarity"] == pytest.approx(0.67)
+    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-vertical",)
+    assert result["claim_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.67)
     assert len(calls) == 3
     assert calls[0][1] == {
         "index_name": "claim_premise_embeddings",
-        "limit": query_frame.budget.max_candidates,
+        "limit": query_frame["budget"]["max_candidates"],
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
     }
     assert calls[1][1] == {
         "index_name": "claim_premise_embeddings",
-        "limit": query_frame.budget.max_vector_results - 1,
+        "limit": query_frame["budget"]["max_vector_results"] - 1,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
     }
@@ -625,10 +693,10 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
 
     unavailable = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    assert unavailable.state == ResolverState.COMPLETED
-    assert unavailable.reason_code == "support_semantic_miss"
-    assert unavailable.claim_evidence == ()
-    assert unavailable.consumption.vector_results == 0
+    assert unavailable["state"] == ResolverState.COMPLETED
+    assert unavailable["reason_code"] == "support_semantic_miss"
+    assert unavailable["claim_evidence"] == ()
+    assert unavailable["consumption"]["vector_results"] == 0
 
     monkeypatch.setattr(
         engine,
@@ -637,8 +705,8 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
     )
     exhausted = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    assert exhausted.state == ResolverState.EXHAUSTED
-    assert exhausted.reason_code == "resolver_time_budget"
+    assert exhausted["state"] == ResolverState.EXHAUSTED
+    assert exhausted["reason_code"] == "resolver_time_budget"
 
 
 def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
@@ -656,7 +724,8 @@ def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(mon
     def current_projection(_claim_id):
         nonlocal current_calls
         current_calls += 1
-        return (current,)
+        result = (current,)
+        return result
 
     monkeypatch.setattr(engine, "current_claim_projection", current_projection)
     query_frame = frame(engine, "Ada", namespace="")
@@ -664,25 +733,25 @@ def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(mon
 
     no_graph_rows = SupportSemanticResolver(engine, lambda: START_NS).resolve(
         query_frame,
-        replace(lease, max_graph_rows=0),
+        resolver_budget_with_changes(lease, {"max_graph_rows": 0}),
     )
-    assert no_graph_rows.claim_evidence == ()
+    assert no_graph_rows["claim_evidence"] == ()
     assert current_calls == 0
     byte_limited = SupportSemanticResolver(engine, lambda: START_NS).resolve(
         query_frame,
-        replace(lease, max_evidence_bytes=256),
+        resolver_budget_with_changes(lease, {"max_evidence_bytes": 256}),
     )
     assert current_calls == 1
     memory_limited = SupportSemanticResolver(engine, lambda: START_NS).resolve(
         query_frame,
-        replace(lease, max_working_memory_bytes=256),
+        resolver_budget_with_changes(lease, {"max_working_memory_bytes": 256}),
     )
 
     assert current_calls == 2
-    assert byte_limited.claim_evidence == ()
-    assert "evidence_bytes" in byte_limited.consumption.exhausted_dimensions
-    assert memory_limited.state == ResolverState.EXHAUSTED
-    assert memory_limited.reason_code == "working_memory_bytes_budget"
+    assert byte_limited["claim_evidence"] == ()
+    assert "evidence_bytes" in byte_limited["consumption"]["exhausted_dimensions"]
+    assert memory_limited["state"] == ResolverState.EXHAUSTED
+    assert memory_limited["reason_code"] == "working_memory_bytes_budget"
 
 
 def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consumed(monkeypatch) -> None:
@@ -700,7 +769,7 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
         engine,
         "Ada",
         namespace="",
-        budget=ResolutionBudget.capture(
+        budget=capture_resolution_budget(
             lambda: START_NS,
             total_time_ms=100,
             resolver_time_ms=25,
@@ -710,11 +779,11 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
     first_candidate = candidate()
     lexical = FakeResolver(
         "lexical",
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
             candidates=(first_candidate,),
-            accounting=(AccountingObservation(first_candidate.statement_id),),
+            accounting=(accounting_observation(first_candidate["statement_id"]),),
         ),
     )
     semantic = SupportSemanticResolver(engine, lambda: START_NS)
@@ -724,10 +793,10 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
         ResolverRegistry((lexical, semantic)).plan(query_frame),
     )
 
-    assert len(report.results[0].candidates) == 1
-    assert report.reservations[1].lease.max_candidates == 0
-    assert tuple(record.claim_id for record in report.results[1].claim_evidence) == ("claim-after-candidate",)
-    assert report.results[1].accounting == ()
+    assert len(report["results"][0]["candidates"]) == 1
+    assert report["reservations"][1]["lease"]["max_candidates"] == 0
+    assert tuple(record["claim_id"] for record in report["results"][1]["claim_evidence"]) == ("claim-after-candidate",)
+    assert report["results"][1]["accounting"] == ()
 
 
 def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_or_accounting(monkeypatch) -> None:
@@ -758,34 +827,35 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
     )
 
     report = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame))
-    records = report.canonical_claim_evidence()
+    records = execution_report_canonical_claim_evidence(report)
 
     assert len(records) == 1
-    assert records[0].claim_id == "claim-shared"
-    assert records[0].source_contributions == ("structured_graph", "support_semantic")
-    assert records[0].features.values["structured_match"] == 1.0
-    assert records[0].features.values["semantic_similarity"] == pytest.approx(0.76)
-    assert records[0].features.values["source_agreement"] == 1.0
-    assert all(result.candidates == () for result in report.results)
-    assert all(result.accounting == () for result in report.results)
+    assert records[0]["claim_id"] == "claim-shared"
+    assert records[0]["source_contributions"] == ("structured_graph", "support_semantic")
+    assert records[0]["features"]["values"]["structured_match"] == 1.0
+    assert records[0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.76)
+    assert records[0]["features"]["values"]["source_agreement"] == 1.0
+    assert all(result["candidates"] == () for result in report["results"])
+    assert all(result["accounting"] == () for result in report["results"])
 
-    raw_record = report.results[0].claim_evidence[0]
-    untrusted_record = replace(
+    raw_record = report["results"][0]["claim_evidence"][0]
+    untrusted_record = claim_evidence_record_with_changes(
         raw_record,
-        source_resolver="lexical",
-        source_contributions=("lexical",),
+        {"source_resolver": "lexical", "source_contributions": ("lexical",)},
     )
-    untrusted_report = replace(
+    untrusted_report = execution_report_with_changes(
         report,
-        results=(
-            ResolverResult(
-                "lexical",
-                ResolverState.COMPLETED,
-                claim_evidence=(untrusted_record,),
+        {
+            "results": (
+                resolver_result(
+                    "lexical",
+                    ResolverState.COMPLETED,
+                    claim_evidence=(untrusted_record,),
+                ),
             ),
-        ),
+        },
     )
-    assert untrusted_report.canonical_claim_evidence() == ()
+    assert execution_report_canonical_claim_evidence(untrusted_report) == ()
 
     orchestrated, finalization = ResolutionOrchestrator(
         registry,
@@ -793,15 +863,15 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
         ResolutionAccountingFinalizer(engine),
     ).resolve(query_frame, "request-cross-producer-package")
 
-    assert orchestrated.outcome == ResolutionOutcome.EVIDENCE
-    assert len(orchestrated.evidence_package.records) == 1
-    assert orchestrated.evidence_package.records[0].source_contributions == (
+    assert orchestrated["outcome"] == ResolutionOutcome.EVIDENCE
+    assert len(orchestrated["evidence_package"]["records"]) == 1
+    assert orchestrated["evidence_package"]["records"][0]["source_contributions"] == (
         "structured_graph",
         "support_semantic",
     )
-    assert orchestrated.evidence_package.records[0].features.values["source_agreement"] == 1.0
-    assert all(not result.claim_evidence for result in orchestrated.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert orchestrated["evidence_package"]["records"][0]["features"]["values"]["source_agreement"] == 1.0
+    assert all(not result["claim_evidence"] for result in orchestrated["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeypatch) -> None:
@@ -824,23 +894,23 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-only")
 
-    assert result.schema_version == 1
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert result.selected_candidate_available is False
-    assert result.response_candidates == ()
-    assert result.evidence == ()
-    assert result.evidence_package_available is True
-    assert tuple(record.claim_id for record in result.evidence_package.records) == ("claim-orchestrated",)
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert result.budget.evidence == 1
-    assert result.budget.evidence_bytes == len(result.evidence_package.to_json().encode("utf-8"))
-    assert result.budget.evidence_bytes <= query_frame.budget.max_evidence_bytes
-    assert result.budget.graph_rows == 2
-    assert result.budget.vector_results == 0
-    assert result.budget.output_bytes == len(result.to_json().encode("utf-8"))
-    assert result.budget.diagnostic_bytes <= query_frame.budget.max_diagnostic_bytes
-    assert result.budget.working_memory_bytes <= query_frame.budget.max_working_memory_bytes
-    claim_diagnostics = result.frame_diagnostics["claim_evidence"]
+    assert result["schema_version"] == 1
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert result["selected_candidate_available"] is False
+    assert result["response_candidates"] == ()
+    assert result["evidence"] == ()
+    assert result["evidence_package_available"] is True
+    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-orchestrated",)
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert result["budget"]["evidence"] == 1
+    assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
+    assert result["budget"]["evidence_bytes"] <= query_frame["budget"]["max_evidence_bytes"]
+    assert result["budget"]["graph_rows"] == 2
+    assert result["budget"]["vector_results"] == 0
+    assert result["budget"]["output_bytes"] == len(resolution_result_to_json(result).encode("utf-8"))
+    assert result["budget"]["diagnostic_bytes"] <= query_frame["budget"]["max_diagnostic_bytes"]
+    assert result["budget"]["working_memory_bytes"] <= query_frame["budget"]["max_working_memory_bytes"]
+    claim_diagnostics = result["frame_diagnostics"]["claim_evidence"]
     assert isinstance(claim_diagnostics, Mapping)
     assert frozenset(claim_diagnostics) == frozenset(
         {
@@ -856,13 +926,13 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
             "truncated",
         }
     )
-    diagnostic_payload = json.dumps(result.to_dict()["frame_diagnostics"], sort_keys=True)
-    assert discovered.claim_id not in diagnostic_payload
-    assert discovered.subject_entity_id not in diagnostic_payload
-    assert discovered.object_entity_id not in diagnostic_payload
-    assert finalization.candidate_statement_ids == ()
-    assert finalization.accepted_statement_id == ""
-    assert finalization.success_applied is False
+    diagnostic_payload = json.dumps(resolution_result_to_dict(result)["frame_diagnostics"], sort_keys=True)
+    assert discovered["claim_id"] not in diagnostic_payload
+    assert discovered["subject_entity_id"] not in diagnostic_payload
+    assert discovered["object_entity_id"] not in diagnostic_payload
+    assert finalization["candidate_statement_ids"] == ()
+    assert finalization["accepted_statement_id"] == ""
+    assert finalization["success_applied"] is False
 
 
 def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch) -> None:
@@ -886,11 +956,11 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-excluded")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is True
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_excluded" in result.reason_codes
-    diagnostics = result.frame_diagnostics["claim_evidence"]
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is True
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_excluded" in result["reason_codes"]
+    diagnostics = result["frame_diagnostics"]["claim_evidence"]
     assert isinstance(diagnostics, Mapping)
     assert diagnostics["input_count"] == 1
     assert diagnostics["normalized_count"] == 1
@@ -900,13 +970,13 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
         "retrieval_signal_below_floor": 1,
         "supplied_trust_unavailable": 1,
     }
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert result.budget.evidence == 0
-    assert result.budget.evidence_bytes == len(result.evidence_package.to_json().encode("utf-8"))
-    assert result.budget.graph_rows == 1
-    assert result.budget.vector_results == 1
-    assert finalization.candidate_statement_ids == ()
-    assert finalization.success_applied is False
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert result["budget"]["evidence"] == 0
+    assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
+    assert result["budget"]["graph_rows"] == 1
+    assert result["budget"]["vector_results"] == 1
+    assert finalization["candidate_statement_ids"] == ()
+    assert finalization["success_applied"] is False
 
 
 def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded(monkeypatch) -> None:
@@ -925,11 +995,11 @@ def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded
     lexical_candidate = candidate(statement_id)
     lexical = FakeResolver(
         "lexical",
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
             candidates=(lexical_candidate,),
-            accounting=(AccountingObservation(statement_id),),
+            accounting=(accounting_observation(statement_id),),
         ),
     )
     query_frame = frame(engine, "Ada", namespace="")
@@ -937,25 +1007,25 @@ def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded
         ResolverRegistry((lexical, SupportSemanticResolver(engine, lambda: START_NS))),
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
-        CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-candidate-plus-excluded-claim")
 
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert tuple(value.statement_id for value in result.response_candidates) == (statement_id,)
-    assert result.evidence_package_available is True
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_excluded" in result.reason_codes
-    assert finalization.candidate_statement_ids == (statement_id,)
-    assert finalization.success_applied is False
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert tuple(value["statement_id"] for value in result["response_candidates"]) == (statement_id,)
+    assert result["evidence_package_available"] is True
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_excluded" in result["reason_codes"]
+    assert finalization["candidate_statement_ids"] == (statement_id,)
+    assert finalization["success_applied"] is False
 
 
 def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeypatch) -> None:
     engine = Engram()
     engine._graph_client = MemGraphConnection()
     discovered = tuple(_structured_claim_projection(f"claim-{index:02d}") for index in range(12))
-    current = {projection.claim_id: _current_claim_projection(projection) for projection in discovered}
+    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_claim_projections",
@@ -971,32 +1041,32 @@ def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeyp
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-count-limit")
 
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert tuple(record.claim_id for record in result.evidence_package.records) == tuple(
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == tuple(
         f"claim-{index:02d}" for index in range(10)
     )
-    assert result.evidence_package.retained_count == 10
-    assert result.evidence_package.omitted_count == 2
-    assert result.evidence_package.truncated is True
-    assert result.evidence_package.truncation_reasons == (EvidencePackageTruncationReason.RECORD_LIMIT,)
-    assert result.budget.evidence == 10
-    assert result.budget.evidence_bytes == len(result.evidence_package.to_json().encode("utf-8"))
-    assert result.budget.output_bytes == len(result.to_json().encode("utf-8"))
-    assert finalization.candidate_statement_ids == ()
+    assert result["evidence_package"]["retained_count"] == 10
+    assert result["evidence_package"]["omitted_count"] == 2
+    assert result["evidence_package"]["truncated"] is True
+    assert result["evidence_package"]["truncation_reasons"] == (EvidencePackageTruncationReason.RECORD_LIMIT,)
+    assert result["budget"]["evidence"] == 10
+    assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
+    assert result["budget"]["output_bytes"] == len(resolution_result_to_json(result).encode("utf-8"))
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch) -> None:
     engine = Engram()
     engine._graph_client = MemGraphConnection()
     discovered = tuple(_structured_claim_projection(f"claim-output-{index:02d}") for index in range(4))
-    current = {projection.claim_id: _current_claim_projection(projection) for projection in discovered}
+    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_claim_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
@@ -1011,15 +1081,15 @@ def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch)
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-output-limit")
 
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert 0 < result.evidence_package.retained_count < len(discovered)
-    assert result.evidence_package.truncated is True
-    assert "output_truncated" in result.reason_codes
-    assert "output_bytes" in result.budget.exhausted_dimensions
-    assert result.budget.output_bytes == len(result.to_json().encode("utf-8"))
-    assert result.budget.output_bytes <= selected_budget.max_output_bytes
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert 0 < result["evidence_package"]["retained_count"] < len(discovered)
+    assert result["evidence_package"]["truncated"] is True
+    assert "output_truncated" in result["reason_codes"]
+    assert "output_bytes" in result["budget"]["exhausted_dimensions"]
+    assert result["budget"]["output_bytes"] == len(resolution_result_to_json(result).encode("utf-8"))
+    assert result["budget"]["output_bytes"] <= selected_budget["max_output_bytes"]
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch) -> None:
@@ -1037,25 +1107,22 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
         lambda _claim_id: (_current_claim_projection(probe_projection),),
     )
     probe_frame = frame(engine, "Ada", namespace="")
-    probe_record = (
-        StructuredGraphResolver(engine, lambda: START_NS)
-        .resolve(
-            probe_frame,
-            resolver_budget(probe_frame),
-        )
-        .claim_evidence[0]
+    probe_result = StructuredGraphResolver(engine, lambda: START_NS).resolve(
+        probe_frame,
+        resolver_budget(probe_frame),
     )
-    single_package_bytes = len(EvidencePackage.build((probe_record,)).to_json().encode("utf-8"))
+    probe_record = probe_result["claim_evidence"][0]
+    single_package_bytes = len(evidence_package_to_json(build_evidence_package((probe_record,))).encode("utf-8"))
 
     discovered = tuple(_structured_claim_projection(f"claim-byte-{index:02d}") for index in range(2))
-    current = {projection.claim_id: _current_claim_projection(projection) for projection in discovered}
+    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_claim_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
@@ -1070,13 +1137,13 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-evidence-byte-limit")
 
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert tuple(record.claim_id for record in result.evidence_package.records) == ("claim-byte-00",)
-    assert result.budget.evidence == 1
-    assert result.budget.evidence_bytes == len(result.evidence_package.to_json().encode("utf-8"))
-    assert result.budget.evidence_bytes <= single_package_bytes
-    assert "evidence_bytes" in result.budget.exhausted_dimensions
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-byte-00",)
+    assert result["budget"]["evidence"] == 1
+    assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
+    assert result["budget"]["evidence_bytes"] <= single_package_bytes
+    assert "evidence_bytes" in result["budget"]["exhausted_dimensions"]
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch) -> None:
@@ -1090,7 +1157,7 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
@@ -1105,13 +1172,13 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-diagnostic-limit")
 
-    assert result.outcome == ResolutionOutcome.EVIDENCE
-    assert tuple(record.claim_id for record in result.evidence_package.records) == ("claim-no-diagnostics",)
-    assert result.frame_diagnostics == {}
-    assert result.budget.diagnostic_bytes == 0
-    assert "diagnostic_bytes" in result.budget.exhausted_dimensions
-    assert "diagnostics_truncated" in result.reason_codes
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-no-diagnostics",)
+    assert result["frame_diagnostics"] == {}
+    assert result["budget"]["diagnostic_bytes"] == 0
+    assert "diagnostic_bytes" in result["budget"]["exhausted_dimensions"]
+    assert "diagnostics_truncated" in result["reason_codes"]
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted(monkeypatch) -> None:
@@ -1129,18 +1196,20 @@ def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted
     registry = ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),))
     executor = ResolverExecutor(lambda: START_NS)
     probe_execution = executor.execute(base_frame, registry.plan(base_frame))
-    fusion = CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
     fusion_required = fusion.decide(
         base_frame,
         (),
         (),
-        working_memory_limit=(base_frame.budget.max_working_memory_bytes - probe_execution.consumption.working_memory_bytes),
+        working_memory_limit=(
+            base_frame["budget"]["max_working_memory_bytes"] - probe_execution["consumption"]["working_memory_bytes"]
+        ),
         working_memory_limit_available=True,
-    ).working_memory_bytes
-    memory_limit = probe_execution.consumption.working_memory_bytes + fusion_required
-    constrained_frame = replace(
+    )["working_memory_bytes"]
+    memory_limit = probe_execution["consumption"]["working_memory_bytes"] + fusion_required
+    constrained_frame = query_frame_with_changes(
         base_frame,
-        budget=replace(base_frame.budget, max_working_memory_bytes=memory_limit),
+        {"budget": resolution_budget_with_changes(base_frame["budget"], {"max_working_memory_bytes": memory_limit})},
     )
     orchestrator = ResolutionOrchestrator(
         registry,
@@ -1151,14 +1220,14 @@ def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted
 
     result, finalization = orchestrator.resolve(constrained_frame, "request-claim-memory-limit")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_memory_exhausted" in result.reason_codes
-    assert "working_memory_bytes" in result.budget.exhausted_dimensions
-    assert result.budget.working_memory_bytes == memory_limit
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_memory_exhausted" in result["reason_codes"]
+    assert "working_memory_bytes" in result["budget"]["exhausted_dimensions"]
+    assert result["budget"]["working_memory_bytes"] == memory_limit
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_deadline_stops_claim_policy_and_package_publication(monkeypatch) -> None:
@@ -1178,7 +1247,8 @@ def test_orchestrator_deadline_stops_claim_policy_and_package_publication(monkey
     def deadline_clock() -> int:
         nonlocal calls
         calls += 1
-        return START_NS if calls <= 6 else query_frame.budget.deadline_ns
+        result = START_NS if calls <= 6 else query_frame["budget"]["deadline_ns"]
+        return result
 
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((FakeResolver("structured_graph", raw),)),
@@ -1188,13 +1258,13 @@ def test_orchestrator_deadline_stops_claim_policy_and_package_publication(monkey
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-deadline")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_deadline_exhausted" in result.reason_codes
-    assert "total_time" in result.budget.exhausted_dimensions
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_deadline_exhausted" in result["reason_codes"]
+    assert "total_time" in result["budget"]["exhausted_dimensions"]
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_records(monkeypatch) -> None:
@@ -1208,27 +1278,29 @@ def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_reco
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
-    record = (
-        StructuredGraphResolver(engine, lambda: START_NS)
-        .resolve(
-            query_frame,
-            resolver_budget(query_frame),
-        )
-        .claim_evidence[0]
+    resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
+        query_frame,
+        resolver_budget(query_frame),
     )
-    conflicting = replace(
+    record = resolver_output["claim_evidence"][0]
+    conflicting = claim_evidence_record_with_changes(
         record,
-        source_resolver="support_semantic",
-        source_contributions=("support_semantic",),
-        canonical_references=replace(record.canonical_references, object_entity_id="entity:conflict"),
+        {
+            "source_resolver": "support_semantic",
+            "source_contributions": ("support_semantic",),
+            "canonical_references": canonical_claim_references_with_changes(
+                record["canonical_references"],
+                {"object_entity_id": "entity:conflict"},
+            ),
+        },
     )
     structured = FakeResolver(
         "structured_graph",
-        ResolverResult("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
+        resolver_result("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
     )
     semantic = FakeResolver(
         "support_semantic",
-        ResolverResult("support_semantic", ResolverState.COMPLETED, claim_evidence=(conflicting,)),
+        resolver_result("support_semantic", ResolverState.COMPLETED, claim_evidence=(conflicting,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((structured, semantic)),
@@ -1238,12 +1310,12 @@ def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_reco
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-conflict")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_conflict" in result.reason_codes
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_conflict" in result["reason_codes"]
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 @pytest.mark.parametrize("mismatch", ("scope", "evaluation_time"))
@@ -1258,27 +1330,34 @@ def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mism
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
-    record = (
-        StructuredGraphResolver(engine, lambda: START_NS)
-        .resolve(
-            query_frame,
-            resolver_budget(query_frame),
-        )
-        .claim_evidence[0]
+    resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
+        query_frame,
+        resolver_budget(query_frame),
     )
+    record = resolver_output["claim_evidence"][0]
     if mismatch == "scope":
-        record = replace(
+        record = claim_evidence_record_with_changes(
             record,
-            disclosure=replace(record.disclosure, scope=ScopeKey(namespace="other")),
+            {
+                "disclosure": disclosure_decision_with_changes(
+                    record["disclosure"],
+                    {"scope": scope_key(namespace="other")},
+                )
+            },
         )
     else:
-        record = replace(
+        record = claim_evidence_record_with_changes(
             record,
-            validity=replace(record.validity, evaluation_time="2026-08-17T12:00:00Z"),
+            {
+                "validity": claim_validity_inputs_with_changes(
+                    record["validity"],
+                    {"evaluation_time": "2026-08-17T12:00:00Z"},
+                )
+            },
         )
     resolver = FakeResolver(
         "structured_graph",
-        ResolverResult("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
+        resolver_result("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
@@ -1288,12 +1367,12 @@ def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mism
 
     result, finalization = orchestrator.resolve(query_frame, f"request-{mismatch}-mismatch")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_conflict" in result.reason_codes
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_conflict" in result["reason_codes"]
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_ignores_claim_from_untrusted_producer(monkeypatch) -> None:
@@ -1307,22 +1386,18 @@ def test_orchestrator_ignores_claim_from_untrusted_producer(monkeypatch) -> None
     )
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
-    trusted_record = (
-        StructuredGraphResolver(engine, lambda: START_NS)
-        .resolve(
-            query_frame,
-            resolver_budget(query_frame),
-        )
-        .claim_evidence[0]
+    resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
+        query_frame,
+        resolver_budget(query_frame),
     )
-    untrusted_record = replace(
+    trusted_record = resolver_output["claim_evidence"][0]
+    untrusted_record = claim_evidence_record_with_changes(
         trusted_record,
-        source_resolver="lexical",
-        source_contributions=("lexical",),
+        {"source_resolver": "lexical", "source_contributions": ("lexical",)},
     )
     resolver = FakeResolver(
         "lexical",
-        ResolverResult("lexical", ResolverState.COMPLETED, claim_evidence=(untrusted_record,)),
+        resolver_result("lexical", ResolverState.COMPLETED, claim_evidence=(untrusted_record,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
@@ -1332,12 +1407,12 @@ def test_orchestrator_ignores_claim_from_untrusted_producer(monkeypatch) -> None
 
     result, finalization = orchestrator.resolve(query_frame, "request-untrusted-claim-producer")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert "claim_evidence_untrusted_producer" in result.reason_codes
-    assert all(not resolver_result.claim_evidence for resolver_result in result.resolver_results)
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert "claim_evidence_untrusted_producer" in result["reason_codes"]
+    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_fails_soft_when_claim_producer_dependency_fails() -> None:
@@ -1345,7 +1420,7 @@ def test_orchestrator_fails_soft_when_claim_producer_dependency_fails() -> None:
     query_frame = frame(engine, "Ada", namespace="")
     failed = FakeResolver(
         "structured_graph",
-        ResolverResult("structured_graph", ResolverState.COMPLETED),
+        resolver_result("structured_graph", ResolverState.COMPLETED),
         error=True,
     )
     orchestrator = ResolutionOrchestrator(
@@ -1356,12 +1431,12 @@ def test_orchestrator_fails_soft_when_claim_producer_dependency_fails() -> None:
 
     result, finalization = orchestrator.resolve(query_frame, "request-claim-dependency-failure")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package.records == ()
-    assert tuple(value.state for value in result.resolver_results) == (ResolverState.FAILED,)
-    assert finalization.candidate_statement_ids == ()
-    assert finalization.success_applied is False
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+    assert tuple(value["state"] for value in result["resolver_results"]) == (ResolverState.FAILED,)
+    assert finalization["candidate_statement_ids"] == ()
+    assert finalization["success_applied"] is False
 
 
 def test_orchestrator_keeps_package_unavailable_when_producer_has_no_strict_records() -> None:
@@ -1369,7 +1444,7 @@ def test_orchestrator_keeps_package_unavailable_when_producer_has_no_strict_reco
     query_frame = frame(engine, "Ada", namespace="")
     empty = FakeResolver(
         "structured_graph",
-        ResolverResult("structured_graph", ResolverState.COMPLETED, reason_code="structured_graph_miss"),
+        resolver_result("structured_graph", ResolverState.COMPLETED, reason_code="structured_graph_miss"),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
@@ -1379,10 +1454,10 @@ def test_orchestrator_keeps_package_unavailable_when_producer_has_no_strict_reco
 
     result, finalization = orchestrator.resolve(query_frame, "request-empty-claim-producer")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert result.evidence_package_available is False
-    assert result.evidence_package == EvidencePackage((), 0, 0, False, ())
-    assert finalization.candidate_statement_ids == ()
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"] == empty_evidence_package()
+    assert finalization["candidate_statement_ids"] == ()
 
 
 def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
@@ -1390,27 +1465,27 @@ def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
     query_frame = frame(
         engine,
         namespace="",
-        budget=ResolutionBudget.capture(
+        budget=capture_resolution_budget(
             lambda: START_NS,
             total_time_ms=100,
             resolver_time_ms=25,
             allowed_cost_classes=(CostClass.EXACT, CostClass.CHEAP),
         ),
     )
-    exact = FakeResolver("exact", ResolverResult("exact", ResolverState.COMPLETED), available=True, cost_class=CostClass.EXACT)
-    unavailable = FakeResolver("pattern", ResolverResult("pattern", ResolverState.COMPLETED), available=False)
+    exact = FakeResolver("exact", resolver_result("exact", ResolverState.COMPLETED), available=True, cost_class=CostClass.EXACT)
+    unavailable = FakeResolver("pattern", resolver_result("pattern", ResolverState.COMPLETED), available=False)
     expensive = FakeResolver(
         "support_semantic",
-        ResolverResult("support_semantic", ResolverState.COMPLETED),
+        resolver_result("support_semantic", ResolverState.COMPLETED),
         cost_class=CostClass.EXPENSIVE,
     )
     registry = ResolverRegistry((exact, unavailable, expensive))
 
     plan = registry.plan(query_frame, ("exact", "support_semantic"))
 
-    assert [entry.resolver.name for entry in plan.entries] == ["exact", "pattern", "support_semantic"]
-    assert [entry.reason_code for entry in plan.entries] == ["", "not_configured", "cost_class_disabled"]
-    assert plan.to_dict() == registry.plan(query_frame, ("exact", "support_semantic")).to_dict()
+    assert [resolver_contract(entry["resolver"])[0] for entry in plan["entries"]] == ["exact", "pattern", "support_semantic"]
+    assert [entry["reason_code"] for entry in plan["entries"]] == ["", "not_configured", "cost_class_disabled"]
+    assert resolution_plan_to_dict(plan) == resolution_plan_to_dict(registry.plan(query_frame, ("exact", "support_semantic")))
     with pytest.raises(InvalidRequestError, match="duplicates"):
         registry.plan(query_frame, ("exact", "exact"))
 
@@ -1420,53 +1495,53 @@ def test_registry_translates_availability_failures_without_aborting_plan() -> No
     query_frame = frame(engine, namespace="")
     broken = FakeResolver(
         "broken",
-        ResolverResult("broken", ResolverState.COMPLETED),
+        resolver_result("broken", ResolverState.COMPLETED),
         availability_error=True,
     )
-    healthy = FakeResolver("healthy", ResolverResult("healthy", ResolverState.COMPLETED))
+    healthy = FakeResolver("healthy", resolver_result("healthy", ResolverState.COMPLETED))
 
     plan = ResolverRegistry((broken, healthy)).plan(query_frame)
     execution = ResolverExecutor(lambda: START_NS).execute(query_frame, plan)
 
-    assert plan.entries[0].reason_code == "availability_check_failed"
-    assert [result.state for result in execution.results] == [ResolverState.UNAVAILABLE, ResolverState.COMPLETED]
+    assert plan["entries"][0]["reason_code"] == "availability_check_failed"
+    assert [result["state"] for result in execution["results"]] == [ResolverState.UNAVAILABLE, ResolverState.COMPLETED]
 
 
 def test_resolver_lease_and_reservation_codecs_are_deterministic() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     lease = resolver_budget(query_frame)
-    reservation = ResolverReservation("lexical", 2, lease, BudgetConsumption(resolvers=1, candidates=1))
+    reservation = resolver_reservation("lexical", 2, lease, budget_consumption(resolvers=1, candidates=1))
 
-    assert ResolverBudget.from_json(lease.to_json()) == lease
-    assert ResolverReservation.from_json(reservation.to_json()) == reservation
+    assert resolver_budget_from_json(resolver_budget_to_json(lease)) == lease
+    assert resolver_reservation_from_json(resolver_reservation_to_json(reservation)) == reservation
     with pytest.raises(InvalidRequestError, match="unsupported resolver budget"):
-        replace(lease, schema_version=2)
+        resolver_budget_with_changes(lease, {"schema_version": 2})
     with pytest.raises(InvalidRequestError, match="unsupported resolver reservation"):
-        replace(reservation, schema_version=2)
+        resolver_reservation_with_changes(reservation, {"schema_version": 2})
 
 
 def test_executor_isolates_failures_and_preserves_later_success() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
-    failed = FakeResolver("first", ResolverResult("first", ResolverState.COMPLETED), error=True)
+    failed = FakeResolver("first", resolver_result("first", ResolverState.COMPLETED), error=True)
     later_candidate = candidate()
     completed = FakeResolver(
         "second",
-        ResolverResult(
+        resolver_result(
             "second",
             ResolverState.COMPLETED,
             candidates=(later_candidate,),
-            accounting=(AccountingObservation(later_candidate.statement_id),),
+            accounting=(accounting_observation(later_candidate["statement_id"]),),
         ),
     )
     registry = ResolverRegistry((failed, completed))
 
     execution = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame))
 
-    assert [result.state for result in execution.results] == [ResolverState.FAILED, ResolverState.COMPLETED]
-    assert execution.results[0].diagnostics["exception_type"] == "RuntimeError"
-    assert execution.results[1].candidates == (later_candidate,)
+    assert [result["state"] for result in execution["results"]] == [ResolverState.FAILED, ResolverState.COMPLETED]
+    assert execution["results"][0]["diagnostics"]["exception_type"] == "RuntimeError"
+    assert execution["results"][1]["candidates"] == (later_candidate,)
 
 
 def test_executor_short_circuits_only_on_one_exact_candidate() -> None:
@@ -1475,38 +1550,38 @@ def test_executor_short_circuits_only_on_one_exact_candidate() -> None:
     exact_candidate = candidate(source=CandidateSource.EXACT)
     exact = FakeResolver(
         "exact",
-        ResolverResult(
+        resolver_result(
             "exact",
             ResolverState.COMPLETED,
             candidates=(exact_candidate,),
-            accounting=(AccountingObservation(exact_candidate.statement_id),),
+            accounting=(accounting_observation(exact_candidate["statement_id"]),),
         ),
         cost_class=CostClass.EXACT,
     )
-    later = FakeResolver("later", ResolverResult("later", ResolverState.COMPLETED))
+    later = FakeResolver("later", resolver_result("later", ResolverState.COMPLETED))
 
     execution = ResolverExecutor(lambda: START_NS).execute(query_frame, ResolverRegistry((exact, later)).plan(query_frame))
 
-    assert execution.exact_short_circuited is True
+    assert execution["exact_short_circuited"] is True
     assert later.calls == 0
-    assert len(execution.results) == 1
+    assert len(execution["results"]) == 1
 
 
 def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bounds() -> None:
     engine = Engram()
-    reference = EvidenceReference("claim-1", "oversized", EvidenceKind.SUPPORT, ScopeKey())
+    reference = evidence_reference("claim-1", "oversized", EvidenceKind.SUPPORT, scope_key())
     oversized_candidate = candidate(response="x" * 10_000, evidence=(reference, reference))
-    raw = ResolverResult(
+    raw = resolver_result(
         "oversized",
         ResolverState.COMPLETED,
         candidates=(oversized_candidate,),
         evidence=(reference,),
-        accounting=(AccountingObservation(oversized_candidate.statement_id),),
+        accounting=(accounting_observation(oversized_candidate["statement_id"]),),
         diagnostics={"detail": "x" * 500},
-        consumption=BudgetConsumption(graph_rows=50, vector_results=50, working_memory_bytes=10_000),
+        consumption=budget_consumption(graph_rows=50, vector_results=50, working_memory_bytes=10_000),
     )
     resolver = FakeResolver("oversized", raw)
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
@@ -1520,18 +1595,19 @@ def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bound
     )
     query_frame = frame(engine, namespace="", budget=selected_budget)
 
-    result = ResolverExecutor(lambda: START_NS).execute(query_frame, ResolverRegistry((resolver,)).plan(query_frame)).results[0]
+    execution = ResolverExecutor(lambda: START_NS).execute(query_frame, ResolverRegistry((resolver,)).plan(query_frame))
+    result = execution["results"][0]
 
-    assert result.candidates == ()
-    assert result.evidence == ()
-    assert result.diagnostics == {}
-    assert result.consumption.graph_rows == 1
-    assert result.consumption.vector_results == 1
-    assert result.consumption.evidence <= 1
-    assert result.consumption.evidence_bytes <= 1
-    assert result.consumption.output_bytes <= 4_096
-    assert result.consumption.diagnostic_bytes == 0
-    assert result.consumption.working_memory_bytes <= 1
+    assert result["candidates"] == ()
+    assert result["evidence"] == ()
+    assert result["diagnostics"] == {}
+    assert result["consumption"]["graph_rows"] == 1
+    assert result["consumption"]["vector_results"] == 1
+    assert result["consumption"]["evidence"] <= 1
+    assert result["consumption"]["evidence_bytes"] <= 1
+    assert result["consumption"]["output_bytes"] <= 4_096
+    assert result["consumption"]["diagnostic_bytes"] == 0
+    assert result["consumption"]["working_memory_bytes"] <= 1
     assert {
         "diagnostic_bytes",
         "evidence_bytes",
@@ -1539,22 +1615,23 @@ def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bound
         "output_bytes",
         "vector_results",
         "working_memory_bytes",
-    }.issubset(result.consumption.exhausted_dimensions)
+    }.issubset(result["consumption"]["exhausted_dimensions"])
 
 
 def test_executor_preserves_unavailable_consumption_measurements() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
-    raw = ResolverResult(
+    raw = resolver_result(
         "unmeasured",
         ResolverState.COMPLETED,
-        consumption=BudgetConsumption(resolvers=1, measurement_available=False),
+        consumption=budget_consumption(resolvers=1, measurement_available=False),
     )
     registry = ResolverRegistry((FakeResolver("unmeasured", raw),))
 
-    result = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame)).results[0]
+    execution = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame))
+    result = execution["results"][0]
 
-    assert result.consumption.measurement_available is False
+    assert result["consumption"]["measurement_available"] is False
 
 
 def test_concrete_lexical_resolver_cooperates_with_lease_deadline(monkeypatch) -> None:
@@ -1567,109 +1644,103 @@ def test_concrete_lexical_resolver_cooperates_with_lease_deadline(monkeypatch) -
 
     monkeypatch.setattr(engine, "query_candidates", discover)
     query_frame = frame(engine, namespace="")
-    lease = replace(resolver_budget(query_frame), deadline_ns=START_NS + 1)
+    lease = resolver_budget_with_changes(resolver_budget(query_frame), {"deadline_ns": START_NS + 1})
 
     result = LexicalResolver(engine, lambda: next(calls)).resolve(query_frame, lease)
 
-    assert result.state == ResolverState.EXHAUSTED
-    assert result.reason_code == "resolver_time_budget"
-    assert result.consumption.exhausted_dimensions == ("resolver_time",)
+    assert result["state"] == ResolverState.EXHAUSTED
+    assert result["reason_code"] == "resolver_time_budget"
+    assert result["consumption"]["exhausted_dimensions"] == ("resolver_time",)
 
 
 def test_concrete_lexical_resolver_abstains_before_exceeding_memory_estimate() -> None:
     engine = Engram()
     engine.store("alpha beta gamma")
     query_frame = frame(engine, "alpha beta", namespace="")
-    lease = replace(resolver_budget(query_frame), max_working_memory_bytes=100)
+    lease = resolver_budget_with_changes(resolver_budget(query_frame), {"max_working_memory_bytes": 100})
 
     result = LexicalResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    assert result.state == ResolverState.EXHAUSTED
-    assert result.reason_code == "working_memory_bytes_budget"
-    assert result.candidates == ()
-    assert result.consumption.exhausted_dimensions == ("working_memory_bytes",)
+    assert result["state"] == ResolverState.EXHAUSTED
+    assert result["reason_code"] == "working_memory_bytes_budget"
+    assert result["candidates"] == ()
+    assert result["consumption"]["exhausted_dimensions"] == ("working_memory_bytes",)
 
 
 def test_executor_reports_total_deadline_and_resolver_count_exhaustion() -> None:
     engine = Engram()
-    resolver = FakeResolver("one", ResolverResult("one", ResolverState.COMPLETED))
+    resolver = FakeResolver("one", resolver_result("one", ResolverState.COMPLETED))
     deadline_frame = frame(engine, namespace="")
-    deadline = ResolverExecutor(lambda: deadline_frame.budget.deadline_ns).execute(
+    deadline = ResolverExecutor(lambda: deadline_frame["budget"]["deadline_ns"]).execute(
         deadline_frame,
         ResolverRegistry((resolver,)).plan(deadline_frame),
     )
-    first = FakeResolver("first", ResolverResult("first", ResolverState.COMPLETED))
-    second = FakeResolver("second", ResolverResult("second", ResolverState.COMPLETED))
-    count_budget = replace(deadline_frame.budget, max_resolvers=1)
-    count_frame = replace(deadline_frame, budget=count_budget)
+    first = FakeResolver("first", resolver_result("first", ResolverState.COMPLETED))
+    second = FakeResolver("second", resolver_result("second", ResolverState.COMPLETED))
+    count_budget = resolution_budget_with_changes(deadline_frame["budget"], {"max_resolvers": 1})
+    count_frame = query_frame_with_changes(deadline_frame, {"budget": count_budget})
     count = ResolverExecutor(lambda: START_NS).execute(count_frame, ResolverRegistry((first, second)).plan(count_frame))
 
-    assert deadline.results[0].state == ResolverState.EXHAUSTED
-    assert deadline.results[0].reason_code == "total_deadline"
-    assert count.results[-1].state == ResolverState.EXHAUSTED
-    assert count.results[-1].reason_code == "resolver_budget"
+    assert deadline["results"][0]["state"] == ResolverState.EXHAUSTED
+    assert deadline["results"][0]["reason_code"] == "total_deadline"
+    assert count["results"][-1]["state"] == ResolverState.EXHAUSTED
+    assert count["results"][-1]["reason_code"] == "resolver_budget"
 
 
 def test_executor_rejects_result_returned_after_aggregate_deadline() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     near_deadline = START_NS + 90_000_000
-    at_deadline = query_frame.budget.deadline_ns
+    at_deadline = query_frame["budget"]["deadline_ns"]
     moments = iter((near_deadline, near_deadline, near_deadline, at_deadline, at_deadline))
-    resolver = FakeResolver("late", ResolverResult("late", ResolverState.COMPLETED))
+    resolver = FakeResolver("late", resolver_result("late", ResolverState.COMPLETED))
 
-    result = (
-        ResolverExecutor(lambda: next(moments, at_deadline))
-        .execute(
-            query_frame,
-            ResolverRegistry((resolver,)).plan(query_frame),
-        )
-        .results[0]
+    execution = ResolverExecutor(lambda: next(moments, at_deadline)).execute(
+        query_frame,
+        ResolverRegistry((resolver,)).plan(query_frame),
     )
+    result = execution["results"][0]
 
-    assert result.state == ResolverState.EXHAUSTED
-    assert result.reason_code == "total_deadline"
-    assert result.consumption.exhausted_dimensions == ("total_time",)
+    assert result["state"] == ResolverState.EXHAUSTED
+    assert result["reason_code"] == "total_deadline"
+    assert result["consumption"]["exhausted_dimensions"] == ("total_time",)
 
 
 def test_executor_uses_its_clock_instead_of_untrusted_reported_elapsed_time() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
-    raw = ResolverResult(
+    raw = resolver_result(
         "elapsed",
         ResolverState.COMPLETED,
-        consumption=BudgetConsumption(elapsed_ns=query_frame.budget.resolver_time_ms * 2_000_000, resolvers=1),
+        consumption=budget_consumption(elapsed_ns=query_frame["budget"]["resolver_time_ms"] * 2_000_000, resolvers=1),
     )
 
-    result = (
-        ResolverExecutor(lambda: START_NS)
-        .execute(
-            query_frame,
-            ResolverRegistry((FakeResolver("elapsed", raw),)).plan(query_frame),
-        )
-        .results[0]
+    execution = ResolverExecutor(lambda: START_NS).execute(
+        query_frame,
+        ResolverRegistry((FakeResolver("elapsed", raw),)).plan(query_frame),
     )
+    result = execution["results"][0]
 
-    assert result.state == ResolverState.COMPLETED
-    assert result.consumption.elapsed_ns == 0
+    assert result["state"] == ResolverState.COMPLETED
+    assert result["consumption"]["elapsed_ns"] == 0
 
 
 def test_accounting_deduplicates_candidates_and_applies_success_once() -> None:
     engine = Engram()
     statement_id = engine.store("alpha beta")
-    observation = AccountingObservation(statement_id, ("alpha",))
+    observation = accounting_observation(statement_id, ("alpha",))
     results = (
-        ResolverResult("lexical", ResolverState.COMPLETED, accounting=(observation,)),
-        ResolverResult("pattern", ResolverState.COMPLETED, accounting=(observation,)),
+        resolver_result("lexical", ResolverState.COMPLETED, accounting=(observation,)),
+        resolver_result("pattern", ResolverState.COMPLETED, accounting=(observation,)),
     )
     finalizer = ResolutionAccountingFinalizer(engine)
 
     first = finalizer.finalize("request-1", results, statement_id)
     replay = finalizer.finalize("request-1", results, statement_id)
 
-    assert first.candidate_statement_ids == (statement_id,)
-    assert first.success_applied is True
-    assert replay.idempotent is True
+    assert first["candidate_statement_ids"] == (statement_id,)
+    assert first["success_applied"] is True
+    assert replay["idempotent"] is True
     assert engine.query_count == 1
     assert engine.hit_count == 1
     assert engine.get_statement(statement_id)["query_count"] == 1
@@ -1681,14 +1752,14 @@ def test_accounting_deduplicates_candidates_and_applies_success_once() -> None:
 def test_accounting_retry_signature_ignores_elapsed_time_and_retention_is_bounded() -> None:
     engine = Engram()
     finalizer = ResolutionAccountingFinalizer(engine, max_requests=1)
-    first = (ResolverResult("empty", ResolverState.COMPLETED, consumption=BudgetConsumption(elapsed_ns=1, resolvers=1)),)
-    replay = (ResolverResult("empty", ResolverState.COMPLETED, consumption=BudgetConsumption(elapsed_ns=2, resolvers=1)),)
+    first = (resolver_result("empty", ResolverState.COMPLETED, consumption=budget_consumption(elapsed_ns=1, resolvers=1)),)
+    replay = (resolver_result("empty", ResolverState.COMPLETED, consumption=budget_consumption(elapsed_ns=2, resolvers=1)),)
 
     finalizer.finalize("request-one", first)
     repeated = finalizer.finalize("request-one", replay)
     finalizer.finalize("request-two", first)
 
-    assert repeated.idempotent is True
+    assert repeated["idempotent"] is True
     assert tuple(finalizer._requests) == ("request-two",)
 
 
@@ -1696,10 +1767,10 @@ def test_accounting_rejects_invalid_acceptance_before_any_mutation() -> None:
     engine = Engram()
     statement_id = engine.store("alpha beta")
     results = (
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
-            accounting=(AccountingObservation(statement_id, ("alpha",)),),
+            accounting=(accounting_observation(statement_id, ("alpha",)),),
         ),
     )
 
@@ -1717,17 +1788,22 @@ def test_core_orchestration_exact_answer_is_deterministic_and_retry_safe() -> No
     first = core.resolve_request("Explain Engram", "request-exact", namespace="tenant-a", accept_exact=True)
     replay = core.resolve_request("Explain Engram", "request-exact", namespace="tenant-a", accept_exact=True)
 
-    assert first is replay
-    assert first.outcome == ResolutionOutcome.ANSWER
-    assert first.selected_candidate.response == accepted.response
-    assert first.evidence_package_available is False
-    assert first.evidence_package.records == ()
-    assert [result.resolver for result in first.resolver_results] == ["exact"]
-    updated = core.engram.response_repository.get_artifact(accepted.statement_id)
-    assert updated.statistics.query_count == 1
-    assert updated.statistics.hit_count == 1
-    assert core.engram.get_statement(accepted.statement_id)["query_count"] == 1
-    assert core.engram.get_statement(accepted.statement_id)["hit_count"] == 1
+    assert first == replay
+    assert first is not replay
+    assert first["outcome"] == ResolutionOutcome.ANSWER
+    assert first["selected_candidate"]["response"] == accepted["response"]
+    assert first["evidence_package_available"] is False
+    assert first["evidence_package"]["records"] == ()
+    assert [result["resolver"] for result in first["resolver_results"]] == ["exact"]
+    updated = core.engram.response_repository.get_artifact(accepted["statement_id"])
+    assert updated["statistics"]["query_count"] == 1
+    assert updated["statistics"]["hit_count"] == 1
+    assert core.engram.get_statement(accepted["statement_id"])["query_count"] == 1
+    assert core.engram.get_statement(accepted["statement_id"])["hit_count"] == 1
+    first["reason_codes"] = ("caller_mutation",)
+    first["budget"]["candidates"] = 999
+    isolated_replay = core.resolve_request("Explain Engram", "request-exact", namespace="tenant-a", accept_exact=True)
+    assert isolated_replay == replay
     with pytest.raises(ConflictError, match="different input"):
         core.resolve_request("Different request", "request-exact", namespace="tenant-a", accept_exact=True)
 
@@ -1740,7 +1816,7 @@ def test_core_result_cache_eviction_discards_matching_transient_accounting(monke
     core.resolve_request("second miss", "request-second", configured_resolvers=("exact",))
     replay = core.resolve_request("first miss", "request-first", configured_resolvers=("exact",))
 
-    assert replay.outcome == ResolutionOutcome.MISS
+    assert replay["outcome"] == ResolutionOutcome.MISS
     assert tuple(core._resolution_requests) == ("request-first",)
     assert tuple(core._resolution_accounting._requests) == ("request-first",)
 
@@ -1754,17 +1830,17 @@ def test_output_budget_downgrade_does_not_record_accepted_success() -> None:
         "request-output-downgrade",
         namespace="tenant-a",
         accept_exact=True,
-        budget=ResolutionBudget(max_output_bytes=4_096),
+        budget=resolution_budget(max_output_bytes=4_096),
     )
 
-    updated = core.engram.response_repository.get_artifact(accepted.statement_id)
-    accounting = result.frame_diagnostics["accounting"]
+    updated = core.engram.response_repository.get_artifact(accepted["statement_id"])
+    accounting = result["frame_diagnostics"]["accounting"]
     assert isinstance(accounting, Mapping)
-    assert result.outcome == ResolutionOutcome.MISS
-    assert "answer_exceeds_output_budget" in result.reason_codes
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert "answer_exceeds_output_budget" in result["reason_codes"]
     assert accounting["success_applied"] is False
-    assert updated.statistics.query_count == 1
-    assert updated.statistics.hit_count == 0
+    assert updated["statistics"]["query_count"] == 1
+    assert updated["statistics"]["hit_count"] == 0
 
 
 def test_exact_accounting_receipt_replays_after_restart_without_double_credit() -> None:
@@ -1781,10 +1857,10 @@ def test_exact_accounting_receipt_replays_after_restart_without_double_credit() 
         accept_exact=True,
     )
 
-    updated = restored_core.engram.response_repository.get_artifact(accepted.statement_id)
-    assert replay.outcome == ResolutionOutcome.ANSWER
-    assert updated.statistics.query_count == 1
-    assert updated.statistics.hit_count == 1
+    updated = restored_core.engram.response_repository.get_artifact(accepted["statement_id"])
+    assert replay["outcome"] == ResolutionOutcome.ANSWER
+    assert updated["statistics"]["query_count"] == 1
+    assert updated["statistics"]["hit_count"] == 1
     assert restored_core.engram.query_count == 1
     assert restored_core.engram.hit_count == 1
 
@@ -1795,11 +1871,11 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
     lexical_candidate = candidate()
     lexical = FakeResolver(
         "lexical",
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
             candidates=(lexical_candidate,),
-            accounting=(AccountingObservation(lexical_candidate.statement_id),),
+            accounting=(accounting_observation(lexical_candidate["statement_id"]),),
         ),
     )
     evidence_accounting = ResolutionAccountingFinalizer(engine)
@@ -1807,10 +1883,10 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
         ResolverRegistry((lexical,)),
         ResolverExecutor(lambda: START_NS),
         evidence_accounting,
-        CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
     )
     evidence_result, _ = evidence_orchestrator.resolve(query_frame, "request-evidence")
-    empty = FakeResolver("empty", ResolverResult("empty", ResolverState.COMPLETED))
+    empty = FakeResolver("empty", resolver_result("empty", ResolverState.COMPLETED))
     miss_orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
         ResolverExecutor(lambda: START_NS),
@@ -1818,19 +1894,21 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
     )
     miss_result, _ = miss_orchestrator.resolve(query_frame, "request-miss")
 
-    assert evidence_result.outcome == ResolutionOutcome.EVIDENCE
-    assert evidence_result.selected_candidate_available is False
-    assert tuple(candidate.statement_id for candidate in evidence_result.response_candidates) == (lexical_candidate.statement_id,)
-    assert evidence_result.response_candidates[0].features.values["lexical"] == 1.0
-    assert miss_result.outcome == ResolutionOutcome.MISS
-    assert miss_result.response_candidates == ()
-    assert miss_result.evidence == ()
+    assert evidence_result["outcome"] == ResolutionOutcome.EVIDENCE
+    assert evidence_result["selected_candidate_available"] is False
+    assert tuple(candidate["statement_id"] for candidate in evidence_result["response_candidates"]) == (
+        lexical_candidate["statement_id"],
+    )
+    assert evidence_result["response_candidates"][0]["features"]["values"]["lexical"] == 1.0
+    assert miss_result["outcome"] == ResolutionOutcome.MISS
+    assert miss_result["response_candidates"] == ()
+    assert miss_result["evidence"] == ()
 
 
 def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit_acceptance() -> None:
     engine = Engram()
     statement_id = engine.store("Candidate response")
-    reference = EvidenceReference("claim-fused", "semantic", EvidenceKind.SUPPORT, ScopeKey())
+    reference = evidence_reference("claim-fused", "semantic", EvidenceKind.SUPPORT, scope_key())
     lexical_candidate = candidate(
         statement_id,
         source=CandidateSource.LEXICAL,
@@ -1842,11 +1920,11 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
         evidence=(reference,),
         features={"semantic_score": 0.92, "support_coverage": 1.0},
     )
-    observation = AccountingObservation(statement_id, ("candidate",))
-    failed = FakeResolver("failed", ResolverResult("failed", ResolverState.COMPLETED), error=True)
+    observation = accounting_observation(statement_id, ("candidate",))
+    failed = FakeResolver("failed", resolver_result("failed", ResolverState.COMPLETED), error=True)
     lexical = FakeResolver(
         "lexical",
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
             candidates=(lexical_candidate,),
@@ -1855,7 +1933,7 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     )
     semantic = FakeResolver(
         "semantic",
-        ResolverResult(
+        resolver_result(
             "semantic",
             ResolverState.COMPLETED,
             candidates=(semantic_candidate,),
@@ -1872,17 +1950,17 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     result, first = orchestrator.resolve(query_frame, "request-fused", accept_exact=True)
     replay_result, replay = orchestrator.resolve(query_frame, "request-fused", accept_exact=True)
 
-    assert result.outcome == ResolutionOutcome.ANSWER
-    assert replay_result.selected_candidate == result.selected_candidate
-    assert [value.state for value in result.resolver_results] == [
+    assert result["outcome"] == ResolutionOutcome.ANSWER
+    assert replay_result["selected_candidate"] == result["selected_candidate"]
+    assert [value["state"] for value in result["resolver_results"]] == [
         ResolverState.FAILED,
         ResolverState.COMPLETED,
         ResolverState.COMPLETED,
     ]
-    assert first.candidate_statement_ids == (statement_id,)
-    assert first.accepted_statement_id == ""
-    assert first.success_applied is False
-    assert replay.idempotent is True
+    assert first["candidate_statement_ids"] == (statement_id,)
+    assert first["accepted_statement_id"] == ""
+    assert first["success_applied"] is False
+    assert replay["idempotent"] is True
     assert engine.get_statement(statement_id)["query_count"] == 1
     assert engine.get_statement(statement_id)["hit_count"] == 0
 
@@ -1893,11 +1971,11 @@ def test_fusion_deadline_exhaustion_is_typed_in_complete_resolution_budget() -> 
     value = candidate(features={"lexical_score": 0.9})
     resolver = FakeResolver(
         "lexical",
-        ResolverResult(
+        resolver_result(
             "lexical",
             ResolverState.COMPLETED,
             candidates=(value,),
-            accounting=(AccountingObservation(value.statement_id),),
+            accounting=(accounting_observation(value["statement_id"]),),
         ),
     )
     orchestrator = ResolutionOrchestrator(
@@ -1905,39 +1983,39 @@ def test_fusion_deadline_exhaustion_is_typed_in_complete_resolution_budget() -> 
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
         CandidateFusionEngine(
-            authority=PERMISSIVE_CANDIDATE_AUTHORITY,
-            clock_ns=lambda: query_frame.budget.deadline_ns,
+            authority=permissive_candidate_authority,
+            clock_ns=lambda: query_frame["budget"]["deadline_ns"],
         ),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-fusion-deadline")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert FusionPolicyReason.FUSION_DEADLINE_EXHAUSTED.value in result.reason_codes
-    assert "fusion_deadline" in result.budget.exhausted_dimensions
-    assert finalization.candidate_statement_ids == (value.statement_id,)
-    assert finalization.success_applied is False
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert FusionPolicyReason.FUSION_DEADLINE_EXHAUSTED.value in result["reason_codes"]
+    assert "fusion_deadline" in result["budget"]["exhausted_dimensions"]
+    assert finalization["candidate_statement_ids"] == (value["statement_id"],)
+    assert finalization["success_applied"] is False
 
 
 def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     value = candidate(features={"lexical_score": 0.9})
-    raw = ResolverResult(
+    raw = resolver_result(
         "lexical",
         ResolverState.COMPLETED,
         candidates=(value,),
-        accounting=(AccountingObservation(value.statement_id),),
+        accounting=(accounting_observation(value["statement_id"]),),
     )
     executor = ResolverExecutor(lambda: START_NS)
     probe_resolver = FakeResolver("lexical", raw)
     probe_execution = executor.execute(query_frame, ResolverRegistry((probe_resolver,)).plan(query_frame))
-    fusion = CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS)
-    fusion_required = fusion.decide(query_frame, (value,)).working_memory_bytes
-    total_limit = probe_execution.consumption.working_memory_bytes + fusion_required - 1
-    constrained_frame = replace(
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
+    fusion_required = fusion.decide(query_frame, (value,))["working_memory_bytes"]
+    total_limit = probe_execution["consumption"]["working_memory_bytes"] + fusion_required - 1
+    constrained_frame = query_frame_with_changes(
         query_frame,
-        budget=replace(query_frame.budget, max_working_memory_bytes=total_limit),
+        {"budget": resolution_budget_with_changes(query_frame["budget"], {"max_working_memory_bytes": total_limit})},
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((FakeResolver("lexical", raw),)),
@@ -1948,23 +2026,23 @@ def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption()
 
     result, finalization = orchestrator.resolve(constrained_frame, "request-fusion-memory")
 
-    assert result.outcome == ResolutionOutcome.MISS
-    assert FusionPolicyReason.FUSION_MEMORY_EXHAUSTED.value in result.reason_codes
-    assert "working_memory_bytes" in result.budget.exhausted_dimensions
-    assert result.budget.working_memory_bytes == total_limit
-    assert finalization.success_applied is False
+    assert result["outcome"] == ResolutionOutcome.MISS
+    assert FusionPolicyReason.FUSION_MEMORY_EXHAUSTED.value in result["reason_codes"]
+    assert "working_memory_bytes" in result["budget"]["exhausted_dimensions"]
+    assert result["budget"]["working_memory_bytes"] == total_limit
+    assert finalization["success_applied"] is False
 
 
 def test_complete_result_serialization_obeys_and_reports_output_budget() -> None:
     engine = Engram()
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
         max_output_bytes=4_096,
     )
     query_frame = frame(engine, namespace="", budget=selected_budget)
-    empty = FakeResolver("empty", ResolverResult("empty", ResolverState.COMPLETED))
+    empty = FakeResolver("empty", resolver_result("empty", ResolverState.COMPLETED))
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
         ResolverExecutor(lambda: START_NS),
@@ -1972,15 +2050,15 @@ def test_complete_result_serialization_obeys_and_reports_output_budget() -> None
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-envelope")
-    encoded_size = len(result.to_json().encode("utf-8"))
+    encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
 
-    assert encoded_size <= query_frame.budget.max_output_bytes
-    assert result.budget.output_bytes == encoded_size
+    assert encoded_size <= query_frame["budget"]["max_output_bytes"]
+    assert result["budget"]["output_bytes"] == encoded_size
 
 
 def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     engine = Engram()
-    selected_budget = ResolutionBudget.capture(
+    selected_budget = capture_resolution_budget(
         lambda: START_NS,
         total_time_ms=100,
         resolver_time_ms=25,
@@ -1990,24 +2068,24 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     large_candidate = candidate(response="x" * 2_500)
     resolver = FakeResolver(
         "large",
-        ResolverResult(
+        resolver_result(
             "large",
             ResolverState.COMPLETED,
             candidates=(large_candidate,),
-            accounting=(AccountingObservation(large_candidate.statement_id),),
+            accounting=(accounting_observation(large_candidate["statement_id"]),),
         ),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
-        CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-payload")
-    encoded_size = len(result.to_json().encode("utf-8"))
+    encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
 
-    assert encoded_size <= query_frame.budget.max_output_bytes
-    assert result.budget.output_bytes == encoded_size
-    assert "output_truncated" in result.reason_codes
-    assert "output_bytes" in result.budget.exhausted_dimensions
+    assert encoded_size <= query_frame["budget"]["max_output_bytes"]
+    assert result["budget"]["output_bytes"] == encoded_size
+    assert "output_truncated" in result["reason_codes"]
+    assert "output_bytes" in result["budget"]["exhausted_dimensions"]

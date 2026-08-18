@@ -18,7 +18,7 @@ from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, PersistenceError
 from engram.grpc_server import SERVICE_NAME, create_grpc_server
-from engram.service import EngramCore
+from engram.service import EngramCore, open_engram_core
 from engram.v1 import engram_pb2, engram_pb2_grpc
 
 
@@ -26,11 +26,13 @@ def _core(store_path="") -> EngramCore:
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
-    return EngramCore(engram, store_path=store_path)
+    result = EngramCore(engram, store_path=store_path)
+    return result
 
 
 def _as_dict(message: struct_pb2.Struct) -> dict:
-    return json_format.MessageToDict(message, preserving_proto_field_name=True)
+    result = json_format.MessageToDict(message, preserving_proto_field_name=True)
+    return result
 
 
 @contextmanager
@@ -47,12 +49,14 @@ def _running_server(core: EngramCore, **kwargs):
 
 def _health_status(channel: grpc.Channel) -> int:
     health_stub = cast(Any, health_pb2_grpc.HealthStub(channel))
-    return health_stub.Check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5).status
+    result = health_stub.Check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5).status
+    return result
 
 
 def _trailing_metadata(error: grpc.RpcError) -> dict[str, str]:
     metadata = cast(tuple[tuple[str, str], ...], error.trailing_metadata())
-    return dict(metadata)
+    result = dict(metadata)
+    return result
 
 
 def test_section7_keeps_current_grpc_v1_as_proposal_resolution_only() -> None:
@@ -242,7 +246,7 @@ def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monke
         assert _as_dict(stub.GetStatus(empty_pb2.Empty()))["durability"] == "healthy"
         assert _health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 
-    restored = EngramCore.open(store_path=store)
+    restored = open_engram_core(store_path=store)
     assert restored.engram.get_statement(recovered["statement_id"])["text"] == "This answer should persist."
     restored.close()
 
@@ -268,7 +272,7 @@ def test_durable_state_survives_restart_but_proposals_do_not(tmp_path) -> None:
     first_channel.close()
     first_server.stop(0)
 
-    restored_core = EngramCore.open(store_path=store)
+    restored_core = open_engram_core(store_path=store)
     with _running_server(restored_core) as (_, _, restored_stub):
         proposal = _as_dict(
             restored_stub.Propose(engram_pb2.ProposeRequest(request="What survives?", request_id="proposal-after-restart"))
@@ -295,7 +299,8 @@ def test_deadline_does_not_claim_to_roll_back_started_core_work() -> None:
     def delayed_chat(user_id: str, text: str) -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        return original_chat(user_id, text)
+        result = original_chat(user_id, text)
+        return result
 
     core.chat = delayed_chat
     with _running_server(core) as (_, _, stub):
@@ -320,7 +325,8 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     def delayed_chat(user_id: str, text: str) -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        return original_chat(user_id, text)
+        result = original_chat(user_id, text)
+        return result
 
     core.chat = delayed_chat
     server = create_grpc_server(core, bind_address="127.0.0.1:0")
@@ -364,7 +370,7 @@ def test_shutdown_can_retry_a_failed_final_checkpoint(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(service_module.persistence, "save", real_save)
     assert server.stop(0) is True
     assert server.stop(0) is False
-    restored = EngramCore.open(store_path=store)
+    restored = open_engram_core(store_path=store)
     assert restored.engram.statements[0]["text"] == "Pending state."
     restored.close()
     channel.close()
@@ -378,10 +384,11 @@ def test_tls_requires_a_certificate_and_key_pair() -> None:
 
 
 def test_grpc_main_refuses_to_serve_after_component_preflight_failure(monkeypatch) -> None:
-    def fail_open(cls, **kwargs):
+    def fail_open(**kwargs):
+        del kwargs
         raise InvalidRequestError("component preflight failed: graph unavailable")
 
-    monkeypatch.setattr(EngramCore, "open", classmethod(fail_open))
+    monkeypatch.setattr(grpc_server_module, "open_engram_core", fail_open)
 
     assert grpc_server_module.main(["--log-level", "ERROR"]) == 1
 

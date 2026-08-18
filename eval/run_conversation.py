@@ -79,7 +79,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
             warnings.append("unanswered (source none)")
         else:
             defects.append(f"empty response from source {source}")
-        return defects, warnings
+        result = defects, warnings
+        return result
 
     first_alpha = next((c for c in response if c.isalpha()), "")
     if first_alpha and first_alpha.islower():
@@ -93,7 +94,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
     if "{" in response and "}" in response:
         defects.append("unresolved template token in response")
 
-    return defects, warnings
+    result = defects, warnings
+    return result
 
 
 def run_conversation(turns: list, verbose: bool) -> dict:
@@ -184,7 +186,8 @@ def main() -> int:
     turns = load_turns(args.script)
     if not turns:
         print("No turns found in the conversation script", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     report = run_conversation(turns, verbose=not args.quiet)
 
@@ -221,7 +224,8 @@ def main() -> int:
             json.dump(report, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    return 1 if defect_turns or report["hygiene_defects"] else 0
+    result = 1 if defect_turns or report["hygiene_defects"] else 0
+    return result
 
 
 if __name__ == "__main__":

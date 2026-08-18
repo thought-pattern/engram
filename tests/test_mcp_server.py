@@ -21,11 +21,12 @@ from scripts.run_section3_mcp_conformance import _evaluate_turn, _run_length_enc
 
 
 def _runtime(service: MCPConversationService) -> ConversationRuntime:
-    return cast(ConversationRuntime, service.runtime)
+    result = cast(ConversationRuntime, service.runtime)
+    return result
 
 
 def _complete_turn_event() -> dict:
-    return {
+    result = {
         "turn": 1,
         "input": "hello",
         "response": "Hello!",
@@ -42,6 +43,7 @@ def _complete_turn_event() -> dict:
         "context_changes": {},
         "learned_statements": [],
     }
+    return result
 
 
 def test_mcp_long_conversation_evaluator_checks_each_complete_turn_without_retaining_text() -> None:
@@ -93,7 +95,8 @@ def _seed_file(tmp_path):
 def _tool_json(result) -> dict:
     assert result.is_error is False
     assert len(result.content) == 1
-    return json.loads(result.content[0].text)
+    result = json.loads(result.content[0].text)
+    return result
 
 
 def test_service_persists_one_runtime_across_calls(tmp_path) -> None:
@@ -327,7 +330,8 @@ def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
     proposal = service.propose("What is cached?", "proposal-concurrent")
 
     def accept() -> dict:
-        return service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
+        result = service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
+        return result
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(lambda _: accept(), range(8)))
@@ -347,7 +351,7 @@ def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
     assert retired["retired"] is True
     assert retry["idempotent"] is True
     retired_artifact = _runtime(service).engram.response_repository.get_artifact(learned["statement_id"])
-    assert retired_artifact.lifecycle.value == "RETIRED"
+    assert retired_artifact["lifecycle"].value == "RETIRED"
     assert service.propose("What is stale?", "proposal-retired")["candidates"] == []
     static_pattern_id = next(
         statement["id"] for statement in _runtime(service).engram.statements if statement["pattern"] == "HELLO"

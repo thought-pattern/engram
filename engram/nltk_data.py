@@ -44,10 +44,12 @@ def _is_available(find_path: str) -> bool:
     for candidate in (find_path, find_path + ".zip"):
         try:
             nltk.data.find(candidate)
-            return True
+            result = True
+            return result
         except LookupError:
             continue
-    return False
+    result = False
+    return result
 
 
 def ensure_resource(find_path: str, download_name: str, *, download: bool = False) -> bool:
@@ -63,9 +65,11 @@ def ensure_resource(find_path: str, download_name: str, *, download: bool = Fals
     """
     configure_path()
     if _is_available(find_path):
-        return True
+        result = True
+        return result
     if not download:
-        return False
+        result = False
+        return result
     nltk.download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
     cache_clear = getattr(_is_available, "cache_clear", ())
     if callable(cache_clear):
@@ -107,9 +111,11 @@ def main() -> int:
         print("[WARNING] Could not obtain the following packages:")
         for find_path, download_name in missing:
             print(f"  - {download_name} ({find_path})")
-        return 1
+        result = 1
+        return result
     print("[DONE] All required NLTK data is available.")
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

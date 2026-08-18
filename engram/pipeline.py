@@ -203,7 +203,8 @@ def respond(
                     captured=matched_captured,
                     user_id=context_id,
                 )
-                return _attach_dialogue_state(engram, tier1, context_id)
+                result = _attach_dialogue_state(engram, tier1, context_id)
+                return result
 
     # Tier 2: confident cached answer via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
@@ -225,7 +226,8 @@ def respond(
                 keywords=keywords,
                 user_id=context_id,
             )
-            return _attach_dialogue_state(engram, tier2, context_id)
+            result = _attach_dialogue_state(engram, tier2, context_id)
+            return result
 
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
@@ -246,7 +248,8 @@ def respond(
                 keywords=keywords,
                 user_id=context_id,
             )
-            return _attach_dialogue_state(engram, tier3, context_id)
+            result = _attach_dialogue_state(engram, tier3, context_id)
+            return result
 
     # Tier 4: nothing confident. A held catch-all response still beats
     # silence -- re-record it into the session since it is actually shown --
@@ -263,7 +266,8 @@ def respond(
             captured=matched_captured,
             user_id=context_id,
         )
-        return _attach_dialogue_state(engram, deferred, context_id)
+        result = _attach_dialogue_state(engram, deferred, context_id)
+        return result
     top_score = matches[0][1] if matches else 0.0
     tier4 = pipeline_result(
         "",
@@ -273,7 +277,8 @@ def respond(
         keywords=keywords,
         user_id=context_id,
     )
-    return _attach_dialogue_state(engram, tier4, context_id)
+    result = _attach_dialogue_state(engram, tier4, context_id)
+    return result
 
 
 def chat(
@@ -287,7 +292,7 @@ def chat(
 ) -> dict:
     """Run the chatbot for one caller-owned user context."""
     normalized_user_id = sessions_mod.normalize_user_id(user_id)
-    return respond(
+    result = respond(
         engram,
         text,
         llm_fn=llm_fn,
@@ -296,3 +301,4 @@ def chat(
         learn=learn,
         user_id=normalized_user_id,
     )
+    return result

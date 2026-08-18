@@ -9,237 +9,47 @@ cache, and which sentence should represent a multi-sentence turn.
 
 import re
 
-from engram.constants import KIND_COMMAND, KIND_QUESTION
+from engram.constants import (
+    DIALOGUE_ACKNOWLEDGMENT,
+    DIALOGUE_ACKNOWLEDGMENT_RE as _ACKNOWLEDGMENT_RE,
+    DIALOGUE_BROAD_PATTERNS as _BROAD_DIALOGUE_PATTERNS,
+    DIALOGUE_CLOSING,
+    DIALOGUE_CLOSING_RE as _CLOSING_RE,
+    DIALOGUE_COMMAND,
+    DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS as _DISCOURSE_FACT_SUBJECT_LEADS,
+    DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE as _DISCOURSE_TOPIC_PREFIX_RE,
+    DIALOGUE_EMOTION,
+    DIALOGUE_EMOTION_RE as _EMOTION_RE,
+    DIALOGUE_ENTITY_LABEL_PRIORITY as _ENTITY_LABEL_PRIORITY,
+    DIALOGUE_ENTITY_LEADS as _ENTITY_LEADS,
+    DIALOGUE_FACT,
+    DIALOGUE_GRATITUDE,
+    DIALOGUE_GRATITUDE_RE as _GRATITUDE_RE,
+    DIALOGUE_GREETING,
+    DIALOGUE_GREETING_RE as _GREETING_RE,
+    DIALOGUE_HEDGE_RE as _HEDGE_RE,
+    DIALOGUE_INVALID_TOPIC_WORDS as _INVALID_TOPIC_WORDS,
+    DIALOGUE_META_FACT_WORDS as _META_FACT_WORDS,
+    DIALOGUE_OPINION,
+    DIALOGUE_OPINION_RE as _OPINION_RE,
+    DIALOGUE_PERSONAL_FACT_OBJECT_WORDS as _PERSONAL_FACT_OBJECT_WORDS,
+    DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS as _QUALIFIED_FACT_SUBJECT_LEADS,
+    DIALOGUE_QUESTION,
+    DIALOGUE_QUESTION_TOPIC_RES as _QUESTION_TOPIC_RES,
+    DIALOGUE_REFERRING_RE as _REFERRING_RE,
+    DIALOGUE_SELF_INTRODUCTION,
+    DIALOGUE_SELF_INTRODUCTION_RE as _SELF_INTRODUCTION_RE,
+    DIALOGUE_STATEMENT,
+    DIALOGUE_TOPIC_LEADING_MODIFIERS as _TOPIC_LEADING_MODIFIERS,
+    DIALOGUE_TOPIC_SHIFT,
+    DIALOGUE_TOPIC_SHIFT_RE as _TOPIC_SHIFT_RE,
+    DIALOGUE_TOPIC_TRAILERS as _TOPIC_TRAILERS,
+    DIALOGUE_TRANSIENT_RE as _TRANSIENT_RE,
+    DIALOGUE_VAGUE_FACT_SUBJECTS as _VAGUE_FACT_SUBJECTS,
+    KIND_COMMAND,
+    KIND_QUESTION,
+)
 from engram.nlp import input_kind
-
-DIALOGUE_ACKNOWLEDGMENT = "acknowledgment"
-DIALOGUE_CLOSING = "closing"
-DIALOGUE_COMMAND = "command"
-DIALOGUE_EMOTION = "emotion"
-DIALOGUE_FACT = "fact"
-DIALOGUE_GRATITUDE = "gratitude"
-DIALOGUE_GREETING = "greeting"
-DIALOGUE_OPINION = "opinion"
-DIALOGUE_QUESTION = "question"
-DIALOGUE_SELF_INTRODUCTION = "self_introduction"
-DIALOGUE_STATEMENT = "statement"
-DIALOGUE_TOPIC_SHIFT = "topic_shift"
-
-_CLOSING_RE = re.compile(
-    r"\b(?:goodbye|bye|farewell|good night|see you|talk (?:to you )?later|catch you later|"
-    r"enough for (?:today|now)|done for (?:today|now)|stop here|leave it there)\b",
-    re.IGNORECASE,
-)
-_GRATITUDE_RE = re.compile(r"\b(?:thank you|thanks|much appreciated|appreciate it)\b", re.IGNORECASE)
-_GREETING_RE = re.compile(r"^\s*(?:hello|hi|hey|greetings|good morning|good afternoon|good evening)\b", re.IGNORECASE)
-_SELF_INTRODUCTION_RE = re.compile(r"\b(?:my name is|i am called|call me)\b", re.IGNORECASE)
-_TOPIC_SHIFT_RE = re.compile(
-    r"\b(?:talk|speak|chat|discuss)\s+about\s+(.+)$|"
-    r"\b(?:change|switch)\s+(?:the\s+)?topic\s+to\s+(.+)$|"
-    r"\b(?:move|switch)\s+(?:on\s+)?to\s+(.+)$|"
-    r"\b(?:return|go\s+back|come\s+back)\s+to\s+(.+)$",
-    re.IGNORECASE,
-)
-_QUESTION_TOPIC_RES = (
-    re.compile(r"^\s*(?:what|who|where)\s+(?:is|are|was|were)\s+(.+?)\s*[?!.]*$", re.IGNORECASE),
-    re.compile(r"^\s*how\s+\w+\s+(?:is|are|was|were)\s+(.+?)\s*[?!.]*$", re.IGNORECASE),
-    re.compile(r"^\s*what\b.*\bwhen\s+you\s+(?:consider|think\s+about)\s+(.+?)\s*[?!.]*$", re.IGNORECASE),
-)
-_EMOTION_RE = re.compile(
-    r"\b(?:feel|feeling|felt|happy|sad|angry|anxious|excited|worried|wistful|afraid|upset|glad|lonely)\b",
-    re.IGNORECASE,
-)
-_OPINION_RE = re.compile(r"\b(?:i think|i believe|in my opinion|i prefer|i like|i dislike|seems to me)\b", re.IGNORECASE)
-_ACKNOWLEDGMENT_RE = re.compile(
-    r"^\s*(?:yes|yeah|yep|no|nope|okay|ok|right|exactly|sure|agreed|understood|i see|got it|fair enough)" r"[.!\s]*$",
-    re.IGNORECASE,
-)
-_REFERRING_RE = re.compile(
-    r"\b(?:he|her|hers|herself|him|himself|his|it|its|she|they|them|their|theirs|this|that|these|those)\b",
-    re.IGNORECASE,
-)
-_DISCOURSE_TOPIC_PREFIX_RE = re.compile(
-    r"^\s*(?:after\b[^:\r\n]{1,80}:|because\b|before\s+we\b|for\s+my\s+part\b|"
-    r"for\b[^:\r\n]{1,80}:|here\s+(?:is|are|was|were)\b|"
-    r"one\s+more(?:\s+[\w'-]+){0,3}\s+thought\b|there\s+(?:is|are|was|were)\b|to\s+me\b)",
-    re.IGNORECASE,
-)
-
-_HEDGE_RE = re.compile(
-    r"\b(?:maybe|perhaps|possibly|probably|supposedly|apparently|i guess|i suppose|might|could|would)\b",
-    re.IGNORECASE,
-)
-_TRANSIENT_RE = re.compile(
-    r"\b(?:right now|at the moment|for now|today|tonight|currently|temporarily|lately|this morning|"
-    r"this afternoon|this evening|this week|this month|this year)\b",
-    re.IGNORECASE,
-)
-_META_FACT_WORDS = {
-    "answer",
-    "chat",
-    "claim",
-    "conversation",
-    "detail",
-    "discussion",
-    "example",
-    "feeling",
-    "idea",
-    "message",
-    "observation",
-    "point",
-    "prompt",
-    "question",
-    "remark",
-    "reply",
-    "response",
-    "sentence",
-    "statement",
-    "test",
-    "thought",
-    "topic",
-    "turn",
-}
-_VAGUE_FACT_SUBJECTS = {"anything", "everything", "nothing", "something", "stuff", "thing", "things"}
-_TOPIC_TRAILERS = {"again", "broadly", "instead", "next", "now", "please", "specifically"}
-_TOPIC_LEADING_MODIFIERS = {
-    "actually",
-    "apparently",
-    "currently",
-    "generally",
-    "maybe",
-    "no",
-    "occasionally",
-    "often",
-    "okay",
-    "perhaps",
-    "possibly",
-    "probably",
-    "right",
-    "sometimes",
-    "supposedly",
-    "today",
-    "tonight",
-    "typically",
-    "usually",
-    "well",
-    "which",
-    "whom",
-    "whose",
-    "yes",
-}
-_GRAMMATICAL_TOPIC_WORDS = {
-    "am",
-    "are",
-    "be",
-    "been",
-    "being",
-    "can",
-    "could",
-    "did",
-    "do",
-    "does",
-    "had",
-    "has",
-    "have",
-    "he",
-    "her",
-    "hers",
-    "him",
-    "his",
-    "i",
-    "it",
-    "its",
-    "me",
-    "mine",
-    "must",
-    "my",
-    "our",
-    "ours",
-    "shall",
-    "she",
-    "should",
-    "that",
-    "their",
-    "theirs",
-    "them",
-    "these",
-    "they",
-    "this",
-    "those",
-    "us",
-    "was",
-    "we",
-    "were",
-    "will",
-    "would",
-    "you",
-    "your",
-    "yours",
-}
-_INVALID_TOPIC_WORDS = _META_FACT_WORDS | _VAGUE_FACT_SUBJECTS | _GRAMMATICAL_TOPIC_WORDS
-_AMBIGUOUS_CAPITALIZED_LEADS = {
-    "after",
-    "allow",
-    "because",
-    "before",
-    "for",
-    "here",
-    "if",
-    "in",
-    "one",
-    "there",
-    "to",
-    "which",
-    "with",
-}
-_ENTITY_LEADS = (
-    {
-        "a",
-        "an",
-        "answer",
-        "conversation",
-        "exactly",
-        "good",
-        "goodbye",
-        "hello",
-        "hi",
-        "how",
-        "let",
-        "let's",
-        "my",
-        "prompt",
-        "question",
-        "tell",
-        "thank",
-        "thanks",
-        "the",
-        "what",
-        "when",
-        "where",
-        "who",
-        "why",
-    }
-    | _GRAMMATICAL_TOPIC_WORDS
-    | _TOPIC_LEADING_MODIFIERS
-    | _AMBIGUOUS_CAPITALIZED_LEADS
-)
-_DISCOURSE_FACT_SUBJECT_LEADS = {"actually", "no", "okay", "right", "well", "yes"}
-_QUALIFIED_FACT_SUBJECT_LEADS = {"generally", "occasionally", "often", "sometimes", "typically", "usually"}
-_PERSONAL_FACT_OBJECT_WORDS = {
-    "i",
-    "me",
-    "mine",
-    "my",
-    "our",
-    "ours",
-    "us",
-    "we",
-    "you",
-    "your",
-    "yours",
-}
-_ENTITY_LABEL_PRIORITY = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
-_BROAD_DIALOGUE_PATTERNS = {"THAT *", "THAT IS *", "THE *"}
 
 
 def classify_dialogue_act(text: str, fact=()) -> str:
@@ -288,11 +98,13 @@ def _clean_topic(value: str) -> str:
     while words and words[-1].lower() in _TOPIC_TRAILERS:
         words.pop()
     if not words or len(words) > 8:
-        return ""
+        result = ""
+        return result
     topic = " ".join(words).strip(" \t\r\n.,!?;:'\"")
     topic_words = {word.lower() for word in re.findall(r"[\w'-]+", topic)}
     if not topic_words or topic_words & _INVALID_TOPIC_WORDS:
-        return ""
+        result = ""
+        return result
     return topic
 
 
@@ -302,14 +114,18 @@ def explicit_topic(text: str) -> str:
     if not match:
         about_match = re.search(r"\b(?:know|tell me|learn|think)\s+about\s+(.+)$", text, re.IGNORECASE)
         if about_match:
-            return _clean_topic(about_match.group(1))
+            result = _clean_topic(about_match.group(1))
+            return result
         for question_re in _QUESTION_TOPIC_RES:
             question_match = question_re.match(text)
             if question_match:
-                return _clean_topic(question_match.group(1))
-        return ""
+                result = _clean_topic(question_match.group(1))
+                return result
+        result = ""
+        return result
     value = next((group for group in match.groups() if group), "")
-    return _clean_topic(value)
+    result = _clean_topic(value)
+    return result
 
 
 def infer_active_topic(
@@ -349,7 +165,8 @@ def infer_active_topic(
                 return candidate
     if previous_topic and _REFERRING_RE.search(text):
         return previous_topic
-    return ""
+    result = ""
+    return result
 
 
 def extract_dialogue_entities(text: str, fact=(), topic: str = "") -> list[dict]:
@@ -401,46 +218,61 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
     knowledge.  This gate applies only to facts inferred from casual chat.
     """
     if not fact:
-        return {"admitted": False, "reason": "missing_fact"}
+        result = {"admitted": False, "reason": "missing_fact"}
+        return result
     subject = str(fact.get("subject", "")).strip()
     obj = str(fact.get("obj", fact.get("object", ""))).strip()
     if not subject or not obj:
-        return {"admitted": False, "reason": "missing_fields"}
+        result = {"admitted": False, "reason": "missing_fields"}
+        return result
     if _DISCOURSE_TOPIC_PREFIX_RE.match(text):
-        return {"admitted": False, "reason": "discourse_subject"}
+        result = {"admitted": False, "reason": "discourse_subject"}
+        return result
     if _HEDGE_RE.search(text):
-        return {"admitted": False, "reason": "hedged"}
+        result = {"admitted": False, "reason": "hedged"}
+        return result
     if _TRANSIENT_RE.search(text):
-        return {"admitted": False, "reason": "transient"}
+        result = {"admitted": False, "reason": "transient"}
+        return result
 
     subject_tokens = [word.lower() for word in re.findall(r"[\w'-]+", subject)]
     subject_words = set(subject_tokens)
     object_words = {word.lower() for word in re.findall(r"[\w'-]+", obj)}
     if subject_tokens[0] in _DISCOURSE_FACT_SUBJECT_LEADS:
-        return {"admitted": False, "reason": "discourse_subject"}
+        result = {"admitted": False, "reason": "discourse_subject"}
+        return result
     if subject_tokens[0] in _QUALIFIED_FACT_SUBJECT_LEADS:
-        return {"admitted": False, "reason": "qualified_subject"}
+        result = {"admitted": False, "reason": "qualified_subject"}
+        return result
     if subject_words & _META_FACT_WORDS:
-        return {"admitted": False, "reason": "meta_subject"}
+        result = {"admitted": False, "reason": "meta_subject"}
+        return result
     if subject_words & _VAGUE_FACT_SUBJECTS:
-        return {"admitted": False, "reason": "vague_subject"}
+        result = {"admitted": False, "reason": "vague_subject"}
+        return result
     if object_words & _PERSONAL_FACT_OBJECT_WORDS:
-        return {"admitted": False, "reason": "personal_object"}
+        result = {"admitted": False, "reason": "personal_object"}
+        return result
     if object_words & {"temporary", "unknown", "unsure"}:
-        return {"admitted": False, "reason": "unstable_object"}
-    return {"admitted": True, "reason": "admitted"}
+        result = {"admitted": False, "reason": "unstable_object"}
+        return result
+    result = {"admitted": True, "reason": "admitted"}
+    return result
 
 
 def conversational_fact_is_admissible(fact: dict, text: str) -> bool:
     """Compatibility Boolean for the reasoned admission decision."""
-    return conversational_fact_admission(fact, text)["admitted"]
+    result = conversational_fact_admission(fact, text)["admitted"]
+    return result
 
 
 def topic_is_referenced(text: str, topic: str) -> bool:
     """Return whether a turn explicitly or pronominally continues a topic."""
     if not topic:
-        return False
-    return _topic_is_named(text, topic) or bool(_REFERRING_RE.search(text))
+        result = False
+        return result
+    result = _topic_is_named(text, topic) or bool(_REFERRING_RE.search(text))
+    return result
 
 
 def _topic_is_named(text: str, topic: str) -> bool:
@@ -448,14 +280,16 @@ def _topic_is_named(text: str, topic: str) -> bool:
     text_words = re.findall(r"[\w'-]+", text.casefold())
     topic_words = re.findall(r"[\w'-]+", topic.casefold())
     if not topic_words or len(topic_words) > len(text_words):
-        return False
+        result = False
+        return result
     width = len(topic_words)
-    return any(text_words[start : start + width] == topic_words for start in range(len(text_words) - width + 1))
+    result = any(text_words[start : start + width] == topic_words for start in range(len(text_words) - width + 1))
+    return result
 
 
 def dialogue_act_clears_unreferenced_topic(dialogue_act: str) -> bool:
     """Return whether an unrelated act starts a new substantive thread."""
-    return dialogue_act in {
+    result = dialogue_act in {
         DIALOGUE_COMMAND,
         DIALOGUE_EMOTION,
         DIALOGUE_FACT,
@@ -464,6 +298,7 @@ def dialogue_act_clears_unreferenced_topic(dialogue_act: str) -> bool:
         DIALOGUE_STATEMENT,
         DIALOGUE_TOPIC_SHIFT,
     }
+    return result
 
 
 def topic_from_statement_pattern(pattern: str, statement_text: str = "") -> str:
@@ -475,11 +310,13 @@ def topic_from_statement_pattern(pattern: str, statement_text: str = "") -> str:
     and retain title-casing only as a compatibility fallback.
     """
     if not pattern or "*" in pattern or "_" in pattern or "{" in pattern:
-        return ""
+        result = ""
+        return result
 
     pattern_words = [word.casefold() for word in re.findall(r"[\w'-]+", pattern)]
     if not pattern_words:
-        return ""
+        result = ""
+        return result
     statement_words = list(re.finditer(r"[\w'-]+", statement_text))
     for start in range(len(statement_words) - len(pattern_words) + 1):
         matches = statement_words[start : start + len(pattern_words)]
@@ -489,36 +326,45 @@ def topic_from_statement_pattern(pattern: str, statement_text: str = "") -> str:
         topic = _clean_topic(surface)
         if topic:
             return topic
-    return _clean_topic(pattern.title())
+    result = _clean_topic(pattern.title())
+    return result
 
 
 def pattern_is_broad(pattern: str) -> bool:
     """Return whether a pattern expresses little conversational intent."""
-    return pattern.upper().strip() in _BROAD_DIALOGUE_PATTERNS
+    result = pattern.upper().strip() in _BROAD_DIALOGUE_PATTERNS
+    return result
 
 
 def repetition_response_options(dialogue_act: str, topic: str = "") -> tuple[str, ...]:
     """Alternatives when any authored response repeats recent output."""
     if dialogue_act == DIALOGUE_ACKNOWLEDGMENT:
-        return ("Right - I heard you.", "Understood; let's keep moving.")
+        result = ("Right - I heard you.", "Understood; let's keep moving.")
+        return result
     if dialogue_act == DIALOGUE_GREETING:
-        return ("Hello again.",)
+        result = ("Hello again.",)
+        return result
     if dialogue_act == DIALOGUE_GRATITUDE:
-        return ("Glad to help.",)
+        result = ("Glad to help.",)
+        return result
     if dialogue_act == DIALOGUE_CLOSING:
-        return ("Take care.",)
+        result = ("Take care.",)
+        return result
     if topic:
-        return (f"I don't want to repeat myself about {topic}; let's move the conversation forward.",)
-    return ("I don't want to repeat the same line; let's move the conversation forward.",)
+        result = (f"I don't want to repeat myself about {topic}; let's move the conversation forward.",)
+        return result
+    result = ("I don't want to repeat the same line; let's move the conversation forward.",)
+    return result
 
 
 def repeated_input_response_options() -> tuple[str, ...]:
     """Topic-neutral continuations when an ordinary input is repeated."""
-    return (
+    result = (
         "We've returned to that idea. Which part would you like to explore further?",
         "That thought has come up before. What new angle should we take?",
         "We're circling back to that. What feels unfinished about it?",
     )
+    return result
 
 
 def select_turn_candidate(candidates: list[dict]) -> dict:
@@ -529,7 +375,8 @@ def select_turn_candidate(candidates: list[dict]) -> dict:
     change, fact, or self-introduction.
     """
     if not candidates:
-        return {}
+        result = {}
+        return result
 
     # An explicit farewell remains the turn intent when followed by a
     # compliment or well-wish. A later request genuinely reopens the turn and
@@ -542,7 +389,8 @@ def select_turn_candidate(candidates: list[dict]) -> dict:
             for later in candidates[index + 1 :]
             if later["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION, DIALOGUE_TOPIC_SHIFT}
         ]
-        return later_requests[-1] if later_requests else candidate
+        result = later_requests[-1] if later_requests else candidate
+        return result
 
     final = candidates[-1]
     if final["dialogue_act"] not in {DIALOGUE_ACKNOWLEDGMENT, DIALOGUE_GRATITUDE, DIALOGUE_GREETING}:
@@ -570,24 +418,33 @@ def contextual_fallback_options(
     """Return ordered, topic-aware alternatives to a generic catch-all."""
     if dialogue_act == DIALOGUE_CLOSING:
         if had_gratitude:
-            return ("You're welcome. We can stop here for today.", "Of course. We can leave it there for now.")
-        return ("Of course. We can stop here for today.", "Understood. We can leave it there for now.")
+            result = ("You're welcome. We can stop here for today.", "Of course. We can leave it there for now.")
+            return result
+        result = ("Of course. We can stop here for today.", "Understood. We can leave it there for now.")
+        return result
     if dialogue_act == DIALOGUE_TOPIC_SHIFT and topic:
-        return (f"Sure - let's talk about {topic}.",)
+        result = (f"Sure - let's talk about {topic}.",)
+        return result
     if not topic:
-        return ()
+        result = ()
+        return result
     if dialogue_act == DIALOGUE_QUESTION:
-        return (f"I don't know enough about {topic} to answer that yet.",)
+        result = (f"I don't know enough about {topic} to answer that yet.",)
+        return result
     if dialogue_act == DIALOGUE_ACKNOWLEDGMENT:
-        return (f"Right - {topic} is the thread we're following.",)
+        result = (f"Right - {topic} is the thread we're following.",)
+        return result
     if dialogue_act == DIALOGUE_EMOTION:
         options = [f"That adds a personal angle to what we're saying about {topic}."]
         if fact_text:
             options.insert(0, f"That feeling connects with what you said about {topic}: {fact_text}")
-        return tuple(options)
+        result = tuple(options)
+        return result
     if dialogue_act in {DIALOGUE_FACT, DIALOGUE_OPINION, DIALOGUE_STATEMENT}:
         options = [f"Staying with {topic}, that adds another angle to the conversation."]
         if fact_text:
             options.insert(0, f"That connects with what you said about {topic}: {fact_text}")
-        return tuple(options)
-    return ()
+        result = tuple(options)
+        return result
+    result = ()
+    return result

@@ -43,7 +43,8 @@ def get_session_count(engram) -> int:
 def get_overall_hit_rate(engram) -> float:
     """Overall hit rate percentage."""
     if engram.query_count == 0:
-        return 0.0
+        result = 0.0
+        return result
     rate = engram.hit_count / engram.query_count
     return rate
 

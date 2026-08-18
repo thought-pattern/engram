@@ -11,34 +11,39 @@ import random
 import re
 from datetime import datetime
 
-from engram.constants import VERSION
+from engram.constants import (
+    TEMPLATE_BOT_EXPRESSION,
+    TEMPLATE_DATE_FORMAT_EXPRESSION,
+    TEMPLATE_GET_EXPRESSION,
+    TEMPLATE_INPUT_EXPRESSION,
+    TEMPLATE_MAP_EXPRESSION,
+    TEMPLATE_RESPONSE_EXPRESSION,
+    TEMPLATE_SIMPLE_VARIABLE_TOKENS,
+    TEMPLATE_STAR_EXPRESSION,
+    TEMPLATE_THAT_EXPRESSION,
+    TEMPLATE_THATSTAR_EXPRESSION,
+    TEMPLATE_TOPICSTAR_EXPRESSION,
+    TEMPLATE_TRANSFORM_EXPRESSION,
+    TRIPLE_QUERY_OBJECT,
+    TRIPLE_QUERY_SUBJECT,
+    VERSION,
+)
 from engram.graph import graph_is_empty, graph_single, is_write_cypher
 from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
 from engram.text import extract_name, first_clause
 
-TRIPLE_QUERY_OBJECT = (
-    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
-    "WHERE (toLower(s.primary_label) = toLower($subject) "
-    "OR toLower($subject) IN [a IN s.aliases | toLower(a)] "
-    "OR toLower(hs.surface_form) = toLower($subject)) "
-    "AND (toLower(p.label) = toLower($predicate) "
-    "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.invalidated_at IS NULL "
-    "RETURN ho.surface_form AS result LIMIT 1"
-)
-TRIPLE_QUERY_SUBJECT = (
-    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
-    "WHERE (toLower(o.primary_label) = toLower($object) "
-    "OR toLower($object) IN [a IN o.aliases | toLower(a)] "
-    "OR toLower(ho.surface_form) = toLower($object)) "
-    "AND (toLower(p.label) = toLower($predicate) "
-    "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.invalidated_at IS NULL "
-    "RETURN hs.surface_form AS result LIMIT 1"
-)
+star_pattern = re.compile(TEMPLATE_STAR_EXPRESSION)
+thatstar_pattern = re.compile(TEMPLATE_THATSTAR_EXPRESSION)
+topicstar_pattern = re.compile(TEMPLATE_TOPICSTAR_EXPRESSION)
+get_pattern = re.compile(TEMPLATE_GET_EXPRESSION)
+bot_pattern = re.compile(TEMPLATE_BOT_EXPRESSION)
+map_pattern = re.compile(TEMPLATE_MAP_EXPRESSION)
+input_pattern = re.compile(TEMPLATE_INPUT_EXPRESSION)
+response_pattern = re.compile(TEMPLATE_RESPONSE_EXPRESSION)
+that_pattern = re.compile(TEMPLATE_THAT_EXPRESSION)
+transform_pattern = re.compile(TEMPLATE_TRANSFORM_EXPRESSION)
+date_format_pattern = re.compile(TEMPLATE_DATE_FORMAT_EXPRESSION)
 
 
 def template_context(
@@ -109,7 +114,8 @@ def get_star(ctx: dict, index: int) -> str:
     if 1 <= index <= len(ctx["stars"]):
         star = ctx["stars"][index - 1]
         return star
-    return ""
+    result = ""
+    return result
 
 
 def get_thatstar(ctx: dict, index: int) -> str:
@@ -117,7 +123,8 @@ def get_thatstar(ctx: dict, index: int) -> str:
     if 1 <= index <= len(ctx["thatstars"]):
         thatstar = ctx["thatstars"][index - 1]
         return thatstar
-    return ""
+    result = ""
+    return result
 
 
 def get_topicstar(ctx: dict, index: int) -> str:
@@ -125,7 +132,8 @@ def get_topicstar(ctx: dict, index: int) -> str:
     if 1 <= index <= len(ctx["topicstars"]):
         topicstar = ctx["topicstars"][index - 1]
         return topicstar
-    return ""
+    result = ""
+    return result
 
 
 def get_map(ctx: dict, map_name: str, key: str, default: str = "") -> str:
@@ -141,7 +149,8 @@ def get_input(ctx: dict, index: int = 1) -> str:
     if 1 <= index <= len(ctx["input_history"]):
         value = ctx["input_history"][index - 1]
         return value
-    return ""
+    result = ""
+    return result
 
 
 def get_response(ctx: dict, index: int = 1) -> str:
@@ -149,7 +158,8 @@ def get_response(ctx: dict, index: int = 1) -> str:
     if 1 <= index <= len(ctx["response_history"]):
         value = ctx["response_history"][index - 1]
         return value
-    return ""
+    result = ""
+    return result
 
 
 def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
@@ -159,46 +169,52 @@ def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
         if 1 <= sentence_idx <= len(sentences):
             sentence = sentences[sentence_idx - 1]
             return sentence
-    return ""
+    result = ""
+    return result
+
+
+def simple_variable_values(context: dict) -> dict[str, str]:
+    """Collect concrete values for the centralized simple-variable tokens."""
+
+    result = {
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["topic"]: context["predicates"].get("topic", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["input"]: context["input_text"],
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["request"]: context["request_text"],
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["id"]: context["session_id"],
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["size"]: str(context["category_count"]),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["vocabulary"]: str(context["vocabulary_count"]),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["date"]: datetime.now().strftime("%B %d, %Y"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["time"]: datetime.now().strftime("%H:%M:%S"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["program"]: context["bot"].get("name", "ENGRAM"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["version"]: context["bot"].get("version", VERSION),
+    }
+    return result
+
+
+def apply_word_substitution(text: str, substitutions: dict[str, str]) -> str:
+    """Apply a case-preserving word substitution map."""
+    if not substitutions:
+        result = text
+        return result
+    words = text.split()
+    replaced = []
+    for word in words:
+        lower = word.lower()
+        if lower in substitutions:
+            replacement = substitutions[lower]
+            if word.isupper():
+                replacement = replacement.upper()
+            elif word[0].isupper():
+                replacement = replacement.capitalize()
+            replaced.append(replacement)
+        else:
+            replaced.append(word)
+    result = " ".join(replaced)
+    return result
 
 
 class TemplateProcessor:
     """Processes templates and substitutes variables."""
-
-    # Regex patterns for variable substitution
-    STAR_PATTERN = re.compile(r"\{star(\d+)\}")
-    THATSTAR_PATTERN = re.compile(r"\{thatstar(\d+)\}")
-    TOPICSTAR_PATTERN = re.compile(r"\{topicstar(\d+)\}")
-    GET_PATTERN = re.compile(r"\{get:([^:}]+)(?::([^}]*))?\}")
-    BOT_PATTERN = re.compile(r"\{bot:([^}]+)\}")
-    MAP_PATTERN = re.compile(r"\{map:([^:}]+):([^:}]+)(?::([^}]*))?\}")
-    # Bare {input} is the CURRENT input (a simple variable); only the indexed
-    # form {input:N} reads history. A bare-form match here would shadow the
-    # simple variable and return the PREVIOUS turn's input instead.
-    INPUT_PATTERN = re.compile(r"\{input:(\d+)\}")
-    RESPONSE_PATTERN = re.compile(r"\{response(?::(\d+))?\}")
-    THAT_PATTERN = re.compile(r"\{that(?::(\d+)(?::(\d+))?)?\}")
-    # Match transforms with content that doesn't contain braces - processes innermost first
-    TRANSFORM_PATTERN = re.compile(
-        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount|sentiment|clause|qtype|name):([^{}]*)\}"
-    )
-
-    # Simple variable patterns
-    SIMPLE_VARS = {
-        "{topic}": lambda ctx: ctx["predicates"].get("topic", ""),
-        "{input}": lambda ctx: ctx["input_text"],
-        "{request}": lambda ctx: ctx["request_text"],
-        "{id}": lambda ctx: ctx["session_id"],
-        "{size}": lambda ctx: str(ctx["category_count"]),
-        "{vocabulary}": lambda ctx: str(ctx["vocabulary_count"]),
-        "{date}": lambda ctx: datetime.now().strftime("%B %d, %Y"),
-        "{time}": lambda ctx: datetime.now().strftime("%H:%M:%S"),
-        "{program}": lambda ctx: ctx["bot"].get("name", "ENGRAM"),
-        "{version}": lambda ctx: ctx["bot"].get("version", VERSION),
-    }
-
-    # Pattern for formatted date: {date:format}
-    DATE_FORMAT_PATTERN = re.compile(r"\{date:([^}]+)\}")
 
     def __init__(self, srai_limit: int = 100):
         """Initialize processor.
@@ -223,7 +239,8 @@ class TemplateProcessor:
             Processed output string.
         """
         if not template:
-            return ""
+            result = ""
+            return result
 
         if isinstance(template, str):
             result = self._substitute_variables(template, context)
@@ -275,27 +292,32 @@ class TemplateProcessor:
             if context["stars"]:
                 result = self._process_redirect(context["stars"][0], context)
                 return result
-            return ""
+            result = ""
+            return result
 
         # Think (silent processing)
         if "think" in template:
             self._process_think(template["think"], context)
-            return ""
+            result = ""
+            return result
 
         # Set variable
         if "set" in template:
             self._process_set(template["set"], context)
-            return ""
+            result = ""
+            return result
 
         # Learn new category
         if "learn" in template:
             self._process_learn(template["learn"], context)
-            return ""
+            result = ""
+            return result
 
         # Loop (returns to condition evaluation)
         if "loop" in template and template["loop"]:
             # Loop is handled in condition processing
-            return ""
+            result = ""
+            return result
 
         # Graph query
         if "graph_query" in template:
@@ -307,12 +329,14 @@ class TemplateProcessor:
             result = self._process_triple_query(template["triple_query"], context)
             return result
 
-        return ""
+        result = ""
+        return result
 
     def _process_random(self, choices: list, context: dict) -> str:
         """Process random selection."""
         if not choices:
-            return ""
+            result = ""
+            return result
         choice = random.choice(choices)
         result = self.process(choice, context)
         return result
@@ -375,7 +399,8 @@ class TemplateProcessor:
                         return combined
                     return result
 
-        return ""
+        result = ""
+        return result
 
     def _process_sequence(self, sequence: list, context: dict) -> str:
         """Process sequence of templates, returning last text output."""
@@ -391,7 +416,8 @@ class TemplateProcessor:
     def _process_redirect(self, pattern: str, context: dict) -> str:
         """Process redirect (SRAI)."""
         if self._srai_depth >= self.srai_limit:
-            return ""
+            result = ""
+            return result
 
         # Substitute variables in the redirect pattern
         resolved_pattern = self._substitute_variables(pattern, context)
@@ -405,7 +431,8 @@ class TemplateProcessor:
             finally:
                 self._srai_depth -= 1
 
-        return ""
+        result = ""
+        return result
 
     def _process_think(self, items: list, context: dict) -> None:
         """Process think elements (silent, no output)."""
@@ -516,7 +543,8 @@ class TemplateProcessor:
     def _process_triple_query(self, triple_data: dict, context: dict) -> str:
         """Process triple query shorthand operation."""
         if not context["graph_fn"]:
-            return ""
+            result = ""
+            return result
 
         subject = self._substitute_variables(triple_data.get("subject", ""), context)
         predicate = triple_data.get("predicate", "")
@@ -532,7 +560,8 @@ class TemplateProcessor:
             query = TRIPLE_QUERY_SUBJECT
             params = {"object": obj, "predicate": predicate}
         else:
-            return ""
+            result = ""
+            return result
 
         try:
             records = context["graph_fn"](query, params)
@@ -541,54 +570,57 @@ class TemplateProcessor:
         if records and graph_single(records):
             value = str(graph_single(records).get("result", ""))
             return value
-        return ""
+        result = ""
+        return result
 
     def _substitute_variables(self, text: str, context: dict) -> str:
         """Substitute all variables in text."""
         result = text
 
         # Star captures: {star1}, {star2}, etc.
-        result = self.STAR_PATTERN.sub(lambda m: get_star(context, int(m.group(1))), result)
+        result = star_pattern.sub(lambda m: get_star(context, int(m.group(1))), result)
 
         # Thatstar captures: {thatstar1}, etc.
-        result = self.THATSTAR_PATTERN.sub(lambda m: get_thatstar(context, int(m.group(1))), result)
+        result = thatstar_pattern.sub(lambda m: get_thatstar(context, int(m.group(1))), result)
 
         # Topicstar captures: {topicstar1}, etc.
-        result = self.TOPICSTAR_PATTERN.sub(lambda m: get_topicstar(context, int(m.group(1))), result)
+        result = topicstar_pattern.sub(lambda m: get_topicstar(context, int(m.group(1))), result)
 
         # Get predicates: {get:name} or {get:name:default}
-        result = self.GET_PATTERN.sub(lambda m: context["predicates"].get(m.group(1), m.group(2) or ""), result)
+        result = get_pattern.sub(lambda m: context["predicates"].get(m.group(1), m.group(2) or ""), result)
 
         # Bot properties: {bot:name}
-        result = self.BOT_PATTERN.sub(lambda m: context["bot"].get(m.group(1), ""), result)
+        result = bot_pattern.sub(lambda m: context["bot"].get(m.group(1), ""), result)
 
         # Map lookups: {map:name:key} or {map:name:key:default}
-        result = self.MAP_PATTERN.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
+        result = map_pattern.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
 
         # Input history: {input:N} (bare {input} is the current input, below)
-        result = self.INPUT_PATTERN.sub(lambda m: get_input(context, int(m.group(1))), result)
+        result = input_pattern.sub(lambda m: get_input(context, int(m.group(1))), result)
 
         # Response history: {response} or {response:N}
-        result = self.RESPONSE_PATTERN.sub(lambda m: get_response(context, int(m.group(1)) if m.group(1) else 1), result)
+        result = response_pattern.sub(lambda m: get_response(context, int(m.group(1)) if m.group(1) else 1), result)
 
         # That history: {that} or {that:M} or {that:M:N}
         def that_sub(m):
             if not m.group(1):
                 # Get most recent bot response
                 if context["that_history"] and context["that_history"][0]:
-                    return context["that_history"][0][0]
-                return ""
+                    result = context["that_history"][0][0]
+                    return result
+                result = ""
+                return result
             resp_idx = int(m.group(1))
             sent_idx = int(m.group(2)) if m.group(2) else 1
             that_value = get_that(context, resp_idx, sent_idx)
             return that_value
 
-        result = self.THAT_PATTERN.sub(that_sub, result)
+        result = that_pattern.sub(that_sub, result)
 
         # Simple variables
-        for pattern, fn in self.SIMPLE_VARS.items():
+        for pattern, value in simple_variable_values(context).items():
             if pattern in result:
-                result = result.replace(pattern, fn(context))
+                result = result.replace(pattern, value)
 
         # Formatted date: {date:format}
         def date_format_sub(m):
@@ -600,7 +632,7 @@ class TemplateProcessor:
                 original = m.group(0)  # Return original if invalid format
                 return original
 
-        result = self.DATE_FORMAT_PATTERN.sub(date_format_sub, result)
+        result = date_format_pattern.sub(date_format_sub, result)
 
         # Text transforms: {upper:...}, {lower:...}, etc.
         result = self._apply_transforms(result, context)
@@ -633,13 +665,13 @@ class TemplateProcessor:
                 transformed = resolved.capitalize()
                 return transformed
             elif fn_name == "person":
-                transformed = self._apply_substitution(resolved, context["person_subs"])
+                transformed = apply_word_substitution(resolved, context["person_subs"])
                 return transformed
             elif fn_name == "person2":
-                transformed = self._apply_substitution(resolved, context["person2_subs"])
+                transformed = apply_word_substitution(resolved, context["person2_subs"])
                 return transformed
             elif fn_name == "gender":
-                transformed = self._apply_substitution(resolved, context["gender_subs"])
+                transformed = apply_word_substitution(resolved, context["gender_subs"])
                 return transformed
             elif fn_name == "normalize":
                 transformed = resolved.upper()
@@ -686,34 +718,12 @@ class TemplateProcessor:
 
         # Keep applying until no more transforms
         while True:
-            transformed_text = self.TRANSFORM_PATTERN.sub(transform, text)
+            transformed_text = transform_pattern.sub(transform, text)
             if transformed_text == text:
                 break
             text = transformed_text
 
         return text
-
-    def _apply_substitution(self, text: str, subs: dict[str, str]) -> str:
-        """Apply word-by-word substitution."""
-        if not subs:
-            return text
-
-        words = text.split()
-        result = []
-        for word in words:
-            lower = word.lower()
-            if lower in subs:
-                # Preserve case
-                replacement = subs[lower]
-                if word.isupper():
-                    replacement = replacement.upper()
-                elif word[0].isupper():
-                    replacement = replacement.capitalize()
-                result.append(replacement)
-            else:
-                result.append(word)
-        joined = " ".join(result)
-        return joined
 
 
 def parse_template(data):

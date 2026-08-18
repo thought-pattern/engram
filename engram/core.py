@@ -14,6 +14,20 @@ from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import (
     CONFLICTING_FACT_RESPONSES,
+    DIALOGUE_ACKNOWLEDGMENT,
+    DIALOGUE_CLOSING,
+    DIALOGUE_COMMAND,
+    DIALOGUE_EMOTION,
+    DIALOGUE_FACT,
+    DIALOGUE_GRATITUDE,
+    DIALOGUE_GREETING,
+    DIALOGUE_OPINION,
+    DIALOGUE_QUESTION,
+    DIALOGUE_SELF_INTRODUCTION,
+    DIALOGUE_TOPIC_SHIFT,
+    EMPTY_CONFIG,
+    GRAPH_ENTITY_FACTS_QUERY,
+    GRAPH_KEYWORD_FACTS_QUERY,
     KIND_STATEMENT,
     KNOWN_FACT_RESPONSES,
     LEARNED_ACKNOWLEDGMENTS,
@@ -27,17 +41,6 @@ from engram.constants import (
     Tier,
 )
 from engram.dialogue import (
-    DIALOGUE_ACKNOWLEDGMENT,
-    DIALOGUE_CLOSING,
-    DIALOGUE_COMMAND,
-    DIALOGUE_EMOTION,
-    DIALOGUE_FACT,
-    DIALOGUE_GRATITUDE,
-    DIALOGUE_GREETING,
-    DIALOGUE_OPINION,
-    DIALOGUE_QUESTION,
-    DIALOGUE_SELF_INTRODUCTION,
-    DIALOGUE_TOPIC_SHIFT,
     classify_dialogue_act,
     contextual_fallback_options,
     conversational_fact_admission,
@@ -52,9 +55,17 @@ from engram.dialogue import (
     topic_is_referenced,
 )
 from engram.eligibility import NamespaceEpochState
+from engram.errors import InvalidRequestError
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
-from engram.graph import ClaimProjection, ClaimProjectionQuery, create_graph_client, is_write_cypher
+from engram.graph import (
+    ClaimProjection,
+    ClaimProjectionQuery,
+    claim_projection_to_dict,
+    create_graph_client,
+    is_write_cypher,
+    validate_claim_projection,
+)
 from engram.identity import ScopedRetrievalKey
 from engram.indexes import (
     MAX_INDEX_SUPPORT_SCAN_EDGES,
@@ -65,7 +76,11 @@ from engram.indexes import (
     IndexRepairResult,
     IndexState,
     SupportLookupResult,
+    index_state_exact_lookup,
+    index_state_support_lookup,
+    index_state_support_scan_plan,
     projection_from_statement,
+    validate_index_projection,
 )
 from engram.models import (
     keyword_entry,
@@ -101,7 +116,6 @@ from engram.text import (
 )
 
 logger = logging.getLogger(__name__)
-EMPTY_CONFIG: dict = {}
 
 
 def _run_cooperative_check(check=()) -> None:
@@ -116,22 +130,29 @@ def _estimate_working_bytes(value: object, seen=()) -> int:
     """Return a conservative, bounded-size estimate for resolution working data."""
     visited = seen if isinstance(seen, set) else set()
     if isinstance(value, str):
-        return len(value.encode("utf-8")) + 49
+        result = len(value.encode("utf-8")) + 49
+        return result
     if isinstance(value, bytes):
-        return len(value) + 33
+        result = len(value) + 33
+        return result
     if isinstance(value, (bool, int, float)):
-        return 32
+        result = 32
+        return result
     identity = id(value)
     if identity in visited:
-        return 0
+        result = 0
+        return result
     visited.add(identity)
     if isinstance(value, dict):
-        return 64 + sum(
+        result = 64 + sum(
             _estimate_working_bytes(key, visited) + _estimate_working_bytes(item, visited) for key, item in value.items()
         )
+        return result
     if isinstance(value, (list, tuple, set, frozenset)):
-        return 64 + sum(_estimate_working_bytes(item, visited) for item in value)
-    return len(str(value).encode("utf-8")) + 64
+        result = 64 + sum(_estimate_working_bytes(item, visited) for item in value)
+        return result
+    result = len(str(value).encode("utf-8")) + 64
+    return result
 
 
 def _require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
@@ -142,13 +163,15 @@ def _require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
 
 def _reports_repetition(text: str) -> bool:
     normalized_text = normalize(text)
-    return any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
+    result = any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
+    return result
 
 
 def _response_repeats(candidate: str, recent_responses: list[str], *, allow_similarity: bool = True) -> bool:
     normalized_candidate = normalize(candidate)
     if not normalized_candidate:
-        return False
+        result = False
+        return result
     for recent in recent_responses:
         normalized_recent = normalize(recent)
         if normalized_recent and (
@@ -159,61 +182,55 @@ def _response_repeats(candidate: str, recent_responses: list[str], *, allow_simi
                 >= RESPONSE_SIMILARITY_THRESHOLD
             )
         ):
-            return True
-    return False
+            result = True
+            return result
+    result = False
+    return result
 
 
 def _input_repeats(candidate: str, recent_inputs: list[str]) -> bool:
     normalized_candidate = normalize(candidate)
-    return bool(normalized_candidate and any(normalized_candidate == normalize(recent_input) for recent_input in recent_inputs))
+    result = bool(normalized_candidate and any(normalized_candidate == normalize(recent_input) for recent_input in recent_inputs))
+    return result
 
 
 def _pattern_has_wildcard(pattern: str) -> bool:
-    return any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
+    result = any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
+    return result
 
 
 def _response_cache_scope(template) -> tuple[str, str]:
     """Return the caller-owned namespace and context attached to a response."""
     if not isinstance(template, dict):
-        return "", ""
+        result = "", ""
+        return result
     tapestry_metadata = template.get("tapestry")
     if not isinstance(tapestry_metadata, dict):
-        return "", ""
+        result = "", ""
+        return result
     namespace = tapestry_metadata.get("namespace", "")
     context_fingerprint = tapestry_metadata.get("context_fingerprint", "")
-    return str(namespace), str(context_fingerprint)
+    result = str(namespace), str(context_fingerprint)
+    return result
 
 
-# Canonical-graph recall queries. Claims link to canonical Entity/Predicate
-# nodes by edge; the surface triple is read from the denormalized projection on
-# the Claim node (subject/predicate/object), never matched on. See schema.cypher.
-GRAPH_ENTITY_FACTS_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(proof_subject:Entity) "
-    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
-    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
-    "MATCH (c)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
-    "WHERE (toLower(e.primary_label) = toLower($name) "
-    "OR toLower($name) IN [a IN e.aliases | toLower(a)] "
-    "OR toLower(rel.surface_form) = toLower($name)) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND proof_predicate.canonical_id <> 'generic_relation' "
-    "AND coalesce(c.predicate_canonical, true) = true "
-    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
-    "LIMIT 5"
-)
-GRAPH_KEYWORD_FACTS_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) "
-    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
-    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
-    "WHERE toLower(e.primary_label) CONTAINS toLower($keyword) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND proof_predicate.canonical_id <> 'generic_relation' "
-    "AND coalesce(c.predicate_canonical, true) = true "
-    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
-    "LIMIT 3"
-)
+def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
+    """Turn canonical graph rows into complete fact tuples."""
+    facts = []
+    for record in records:
+        subject = record.get("subject", "")
+        predicate = record.get("predicate", "")
+        obj = record.get("object", "")
+        if subject and predicate and obj:
+            facts.append((subject, predicate, obj))
+    result = facts
+    return result
+
+
+def format_graph_facts(facts: list[tuple[str, str, str]]) -> str:
+    """Phrase graph fact tuples as natural-language sentences."""
+    result = phrase_facts(facts)
+    return result
 
 
 class Engram:
@@ -311,7 +328,8 @@ class Engram:
     @property
     def graph_client(self):
         """Return the graph client created during Engram initialization."""
-        return self._graph_client
+        result = self._graph_client
+        return result
 
     def preflight_components(self) -> dict:
         """Verify every enabled external or model-backed component before serving."""
@@ -338,7 +356,7 @@ class Engram:
         if spacy_phrasing_enabled and not get_nlp(disable=("parser", "ner")):
             raise RuntimeError("enabled graph phrasing requires the pre-provisioned spaCy English model")
 
-        return {
+        result = {
             "nltk": {"enabled": True, "ready": True},
             "graph": {"enabled": graph_enabled, "ready": graph_enabled},
             "vector": {"enabled": vector_enabled, "ready": vector_enabled},
@@ -347,6 +365,7 @@ class Engram:
                 "ready": spacy_full_enabled or spacy_phrasing_enabled,
             },
         }
+        return result
 
     def graph_query(self, cypher: str, params=()) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
@@ -365,13 +384,15 @@ class Engram:
 
         client = self.graph_client
         if not client:
-            return []
+            result = []
+            return result
         try:
             records = client.execute_read(cypher, params)
             return records
         except RuntimeError as err:
             logger.debug("Graph query failed: %s", err)
-            return []
+            result = []
+            return result
 
     def graph_read_fn(self, cypher: str, params=()) -> list:
         """Read-only graph callback for template operations.
@@ -379,7 +400,8 @@ class Engram:
         Both this callback and the underlying connection reject mutating
         Cypher. The duplicated boundary keeps custom graph clients read-only.
         """
-        return self.graph_query(cypher, params)
+        result = self.graph_query(cypher, params)
+        return result
 
     def _load_graph_embedding_model(self) -> None:
         """Load the configured local embedding model during initialization."""
@@ -425,10 +447,12 @@ class Engram:
         graph_config = self.config.get("graph") or {}
         client = self.graph_client
         if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
-            return []
+            result = []
+            return result
         search = getattr(client, "vector_search_claims", ())
         if not callable(search):
-            return []
+            result = []
+            return result
         try:
             embedding = self._encode_graph_query(text)
             rows = search(
@@ -437,10 +461,12 @@ class Engram:
                 limit=(max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])),
                 min_similarity=float(graph_config["vector_min_similarity"]),
             )
-            return rows if isinstance(rows, list) else []
+            result = rows if isinstance(rows, list) else []
+            return result
         except Exception as err:
             logger.warning("Vector graph recall unavailable; using keyword fallback: %s", err)
-            return []
+            result = []
+            return result
 
     def graph_vector_claim_projections(
         self,
@@ -454,10 +480,12 @@ class Engram:
         graph_config = self.config.get("graph") or {}
         client = self.graph_client
         if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
-            return []
+            result = []
+            return result
         search = getattr(client, "vector_search_claim_projections", ())
         if not callable(search):
-            return []
+            result = []
+            return result
         try:
             _run_cooperative_check(cooperative_check)
             embedding = self._encode_graph_query(text)
@@ -470,14 +498,16 @@ class Engram:
                 limit=row_limit,
                 min_similarity=float(graph_config["vector_min_similarity"]),
             )
-            if not isinstance(rows, list) or len(rows) > row_limit or not all(isinstance(row, ClaimProjection) for row in rows):
+            if not isinstance(rows, list) or len(rows) > row_limit:
                 raise ValueError("vector Claim projection boundary returned an invalid collection")
+            validated_rows = [validate_claim_projection(row) for row in rows]
             _require_working_memory(
-                _estimate_working_bytes(embedding) + _estimate_working_bytes([row.to_dict() for row in rows]),
+                _estimate_working_bytes(embedding)
+                + _estimate_working_bytes([claim_projection_to_dict(row) for row in validated_rows]),
                 max_working_memory_bytes,
             )
             _run_cooperative_check(cooperative_check)
-            return rows
+            return validated_rows
         except (TimeoutError, MemoryError):
             raise
         except Exception as err:
@@ -485,18 +515,21 @@ class Engram:
                 "Vector Claim projection unavailable; omitting response-less evidence (%s)",
                 type(err).__name__,
             )
-            return []
+            result = []
+            return result
 
     def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
         """Re-read one canonical Claim through the fixed by-ID capability."""
         client = self.graph_client
         lookup = getattr(client, "claim_projection_by_id", ())
         if not client or not callable(lookup):
-            return ()
+            result = ()
+            return result
         rows = lookup(claim_id)
-        if not isinstance(rows, list) or len(rows) > 1 or not all(isinstance(row, ClaimProjection) for row in rows):
+        if not isinstance(rows, list) or len(rows) > 1:
             raise ValueError("Claim projection revalidation boundary returned an invalid collection")
-        return tuple(rows)
+        result = tuple(validate_claim_projection(row) for row in rows)
+        return result
 
     def warm_vector_recall(self) -> bool:
         """Load the query model and verify the configured graph ANN path.
@@ -507,7 +540,8 @@ class Engram:
         """
         graph_config = self.config.get("graph") or {}
         if not graph_config.get("vector_enabled"):
-            return False
+            result = False
+            return result
         client = self.graph_client
         search = getattr(client, "vector_search_claims", ())
         if not client or not callable(search):
@@ -521,99 +555,101 @@ class Engram:
         )
         if getattr(client, "available", True) is False:
             raise RuntimeError("configured MemGraph service is unavailable")
-        return True
-
-    @staticmethod
-    def _statement_support_ids(statement: dict) -> set[str]:
-        template = statement.get("template")
-        if not isinstance(template, dict):
-            return set()
-        metadata = template.get("tapestry")
-        if not isinstance(metadata, dict):
-            return set()
-        support = metadata.get("support")
-        if not isinstance(support, list):
-            return set()
-        return {
-            str(reference.get("claim_id"))
-            for reference in support
-            if isinstance(reference, dict) and str(reference.get("claim_id") or "").strip()
-        }
+        result = True
+        return result
 
     def index_snapshot(self) -> IndexState:
         """Return the currently visible immutable index state."""
-        return self._index_owner.snapshot()
+        result = self._index_owner.snapshot()
+        return result
 
     def exact_lookup(self, key: ScopedRetrievalKey) -> ExactLookupResult:
         """Look up one scoped exact key against a single immutable snapshot."""
-        return self.index_snapshot().exact_lookup(key)
+        state = self.index_snapshot()
+        result = index_state_exact_lookup(state, key)
+        return result
 
     def support_lookup(self, claim_ids: tuple[str, ...]) -> SupportLookupResult:
         """Find statements supported by the supplied matched Claim IDs."""
-        return self.index_snapshot().support_lookup(claim_ids)
+        state = self.index_snapshot()
+        result = index_state_support_lookup(state, claim_ids)
+        return result
 
     def check_indexes(self) -> IndexCheckReport:
         """Compare live indexes with projections from current statements."""
         with self.mutation_lock:
             with self.statement_lock:
                 sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
-            return self._index_owner.check_against(sources)
+            result = self._index_owner.check_against(sources)
+            return result
 
     def check_index_projections(self, projections) -> IndexCheckReport:
         """Compare live indexes with one explicit projection set, including empty."""
-        return self._index_owner.check_against(tuple(projections))
+        result = self._index_owner.check_against(tuple(projections))
+        return result
 
     def repair_indexes(self, *, dry_run: bool = True) -> IndexRepairResult:
         """Repair indexes from current authoritative statements."""
         with self.mutation_lock, self.statement_lock:
             sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
-            return self._index_owner.repair(sources, dry_run=dry_run)
+            result = self._index_owner.repair(sources, dry_run=dry_run)
+            return result
 
     def repair_index_projections(self, projections, *, dry_run: bool = True) -> IndexRepairResult:
         """Repair indexes from one explicit projection set, including empty."""
         with self.mutation_lock:
-            return self._index_owner.repair(tuple(projections), dry_run=dry_run)
+            result = self._index_owner.repair(tuple(projections), dry_run=dry_run)
+            return result
 
     def rebuild_indexes(self, *, apply: bool = False) -> IndexRepairResult:
         """Alias current-statement repair with rebuild-oriented wording."""
         if not isinstance(apply, bool):
             raise ValueError("index rebuild apply must be a boolean")
-        return self.repair_indexes(dry_run=not apply)
+        result = self.repair_indexes(dry_run=not apply)
+        return result
 
     def add_index_projection(self, projection: IndexProjection) -> IndexState:
         """Atomically add one generic index projection."""
-        if not isinstance(projection, IndexProjection):
-            raise ValueError("projection must be an IndexProjection")
+        try:
+            validated_projection = validate_index_projection(projection)
+        except InvalidRequestError as error:
+            raise ValueError("projection must be an IndexProjection") from error
         with self.mutation_lock:
-            return self._index_owner.add(projection)
+            result = self._index_owner.add(validated_projection)
+            return result
 
     def replace_index_projection(self, projection: IndexProjection) -> IndexState:
         """Atomically replace one generic index projection."""
-        if not isinstance(projection, IndexProjection):
-            raise ValueError("projection must be an IndexProjection")
+        try:
+            validated_projection = validate_index_projection(projection)
+        except InvalidRequestError as error:
+            raise ValueError("projection must be an IndexProjection") from error
         with self.mutation_lock:
-            return self._index_owner.replace(projection)
+            result = self._index_owner.replace(validated_projection)
+            return result
 
     def remove_index_projection(self, statement_id: str) -> IndexState:
         """Atomically remove one generic index projection."""
         with self.mutation_lock:
-            return self._index_owner.remove(statement_id)
+            result = self._index_owner.remove(statement_id)
+            return result
 
     def update_index_support(self, statement_id: str, support_claim_ids: tuple[str, ...]) -> IndexState:
         """Atomically replace only one projection's support Claim IDs."""
         with self.mutation_lock:
-            return self._index_owner.update_support(statement_id, support_claim_ids)
+            result = self._index_owner.update_support(statement_id, support_claim_ids)
+            return result
 
     def _replace_statement_index_projection(self, statement_value: dict) -> None:
         projection = projection_from_statement(statement_value)
-        if projection.statement_id in self.index_snapshot().projections:
-            self._index_owner.replace(projection)
+        if self._index_owner.has_projection(projection["statement_id"]):
+            self._index_owner.replace_in_place(projection)
         else:
-            self._index_owner.add(projection)
+            self._index_owner.add_in_place(projection)
 
     def _remove_index_projection_if_present(self, statement_id: str) -> None:
-        if statement_id in self.index_snapshot().projections:
-            self._index_owner.remove(statement_id)
+        if self._index_owner.has_projection(statement_id):
+            self._index_owner.remove_in_place(statement_id)
 
     def vector_supported_matches(
         self,
@@ -623,7 +659,7 @@ class Engram:
         statement_filter=(),
     ) -> list[tuple[dict, float]]:
         """Rank scoped cached responses through their KG support Claims."""
-        return [
+        result = [
             (match["statement"], match["retrieval_score"])
             for match in self.vector_supported_match_components(
                 text,
@@ -631,6 +667,7 @@ class Engram:
                 statement_filter=statement_filter,
             )
         ]
+        return result
 
     def vector_supported_match_components(
         self,
@@ -644,13 +681,14 @@ class Engram:
         """Return support matches with raw similarity separate from legacy ranking."""
         _run_cooperative_check(cooperative_check)
         rows = self.graph_vector_claims(text, limit=limit)
-        return self.vector_supported_claim_match_components(
+        result = self.vector_supported_claim_match_components(
             rows,
             limit=limit,
             statement_filter=statement_filter,
             cooperative_check=cooperative_check,
             max_working_memory_bytes=max_working_memory_bytes,
         )
+        return result
 
     def vector_supported_claim_match_components(
         self,
@@ -665,7 +703,7 @@ class Engram:
         _run_cooperative_check(cooperative_check)
         _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
         support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
-        return self._vector_supported_match_components_from_scores(
+        result = self._vector_supported_match_components_from_scores(
             support_scores,
             source_working_bytes=_estimate_working_bytes(rows),
             limit=limit,
@@ -673,6 +711,7 @@ class Engram:
             cooperative_check=cooperative_check,
             max_working_memory_bytes=max_working_memory_bytes,
         )
+        return result
 
     def _vector_supported_match_components_from_scores(
         self,
@@ -685,28 +724,31 @@ class Engram:
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
         if not support_scores:
-            return []
+            result = []
+            return result
         graph_settings = self.config.get("graph") or {}
         vector_weight = float(graph_settings["vector_weight"])
         scan_limit = int(graph_settings.get("vector_support_scan_limit", MAX_INDEX_SUPPORT_SCAN_EDGES))
         state = self.index_snapshot()
-        scan_plan = state.support_scan_plan(tuple(support_scores), scan_limit)
-        if not scan_plan.complete:
+        scan_plan = index_state_support_scan_plan(state, tuple(support_scores), scan_limit)
+        if not scan_plan["complete"]:
             logger.warning(
                 "vector_support_scan_incomplete: matched support fan-out %s exceeds configured limit %s; abstaining",
-                scan_plan.edge_count,
-                scan_plan.scan_limit,
+                scan_plan["edge_count"],
+                scan_plan["scan_limit"],
             )
-            return []
+            result = []
+            return result
         if limit < 1:
-            return []
+            result = []
+            return result
         scored: list[tuple[float, int, dict]] = []
         scored_bytes = 64
         seen_statement_ids = set()
         retained_bytes = source_working_bytes + _estimate_working_bytes(support_scores)
         with self.statement_lock:
-            for claim_id in scan_plan.queried_claim_ids:
-                for statement_id in state.claim_to_statements.get(claim_id, ()):
+            for claim_id in scan_plan["queried_claim_ids"]:
+                for statement_id in state["claim_to_statements"].get(claim_id, ()):
                     _run_cooperative_check(cooperative_check)
                     if statement_id in seen_statement_ids:
                         continue
@@ -721,7 +763,7 @@ class Engram:
                         continue
                     similarities = [
                         support_scores[support_id]
-                        for support_id in state.statement_to_claims.get(statement_id, ())
+                        for support_id in state["statement_to_claims"].get(statement_id, ())
                         if support_id in support_scores
                     ]
                     if not similarities:
@@ -748,7 +790,8 @@ class Engram:
                     _require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         _run_cooperative_check(cooperative_check)
-        return [components for _, _, components in scored]
+        result = [components for _, _, components in scored]
+        return result
 
     def graph_lookup(self, text: str) -> str:
         """Look up information in the knowledge graph based on input text.
@@ -764,7 +807,8 @@ class Engram:
         """
         client = self.graph_client
         if not client:
-            return ""
+            result = ""
+            return result
 
         # Extract entities from the input
         entities = extract_entities(text)
@@ -774,16 +818,18 @@ class Engram:
             # claims it is the subject of.
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             if not keywords:
-                return ""
+                result = ""
+                return result
             facts = []
             for kw in keywords[:3]:  # Limit to top 3 keywords
                 records = self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": kw})
-                facts.extend(self._records_to_facts(records))
+                facts.extend(graph_records_to_facts(records))
             if facts:
-                formatted = self._format_graph_facts(facts)
+                formatted = format_graph_facts(facts)
                 return formatted
-            vector_facts = self._records_to_facts(self.graph_vector_claims(text, limit=5))
-            return self._format_graph_facts(vector_facts) if vector_facts else ""
+            vector_facts = graph_records_to_facts(self.graph_vector_claims(text, limit=5))
+            result = format_graph_facts(vector_facts) if vector_facts else ""
+            return result
 
         # Query the canonical graph for each entity. The Claim node carries the
         # rendered subject/predicate/object projection, so one query covers the
@@ -791,41 +837,15 @@ class Engram:
         facts = []
         for entity in entities:
             records = self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]})
-            facts.extend(self._records_to_facts(records))
+            facts.extend(graph_records_to_facts(records))
 
         if facts:
             # Format facts as natural language
-            formatted = self._format_graph_facts(facts)
+            formatted = format_graph_facts(facts)
             return formatted
-        vector_facts = self._records_to_facts(self.graph_vector_claims(text, limit=5))
-        return self._format_graph_facts(vector_facts) if vector_facts else ""
-
-    def _records_to_facts(self, records: list) -> list:
-        """Turn canonical claim-projection rows into (subject, predicate, object) tuples."""
-        facts = []
-        for record in records:
-            subj = record.get("subject", "")
-            pred = record.get("predicate", "")
-            obj = record.get("object", "")
-            if subj and pred and obj:
-                facts.append((subj, pred, obj))
-        return facts
-
-    def _format_graph_facts(self, facts: list[tuple[str, str, str]]) -> str:
-        """Phrase graph facts as friendly natural-language sentences.
-
-        Delegates to `phrasing.phrase_facts`, which picks a grammatical
-        frame per predicate (copula / passive / possessive / active) from
-        spaCy morphology, so a recalled triple reads as a sentence rather
-        than the wooden `subject slug object` projection.
-
-        Args:
-            facts: List of (subject, predicate, object) tuples.
-
-        Returns:
-            Natural language string ("" when there are no facts).
-        """
-        return phrase_facts(facts)
+        vector_facts = graph_records_to_facts(self.graph_vector_claims(text, limit=5))
+        result = format_graph_facts(vector_facts) if vector_facts else ""
+        return result
 
     def learn_from_response(
         self,
@@ -905,7 +925,8 @@ class Engram:
                         stmt["query_count"] = 0
                         stmt["last_hit"] = ""
                         self._replace_statement_index_projection(stmt)
-                        return stmt["id"]
+                        result = stmt["id"]
+                        return result
 
         stmt_id = self.store(
             text=response,
@@ -1034,9 +1055,10 @@ class Engram:
                 if kw not in self.keywords:
                     self.keywords[kw] = keyword_entry(keyword=kw)
                 self.keywords[kw]["statement_ids"].add(stmt["id"])
-            self._index_owner.add(index_projection)
+            self._index_owner.add_in_place(index_projection)
 
-        return stmt["id"]
+        result = stmt["id"]
+        return result
 
     def query_candidates(
         self,
@@ -1261,7 +1283,8 @@ class Engram:
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
         if not row_limit or not self.graph_client:
-            return []
+            result = []
+            return result
         _run_cooperative_check(cooperative_check)
         rows = []
         entities = extract_entities(text)
@@ -1282,7 +1305,8 @@ class Engram:
                 _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
                 if len(rows) >= row_limit:
                     break
-        return [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
+        result = [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
+        return result
 
     def structured_claim_projections(
         self,
@@ -1304,7 +1328,8 @@ class Engram:
         client = self.graph_client
         search = getattr(client, "structured_claim_projections", ())
         if not row_limit or not client or not callable(search):
-            return []
+            result = []
+            return result
         _run_cooperative_check(cooperative_check)
         requests: list[tuple[ClaimProjectionQuery, str]] = []
         entities = extract_entities(text)
@@ -1326,18 +1351,21 @@ class Engram:
             if not remaining:
                 break
             rows = search(value, projection_id=projection_id, limit=remaining)
-            if not isinstance(rows, list) or len(rows) > remaining or not all(isinstance(row, ClaimProjection) for row in rows):
+            if not isinstance(rows, list) or len(rows) > remaining:
                 raise ValueError("structured Claim projection boundary returned an invalid collection")
-            for row in rows:
-                if row.claim_id in retained and retained[row.claim_id] != row:
-                    raise ValueError(f"conflicting structured Claim projections for Claim ID: {row.claim_id}")
-                retained[row.claim_id] = row
+            validated_rows = [validate_claim_projection(row) for row in rows]
+            for row in validated_rows:
+                claim_id = row["claim_id"]
+                if claim_id in retained and retained[claim_id] != row:
+                    raise ValueError(f"conflicting structured Claim projections for Claim ID: {claim_id}")
+                retained[claim_id] = row
             _run_cooperative_check(cooperative_check)
             _require_working_memory(
-                _estimate_working_bytes([projection.to_dict() for projection in retained.values()]),
+                _estimate_working_bytes([claim_projection_to_dict(projection) for projection in retained.values()]),
                 max_working_memory_bytes,
             )
-        return [retained[claim_id] for claim_id in sorted(retained)]
+        result = [retained[claim_id] for claim_id in sorted(retained)]
+        return result
 
     def query(
         self,
@@ -1412,11 +1440,12 @@ class Engram:
             with self.statement_lock:
                 for statement_value, _ in discovery["matches"]:
                     record_statement_query(statement_value)
-        return query_result(
+        result = query_result(
             matches=discovery["matches"],
             keywords=keywords,
             resolved_query=discovery["resolved_query"],
         )
+        return result
 
     def pattern_query(
         self,
@@ -1466,7 +1495,8 @@ class Engram:
             sentences = [processed_text] if processed_text.strip() else []
 
         if not sentences:
-            return ()
+            result = ()
+            return result
 
         # Get session if provided
         session = {}
@@ -1686,7 +1716,8 @@ class Engram:
                 with self.session_lock:
                     session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
                     session_record_input(session, text)
-            return ()
+            result = ()
+            return result
 
         # Low-level pattern callers retain AIML-style multi-sentence
         # composition. Conversational callers select one response from the
@@ -1940,7 +1971,8 @@ class Engram:
                         template_to_process = redirect_stmt["template"] or redirect_stmt["text"]
                         redirect_response = self.template_processor.process(template_to_process, new_context)
                         return redirect_response
-            return ""
+            result = ""
+            return result
 
         context["redirect_fn"] = redirect_fn
 
@@ -2038,7 +2070,8 @@ class Engram:
             for stmt in self.statements:
                 if stmt["pattern"] == subject_pattern:
                     # Already know this - don't overwrite
-                    return False
+                    result = False
+                    return result
 
             # Store one fact statement with alternate retrieval patterns.
             # Aliases live in the matcher and map to this one statement, so a
@@ -2063,7 +2096,8 @@ class Engram:
                 source_label=source_label,
             )
 
-        return True
+        result = True
+        return result
 
     def add_fact(
         self,
@@ -2098,20 +2132,23 @@ class Engram:
                     tier=tier,
                 )
             with self.statement_lock:
-                return self.pattern_to_statement.get(primary_pattern, "")
+                result = self.pattern_to_statement.get(primary_pattern, "")
+                return result
 
         normalized_text = normalize(fact_text)
         with self.statement_lock:
             for stmt in self.statements:
                 if not stmt["pattern"] and normalize(stmt["text"]) == normalized_text:
-                    return stmt["id"]
+                    result = stmt["id"]
+                    return result
 
-        return self.store(
+        result = self.store(
             text=fact_text,
             tier=tier,
             introduced_by_user_id="",
             source_label=source_label,
         )
+        return result
 
     def get_statement(self, statement_id: str) -> dict:
         """Get a statement by ID.
@@ -2124,8 +2161,10 @@ class Engram:
         """
         with self.statement_lock:
             if statement_id in self.statement_index:
-                return self.statements[self.statement_index[statement_id]]
-        return {}
+                result = self.statements[self.statement_index[statement_id]]
+                return result
+        result = {}
+        return result
 
     def retire_statement(self, statement_id: str) -> bool:
         """Remove a statement from the store by id.
@@ -2144,8 +2183,10 @@ class Engram:
         """
         with self.mutation_lock, self.statement_lock:
             if statement_id not in self.statement_index:
-                return False
-            return eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
+                result = False
+                return result
+            result = eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
+            return result
 
     # =========================================================================
     # Initialization Patterns
@@ -2264,47 +2305,22 @@ class Engram:
         result = {"added": added, "updated": updated, "unchanged": unchanged, "pruned": pruned}
         return result
 
-    @classmethod
-    def fork(
-        cls,
-        parent: "Engram",
-        static_corpus=(),
-        config=(),
-    ) -> "Engram":
-        """Create a new ENGRAM forked from a parent.
 
-        The child gets the parent's DYNAMIC statements copied in full (text,
-        pattern, that, topic, template), a fresh STATIC corpus if one is given,
-        and a fresh session registry. Hit statistics are not inherited -- the
-        child earns its own.
-
-        Args:
-            parent: Parent ENGRAM to fork from.
-            static_corpus: Optional new static statements.
-            config: Optional configuration override.
-
-        Returns:
-            New Engram instance.
-        """
-        instance = cls(config=config or parent.config)
-
-        # Load static corpus if provided
-        if static_corpus:
-            instance.load_corpus(static_corpus, tier=Tier.STATIC)
-
-        # Copy parent's DYNAMIC statements, including their patterns and
-        # templates so scripted responses survive the fork.
-        with parent.statement_lock:
-            for stmt in parent.statements:
-                if stmt["tier"] == Tier.DYNAMIC:
-                    instance.store(
-                        stmt["text"],
-                        tier=Tier.DYNAMIC,
-                        pattern=stmt["pattern"],
-                        that=stmt["that"],
-                        topic=stmt["topic"],
-                        template=stmt["template"],
-                    )
-
-        # Fresh session registry (no inheritance)
-        return instance
+def fork_engram(parent: Engram, static_corpus=(), config=()) -> Engram:
+    """Create an ENGRAM with copied dynamic statements and fresh runtime state."""
+    instance = Engram(config=config or parent.config)
+    if static_corpus:
+        instance.load_corpus(static_corpus, tier=Tier.STATIC)
+    with parent.statement_lock:
+        for statement in parent.statements:
+            if statement["tier"] == Tier.DYNAMIC:
+                instance.store(
+                    statement["text"],
+                    tier=Tier.DYNAMIC,
+                    pattern=statement["pattern"],
+                    that=statement["that"],
+                    topic=statement["topic"],
+                    template=statement["template"],
+                )
+    result = instance
+    return result

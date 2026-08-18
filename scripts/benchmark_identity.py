@@ -14,7 +14,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
-from engram.identity import ScopedRetrievalKey, ScopeKey, build_standalone_identity, normalize_retrieval_key
+from engram.identity import build_scoped_retrieval_key, build_standalone_identity, normalize_retrieval_key, scope_key
 
 DEFAULT_OUTPUT = REPOSITORY / "documentation" / "identity" / "remediation-benchmark-2026-08-11.json"
 REQUESTS = (
@@ -32,7 +32,8 @@ REQUESTS = (
 def _percentile(samples: list[float], fraction: float) -> float:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * fraction))))
-    return ordered[index]
+    result = ordered[index]
+    return result
 
 
 def _measure(operation: Callable[[], object], iterations: int) -> dict:
@@ -41,18 +42,19 @@ def _measure(operation: Callable[[], object], iterations: int) -> dict:
         started = time.perf_counter_ns()
         operation()
         samples.append((time.perf_counter_ns() - started) / 1_000_000)
-    return {
+    result = {
         "iterations": iterations,
         "minimum_ms": round(min(samples), 6),
         "p50_ms": round(_percentile(samples, 0.50), 6),
         "p95_ms": round(_percentile(samples, 0.95), 6),
         "maximum_ms": round(max(samples), 6),
     }
+    return result
 
 
 def run_benchmark(iterations: int, memory_objects: int) -> dict:
     sequence = [0]
-    scope = ScopeKey("benchmark", "identity-v1")
+    scope = scope_key("benchmark", "identity-v1")
 
     def next_request() -> str:
         request = REQUESTS[sequence[0] % len(REQUESTS)]
@@ -61,7 +63,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
 
     normalization = _measure(lambda: normalize_retrieval_key(next_request()), iterations)
     identity = _measure(lambda: build_standalone_identity(next_request(), scope), iterations)
-    scoped_key = _measure(lambda: ScopedRetrievalKey.build(scope, next_request()), iterations)
+    scoped_key = _measure(lambda: build_scoped_retrieval_key(scope, next_request()), iterations)
 
     tracemalloc.start()
     identities = [build_standalone_identity(REQUESTS[index % len(REQUESTS)], scope) for index in range(memory_objects)]
@@ -69,7 +71,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
     tracemalloc.stop()
     assert len(identities) == memory_objects
 
-    return {
+    result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "environment": {
@@ -91,6 +93,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
         "scoped_key": scoped_key,
         "identity_memory": {"current_bytes": current, "peak_bytes": peak},
     }
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -111,7 +114,8 @@ def main(argv: Sequence[str] = ()) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

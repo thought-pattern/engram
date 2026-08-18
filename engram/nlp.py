@@ -109,12 +109,14 @@ def is_question(text: str) -> bool:
     """
     # Ends with question mark
     if text.rstrip().endswith("?"):
-        return True
+        result = True
+        return result
 
     # Starts with question word
     first_word = text.split()[0].lower() if text.split() else ""
     if first_word in QUESTION_WORDS:
-        return True
+        result = True
+        return result
 
     # Starts with a typo'd question word: a leading token that is not a real
     # word but sits one edit from a question word ("waht", "whta") reads as a
@@ -123,11 +125,13 @@ def is_question(text: str) -> bool:
     if first_word and not is_known_word(first_word):
         for question_word in QUESTION_WORDS:
             if edit_distance(first_word, question_word, transpositions=True) <= 1:
-                return True
+                result = True
+                return result
 
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
-    return len(words) >= 2 and words[0] in COPULAS
+    result = len(words) >= 2 and words[0] in COPULAS
+    return result
 
 
 def input_kind(text: str) -> str:
@@ -156,7 +160,8 @@ def _is_command(text: str) -> bool:
 def _clean_subject(tokens: list[str]) -> str:
     """Clean subject tokens for use as pattern."""
     if not tokens:
-        return ""
+        result = ""
+        return result
 
     # Remove leading articles (a, an, the)
     while tokens and tokens[0].lower() in ("a", "an", "the"):
@@ -186,14 +191,16 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
             break
 
     if copula_idx <= 0:
-        return {}
+        result = {}
+        return result
 
     # Guardrail: a verb or modal before the copula means the copula belongs to
     # an embedded clause, not "subject is object".
     for index, (_, pos) in enumerate(tagged[:copula_idx]):
         noun_like_ing_subject = index == 0 and copula_idx == 1 and pos == "VBG"
         if (pos.startswith("VB") and not noun_like_ing_subject) or pos == "MD":
-            return {}
+            result = {}
+            return result
 
     # Extract subject (everything before copula)
     subject_tokens = tokens[:copula_idx]
@@ -206,26 +213,30 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     obj = " ".join(obj_tokens).rstrip(".")
 
     if not subject or not obj:
-        return {}
+        result = {}
+        return result
 
     subject_words = subject.split()
 
     # Guardrail: long subjects are clauses, not names of things.
     if len(subject_words) > MAX_FACT_SUBJECT_TOKENS:
-        return {}
+        result = {}
+        return result
 
     # Guardrail: a pronoun or possessive anywhere in the subject means it is
     # conversational reference, not the name of a thing -- "you all",
     # "lol that", "sorry my typing", or a bare "that".
     for word in subject_words:
         if word.lower() in PRONOUNS or word.lower() in POSSESSIVE_PRONOUNS:
-            return {}
+            result = {}
+            return result
 
     # Guardrail: a possessive in the object ("waht is your name") marks a
     # personal exchange, not a world fact worth retrieval patterns.
     for word in obj.split():
         if word.lower() in POSSESSIVE_PRONOUNS:
-            return {}
+            result = {}
+            return result
 
     normalized_original = original.rstrip(".") + "."  # Normalize punctuation
     fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
@@ -246,25 +257,30 @@ def extract_fact(text: str) -> dict:
     # Clean and normalize
     text = text.strip()
     if not text:
-        return {}
+        result = {}
+        return result
 
     # Skip questions
     if is_question(text):
-        return {}
+        result = {}
+        return result
 
     # Skip commands
     if _is_command(text):
-        return {}
+        result = {}
+        return result
 
     # Tokenize and tag
     try:
         tokens = word_tokenize(text)
         tagged = pos_tag(tokens)
     except Exception:
-        return {}
+        result = {}
+        return result
 
     if len(tokens) < 3:
-        return {}
+        result = {}
+        return result
 
     # Find copula and extract subject/object
     fact = _extract_copula_fact(tokens, tagged, text)
@@ -299,7 +315,8 @@ def extract_entities(text: str) -> list[dict]:
     _ensure_nltk_data()
 
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     try:
         tokens = word_tokenize(text)
@@ -339,7 +356,8 @@ def extract_entities(text: str) -> list[dict]:
         return entities
 
     except Exception:
-        return []
+        result = []
+        return result
 
 
 def extract_entities_by_type(text: str) -> dict[str, list[str]]:

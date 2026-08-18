@@ -17,14 +17,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from engram import metrics, pipeline, sessions
-from engram.constants import Tier
+from engram.constants import CONVERSATION_REPORT_VERSION, Tier
 from engram.text import normalize
-
-CONVERSATION_REPORT_VERSION = 1
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    result = datetime.now(UTC).isoformat()
+    return result
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
@@ -42,7 +41,7 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 
 def statement_view(statement: dict) -> dict:
     """Return the statement fields useful to conversation adapters."""
-    return {
+    result = {
         "id": statement["id"],
         "text": statement["text"],
         "pattern": statement["pattern"],
@@ -50,11 +49,12 @@ def statement_view(statement: dict) -> dict:
         "introduced_by_user_id": statement.get("introduced_by_user_id") or "",
         "source_label": statement.get("source_label", ""),
     }
+    return result
 
 
 def session_view(session: dict) -> dict:
     """Return a JSON-ready snapshot of one user conversation context."""
-    return {
+    result = {
         "session_id": session["session_id"],
         "previous_response": session["previous_response"],
         "predicates": dict(session["predicates"]),
@@ -66,6 +66,7 @@ def session_view(session: dict) -> dict:
         "response_history": list(session["response_history"]),
         "history_size": session["history_size"],
     }
+    return result
 
 
 def _predicate_changes(before: dict, after: dict) -> dict:
@@ -76,6 +77,16 @@ def _predicate_changes(before: dict, after: dict) -> dict:
         if old_value != new_value:
             changes[name] = {"before": old_value, "after": new_value}
     return changes
+
+
+def conversation_message_key(message: str) -> str:
+    """Return the meaningful normalized identity of one planned message."""
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("conversation messages must be non-empty strings")
+    key = normalize(message)
+    if not key:
+        raise ValueError("conversation messages must contain meaningful text")
+    return key
 
 
 class ConversationTurnPlanner:
@@ -104,34 +115,27 @@ class ConversationTurnPlanner:
         self._farewell = farewell
         self._sent_keys: set[str] = set()
         self._sent_messages: list[str] = []
-        self._allowed_repeat_keys = {self._message_key(message) for message in allowed_repeats or ()}
+        self._allowed_repeat_keys = {conversation_message_key(message) for message in allowed_repeats or ()}
 
-        planned_keys = [self._message_key(message) for message in planned_messages]
-        farewell_key = self._message_key(farewell)
+        planned_keys = [conversation_message_key(message) for message in planned_messages]
+        farewell_key = conversation_message_key(farewell)
         seen: set[str] = set()
         for key in [*planned_keys, farewell_key]:
             if key in seen and key not in self._allowed_repeat_keys:
                 raise ValueError("conversation plan contains an unapproved repeated input")
             seen.add(key)
 
-    @staticmethod
-    def _message_key(message: str) -> str:
-        if not isinstance(message, str) or not message.strip():
-            raise ValueError("conversation messages must be non-empty strings")
-        key = normalize(message)
-        if not key:
-            raise ValueError("conversation messages must contain meaningful text")
-        return key
-
     @property
     def turn_count(self) -> int:
         """Return how many messages the planner has issued."""
-        return len(self._sent_messages)
+        result = len(self._sent_messages)
+        return result
 
     @property
     def remaining_turns(self) -> int:
         """Return the unissued portion of the fixed turn budget."""
-        return self.total_turns - self.turn_count
+        result = self.total_turns - self.turn_count
+        return result
 
     def next_message(self, adaptive_message: str = "") -> str:
         """Issue the next unique message while preserving plan and farewell."""
@@ -150,7 +154,7 @@ class ConversationTurnPlanner:
         else:
             raise RuntimeError("conversation plan exhausted before the reserved farewell")
 
-        key = self._message_key(candidate)
+        key = conversation_message_key(candidate)
         if key in self._sent_keys and key not in self._allowed_repeat_keys:
             raise ValueError("conversation driver attempted an unapproved repeated input")
         self._sent_keys.add(key)
@@ -254,7 +258,7 @@ class ConversationRuntime:
         """Return conversation context, learned knowledge, and current metrics."""
         with self.lock:
             learned = [statement_view(statement) for statement in self.engram.statements if statement["tier"] == Tier.DYNAMIC]
-            return {
+            result = {
                 "user_id": self.user_id,
                 "turn_count": len(self.turns),
                 "initial_bot_text": self.initial_bot_text,
@@ -264,13 +268,14 @@ class ConversationRuntime:
                 "learned_unique_texts": sorted({statement["text"] for statement in learned}),
                 "latest_turn": self.turns[-1] if self.turns else {},
             }
+            return result
 
     def report(self) -> dict:
         """Build the complete machine-readable conversation report."""
         with self.lock:
             snapshot = self.inspect()
             sources = Counter(turn["source"] for turn in self.turns)
-            return {
+            result = {
                 "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
                 "finished_at": _utc_now(),
@@ -291,6 +296,7 @@ class ConversationRuntime:
                 "learned_dynamic": snapshot["learned_dynamic"],
                 "turns": list(self.turns),
             }
+            return result
 
     def write_report(self, output_prefix: str) -> dict:
         """Write JSON and Markdown reports and return their paths and summary."""
@@ -305,11 +311,12 @@ class ConversationRuntime:
         markdown_path.write_text(render_markdown(report), encoding="utf-8")
         with contextlib.suppress(OSError):
             markdown_path.chmod(0o600)
-        return {
+        result = {
             "summary": report["summary"],
             "json": str(json_path),
             "markdown": str(markdown_path),
         }
+        return result
 
     def _persist(self) -> None:
         if not self.transcript_path:
@@ -355,4 +362,5 @@ def render_markdown(report: dict) -> str:
                 "",
             ]
         )
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    return result

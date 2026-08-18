@@ -7,15 +7,27 @@ from typing import Any, cast
 import pytest
 
 from engram import persistence
-from engram.artifacts import ArtifactProvenance, ArtifactStatistics, CachedResponseArtifact, LifecycleState
+from engram.artifacts import (
+    CachedResponseArtifact,
+    LifecycleState,
+    artifact_provenance,
+    artifact_statistics,
+    cached_response_artifact,
+)
 from engram.constants import EvictionPolicy, Tier
-from engram.coordination import AtomicMutationCoordinator, CheckpointFailureError, CheckpointFailureKind
+from engram.coordination import (
+    AtomicMutationCoordinator,
+    CheckpointFailureError,
+    CheckpointFailureKind,
+    coordinated_response_state_durable_signature,
+    coordinated_response_state_signature,
+)
 from engram.core import Engram
 from engram.eligibility import NamespaceEpochState
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
-from engram.mutations import MutationReceiptLedger, MutationResultCode, ReceiptLookupOutcome
-from engram.repository import ArtifactRepository, TierAdmissionPolicy
+from engram.identity import build_retrieval_representation, build_standalone_identity, retrieval_representation_bindings, scope_key
+from engram.mutations import MutationReceiptLedger, MutationResultCode, ReceiptLookupOutcome, mutation_receipt_to_dict
+from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.responses import (
     AcceptedResponseService,
     LifecycleMutationReason,
@@ -36,9 +48,9 @@ def artifact(
     generation: int = 1,
     statistics=(),
 ) -> CachedResponseArtifact:
-    scope = ScopeKey(namespace=namespace)
-    artifact_statistics = statistics if isinstance(statistics, ArtifactStatistics) else ArtifactStatistics()
-    return CachedResponseArtifact(
+    scope = scope_key(namespace=namespace)
+    selected_statistics = statistics if isinstance(statistics, Mapping) and statistics else artifact_statistics()
+    result = cached_response_artifact(
         statement_id=statement_id,
         generation=generation,
         response=response,
@@ -55,10 +67,11 @@ def artifact(
         knowledge_epoch=0,
         knowledge_epoch_available=False,
         superseded_by="",
-        provenance=ArtifactProvenance("test", "caller-a", "2026-08-12T16:00:00Z"),
-        statistics=artifact_statistics,
+        provenance=artifact_provenance("test", "caller-a", "2026-08-12T16:00:00Z"),
+        statistics=selected_statistics,
         metadata={"approved": True},
     )
+    return result
 
 
 def service(
@@ -77,11 +90,12 @@ def service(
         checkpoint_configured=checkpoint_configured,
         checkpoint=checkpoints.append if checkpoint_configured else lambda _state: None,
     )
-    return AcceptedResponseService(
+    result = AcceptedResponseService(
         coordinator,
-        TierAdmissionPolicy(capacity, EvictionPolicy.FIFO, protected_rate),
+        tier_admission_policy(capacity, EvictionPolicy.FIFO, protected_rate),
         clock=lambda: "2026-08-12T18:00:00Z",
     )
+    return result
 
 
 def object_mapping(value: object) -> Mapping[str, object]:
@@ -96,14 +110,18 @@ def test_base_commit_preserves_exact_unicode_and_publishes_complete_state() -> N
     result = command.commit_response(accepted, "request-1")
 
     assert isinstance(result, dict)
-    assert result["receipt"].result_code == MutationResultCode.CREATED
+    assert result["receipt"]["result_code"] == MutationResultCode.CREATED
     assert result["replayed"] is False
     assert result["checkpoint_count"] == 0
     state = command.coordinator.snapshot()
-    assert state.repository.artifacts["stmt-1"].response == accepted.response
-    assert state.repository.statements["stmt-1"]["text"] == accepted.response
-    assert state.repository.index_state.statement_to_retrieval["stmt-1"] == accepted.retrieval.bindings(accepted.scope)
-    assert object_mapping(state.namespace_epochs["epochs"])["tenant-a"] == 1
+    repository = state["repository"]
+    assert repository["artifacts"]["stmt-1"]["response"] == accepted["response"]
+    assert repository["statements"]["stmt-1"]["text"] == accepted["response"]
+    assert repository["index_state"]["statement_to_retrieval"]["stmt-1"] == retrieval_representation_bindings(
+        accepted["retrieval"],
+        accepted["scope"],
+    )
+    assert object_mapping(state["namespace_epochs"]["epochs"])["tenant-a"] == 1
 
 
 def test_response_mutation_result_is_a_revalidated_plain_dictionary() -> None:
@@ -170,12 +188,12 @@ def test_exact_retry_replays_receipt_without_second_checkpoint() -> None:
 def test_changed_payload_retry_is_stable_conflict_without_mutation() -> None:
     command = service()
     command.commit_response(artifact("stmt-1"), "request-1")
-    before = command.coordinator.snapshot().signature()
+    before = coordinated_response_state_signature(command.coordinator.snapshot())
 
     with pytest.raises(ConflictError, match="different mutation"):
         command.commit_response(artifact("stmt-2", request="Different request"), "request-1")
 
-    assert command.coordinator.snapshot().signature() == before
+    assert coordinated_response_state_signature(command.coordinator.snapshot()) == before
 
 
 def test_base_commit_names_all_scoped_canonical_and_alias_collision_owners() -> None:
@@ -202,8 +220,8 @@ def test_same_retrieval_representation_in_another_scope_is_not_a_collision() -> 
 
     result = command.commit_response(artifact("stmt-b", namespace="tenant-b"), "request-b")
 
-    assert result["receipt"].result_code == MutationResultCode.CREATED
-    assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-a", "stmt-b"}
+    assert result["receipt"]["result_code"] == MutationResultCode.CREATED
+    assert set(command.coordinator.snapshot()["repository"]["artifacts"]) == {"stmt-a", "stmt-b"}
 
 
 def test_dynamic_admission_evicts_and_receipt_names_both_generation_effects() -> None:
@@ -212,22 +230,22 @@ def test_dynamic_admission_evicts_and_receipt_names_both_generation_effects() ->
 
     result = command.commit_response(artifact("stmt-new", request="New", namespace="tenant-new"), "request-new")
 
-    assert result["receipt"].result_code == MutationResultCode.CREATED_WITH_EVICTION
-    assert object_mapping(result["receipt"].to_dict()["result"])["evicted_statement_ids"] == ["stmt-old"]
+    assert result["receipt"]["result_code"] == MutationResultCode.CREATED_WITH_EVICTION
+    assert object_mapping(mutation_receipt_to_dict(result["receipt"])["result"])["evicted_statement_ids"] == ["stmt-old"]
     assert [
-        (change.statement_id, change.before_generation, change.after_generation)
-        for change in result["receipt"].affected_generations
+        (change["statement_id"], change["before_generation"], change["after_generation"])
+        for change in result["receipt"]["affected_generations"]
     ] == [
         ("stmt-new", 0, 1),
         ("stmt-old", 1, 0),
     ]
     state = command.coordinator.snapshot()
-    assert set(state.repository.artifacts) == {"stmt-new"}
-    assert state.namespace_epochs["epochs"] == {"tenant-new": 1, "tenant-old": 1}
+    assert set(state["repository"]["artifacts"]) == {"stmt-new"}
+    assert state["namespace_epochs"]["epochs"] == {"tenant-new": 1, "tenant-old": 1}
 
 
 def test_capacity_rejection_records_replayable_result_without_repository_or_epoch_change() -> None:
-    protected = ArtifactStatistics(1, 1, "2026-08-12T17:00:00Z", True)
+    protected = artifact_statistics(1, 1, "2026-08-12T17:00:00Z", True)
     repository = ArtifactRepository((artifact("stmt-protected", request="Protected", statistics=protected),))
     command = service(repository, capacity=1, protected_rate=1.0)
     before_repository = repository.snapshot()
@@ -235,11 +253,11 @@ def test_capacity_rejection_records_replayable_result_without_repository_or_epoc
     result = command.commit_response(artifact("stmt-new", request="New"), "request-new")
     replay = command.commit_response(artifact("stmt-new", request="New"), "request-new")
 
-    assert result["receipt"].result_code == MutationResultCode.REJECTED_CAPACITY
-    assert result["receipt"].affected_generations == ()
+    assert result["receipt"]["result_code"] == MutationResultCode.REJECTED_CAPACITY
+    assert result["receipt"]["affected_generations"] == ()
     assert replay["replayed"] is True
     assert repository.snapshot() == before_repository
-    assert command.coordinator.snapshot().namespace_epochs["epochs"] == {}
+    assert command.coordinator.snapshot()["namespace_epochs"]["epochs"] == {}
 
 
 def test_concurrent_exact_retry_has_one_checkpoint_and_one_replay() -> None:
@@ -266,9 +284,9 @@ def test_concurrent_exact_retry_has_one_checkpoint_and_one_replay() -> None:
     assert (
         command.coordinator.receipt_lookup(
             "request-1",
-            results[0]["receipt"].operation,
-            results[0]["receipt"].payload_signature,
-        ).outcome
+            results[0]["receipt"]["operation"],
+            results[0]["receipt"]["payload_signature"],
+        )["outcome"]
         == ReceiptLookupOutcome.REPLAY
     )
 
@@ -286,7 +304,7 @@ def test_configured_candidate_checkpoint_restarts_with_artifact_epoch_and_receip
     )
     command = AcceptedResponseService(
         coordinator,
-        TierAdmissionPolicy(10, EvictionPolicy.FIFO),
+        tier_admission_policy(10, EvictionPolicy.FIFO),
         clock=lambda: "2026-08-12T18:00:00Z",
     )
     accepted = artifact("stmt-1")
@@ -296,15 +314,17 @@ def test_configured_candidate_checkpoint_restarts_with_artifact_epoch_and_receip
     durable = persistence.coordinated_response_state(loaded)
 
     assert result["checkpoint_count"] == 1
-    assert durable.durable_signature() == coordinator.snapshot().durable_signature()
-    assert loaded.response_repository.get_artifact("stmt-1").response == accepted.response
-    assert loaded.namespace_epochs.get("tenant-a").knowledge_epoch == 1
+    assert coordinated_response_state_durable_signature(durable) == coordinated_response_state_durable_signature(
+        coordinator.snapshot()
+    )
+    assert loaded.response_repository.get_artifact("stmt-1")["response"] == accepted["response"]
+    assert loaded.namespace_epochs.get("tenant-a")["knowledge_epoch"] == 1
     assert (
         loaded.mutation_receipts.lookup(
             "request-1",
-            result["receipt"].operation,
-            result["receipt"].payload_signature,
-        ).outcome
+            result["receipt"]["operation"],
+            result["receipt"]["payload_signature"],
+        )["outcome"]
         == ReceiptLookupOutcome.REPLAY
     )
 
@@ -327,7 +347,7 @@ def test_indeterminate_real_checkpoint_recovers_durable_candidate_by_authority_s
     )
     command = AcceptedResponseService(
         coordinator,
-        TierAdmissionPolicy(10, EvictionPolicy.FIFO),
+        tier_admission_policy(10, EvictionPolicy.FIFO),
         clock=lambda: "2026-08-12T18:00:00Z",
     )
 
@@ -335,7 +355,7 @@ def test_indeterminate_real_checkpoint_recovers_durable_candidate_by_authority_s
 
     assert result["checkpoint_count"] == 1
     assert result["recovered"] is True
-    assert set(coordinator.snapshot().repository.artifacts) == {"stmt-1"}
+    assert set(coordinator.snapshot()["repository"]["artifacts"]) == {"stmt-1"}
 
 
 @pytest.mark.parametrize(
@@ -369,18 +389,18 @@ def test_audited_lifecycle_transition_is_atomic_replayable_and_preserves_respons
     result = transition("stmt-1", 1, reason, "operator-a", "request-transition", "reviewed evidence")
     replay = transition("stmt-1", 1, reason, "operator-a", "request-transition", "reviewed evidence")
 
-    transitioned = command.coordinator.snapshot().repository.artifacts["stmt-1"]
-    assert result["receipt"].result_code == result_code
-    assert result["receipt"].affected_generations[0].statement_id == "stmt-1"
-    assert result["receipt"].affected_generations[0].before_generation == 1
-    assert result["receipt"].affected_generations[0].after_generation == 2
+    transitioned = command.coordinator.snapshot()["repository"]["artifacts"]["stmt-1"]
+    assert result["receipt"]["result_code"] == result_code
+    assert result["receipt"]["affected_generations"][0]["statement_id"] == "stmt-1"
+    assert result["receipt"]["affected_generations"][0]["before_generation"] == 1
+    assert result["receipt"]["affected_generations"][0]["after_generation"] == 2
     assert replay["receipt"] == result["receipt"]
     assert replay["replayed"] is True
-    assert transitioned.generation == 2
-    assert transitioned.lifecycle == expected_lifecycle
-    assert transitioned.response == accepted.response
-    assert transitioned.metadata["lifecycle_audit"] == {
-        "operation": result["receipt"].operation.value,
+    assert transitioned["generation"] == 2
+    assert transitioned["lifecycle"] == expected_lifecycle
+    assert transitioned["response"] == accepted["response"]
+    assert transitioned["metadata"]["lifecycle_audit"] == {
+        "operation": result["receipt"]["operation"].value,
         "reason": reason.value,
         "caller_id": "operator-a",
         "request_id": "request-transition",
@@ -388,15 +408,18 @@ def test_audited_lifecycle_transition_is_atomic_replayable_and_preserves_respons
         "detail": "reviewed evidence",
     }
     state = command.coordinator.snapshot()
-    assert state.repository.index_state.projections["stmt-1"].direct_answer_eligible is False
-    assert state.repository.index_state.projections["stmt-1"].exclusion_reason == f"lifecycle_{expected_lifecycle.value.lower()}"
-    assert object_mapping(state.namespace_epochs["epochs"])["tenant-a"] == 2
+    repository = state["repository"]
+    assert repository["index_state"]["projections"]["stmt-1"]["direct_answer_eligible"] is False
+    assert repository["index_state"]["projections"]["stmt-1"]["exclusion_reason"] == (
+        f"lifecycle_{expected_lifecycle.value.lower()}"
+    )
+    assert object_mapping(state["namespace_epochs"]["epochs"])["tenant-a"] == 2
 
 
 def test_lifecycle_transition_requires_typed_reason_caller_and_expected_generation() -> None:
     command = service()
     command.commit_response(artifact("stmt-1"), "request-create")
-    before = command.coordinator.snapshot().signature()
+    before = coordinated_response_state_signature(command.coordinator.snapshot())
 
     with pytest.raises(InvalidRequestError, match="LifecycleMutationReason"):
         command.invalidate_response("stmt-1", 1, cast(Any, "SOURCE_RETRACTED"), "operator-a", "request-invalid")
@@ -405,7 +428,7 @@ def test_lifecycle_transition_requires_typed_reason_caller_and_expected_generati
     with pytest.raises(ConflictError, match="generation conflict"):
         command.invalidate_response("stmt-1", 2, LifecycleMutationReason.SOURCE_RETRACTED, "operator-a", "request-stale")
 
-    assert command.coordinator.snapshot().signature() == before
+    assert coordinated_response_state_signature(command.coordinator.snapshot()) == before
 
 
 def test_changed_lifecycle_retry_conflicts_and_terminal_artifact_cannot_transition_again() -> None:
@@ -483,7 +506,7 @@ def test_competing_invalidation_and_retirement_have_one_generation_winner() -> N
 
     assert len(successes) == 1
     assert len(conflicts) == 1
-    assert command.coordinator.snapshot().repository.artifacts["stmt-1"].generation == 2
+    assert command.coordinator.snapshot()["repository"]["artifacts"]["stmt-1"]["generation"] == 2
 
 
 def test_audited_lifecycle_checkpoint_restores_terminal_artifact_and_receipt(tmp_path) -> None:
@@ -499,7 +522,7 @@ def test_audited_lifecycle_checkpoint_restores_terminal_artifact_and_receipt(tmp
     )
     command = AcceptedResponseService(
         coordinator,
-        TierAdmissionPolicy(10, EvictionPolicy.FIFO),
+        tier_admission_policy(10, EvictionPolicy.FIFO),
         clock=lambda: "2026-08-12T18:00:00Z",
     )
     command.commit_response(artifact("stmt-1", tier=Tier.STATIC), "request-create")
@@ -514,15 +537,15 @@ def test_audited_lifecycle_checkpoint_restores_terminal_artifact_and_receipt(tmp
     loaded = persistence.load_engram(store, config=engine.config)
 
     restored = loaded.response_repository.get_artifact("stmt-1")
-    assert restored.lifecycle == LifecycleState.RETIRED
-    assert restored.generation == 2
-    assert object_mapping(restored.metadata["lifecycle_audit"])["caller_id"] == "operator-a"
+    assert restored["lifecycle"] == LifecycleState.RETIRED
+    assert restored["generation"] == 2
+    assert object_mapping(restored["metadata"]["lifecycle_audit"])["caller_id"] == "operator-a"
     assert (
         loaded.mutation_receipts.lookup(
             "request-retire",
-            result["receipt"].operation,
-            result["receipt"].payload_signature,
-        ).outcome
+            result["receipt"]["operation"],
+            result["receipt"]["payload_signature"],
+        )["outcome"]
         == ReceiptLookupOutcome.REPLAY
     )
 
@@ -556,29 +579,30 @@ def test_explicit_supersession_links_generations_and_reuses_only_expected_owned_
     )
 
     state = command.coordinator.snapshot()
-    old = state.repository.artifacts["stmt-old"]
-    new = state.repository.artifacts["stmt-new"]
-    assert result["receipt"].result_code == MutationResultCode.SUPERSEDED
+    repository = state["repository"]
+    old = repository["artifacts"]["stmt-old"]
+    new = repository["artifacts"]["stmt-new"]
+    assert result["receipt"]["result_code"] == MutationResultCode.SUPERSEDED
     assert replay["receipt"] == result["receipt"]
     assert replay["replayed"] is True
-    assert old.lifecycle == LifecycleState.SUPERSEDED
-    assert old.generation == 2
-    assert old.superseded_by == "stmt-new"
-    assert old.response == current.response
-    assert object_mapping(old.metadata["lifecycle_audit"])["replacement_statement_id"] == "stmt-new"
-    assert new.lifecycle == LifecycleState.ACTIVE
-    assert new.generation == 1
-    assert new.response == replacement.response
+    assert old["lifecycle"] == LifecycleState.SUPERSEDED
+    assert old["generation"] == 2
+    assert old["superseded_by"] == "stmt-new"
+    assert old["response"] == current["response"]
+    assert object_mapping(old["metadata"]["lifecycle_audit"])["replacement_statement_id"] == "stmt-new"
+    assert new["lifecycle"] == LifecycleState.ACTIVE
+    assert new["generation"] == 1
+    assert new["response"] == replacement["response"]
     assert [
-        (effect.statement_id, effect.before_generation, effect.after_generation)
-        for effect in result["receipt"].affected_generations
+        (effect["statement_id"], effect["before_generation"], effect["after_generation"])
+        for effect in result["receipt"]["affected_generations"]
     ] == [
         ("stmt-new", 0, 1),
         ("stmt-old", 1, 2),
     ]
-    owners = next(iter(state.repository.index_state.retrieval_to_owners.values()))
-    assert {owner.statement_id for owner in owners} == {"stmt-old", "stmt-new"}
-    assert object_mapping(state.namespace_epochs["epochs"])["tenant-a"] == 1
+    owners = next(iter(repository["index_state"]["retrieval_to_owners"].values()))
+    assert {owner["statement_id"] for owner in owners} == {"stmt-old", "stmt-new"}
+    assert object_mapping(state["namespace_epochs"]["epochs"])["tenant-a"] == 1
 
 
 def test_supersession_rejects_other_owner_collision_and_same_statement_id() -> None:
@@ -634,11 +658,11 @@ def test_dynamic_supersession_rejects_capacity_when_lineage_would_be_evicted() -
         "request-supersede",
     )
 
-    assert result["receipt"].result_code == MutationResultCode.REJECTED_CAPACITY
-    assert result["receipt"].affected_generations == ()
+    assert result["receipt"]["result_code"] == MutationResultCode.REJECTED_CAPACITY
+    assert result["receipt"]["affected_generations"] == ()
     assert replay["replayed"] is True
-    assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-old"}
-    assert command.coordinator.snapshot().repository.artifacts["stmt-old"].lifecycle == LifecycleState.ACTIVE
+    assert set(command.coordinator.snapshot()["repository"]["artifacts"]) == {"stmt-old"}
+    assert command.coordinator.snapshot()["repository"]["artifacts"]["stmt-old"]["lifecycle"] == LifecycleState.ACTIVE
 
 
 def test_supersession_can_evict_unrelated_dynamic_while_retaining_static_lineage() -> None:
@@ -660,10 +684,10 @@ def test_supersession_can_evict_unrelated_dynamic_while_retaining_static_lineage
         "request-supersede",
     )
 
-    assert result["receipt"].result_code == MutationResultCode.SUPERSEDED
-    assert object_mapping(result["receipt"].to_dict()["result"])["evicted_statement_ids"] == ["stmt-victim"]
-    assert set(command.coordinator.snapshot().repository.artifacts) == {"stmt-old", "stmt-new"}
-    assert command.coordinator.snapshot().namespace_epochs["epochs"] == {"tenant-old": 1, "tenant-victim": 1}
+    assert result["receipt"]["result_code"] == MutationResultCode.SUPERSEDED
+    assert object_mapping(mutation_receipt_to_dict(result["receipt"])["result"])["evicted_statement_ids"] == ["stmt-victim"]
+    assert set(command.coordinator.snapshot()["repository"]["artifacts"]) == {"stmt-old", "stmt-new"}
+    assert command.coordinator.snapshot()["namespace_epochs"]["epochs"] == {"tenant-old": 1, "tenant-victim": 1}
 
 
 def test_competing_supersessions_have_one_winner_and_stale_generation_conflict() -> None:
@@ -701,10 +725,10 @@ def test_competing_supersessions_have_one_winner_and_stale_generation_conflict()
 
     assert len(successes) == 1
     assert len(conflicts) == 1
-    state = command.coordinator.snapshot().repository
-    assert len(state.artifacts) == 2
-    assert state.artifacts["stmt-old"].generation == 2
-    assert state.artifacts["stmt-old"].superseded_by in {"stmt-new-a", "stmt-new-b"}
+    state = command.coordinator.snapshot()["repository"]
+    assert len(state["artifacts"]) == 2
+    assert state["artifacts"]["stmt-old"]["generation"] == 2
+    assert state["artifacts"]["stmt-old"]["superseded_by"] in {"stmt-new-a", "stmt-new-b"}
 
 
 def test_supersession_checkpoint_restores_lineage_replacement_and_receipt(tmp_path) -> None:
@@ -723,7 +747,7 @@ def test_supersession_checkpoint_restores_lineage_replacement_and_receipt(tmp_pa
     )
     command = AcceptedResponseService(
         coordinator,
-        TierAdmissionPolicy(10, EvictionPolicy.FIFO),
+        tier_admission_policy(10, EvictionPolicy.FIFO),
         clock=lambda: "2026-08-12T18:00:00Z",
     )
     replacement = artifact("stmt-new", tier=Tier.STATIC)
@@ -738,13 +762,13 @@ def test_supersession_checkpoint_restores_lineage_replacement_and_receipt(tmp_pa
     )
     loaded = persistence.load_engram(tmp_path / "supersession.json", config=engine.config)
 
-    assert loaded.response_repository.get_artifact("stmt-old").superseded_by == "stmt-new"
-    assert loaded.response_repository.get_artifact("stmt-new").response == replacement.response
+    assert loaded.response_repository.get_artifact("stmt-old")["superseded_by"] == "stmt-new"
+    assert loaded.response_repository.get_artifact("stmt-new")["response"] == replacement["response"]
     assert (
         loaded.mutation_receipts.lookup(
             "request-supersede",
-            result["receipt"].operation,
-            result["receipt"].payload_signature,
-        ).outcome
+            result["receipt"]["operation"],
+            result["receipt"]["payload_signature"],
+        )["outcome"]
         == ReceiptLookupOutcome.REPLAY
     )

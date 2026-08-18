@@ -11,7 +11,7 @@ from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
-from engram.service import EngramCore
+from engram.service import EngramCore, open_engram_core
 
 
 def test_core_shares_knowledge_while_isolating_user_context() -> None:
@@ -105,17 +105,17 @@ def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -
     )
 
     artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
-    assert artifact.response == "Exact café response ☕."
-    assert artifact.tier == Tier.DYNAMIC
-    assert artifact.lifecycle.value == "ACTIVE"
-    assert artifact.generation == 1
-    assert artifact.scope.namespace == "support"
-    assert artifact.scope.context_fingerprint == "tier:pro"
-    assert artifact.provenance.caller_id == "Alice"
-    assert artifact.provenance.source_label == "actor:test"
-    assert artifact.metadata == {"actor_version": "actor-7"}
-    assert core.engram.sessions["Alice"]["previous_response"] == artifact.response
-    assert core.engram.response_repository.check().consistent is True
+    assert artifact["response"] == "Exact café response ☕."
+    assert artifact["tier"] == Tier.DYNAMIC
+    assert artifact["lifecycle"].value == "ACTIVE"
+    assert artifact["generation"] == 1
+    assert artifact["scope"]["namespace"] == "support"
+    assert artifact["scope"]["context_fingerprint"] == "tier:pro"
+    assert artifact["provenance"]["caller_id"] == "Alice"
+    assert artifact["provenance"]["source_label"] == "actor:test"
+    assert artifact["metadata"] == {"actor_version": "actor-7"}
+    assert core.engram.sessions["Alice"]["previous_response"] == artifact["response"]
+    assert core.engram.response_repository.check()["consistent"] is True
 
 
 def test_learn_response_exact_retry_survives_restart_without_second_checkpoint(tmp_path) -> None:
@@ -124,7 +124,7 @@ def test_learn_response_exact_retry_survives_restart_without_second_checkpoint(t
     created = first.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
     durable_before = store.read_bytes()
 
-    restored = EngramCore.open(store_path=store)
+    restored = open_engram_core(store_path=store)
     replay = restored.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
 
     assert replay["statement_id"] == created["statement_id"]
@@ -142,27 +142,27 @@ def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -
         core.learn_response("What is current?", "Implicit replacement.", "learn-replacement")
 
     artifact = core.engram.response_repository.get_artifact(original["statement_id"])
-    assert artifact.response == "Original exact response."
-    assert artifact.lifecycle.value == "ACTIVE"
-    assert artifact.generation == 1
+    assert artifact["response"] == "Original exact response."
+    assert artifact["lifecycle"].value == "ACTIVE"
+    assert artifact["generation"] == 1
 
 
 def test_proposal_and_resolution_accounting_remain_artifact_view_equivalent() -> None:
     core = EngramCore(checkpoint_on_mutation=False)
     learned = core.learn_response("What is counted?", "Counted response.", "learn-counted")
-    epoch_after_commit = core.engram.namespace_epochs.get("").knowledge_epoch
+    epoch_after_commit = core.engram.namespace_epochs.get("")["knowledge_epoch"]
 
     proposal = core.propose("What is counted?", "proposal-counted")
     core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
 
     artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
     compatibility = core.engram.get_statement(learned["statement_id"])
-    assert artifact.generation == 3
-    assert artifact.statistics.query_count == compatibility["query_count"] == 1
-    assert artifact.statistics.hit_count == compatibility["hit_count"] == 1
-    assert artifact.statistics.last_hit_available is True
-    assert core.engram.namespace_epochs.get("").knowledge_epoch == epoch_after_commit
-    assert core.engram.response_repository.check().consistent is True
+    assert artifact["generation"] == 3
+    assert artifact["statistics"]["query_count"] == compatibility["query_count"] == 1
+    assert artifact["statistics"]["hit_count"] == compatibility["hit_count"] == 1
+    assert artifact["statistics"]["last_hit_available"] is True
+    assert core.engram.namespace_epochs.get("")["knowledge_epoch"] == epoch_after_commit
+    assert core.engram.response_repository.check()["consistent"] is True
     assert core.engram.mutation_receipts.next_sequence == 4
 
 
@@ -180,7 +180,7 @@ def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None
     assert len(accounting_ids) == 2
     assert all(len(request_id.encode("utf-8")) <= 256 for request_id in accounting_ids)
     assert all(external_request_id not in request_id for request_id in accounting_ids)
-    assert core.engram.response_repository.check().consistent is True
+    assert core.engram.response_repository.check()["consistent"] is True
 
 
 def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) -> None:
@@ -190,7 +190,7 @@ def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) 
     proposal = core.propose("What persists?", "proposal-before-restart")
     assert store.exists()
 
-    restored = EngramCore.open(store_path=store)
+    restored = open_engram_core(store_path=store)
     recalled = restored.propose("What persists?", "proposal-after-restart")
 
     assert recalled["candidates"][0]["statement_id"] == learned["statement_id"]
@@ -204,13 +204,13 @@ def test_core_open_restores_stored_config_unless_explicitly_overridden(tmp_path)
     core = EngramCore(Engram(config=stored_config), store_path=store)
     assert core.flush() is True
 
-    restored = EngramCore.open(store_path=store)
+    restored = open_engram_core(store_path=store)
 
     assert restored.engram.config["capacity"] == 37
     assert restored.engram.config["use_synonyms"] is False
 
     override = engram_config(capacity=41, use_synonyms=True)
-    overridden = EngramCore.open(config=override, store_path=store)
+    overridden = open_engram_core(config=override, store_path=store)
 
     assert overridden.engram.config["capacity"] == 41
     assert overridden.engram.config["use_synonyms"] is True
@@ -223,7 +223,7 @@ def test_core_without_store_reports_that_flush_was_skipped() -> None:
 @pytest.mark.parametrize("invalid", [[], (), "", 0, False])
 def test_core_open_rejects_falsey_non_object_config(invalid) -> None:
     with pytest.raises(InvalidRequestError, match="config must be an object"):
-        EngramCore.open(config=invalid)
+        open_engram_core(config=invalid)
 
 
 def test_core_checkpoints_each_durable_mutation(tmp_path) -> None:
@@ -233,29 +233,29 @@ def test_core_checkpoints_each_durable_mutation(tmp_path) -> None:
     core = EngramCore(engram, store_path=store)
 
     core.start_conversation("Alice")
-    assert "Alice" in EngramCore.open(store_path=store).engram.sessions
+    assert "Alice" in open_engram_core(store_path=store).engram.sessions
 
     core.chat("Alice", "hello")
-    assert EngramCore.open(store_path=store).engram.sessions["Alice"]["previous_response"] == "Hello!"
+    assert open_engram_core(store_path=store).engram.sessions["Alice"]["previous_response"] == "Hello!"
 
     core.set_predicate("Alice", "mood", "curious")
-    assert EngramCore.open(store_path=store).engram.sessions["Alice"]["predicates"]["mood"] == "curious"
+    assert open_engram_core(store_path=store).engram.sessions["Alice"]["predicates"]["mood"] == "curious"
 
     fact = core.add_fact("Tokyo is the capital of Japan.", source_label="research")
-    assert EngramCore.open(store_path=store).engram.get_statement(fact["id"])["source_label"] == "research"
+    assert open_engram_core(store_path=store).engram.get_statement(fact["id"])["source_label"] == "research"
 
     learned = core.learn_response("What is cached?", "A cached answer.", "learn-checkpoint")
     proposal = core.propose("What is cached?", "proposal-checkpoint")
-    proposed_state = EngramCore.open(store_path=store).engram.get_statement(learned["statement_id"])
+    proposed_state = open_engram_core(store_path=store).engram.get_statement(learned["statement_id"])
     assert proposed_state["query_count"] == 1
 
     core.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-    accepted_state = EngramCore.open(store_path=store).engram.get_statement(learned["statement_id"])
+    accepted_state = open_engram_core(store_path=store).engram.get_statement(learned["statement_id"])
     assert accepted_state["hit_count"] == 1
 
     core.retire_response(learned["statement_id"], "superseded", "retire-checkpoint")
-    restored_retired = EngramCore.open(store_path=store).engram
-    assert restored_retired.response_repository.get_artifact(learned["statement_id"]).lifecycle.value == "RETIRED"
+    restored_retired = open_engram_core(store_path=store).engram
+    assert restored_retired.response_repository.get_artifact(learned["statement_id"])["lifecycle"].value == "RETIRED"
 
 
 def test_context_manager_flushes_when_mutation_checkpointing_is_disabled(tmp_path) -> None:
@@ -265,7 +265,7 @@ def test_context_manager_flushes_when_mutation_checkpointing_is_disabled(tmp_pat
         fact = core.add_fact("A deferred fact.")
         assert not store.exists()
 
-    assert EngramCore.open(store_path=store).engram.get_statement(fact["id"])["text"] == "A deferred fact."
+    assert open_engram_core(store_path=store).engram.get_statement(fact["id"])["text"] == "A deferred fact."
 
 
 def test_core_exposes_stable_request_and_resource_errors() -> None:
@@ -317,7 +317,8 @@ def test_close_waits_for_an_active_core_operation() -> None:
     def delayed_send(text: str) -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        return original_send(text)
+        result = original_send(text)
+        return result
 
     runtime.send = delayed_send
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -364,7 +365,7 @@ def test_checkpoint_failure_reports_degraded_state_and_recovers(tmp_path, monkey
     assert recovered["dirty"] is False
     assert recovered["last_checkpoint_at"]
     assert recovered["last_persistence_error"] == ""
-    assert EngramCore.open(store_path=store).engram.get_statement(retry["statement_id"])["text"] == "A durable answer."
+    assert open_engram_core(store_path=store).engram.get_statement(retry["statement_id"])["text"] == "A durable answer."
 
 
 def test_failed_close_returns_core_to_running_for_flush_recovery(tmp_path, monkeypatch) -> None:
@@ -386,4 +387,4 @@ def test_failed_close_returns_core_to_running_for_flush_recovery(tmp_path, monke
 
     monkeypatch.setattr(service_module.persistence, "save", real_save)
     assert core.close() is True
-    assert EngramCore.open(store_path=store).engram.statements[0]["text"] == "Pending state."
+    assert open_engram_core(store_path=store).engram.statements[0]["text"] == "Pending state."

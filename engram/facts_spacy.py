@@ -44,7 +44,8 @@ def _first_child(token, deps) -> object:
     for child in token.children:
         if child.dep_ in deps:
             return child
-    return ()
+    result = ()
+    return result
 
 
 def _prep_link(verb) -> tuple[str, object]:
@@ -66,23 +67,28 @@ def _extract_from_sentence(sent) -> dict:
     """Extract a single triple from one parsed sentence, or {} if none."""
     first = sent[0].text.lower()
     if first in QUESTION_WORDS or first in COMMAND_WORDS:
-        return {}
+        result = {}
+        return result
     if sent.text.strip().endswith("?"):
-        return {}
+        result = {}
+        return result
 
     root = sent.root
     if root.pos_ not in ("VERB", "AUX"):
         # Broken or non-declarative parse (e.g. terse SVO the small model
         # mistags) - skip rather than emit a garbage triple.
-        return {}
+        result = {}
+        return result
 
     subject_token = _first_child(root, SUBJECT_DEPS)
     if not isinstance(subject_token, Token):
-        return {}
+        result = {}
+        return result
 
     subject = _phrase(subject_token)
     if not subject or subject.lower() in PRONOUNS:
-        return {}
+        result = {}
+        return result
 
     is_copula = root.pos_ == "AUX" or root.lemma_ == "be"
 
@@ -93,7 +99,8 @@ def _extract_from_sentence(sent) -> dict:
         else:
             prep_text, obj_token = _prep_link(root)
             if not isinstance(obj_token, Token):
-                return {}
+                result = {}
+                return result
             predicate = prep_text  # "Paris is in France" -> (Paris, in, France)
     else:
         obj_token = _first_child(root, OBJECT_DEPS)
@@ -102,12 +109,14 @@ def _extract_from_sentence(sent) -> dict:
         else:
             prep_text, obj_token = _prep_link(root)
             if not isinstance(obj_token, Token):
-                return {}
+                result = {}
+                return result
             predicate = f"{root.lemma_} {prep_text}"  # "belong to"
 
     obj = _phrase(obj_token)
     if not obj or obj.lower() in PRONOUNS:
-        return {}
+        result = {}
+        return result
 
     fact = extracted_fact(
         subject=subject,
@@ -132,10 +141,12 @@ def extract_facts(text: str) -> list:
         nothing is extractable or the spaCy model is unavailable.
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
     nlp = get_nlp()
     if not nlp:
-        return []
+        result = []
+        return result
     doc = nlp(text)
     facts = []
     for sent in doc.sents:

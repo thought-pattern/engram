@@ -9,19 +9,46 @@ import copy
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
+from typing import TypedDict
 
-from engram.artifacts import ArtifactProvenance, ArtifactStatistics, CachedResponseArtifact, LifecycleState
+from engram.artifacts import (
+    CachedResponseArtifact,
+    LifecycleState,
+    artifact_provenance,
+    artifact_statistics,
+    cached_response_artifact,
+    cached_response_artifact_from_dict,
+    cached_response_artifact_to_dict,
+)
 from engram.config import config_from_dict, config_to_dict, engram_config
-from engram.constants import PERSISTENCE_VERSION
-from engram.coordination import CoordinatedResponseState
+from engram.constants import (
+    EMPTY_CONFIG,
+    LEGACY_PERSISTENCE_VERSION,
+    MAX_QUARANTINE_DETAIL_BYTES,
+    MAX_QUARANTINE_RECORDS,
+    PERSISTENCE_VERSION,
+    RESPONSE_QUARANTINE_RECORD_FIELDS,
+    RESPONSE_STATE_SCHEMA_VERSION,
+    ResponseQuarantineReason,
+)
+from engram.coordination import (
+    CoordinatedResponseState,
+    coordinated_response_state as build_coordinated_response_state,
+    coordinated_response_state_to_dict,
+    validate_coordinated_response_state,
+)
 from engram.core import Engram
-from engram.eligibility import NamespaceEpochState
+from engram.eligibility import NamespaceEpochState, namespace_epoch_state_from_snapshot
 from engram.errors import InvalidRequestError
-from engram.feedback import FeedbackState, FeedbackStore
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
+from engram.feedback import FeedbackState, FeedbackStore, feedback_state_from_dict, feedback_state_to_dict, validate_feedback_state
+from engram.identity import (
+    build_retrieval_representation,
+    build_standalone_identity,
+    retrieval_representation_bindings,
+    scope_key,
+    scoped_retrieval_key_to_json,
+)
 from engram.models import (
     keyword_entry,
     keyword_entry_from_dict,
@@ -31,22 +58,8 @@ from engram.models import (
     statement_from_dict,
     statement_to_dict,
 )
-from engram.mutations import MutationReceiptLedger
+from engram.mutations import MutationReceiptLedger, mutation_receipt_ledger_from_snapshot
 from engram.repository import ArtifactRepository
-
-EMPTY_CONFIG: dict = {}
-LEGACY_PERSISTENCE_VERSION = 1
-RESPONSE_STATE_SCHEMA_VERSION = 1
-MAX_QUARANTINE_DETAIL_BYTES = 512
-MAX_QUARANTINE_RECORDS = 100_000
-
-
-class ResponseQuarantineReason(StrEnum):
-    """Stable v1 response migration exclusion reasons."""
-
-    MISSING_IDENTITY = "missing_identity"
-    MALFORMED_IDENTITY = "malformed_identity"
-    AMBIGUOUS_IDENTITY = "ambiguous_identity"
 
 
 def _bounded_quarantine_text(value: object, name: str, allow_empty: bool) -> str:
@@ -61,36 +74,90 @@ def _bounded_quarantine_text(value: object, name: str, allow_empty: bool) -> str
     return value
 
 
-@dataclass(frozen=True, order=True, slots=True)
-class ResponseQuarantineRecord:
-    """One retained legacy response that could not safely enter exact lookup."""
+ResponseQuarantineRecord = TypedDict(
+    "ResponseQuarantineRecord",
+    {
+        "statement_id": str,
+        "reason": ResponseQuarantineReason,
+        "detail": str,
+    },
+)
 
-    statement_id: str
-    reason: ResponseQuarantineReason
-    detail: str
 
-    def __post_init__(self) -> None:
-        _bounded_quarantine_text(self.statement_id, "quarantine statement_id", False)
-        if not isinstance(self.reason, ResponseQuarantineReason):
-            raise InvalidRequestError("quarantine reason must be a ResponseQuarantineReason")
-        _bounded_quarantine_text(self.detail, "quarantine detail", True)
+def response_quarantine_record(
+    statement_id: str,
+    reason: ResponseQuarantineReason,
+    detail: str,
+) -> ResponseQuarantineRecord:
+    """Build one validated legacy-response quarantine dictionary."""
+    normalized_statement_id = _bounded_quarantine_text(statement_id, "quarantine statement_id", False)
+    if not isinstance(reason, ResponseQuarantineReason):
+        raise InvalidRequestError("quarantine reason must be a ResponseQuarantineReason")
+    normalized_detail = _bounded_quarantine_text(detail, "quarantine detail", True)
+    result: ResponseQuarantineRecord = {
+        "statement_id": normalized_statement_id,
+        "reason": reason,
+        "detail": normalized_detail,
+    }
+    return result
 
-    def to_dict(self) -> dict[str, object]:
-        return {"statement_id": self.statement_id, "reason": self.reason.value, "detail": self.detail}
 
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ResponseQuarantineRecord":
-        if not isinstance(value, Mapping) or frozenset(value) != frozenset({"statement_id", "reason", "detail"}):
-            raise InvalidRequestError("ResponseQuarantineRecord must contain exactly statement_id, reason, and detail")
-        try:
-            reason = ResponseQuarantineReason(value["reason"])
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError("quarantine record contains an unsupported reason") from error
-        return cls(
-            statement_id=_bounded_quarantine_text(value["statement_id"], "quarantine statement_id", False),
-            reason=reason,
-            detail=_bounded_quarantine_text(value["detail"], "quarantine detail", True),
-        )
+def validate_response_quarantine_record(value: object) -> ResponseQuarantineRecord:
+    """Validate and copy one quarantine dictionary."""
+    if not isinstance(value, Mapping) or frozenset(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
+        raise InvalidRequestError("ResponseQuarantineRecord must contain exactly statement_id, reason, and detail")
+    statement_id = value.get("statement_id", ())
+    reason = value.get("reason", ())
+    detail = value.get("detail", ())
+    if not isinstance(statement_id, str) or not isinstance(reason, ResponseQuarantineReason) or not isinstance(detail, str):
+        raise InvalidRequestError("quarantine record fields are malformed")
+    result = response_quarantine_record(statement_id, reason, detail)
+    return result
+
+
+def response_quarantine_record_to_dict(value: object) -> dict[str, object]:
+    """Return the exact persistent dictionary for one quarantine record."""
+    record = validate_response_quarantine_record(value)
+    result: dict[str, object] = {
+        "statement_id": record["statement_id"],
+        "reason": record["reason"].value,
+        "detail": record["detail"],
+    }
+    return result
+
+
+def response_quarantine_record_from_dict(value: object) -> ResponseQuarantineRecord:
+    """Decode one quarantine record from its exact persistent dictionary."""
+    if not isinstance(value, Mapping) or frozenset(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
+        raise InvalidRequestError("ResponseQuarantineRecord must contain exactly statement_id, reason, and detail")
+    try:
+        reason = ResponseQuarantineReason(value["reason"])
+    except (TypeError, ValueError) as error:
+        raise InvalidRequestError("quarantine record contains an unsupported reason") from error
+    record = response_quarantine_record(
+        statement_id=_bounded_quarantine_text(value["statement_id"], "quarantine statement_id", False),
+        reason=reason,
+        detail=_bounded_quarantine_text(value["detail"], "quarantine detail", True),
+    )
+    return record
+
+
+def response_quarantine_record_key(value: ResponseQuarantineRecord) -> tuple[str, str, str]:
+    """Return the deterministic order key for one validated quarantine record."""
+    record = validate_response_quarantine_record(value)
+    key = (record["statement_id"], record["reason"].value, record["detail"])
+    return key
+
+
+def validate_response_quarantine_records(value: object) -> tuple[ResponseQuarantineRecord, ...]:
+    """Validate, bound, and deterministically order quarantine records."""
+    if not isinstance(value, tuple):
+        raise InvalidRequestError("response_quarantine must be a tuple of ResponseQuarantineRecord values")
+    if len(value) > MAX_QUARANTINE_RECORDS:
+        raise InvalidRequestError(f"response quarantine exceeds the limit of {MAX_QUARANTINE_RECORDS}")
+    records = tuple(validate_response_quarantine_record(record) for record in value)
+    ordered = tuple(sorted(records, key=response_quarantine_record_key))
+    return ordered
 
 
 def _write_json_atomic(path, state: dict) -> None:
@@ -122,9 +189,11 @@ def save(engram, path) -> None:
 
 def _thaw_response_value(value: object) -> object:
     if isinstance(value, Mapping):
-        return {key: _thaw_response_value(item) for key, item in value.items()}
+        result = {key: _thaw_response_value(item) for key, item in value.items()}
+        return result
     if isinstance(value, tuple):
-        return [_thaw_response_value(item) for item in value]
+        result = [_thaw_response_value(item) for item in value]
+        return result
     return value
 
 
@@ -138,14 +207,14 @@ def _thaw_response_mapping(value: object) -> dict[str, object]:
 def to_dict_with_response_state(engram, response_state: CoordinatedResponseState) -> dict:
     """Serialize a complete off-live coordinated response candidate."""
 
-    if not isinstance(response_state, CoordinatedResponseState):
-        raise InvalidRequestError("response_state candidate must be a CoordinatedResponseState")
+    validated_response_state = validate_coordinated_response_state(response_state)
+    repository = validated_response_state["repository"]
     state = to_dict(engram)
-    previous_ids = set(engram.response_repository.snapshot().artifacts)
+    previous_ids = set(engram.response_repository.snapshot()["artifacts"])
     retained_statements = [statement for statement in state["statements"] if statement["id"] not in previous_ids]
     candidate_statements = [
-        statement_to_dict(_thaw_response_mapping(response_state.repository.statements[statement_id]))
-        for statement_id in sorted(response_state.repository.statements)
+        statement_to_dict(_thaw_response_mapping(repository["statements"][statement_id]))
+        for statement_id in sorted(repository["statements"])
     ]
     state["statements"] = [*retained_statements, *candidate_statements]
 
@@ -162,26 +231,25 @@ def to_dict_with_response_state(engram, response_state: CoordinatedResponseState
             entry["statement_ids"] = sorted({*entry["statement_ids"], statement["id"]})
     state["keywords"] = keywords
 
-    quarantine = engram.response_quarantine
-    if not isinstance(quarantine, tuple) or not all(isinstance(record, ResponseQuarantineRecord) for record in quarantine):
-        raise InvalidRequestError("response_quarantine must be a tuple of ResponseQuarantineRecord values")
-    state["response_state"] = response_state.response_state_dict(tuple(record.to_dict() for record in quarantine))
+    quarantine = validate_response_quarantine_records(engram.response_quarantine)
+    quarantine_values = tuple(response_quarantine_record_to_dict(record) for record in quarantine)
+    state["response_state"] = coordinated_response_state_to_dict(validated_response_state, quarantine_values)
     return state
 
 
 def save_response_state(engram, response_state: CoordinatedResponseState, path) -> None:
     """Atomically checkpoint one complete coordinated response candidate."""
 
-    _write_json_atomic(path, to_dict_with_response_state(engram, response_state))
+    state = to_dict_with_response_state(engram, response_state)
+    _write_json_atomic(path, state)
 
 
 def to_dict_with_feedback_state(engram, feedback_state: FeedbackState) -> dict:
     """Serialize a complete off-live feedback candidate with current Engram state."""
 
-    if not isinstance(feedback_state, FeedbackState):
-        raise InvalidRequestError("feedback_state candidate must be a FeedbackState")
+    validated_feedback_state = validate_feedback_state(feedback_state)
     state = to_dict(engram)
-    state["feedback_state"] = feedback_state.to_dict()
+    state["feedback_state"] = feedback_state_to_dict(validated_feedback_state)
     return state
 
 
@@ -194,23 +262,28 @@ def save_feedback_state(engram, feedback_state: FeedbackState, path) -> None:
 def load_feedback_state(path, config: dict = EMPTY_CONFIG) -> FeedbackState:
     """Load durable feature-owned feedback state."""
 
-    return load_engram(path, config=config).feedback_store.snapshot()
+    engram = load_engram(path, config=config)
+    state = engram.feedback_store.snapshot()
+    return state
 
 
 def coordinated_response_state(engram) -> CoordinatedResponseState:
     """Capture the complete authoritative response state from one loaded Engram."""
 
-    return CoordinatedResponseState(
+    state = build_coordinated_response_state(
         repository=engram.response_repository.snapshot(),
         namespace_epochs=engram.namespace_epochs.snapshot(),
         mutation_receipts=engram.mutation_receipts.snapshot(),
     )
+    return state
 
 
 def load_coordinated_response_state(path, config: dict = EMPTY_CONFIG) -> CoordinatedResponseState:
     """Load durable response authority and rebuild its derived repository state."""
 
-    return coordinated_response_state(load_engram(path, config=config))
+    engram = load_engram(path, config=config)
+    state = coordinated_response_state(engram)
+    return state
 
 
 def save_json(engram) -> str:
@@ -228,18 +301,18 @@ def save_json(engram) -> str:
 
 def _response_state_to_dict(engram) -> dict[str, object]:
     repository = engram.response_repository.snapshot()
-    quarantine = engram.response_quarantine
-    if not isinstance(quarantine, tuple) or not all(isinstance(record, ResponseQuarantineRecord) for record in quarantine):
-        raise InvalidRequestError("response_quarantine must be a tuple of ResponseQuarantineRecord values")
-    if len(quarantine) > MAX_QUARANTINE_RECORDS:
-        raise InvalidRequestError(f"response quarantine exceeds the limit of {MAX_QUARANTINE_RECORDS}")
-    return {
+    quarantine = validate_response_quarantine_records(engram.response_quarantine)
+    result = {
         "schema_version": RESPONSE_STATE_SCHEMA_VERSION,
-        "artifacts": [repository.artifacts[statement_id].to_dict() for statement_id in sorted(repository.artifacts)],
+        "artifacts": [
+            cached_response_artifact_to_dict(repository["artifacts"][statement_id])
+            for statement_id in sorted(repository["artifacts"])
+        ],
         "namespace_epochs": engram.namespace_epochs.snapshot(),
         "mutation_receipts": engram.mutation_receipts.snapshot(),
-        "quarantine": [record.to_dict() for record in sorted(quarantine)],
+        "quarantine": [response_quarantine_record_to_dict(record) for record in quarantine],
     }
+    return result
 
 
 def to_dict(engram) -> dict:
@@ -277,7 +350,7 @@ def to_dict(engram) -> dict:
             "keywords": {kw: keyword_entry_to_dict(entry) for kw, entry in engram.keywords.items()},
             "sessions": [session_to_dict(s) for s in engram.sessions.values()],
             "response_state": _response_state_to_dict(engram),
-            "feedback_state": engram.feedback_store.snapshot().to_dict(),
+            "feedback_state": feedback_state_to_dict(engram.feedback_store.snapshot()),
         }
         return state
 
@@ -352,7 +425,8 @@ def _migration_detail(value: object) -> str:
 def _canonical_utc(value: object, name: str) -> str:
     if not isinstance(value, datetime) or not value.tzinfo:
         raise InvalidRequestError(f"{name} must be a timezone-aware datetime")
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    text = value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return text
 
 
 def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
@@ -369,7 +443,7 @@ def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
     context_fingerprint = tapestry.get("context_fingerprint", "")
     if not isinstance(namespace, str) or not isinstance(context_fingerprint, str):
         raise InvalidRequestError("legacy response scope must use concrete strings")
-    scope = ScopeKey(namespace=namespace, context_fingerprint=context_fingerprint)
+    scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
     aliases = tapestry.get("retrieval_aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases):
         raise InvalidRequestError("legacy retrieval_aliases must be an array of strings")
@@ -390,7 +464,7 @@ def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
     reserved = {"request", "retrieval_aliases", "namespace", "context_fingerprint", "support"}
     metadata = {key: value for key, value in tapestry.items() if key not in reserved}
     last_hit = _canonical_utc(statement["last_hit"], "legacy last_hit") if statement["last_hit"] else ""
-    return CachedResponseArtifact(
+    artifact = cached_response_artifact(
         statement_id=statement["id"],
         generation=1,
         response=statement["text"],
@@ -407,12 +481,12 @@ def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
         knowledge_epoch=0,
         knowledge_epoch_available=False,
         superseded_by="",
-        provenance=ArtifactProvenance(
+        provenance=artifact_provenance(
             source_label=statement["source_label"],
             caller_id=statement["introduced_by_user_id"],
             accepted_at=_canonical_utc(statement["created_at"], "legacy created_at"),
         ),
-        statistics=ArtifactStatistics(
+        statistics=artifact_statistics(
             hit_count=statement["hit_count"],
             query_count=statement["query_count"],
             last_hit=last_hit,
@@ -420,6 +494,7 @@ def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
         ),
         metadata=metadata,
     )
+    return artifact
 
 
 def _migrate_legacy_response_state(instance) -> None:
@@ -431,7 +506,7 @@ def _migrate_legacy_response_state(instance) -> None:
         request = tapestry.get("request", "") if isinstance(tapestry, dict) else ""
         if not isinstance(request, str) or not request.strip():
             quarantine.append(
-                ResponseQuarantineRecord(
+                response_quarantine_record(
                     statement["id"],
                     ResponseQuarantineReason.MISSING_IDENTITY,
                     "legacy response has no recoverable request identity",
@@ -442,7 +517,7 @@ def _migrate_legacy_response_state(instance) -> None:
             artifacts.append(_legacy_response_artifact(statement))
         except (InvalidRequestError, ValueError, TypeError) as error:
             quarantine.append(
-                ResponseQuarantineRecord(
+                response_quarantine_record(
                     statement["id"],
                     ResponseQuarantineReason.MALFORMED_IDENTITY,
                     _migration_detail(error),
@@ -451,30 +526,28 @@ def _migrate_legacy_response_state(instance) -> None:
 
     key_owners: dict[str, set[str]] = {}
     for artifact in artifacts:
-        for binding in artifact.retrieval.bindings(artifact.scope):
-            key_owners.setdefault(binding.key.to_json(), set()).add(artifact.statement_id)
+        for binding in retrieval_representation_bindings(artifact["retrieval"], artifact["scope"]):
+            key_text = scoped_retrieval_key_to_json(binding["key"])
+            key_owners.setdefault(key_text, set()).add(artifact["statement_id"])
     ambiguous_ids = set()
     for owners in key_owners.values():
         if len(owners) > 1:
             ambiguous_ids.update(owners)
     for statement_id in sorted(ambiguous_ids):
         quarantine.append(
-            ResponseQuarantineRecord(
+            response_quarantine_record(
                 statement_id,
                 ResponseQuarantineReason.AMBIGUOUS_IDENTITY,
                 "recoverable scoped retrieval key has multiple legacy owners",
             )
         )
 
-    if len(quarantine) > MAX_QUARANTINE_RECORDS:
-        raise InvalidRequestError(f"response quarantine exceeds the limit of {MAX_QUARANTINE_RECORDS}")
-
     instance.response_repository = ArtifactRepository(artifacts)
     instance.namespace_epochs = NamespaceEpochState()
-    for namespace in sorted({artifact.scope.namespace for artifact in artifacts}):
+    for namespace in sorted({artifact["scope"]["namespace"] for artifact in artifacts}):
         instance.namespace_epochs.initialize(namespace, 0)
     instance.mutation_receipts = MutationReceiptLedger()
-    instance.response_quarantine = tuple(sorted(quarantine))
+    instance.response_quarantine = validate_response_quarantine_records(tuple(quarantine))
 
 
 def _load_response_state(instance, value: object) -> None:
@@ -497,14 +570,15 @@ def _load_response_state(instance, value: object) -> None:
     receipts = value["mutation_receipts"]
     if not isinstance(epochs, Mapping) or not isinstance(receipts, Mapping):
         raise InvalidRequestError("response_state epoch and receipt state must be objects")
-    instance.response_repository = ArtifactRepository(tuple(CachedResponseArtifact.from_dict(item) for item in artifacts))
-    instance.namespace_epochs = NamespaceEpochState.from_snapshot(epochs)
-    instance.mutation_receipts = MutationReceiptLedger.from_snapshot(receipts)
-    instance.response_quarantine = tuple(sorted(ResponseQuarantineRecord.from_dict(item) for item in quarantine))
+    instance.response_repository = ArtifactRepository(tuple(cached_response_artifact_from_dict(item) for item in artifacts))
+    instance.namespace_epochs = namespace_epoch_state_from_snapshot(epochs)
+    instance.mutation_receipts = mutation_receipt_ledger_from_snapshot(receipts)
+    decoded_quarantine = tuple(response_quarantine_record_from_dict(item) for item in quarantine)
+    instance.response_quarantine = validate_response_quarantine_records(decoded_quarantine)
 
 
 def _install_response_compatibility_views(instance, previous_response_ids: tuple[str, ...] = ()) -> None:
-    artifact_ids = set(instance.response_repository.snapshot().artifacts)
+    artifact_ids = set(instance.response_repository.snapshot()["artifacts"])
     response_ids = artifact_ids | set(previous_response_ids)
     retained = []
     for statement in instance.statements:
@@ -548,11 +622,13 @@ def migrate_persistence_state(data: dict) -> dict:
     version = data.get("version", LEGACY_PERSISTENCE_VERSION)
     if version == PERSISTENCE_VERSION:
         load_engram_from_dict(copy.deepcopy(data))
-        return copy.deepcopy(data)
+        migrated = copy.deepcopy(data)
+        return migrated
     if version != LEGACY_PERSISTENCE_VERSION:
         raise InvalidRequestError(f"Unsupported persistence version: {version}")
     instance = load_engram_from_dict(copy.deepcopy(data))
-    return to_dict(instance)
+    migrated = to_dict(instance)
+    return migrated
 
 
 def load_engram(path, config: dict = EMPTY_CONFIG, engram_class=()):
@@ -691,7 +767,8 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
             raise InvalidRequestError("persistence v2 requires response_state")
         _load_response_state(instance, data["response_state"])
     if "feedback_state" in data:
-        instance.feedback_store = FeedbackStore(FeedbackState.from_dict(data["feedback_state"]))
+        feedback_state = feedback_state_from_dict(data["feedback_state"])
+        instance.feedback_store = FeedbackStore(feedback_state)
     else:
         # Existing files deliberately leave typed Regulator feedback unavailable;
         # legacy query/hit statistics are not reinterpreted as external labels.

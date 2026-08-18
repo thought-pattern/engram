@@ -7,14 +7,21 @@ import pytest
 
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.mutations import (
-    ArtifactGenerationChange,
     MutationOperation,
     MutationReceipt,
     MutationReceiptLedger,
     MutationResultCode,
     ReceiptCompletionState,
     ReceiptLookupOutcome,
+    artifact_generation_change,
+    artifact_generation_change_to_dict,
     canonical_payload_signature,
+    mutation_receipt,
+    mutation_receipt_from_json,
+    mutation_receipt_ledger_from_snapshot,
+    mutation_receipt_to_dict,
+    mutation_receipt_to_json,
+    receipt_lookup_receipt,
 )
 
 
@@ -25,21 +32,22 @@ def completed_receipt(
     result_code=MutationResultCode.CREATED,
 ) -> MutationReceipt:
     signature = payload_signature or canonical_payload_signature({"response": "Exact response", "tier": "DYNAMIC"})
-    return MutationReceipt(
+    receipt = mutation_receipt(
         sequence=sequence,
         request_id=request_id,
         operation=MutationOperation.COMMIT_RESPONSE,
         payload_signature=signature,
         result_code=result_code,
-        affected_generations=(ArtifactGenerationChange("stmt-1", 0, 1),),
+        affected_generations=(artifact_generation_change("stmt-1", 0, 1),),
         result={"statement_id": "stmt-1", "generation": 1},
         completion_state=ReceiptCompletionState.COMPLETED,
         created_at="2026-08-12T16:00:00Z",
     )
+    return receipt
 
 
 def prepared_receipt(request_id="request-1", sequence=1) -> MutationReceipt:
-    return MutationReceipt(
+    receipt = mutation_receipt(
         sequence=sequence,
         request_id=request_id,
         operation=MutationOperation.COMMIT_RESPONSE,
@@ -50,6 +58,7 @@ def prepared_receipt(request_id="request-1", sequence=1) -> MutationReceipt:
         completion_state=ReceiptCompletionState.PREPARED,
         created_at="2026-08-12T16:00:00Z",
     )
+    return receipt
 
 
 def test_canonical_payload_signature_is_order_independent_unicode_exact_and_concrete() -> None:
@@ -67,38 +76,39 @@ def test_canonical_payload_signature_is_order_independent_unicode_exact_and_conc
 def test_receipt_codec_round_trip_is_deterministic_and_deeply_immutable() -> None:
     source = {"statement_id": "stmt-1", "nested": {"items": [1, "é"]}}
     receipt = completed_receipt()
-    receipt = MutationReceipt(
-        receipt.sequence,
-        receipt.request_id,
-        receipt.operation,
-        receipt.payload_signature,
-        receipt.result_code,
-        receipt.affected_generations,
+    receipt = mutation_receipt(
+        receipt["sequence"],
+        receipt["request_id"],
+        receipt["operation"],
+        receipt["payload_signature"],
+        receipt["result_code"],
+        receipt["affected_generations"],
         source,
-        receipt.completion_state,
-        receipt.created_at,
+        receipt["completion_state"],
+        receipt["created_at"],
     )
-    encoded = receipt.to_json()
+    encoded = mutation_receipt_to_json(receipt)
     source["nested"]["items"].append("late")
-    restored = MutationReceipt.from_json(encoded)
+    restored = mutation_receipt_from_json(encoded)
 
     assert restored == receipt
-    assert restored.to_json() == encoded
-    assert restored.to_dict()["result"] == {"nested": {"items": [1, "é"]}, "statement_id": "stmt-1"}
+    assert mutation_receipt_to_json(restored) == encoded
+    assert mutation_receipt_to_dict(restored)["result"] == {"nested": {"items": [1, "é"]}, "statement_id": "stmt-1"}
     assert "\\u00e9" not in encoded
     with pytest.raises(TypeError):
-        cast(dict[str, object], receipt.result)["new"] = "value"
+        cast(dict[str, object], receipt["result"])["new"] = "value"
 
 
 def test_exact_completed_retry_replays_original_receipt() -> None:
     ledger = MutationReceiptLedger()
     receipt = ledger.record(completed_receipt())
 
-    lookup = ledger.lookup(receipt.request_id, receipt.operation, receipt.payload_signature)
+    lookup = ledger.lookup(receipt["request_id"], receipt["operation"], receipt["payload_signature"])
 
-    assert lookup.outcome == ReceiptLookupOutcome.REPLAY
-    assert lookup.receipt_available is True
-    assert lookup.receipt() == receipt
+    assert type(lookup) is dict
+    assert lookup["outcome"] == ReceiptLookupOutcome.REPLAY
+    assert lookup["receipt_available"] is True
+    assert receipt_lookup_receipt(lookup) == receipt
     assert ledger.record(receipt) == receipt
 
 
@@ -107,35 +117,35 @@ def test_changed_payload_or_operation_conflicts_without_receipt_disclosure() -> 
     receipt = ledger.record(completed_receipt())
 
     changed_payload = ledger.lookup(
-        receipt.request_id,
-        receipt.operation,
+        receipt["request_id"],
+        receipt["operation"],
         canonical_payload_signature({"response": "Changed response"}),
     )
-    changed_operation = ledger.lookup(receipt.request_id, MutationOperation.RETIRE_RESPONSE, receipt.payload_signature)
+    changed_operation = ledger.lookup(receipt["request_id"], MutationOperation.RETIRE_RESPONSE, receipt["payload_signature"])
 
-    assert changed_payload.outcome == ReceiptLookupOutcome.CONFLICT
-    assert changed_operation.outcome == ReceiptLookupOutcome.CONFLICT
-    assert changed_payload.receipt_available is False
+    assert changed_payload["outcome"] == ReceiptLookupOutcome.CONFLICT
+    assert changed_operation["outcome"] == ReceiptLookupOutcome.CONFLICT
+    assert changed_payload["receipt_available"] is False
     with pytest.raises(ResourceNotFoundError, match="not available"):
-        changed_payload.receipt()
+        receipt_lookup_receipt(changed_payload)
 
 
 def test_prepared_receipt_reports_in_progress_and_can_only_advance_to_completed() -> None:
     ledger = MutationReceiptLedger()
     prepared = ledger.record(prepared_receipt())
-    lookup = ledger.lookup(prepared.request_id, prepared.operation, prepared.payload_signature)
+    lookup = ledger.lookup(prepared["request_id"], prepared["operation"], prepared["payload_signature"])
 
-    assert lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS
-    completed = completed_receipt(payload_signature=prepared.payload_signature)
+    assert lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS
+    completed = completed_receipt(payload_signature=prepared["payload_signature"])
     assert ledger.record(completed) == completed
-    assert ledger.lookup(completed.request_id, completed.operation, completed.payload_signature).outcome == (
+    assert ledger.lookup(completed["request_id"], completed["operation"], completed["payload_signature"])["outcome"] == (
         ReceiptLookupOutcome.REPLAY
     )
 
     with pytest.raises(ConflictError, match="cannot be changed"):
         ledger.record(
             completed_receipt(
-                payload_signature=completed.payload_signature,
+                payload_signature=completed["payload_signature"],
                 result_code=MutationResultCode.CREATED_WITH_EVICTION,
             )
         )
@@ -146,7 +156,9 @@ def test_new_request_requires_exact_next_sequence() -> None:
     receipt = completed_receipt(sequence=2)
     with pytest.raises(ConflictError, match="expected 1, received 2"):
         ledger.record(receipt)
-    assert ledger.lookup(receipt.request_id, receipt.operation, receipt.payload_signature).outcome == ReceiptLookupOutcome.NEW
+    assert ledger.lookup(receipt["request_id"], receipt["operation"], receipt["payload_signature"])["outcome"] == (
+        ReceiptLookupOutcome.NEW
+    )
 
 
 def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon() -> None:
@@ -160,8 +172,13 @@ def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon(
     tombstones_state = cast(list[dict[str, object]], snapshot["tombstones"])
     assert [item["request_id"] for item in receipts_state] == ["request-3", "request-4"]
     assert [item["request_id"] for item in tombstones_state] == ["request-2"]
-    assert ledger.lookup("request-2", receipts[1].operation, receipts[1].payload_signature).outcome == ReceiptLookupOutcome.EXPIRED
-    assert ledger.lookup("request-1", receipts[0].operation, receipts[0].payload_signature).outcome == ReceiptLookupOutcome.NEW
+    assert (
+        ledger.lookup("request-2", receipts[1]["operation"], receipts[1]["payload_signature"])["outcome"]
+        == ReceiptLookupOutcome.EXPIRED
+    )
+    assert ledger.lookup("request-1", receipts[0]["operation"], receipts[0]["payload_signature"])["outcome"] == (
+        ReceiptLookupOutcome.NEW
+    )
     with pytest.raises(ConflictError, match="pruned"):
         ledger.record(completed_receipt("request-2", 5))
 
@@ -170,14 +187,18 @@ def test_ledger_snapshot_restart_preserves_replay_conflict_and_expired_semantics
     ledger = MutationReceiptLedger(max_receipts=1, max_tombstones=2)
     first = ledger.record(completed_receipt("request-1", 1))
     second = ledger.record(completed_receipt("request-2", 2))
-    restored = MutationReceiptLedger.from_snapshot(ledger.snapshot())
+    restored = mutation_receipt_ledger_from_snapshot(ledger.snapshot())
 
     assert restored.snapshot() == ledger.snapshot()
     assert restored.next_sequence == 3
-    assert restored.lookup(second.request_id, second.operation, second.payload_signature).outcome == ReceiptLookupOutcome.REPLAY
-    assert restored.lookup(first.request_id, first.operation, first.payload_signature).outcome == ReceiptLookupOutcome.EXPIRED
+    assert restored.lookup(second["request_id"], second["operation"], second["payload_signature"])["outcome"] == (
+        ReceiptLookupOutcome.REPLAY
+    )
+    assert restored.lookup(first["request_id"], first["operation"], first["payload_signature"])["outcome"] == (
+        ReceiptLookupOutcome.EXPIRED
+    )
     changed_signature = canonical_payload_signature({"response": "changed"})
-    assert restored.lookup(first.request_id, first.operation, changed_signature).outcome == ReceiptLookupOutcome.CONFLICT
+    assert restored.lookup(first["request_id"], first["operation"], changed_signature)["outcome"] == (ReceiptLookupOutcome.CONFLICT)
 
 
 def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
@@ -209,24 +230,24 @@ def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
 
 def test_affected_generations_are_concrete_unique_and_ordered() -> None:
     receipt = completed_receipt()
-    assert receipt.affected_generations[0].to_dict() == {
+    assert artifact_generation_change_to_dict(receipt["affected_generations"][0]) == {
         "statement_id": "stmt-1",
         "before_generation": 0,
         "after_generation": 1,
     }
     with pytest.raises(InvalidRequestError, match="exist before or after"):
-        ArtifactGenerationChange("stmt-1", 0, 0)
+        artifact_generation_change("stmt-1", 0, 0)
     with pytest.raises(InvalidRequestError, match="unique"):
-        MutationReceipt(
-            receipt.sequence,
-            receipt.request_id,
-            receipt.operation,
-            receipt.payload_signature,
-            receipt.result_code,
-            (receipt.affected_generations[0], receipt.affected_generations[0]),
-            receipt.result,
-            receipt.completion_state,
-            receipt.created_at,
+        mutation_receipt(
+            receipt["sequence"],
+            receipt["request_id"],
+            receipt["operation"],
+            receipt["payload_signature"],
+            receipt["result_code"],
+            (receipt["affected_generations"][0], receipt["affected_generations"][0]),
+            receipt["result"],
+            receipt["completion_state"],
+            receipt["created_at"],
         )
 
 
@@ -236,7 +257,7 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
         (lambda: MutationReceiptLedger(max_receipts=0), "positive bounded integer"),
         (lambda: MutationReceiptLedger(receipts=cast(Any, [])), "tuple"),
         (
-            lambda: MutationReceipt.from_json("[]"),
+            lambda: mutation_receipt_from_json("[]"),
             "must contain an object",
         ),
         (

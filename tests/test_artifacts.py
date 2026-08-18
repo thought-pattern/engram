@@ -10,26 +10,42 @@ from engram.artifacts import (
     LEGAL_LIFECYCLE_TRANSITIONS,
     MAX_METADATA_DEPTH,
     TERMINAL_LIFECYCLE_STATES,
-    ArtifactProvenance,
-    ArtifactStatistics,
     CachedResponseArtifact,
     HistoricalKeyReuseReason,
     LifecycleDecisionReason,
     LifecycleOperation,
     LifecycleState,
+    artifact_provenance,
+    artifact_provenance_from_dict,
+    artifact_provenance_to_dict,
+    artifact_statistics,
+    artifact_statistics_from_dict,
+    artifact_statistics_to_dict,
+    cached_response_artifact,
+    cached_response_artifact_from_dict,
+    cached_response_artifact_from_json,
+    cached_response_artifact_to_dict,
+    cached_response_artifact_to_json,
     historical_key_reuse_decision,
+    historical_key_reuse_decision_to_dict,
     lifecycle_after_capacity_eviction,
+    lifecycle_base_decision_to_dict,
     lifecycle_base_eligibility,
     lifecycle_transition_decision,
+    lifecycle_transition_decision_to_dict,
     require_lifecycle_transition,
+    validate_cached_response_artifact,
+    validate_historical_key_reuse_decision,
+    validate_lifecycle_base_decision,
+    validate_lifecycle_transition_decision,
 )
 from engram.constants import Tier
 from engram.errors import InvalidRequestError, LifecycleError
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
+from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 
 
 def accepted_artifact(**overrides) -> CachedResponseArtifact:
-    scope = overrides.pop("scope", ScopeKey(namespace="tenant-a", context_fingerprint="account:pro"))
+    scope = overrides.pop("scope", scope_key(namespace="tenant-a", context_fingerprint="account:pro"))
     request = overrides.pop("request", "Who acquired GitHub?")
     values = {
         "statement_id": "stmt-response-1",
@@ -48,26 +64,31 @@ def accepted_artifact(**overrides) -> CachedResponseArtifact:
         "knowledge_epoch": 0,
         "knowledge_epoch_available": False,
         "superseded_by": "",
-        "provenance": ArtifactProvenance(
+        "provenance": artifact_provenance(
             source_label="tapestry:released",
             caller_id="regulator-a",
             accepted_at="2026-08-12T16:00:00Z",
         ),
-        "statistics": ArtifactStatistics(),
+        "statistics": artifact_statistics(),
         "metadata": {},
     }
     values.update(overrides)
-    return CachedResponseArtifact(**values)
+    result = cached_response_artifact(**values)
+    return result
 
 
 def none_paths(value, path="root") -> list[str]:
     if value is None:
-        return [path]
+        result = [path]
+        return result
     if isinstance(value, dict):
-        return [nested for key, item in value.items() for nested in none_paths(item, f"{path}.{key}")]
+        result = [nested for key, item in value.items() for nested in none_paths(item, f"{path}.{key}")]
+        return result
     if isinstance(value, (list, tuple, set)):
-        return [nested for index, item in enumerate(value) for nested in none_paths(item, f"{path}[{index}]")]
-    return []
+        result = [nested for index, item in enumerate(value) for nested in none_paths(item, f"{path}[{index}]")]
+        return result
+    result = []
+    return result
 
 
 def test_lifecycle_vocabulary_and_terminal_states_are_closed() -> None:
@@ -96,9 +117,10 @@ def test_lifecycle_vocabulary_and_terminal_states_are_closed() -> None:
 def test_base_eligibility_is_complete_and_tier_independent(state, eligible, reason) -> None:
     decision = lifecycle_base_eligibility(state)
 
-    assert decision.direct_answer_eligible is eligible
-    assert decision.reason == reason
-    assert decision.to_dict() == {
+    assert type(decision) is dict
+    assert decision["direct_answer_eligible"] is eligible
+    assert decision["reason"] == reason
+    assert lifecycle_base_decision_to_dict(decision) == {
         "lifecycle": state.value,
         "direct_answer_eligible": eligible,
         "reason": reason.value,
@@ -117,8 +139,9 @@ def test_base_eligibility_is_complete_and_tier_independent(state, eligible, reas
 def test_active_has_only_the_three_named_transitions(operation, target) -> None:
     decision = lifecycle_transition_decision(LifecycleState.ACTIVE, target, operation)
 
-    assert decision.allowed is True
-    assert decision.reason == LifecycleDecisionReason.LEGAL_TRANSITION
+    assert type(decision) is dict
+    assert decision["allowed"] is True
+    assert decision["reason"] == LifecycleDecisionReason.LEGAL_TRANSITION
     assert require_lifecycle_transition(LifecycleState.ACTIVE, target, operation) == decision
     assert LEGAL_LIFECYCLE_TRANSITIONS[LifecycleState.ACTIVE][operation] == target
 
@@ -128,16 +151,16 @@ def test_active_has_only_the_three_named_transitions(operation, target) -> None:
 def test_non_active_lifecycle_states_are_terminal(state, operation) -> None:
     decision = lifecycle_transition_decision(state, LifecycleState.ACTIVE, operation)
 
-    assert decision.allowed is False
-    assert decision.reason == LifecycleDecisionReason.TERMINAL_STATE
+    assert decision["allowed"] is False
+    assert decision["reason"] == LifecycleDecisionReason.TERMINAL_STATE
     assert LEGAL_LIFECYCLE_TRANSITIONS[state] == {}
 
 
 def test_superseded_can_only_be_reached_through_explicit_supersession() -> None:
     for operation in (LifecycleOperation.INVALIDATE, LifecycleOperation.RETIRE):
         decision = lifecycle_transition_decision(LifecycleState.ACTIVE, LifecycleState.SUPERSEDED, operation)
-        assert decision.allowed is False
-        assert decision.reason == LifecycleDecisionReason.OPERATION_TARGET_MISMATCH
+        assert decision["allowed"] is False
+        assert decision["reason"] == LifecycleDecisionReason.OPERATION_TARGET_MISMATCH
 
 
 def test_same_state_retry_is_not_reinterpreted_as_a_transition() -> None:
@@ -147,8 +170,8 @@ def test_same_state_retry_is_not_reinterpreted_as_a_transition() -> None:
         LifecycleOperation.SUPERSEDE,
     )
 
-    assert decision.allowed is False
-    assert decision.reason == LifecycleDecisionReason.SAME_STATE_NOT_A_TRANSITION
+    assert decision["allowed"] is False
+    assert decision["reason"] == LifecycleDecisionReason.SAME_STATE_NOT_A_TRANSITION
 
 
 def test_illegal_transition_raises_stable_lifecycle_error() -> None:
@@ -166,7 +189,7 @@ def test_historical_key_reuse_requires_explicit_expected_owner_and_generation() 
             explicit_replacement=False,
             expected_statement_id="stmt-old",
             expected_generation=4,
-        ).reason
+        )["reason"]
         == HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
     )
     assert (
@@ -174,7 +197,7 @@ def test_historical_key_reuse_requires_explicit_expected_owner_and_generation() 
             explicit_replacement=True,
             expected_statement_id="",
             expected_generation=4,
-        ).reason
+        )["reason"]
         == HistoricalKeyReuseReason.EXPECTED_STATEMENT_ID_REQUIRED
     )
     assert (
@@ -182,7 +205,7 @@ def test_historical_key_reuse_requires_explicit_expected_owner_and_generation() 
             explicit_replacement=True,
             expected_statement_id="stmt-old",
             expected_generation=0,
-        ).reason
+        )["reason"]
         == HistoricalKeyReuseReason.EXPECTED_GENERATION_REQUIRED
     )
     allowed = historical_key_reuse_decision(
@@ -190,8 +213,52 @@ def test_historical_key_reuse_requires_explicit_expected_owner_and_generation() 
         expected_statement_id="stmt-old",
         expected_generation=4,
     )
-    assert allowed.allowed is True
-    assert allowed.reason == HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
+    assert type(allowed) is dict
+    assert allowed["allowed"] is True
+    assert allowed["reason"] == HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
+
+
+def test_lifecycle_decision_dictionaries_have_exact_codecs_and_revalidation() -> None:
+    base = lifecycle_base_eligibility(LifecycleState.ACTIVE)
+    transition = lifecycle_transition_decision(
+        LifecycleState.ACTIVE,
+        LifecycleState.RETIRED,
+        LifecycleOperation.RETIRE,
+    )
+    historical = historical_key_reuse_decision(
+        explicit_replacement=True,
+        expected_statement_id="stmt-old",
+        expected_generation=4,
+    )
+
+    assert validate_lifecycle_base_decision(base) == base
+    assert validate_lifecycle_base_decision(base) is not base
+    assert lifecycle_transition_decision_to_dict(transition) == {
+        "current": "ACTIVE",
+        "target": "RETIRED",
+        "operation": "RETIRE",
+        "allowed": True,
+        "reason": "legal_transition",
+    }
+    assert historical_key_reuse_decision_to_dict(historical) == {
+        "allowed": True,
+        "reason": "allowed_explicit_replacement",
+    }
+
+    malformed_base = dict(base)
+    malformed_base["direct_answer_eligible"] = False
+    with pytest.raises(InvalidRequestError, match="do not match lifecycle policy"):
+        validate_lifecycle_base_decision(malformed_base)
+
+    malformed_transition = dict(transition)
+    malformed_transition["allowed"] = False
+    with pytest.raises(InvalidRequestError, match="do not match transition policy"):
+        validate_lifecycle_transition_decision(malformed_transition)
+
+    malformed_historical = dict(historical)
+    malformed_historical["reason"] = HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
+    with pytest.raises(InvalidRequestError, match="allowed does not match reason"):
+        validate_historical_key_reuse_decision(malformed_historical)
 
 
 @pytest.mark.parametrize("state", tuple(LifecycleState))
@@ -239,35 +306,53 @@ def test_artifact_codec_is_deterministic_and_preserves_exact_unicode() -> None:
         metadata={"z": [1, True, "é"], "a": {"ratio": 0.5}},
     )
 
-    encoded = original.to_json()
-    restored = CachedResponseArtifact.from_json(encoded)
+    encoded = cached_response_artifact_to_json(original)
+    restored = cached_response_artifact_from_json(encoded)
 
     assert restored == original
-    assert restored.to_json() == encoded
-    assert restored.response == response
-    assert restored.response.encode("utf-8") == response.encode("utf-8")
+    assert type(restored) is dict
+    assert cached_response_artifact_to_json(restored) == encoded
+    assert restored["response"] == response
+    assert restored["response"].encode("utf-8") == response.encode("utf-8")
     assert "\\u00e9" not in encoded
-    assert none_paths(restored.to_dict()) == []
+    assert none_paths(cached_response_artifact_to_dict(restored)) == []
 
 
 def test_artifact_codec_uses_exact_required_fields() -> None:
-    data = accepted_artifact().to_dict()
+    data = cached_response_artifact_to_dict(accepted_artifact())
     assert data["schema_version"] == ARTIFACT_SCHEMA_VERSION
 
     data["extra"] = "forbidden"
     with pytest.raises(InvalidRequestError, match="invalid fields"):
-        CachedResponseArtifact.from_dict(data)
+        cached_response_artifact_from_dict(data)
 
     del data["extra"]
     del data["response"]
     with pytest.raises(InvalidRequestError, match="invalid fields"):
-        CachedResponseArtifact.from_dict(data)
+        cached_response_artifact_from_dict(data)
+
+
+def test_artifact_dictionary_revalidates_mutation_and_copies_nested_records() -> None:
+    provenance = artifact_provenance("source", "caller", "2026-08-12T16:00:00Z")
+    statistics = artifact_statistics(1, 2, "", False)
+    artifact = accepted_artifact(provenance=provenance, statistics=statistics)
+    provenance["source_label"] = "late mutation"
+    statistics["query_count"] = 99
+
+    assert type(artifact) is dict
+    assert artifact["provenance"]["source_label"] == "source"
+    assert artifact["statistics"]["query_count"] == 2
+
+    malformed = dict(artifact)
+    malformed["generation"] = 0
+    with pytest.raises(InvalidRequestError, match="positive integer"):
+        validate_cached_response_artifact(malformed)
 
 
 def test_support_is_bounded_deduplicated_and_sorted() -> None:
     artifact = accepted_artifact(support_claim_ids=("claim-z", "claim-a", "claim-z"))
-    assert artifact.support_claim_ids == ("claim-a", "claim-z")
-    assert artifact.to_dict()["support_claim_ids"] == ["claim-a", "claim-z"]
+    assert artifact["support_claim_ids"] == ("claim-a", "claim-z")
+    assert cached_response_artifact_to_dict(artifact)["support_claim_ids"] == ["claim-a", "claim-z"]
 
 
 def test_metadata_is_deeply_immutable_and_json_concrete() -> None:
@@ -275,9 +360,9 @@ def test_metadata_is_deeply_immutable_and_json_concrete() -> None:
     artifact = accepted_artifact(metadata=source)
     source["nested"]["items"].append("late")
 
-    assert artifact.to_dict()["metadata"] == {"nested": {"items": [1, "two", False]}}
+    assert cached_response_artifact_to_dict(artifact)["metadata"] == {"nested": {"items": [1, "two", False]}}
     with pytest.raises(TypeError):
-        cast(dict[str, object], artifact.metadata)["new"] = "value"
+        cast(dict[str, object], artifact["metadata"])["new"] = "value"
 
 
 @pytest.mark.parametrize(
@@ -320,7 +405,10 @@ def test_temporal_presence_and_epoch_fields_are_concrete(overrides, message) -> 
 
 def test_artifact_scope_must_match_authoritative_identity_scope() -> None:
     with pytest.raises(InvalidRequestError, match="scope must match"):
-        accepted_artifact(scope=ScopeKey(namespace="tenant-b"), query_identity=build_standalone_identity("Who acquired GitHub?"))
+        accepted_artifact(
+            scope=scope_key(namespace="tenant-b"),
+            query_identity=build_standalone_identity("Who acquired GitHub?"),
+        )
 
 
 def test_supersession_link_is_consistent_with_lifecycle() -> None:
@@ -332,20 +420,22 @@ def test_supersession_link_is_consistent_with_lifecycle() -> None:
         accepted_artifact(lifecycle=LifecycleState.SUPERSEDED, superseded_by="stmt-response-1")
 
     superseded = accepted_artifact(lifecycle=LifecycleState.SUPERSEDED, superseded_by="stmt-response-2")
-    assert superseded.superseded_by == "stmt-response-2"
+    assert superseded["superseded_by"] == "stmt-response-2"
 
 
 def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
-    provenance = ArtifactProvenance("source", "caller", "2026-08-12T16:00:00Z")
-    statistics = ArtifactStatistics(3, 5, "2026-08-12T17:00:00Z", True)
+    provenance = artifact_provenance("source", "caller", "2026-08-12T16:00:00Z")
+    statistics = artifact_statistics(3, 5, "2026-08-12T17:00:00Z", True)
 
-    assert ArtifactProvenance.from_dict(provenance.to_dict()) == provenance
-    assert ArtifactStatistics.from_dict(statistics.to_dict()) == statistics
+    assert type(provenance) is dict
+    assert type(statistics) is dict
+    assert artifact_provenance_from_dict(artifact_provenance_to_dict(provenance)) == provenance
+    assert artifact_statistics_from_dict(artifact_statistics_to_dict(statistics)) == statistics
 
-    bad_statistics = statistics.to_dict()
+    bad_statistics = artifact_statistics_to_dict(statistics)
     bad_statistics["last_hit_available"] = False
     with pytest.raises(InvalidRequestError, match="must be empty"):
-        ArtifactStatistics.from_dict(bad_statistics)
+        artifact_statistics_from_dict(bad_statistics)
 
 
 @pytest.mark.parametrize(
@@ -367,8 +457,8 @@ def test_artifact_constructor_rejects_wrong_concrete_types(overrides, message) -
 
 def test_artifact_json_loader_rejects_malformed_and_non_object_values() -> None:
     with pytest.raises(InvalidRequestError, match="must be a string"):
-        CachedResponseArtifact.from_json(cast(Any, {}))
+        cached_response_artifact_from_json(cast(Any, {}))
     with pytest.raises(InvalidRequestError, match="malformed"):
-        CachedResponseArtifact.from_json("{")
+        cached_response_artifact_from_json("{")
     with pytest.raises(InvalidRequestError, match="must contain an object"):
-        CachedResponseArtifact.from_json("[]")
+        cached_response_artifact_from_json("[]")

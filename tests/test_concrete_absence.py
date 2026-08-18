@@ -12,12 +12,13 @@ from engram.pipeline import pipeline_result
 from engram.service import EngramCore
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-PRODUCTION_ROOTS = (REPOSITORY / "engram", REPOSITORY / "scripts")
+PRODUCTION_ROOTS = (REPOSITORY / "engram", REPOSITORY / "scripts", REPOSITORY / "eval")
 GENERATED_MODULES = {"engram_pb2.py", "engram_pb2.pyi", "engram_pb2_grpc.py"}
 
 
 def _production_modules() -> list[Path]:
-    return sorted(path for root in PRODUCTION_ROOTS for path in root.rglob("*.py") if path.name not in GENERATED_MODULES)
+    result = sorted(path for root in PRODUCTION_ROOTS for path in root.rglob("*.py") if path.name not in GENERATED_MODULES)
+    return result
 
 
 def _annotations(tree: ast.AST) -> list[ast.expr]:
@@ -40,28 +41,36 @@ def _annotations(tree: ast.AST) -> list[ast.expr]:
 def _annotation_uses_union(annotation: ast.AST) -> bool:
     for node in ast.walk(annotation):
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            return True
+            result = True
+            return result
         if isinstance(node, ast.Subscript):
             name = node.value.id if isinstance(node.value, ast.Name) else getattr(node.value, "attr", "")
             if name in {"Optional", "Union"}:
-                return True
+                result = True
+                return result
         if (
             isinstance(node, ast.Constant)
             and isinstance(node.value, str)
             and (" | " in node.value or "Optional[" in node.value or "Union[" in node.value)
         ):
-            return True
-    return False
+            result = True
+            return result
+    result = False
+    return result
 
 
 def _none_paths(value, path: str = "root") -> list[str]:
     if value is None:
-        return [path]
+        result = [path]
+        return result
     if isinstance(value, dict):
-        return [nested for key, item in value.items() for nested in _none_paths(item, f"{path}.{key}")]
+        result = [nested for key, item in value.items() for nested in _none_paths(item, f"{path}.{key}")]
+        return result
     if isinstance(value, (list, tuple, set)):
-        return [nested for index, item in enumerate(value) for nested in _none_paths(item, f"{path}[{index}]")]
-    return []
+        result = [nested for index, item in enumerate(value) for nested in _none_paths(item, f"{path}[{index}]")]
+        return result
+    result = []
+    return result
 
 
 def test_production_annotations_do_not_use_unions() -> None:

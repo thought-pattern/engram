@@ -58,7 +58,8 @@ def statement(
 def statement_hit_rate(stmt: dict) -> float:
     """Calculate hit rate (hits/queries), default 0.5 when undefined."""
     if stmt["query_count"] == 0:
-        return 0.5
+        result = 0.5
+        return result
     rate = stmt["hit_count"] / stmt["query_count"]
     return rate
 
@@ -155,7 +156,8 @@ def keyword_entry(
 def keyword_entry_hit_rate(entry: dict) -> float:
     """Calculate hit rate, defaulting to 0.5 when undefined."""
     if entry["query_count"] == 0:
-        return 0.5
+        result = 0.5
+        return result
     rate = entry["hit_count"] / entry["query_count"]
     return rate
 

@@ -7,11 +7,18 @@ import pytest
 
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.graph import CLAIM_PROJECTION_FIELDS, ClaimProjection, ClaimProjectionQuery, MemGraphConnection
+from engram.graph import (
+    CLAIM_PROJECTION_FIELDS,
+    ClaimProjectionQuery,
+    MemGraphConnection,
+    claim_projection_from_graph_row,
+    claim_projection_to_dict,
+    validate_claim_projection,
+)
 
 
 def _row(*, semantic: bool = False) -> dict[str, object]:
-    return {
+    result = {
         "claim_id": "claim:01J5M6Q9J8",
         "subject_entity_id": "entity:alan-turing",
         "predicate_id": "predicate:birth-date",
@@ -39,6 +46,7 @@ def _row(*, semantic: bool = False) -> dict[str, object]:
         "semantic_similarity": 0.81 if semantic else 0.0,
         "semantic_similarity_available": semantic,
     }
+    return result
 
 
 def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
@@ -47,7 +55,8 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
         captured.update({"query": query, "parameters": parameters})
-        return [_row()]
+        result = [_row()]
+        return result
 
     client._execute_read_query = execute
     projections = client.structured_claim_projections(
@@ -58,10 +67,11 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
 
     assert len(projections) == 1
     projection = projections[0]
-    assert projection.projection_id == ClaimProjectionQuery.STRUCTURED_ENTITY_V1
-    assert projection.vector_index_id_available is False
-    assert projection.structured_match == 1.0
-    assert projection.semantic_similarity_available is False
+    assert type(projection) is dict
+    assert projection["projection_id"] == ClaimProjectionQuery.STRUCTURED_ENTITY_V1
+    assert projection["vector_index_id_available"] is False
+    assert projection["structured_match"] == 1.0
+    assert projection["semantic_similarity_available"] is False
     assert set(_row()) == CLAIM_PROJECTION_FIELDS
     assert captured["parameters"] == {"value": "Alan Turing", "limit": 3}
     assert "Alan Turing" not in captured["query"]
@@ -72,7 +82,7 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
     assert "c.predicate AS predicate" not in captured["query"]
     assert "c.object AS object" not in captured["query"]
     assert "properties(" not in captured["query"].lower()
-    assert "null" not in json.dumps(projection.to_dict(), sort_keys=True)
+    assert "null" not in json.dumps(claim_projection_to_dict(projection), sort_keys=True)
 
 
 def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
@@ -81,7 +91,8 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
         captured.update({"query": query, "parameters": parameters})
-        return [_row(semantic=True)]
+        result = [_row(semantic=True)]
+        return result
 
     client._execute_read_query = execute
     projections = client.vector_search_claim_projections(
@@ -92,11 +103,11 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
     )
 
     projection = projections[0]
-    assert projection.projection_id == ClaimProjectionQuery.VECTOR_V1
-    assert projection.vector_index_id == "claim_premise_embeddings"
-    assert projection.vector_index_id_available is True
-    assert projection.semantic_similarity == pytest.approx(0.81)
-    assert projection.structured_match_available is False
+    assert projection["projection_id"] == ClaimProjectionQuery.VECTOR_V1
+    assert projection["vector_index_id"] == "claim_premise_embeddings"
+    assert projection["vector_index_id_available"] is True
+    assert projection["semantic_similarity"] == pytest.approx(0.81)
+    assert projection["structured_match_available"] is False
     assert "CALL vector_search.search" in captured["query"]
     assert captured["parameters"] == {
         "index_name": "claim_premise_embeddings",
@@ -138,7 +149,7 @@ def test_projection_decoder_rejects_malformed_or_content_bearing_rows(mutate, me
     mutate(row)
 
     with pytest.raises(InvalidRequestError, match=message):
-        ClaimProjection.from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+        claim_projection_from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
 
 
 def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
@@ -156,13 +167,29 @@ def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
         }
     )
 
-    projection = ClaimProjection.from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    projection = claim_projection_from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
 
-    assert projection.invalidated_at == projection.system_to == projection.valid_to == ""
-    assert projection.trust_category == ""
-    assert projection.supplied_trust == 0.0
-    assert projection.supplied_trust_version == 0
-    assert "null" not in json.dumps(projection.to_dict(), sort_keys=True)
+    assert projection["invalidated_at"] == projection["system_to"] == projection["valid_to"] == ""
+    assert projection["trust_category"] == ""
+    assert projection["supplied_trust"] == 0.0
+    assert projection["supplied_trust_version"] == 0
+    assert "null" not in json.dumps(claim_projection_to_dict(projection), sort_keys=True)
+
+
+def test_projection_validation_revalidates_and_copies_mutable_records() -> None:
+    source = claim_projection_from_graph_row(_row(), ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    validated = validate_claim_projection(source)
+
+    assert type(validated) is dict
+    assert validated == source
+    assert validated is not source
+    source["claim_id"] = "claim:mutated"
+    assert validated["claim_id"] == "claim:01J5M6Q9J8"
+
+    malformed = dict(validated)
+    malformed["unexpected"] = "value"
+    with pytest.raises(InvalidRequestError, match="invalid fields"):
+        validate_claim_projection(malformed)
 
 
 def test_projection_boundary_deduplicates_identical_rows_and_rejects_conflicts() -> None:
@@ -197,17 +224,19 @@ def test_projection_boundary_rejects_excess_rows_and_untrusted_identifiers() -> 
 
 
 def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch) -> None:
-    projection = ClaimProjection.from_graph_row(_row(), ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    projection = claim_projection_from_graph_row(_row(), ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
 
-    class FixedClient(MemGraphConnection):
-        def structured_claim_projections(self, value, *, projection_id, limit=10):
-            assert value == "Alan Turing"
-            assert projection_id == ClaimProjectionQuery.STRUCTURED_ENTITY_V1
-            assert limit == 1
-            return [projection]
+    def structured_claim_projections(value, *, projection_id, limit=10):
+        assert value == "Alan Turing"
+        assert projection_id == ClaimProjectionQuery.STRUCTURED_ENTITY_V1
+        assert limit == 1
+        result = [projection]
+        return result
 
     engine = Engram()
-    engine._graph_client = FixedClient()
+    client = MemGraphConnection()
+    monkeypatch.setattr(client, "structured_claim_projections", structured_claim_projections)
+    engine._graph_client = client
     monkeypatch.setattr("engram.core.extract_entities", lambda _text: [{"text": "Alan Turing"}])
 
     result = engine.structured_claim_projections("Who was Alan Turing?", row_limit=1)
@@ -220,13 +249,15 @@ def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch
 def test_transport_neutral_structured_projection_caps_zero_row_query_attempts(monkeypatch) -> None:
     calls = []
 
-    class EmptyClient(MemGraphConnection):
-        def structured_claim_projections(self, value, *, projection_id, limit=10):
-            calls.append((value, projection_id, limit))
-            return []
+    def structured_claim_projections(value, *, projection_id, limit=10):
+        calls.append((value, projection_id, limit))
+        result = []
+        return result
 
     engine = Engram()
-    engine._graph_client = EmptyClient()
+    client = MemGraphConnection()
+    monkeypatch.setattr(client, "structured_claim_projections", structured_claim_projections)
+    engine._graph_client = client
     monkeypatch.setattr(
         "engram.core.extract_entities",
         lambda _text: [{"text": f"entity-{index}"} for index in range(5)],
@@ -246,14 +277,15 @@ def test_transport_neutral_vector_projection_fails_soft_without_logging_claim_co
     sensitive_claim_id = "claim:sensitive-customer-identifier"
     calls = 0
 
-    class BrokenClient(MemGraphConnection):
-        def vector_search_claim_projections(self, *_args, **_kwargs):
-            nonlocal calls
-            calls += 1
-            raise InvalidRequestError(f"malformed graph row for {sensitive_claim_id}")
+    def broken_vector_search(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise InvalidRequestError(f"malformed graph row for {sensitive_claim_id}")
 
     engine = Engram()
-    engine._graph_client = BrokenClient()
+    client = MemGraphConnection()
+    monkeypatch.setattr(client, "vector_search_claim_projections", broken_vector_search)
+    engine._graph_client = client
     engine.config["graph"].update(
         {
             "enabled": True,
@@ -270,17 +302,19 @@ def test_transport_neutral_vector_projection_fails_soft_without_logging_claim_co
     assert "InvalidRequestError" in caplog.text
     assert sensitive_claim_id not in caplog.text
 
-    projection = ClaimProjection.from_graph_row(
+    projection = claim_projection_from_graph_row(
         _row(semantic=True),
         ClaimProjectionQuery.VECTOR_V1,
         "claim_premise_embeddings",
     )
 
-    class OverReturningClient(MemGraphConnection):
-        def vector_search_claim_projections(self, *_args, **_kwargs):
-            return [projection, projection, projection, projection]
+    def over_returning_vector_search(*_args, **_kwargs):
+        result = [projection, projection, projection, projection]
+        return result
 
-    engine._graph_client = OverReturningClient()
+    over_returning_client = MemGraphConnection()
+    monkeypatch.setattr(over_returning_client, "vector_search_claim_projections", over_returning_vector_search)
+    engine._graph_client = over_returning_client
 
     assert engine.graph_vector_claim_projections("query", limit=3) == []
 
@@ -300,15 +334,16 @@ def test_fixed_by_id_projection_supports_publication_revalidation() -> None:
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
         captured.update({"query": query, "parameters": parameters})
-        return [row]
+        result = [row]
+        return result
 
     client._execute_read_query = execute
     projections = client.claim_projection_by_id("claim:01J5M6Q9J8")
 
     assert len(projections) == 1
-    assert projections[0].projection_id == ClaimProjectionQuery.BY_ID_V1
-    assert projections[0].structured_match_available is False
-    assert projections[0].semantic_similarity_available is False
+    assert projections[0]["projection_id"] == ClaimProjectionQuery.BY_ID_V1
+    assert projections[0]["structured_match_available"] is False
+    assert projections[0]["semantic_similarity_available"] is False
     assert captured["parameters"] == {"claim_id": "claim:01J5M6Q9J8"}
     assert "WHERE c.id = $claim_id" in captured["query"]
     assert "LIMIT 2" in captured["query"]

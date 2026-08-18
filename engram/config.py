@@ -9,9 +9,7 @@ from types import NoneType
 
 import yaml
 
-from engram.constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
-
-EMPTY_GRAPH_CONFIG: dict = {}
+from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, SessionOverflow
 
 
 def graph_config(
@@ -135,7 +133,7 @@ def engram_config(
     # Fallback response when no pattern matches
     fallback_response: str = "",  # Empty means an empty response on no match
     # Knowledge Graph settings
-    graph: dict = EMPTY_GRAPH_CONFIG,
+    graph: dict = EMPTY_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):

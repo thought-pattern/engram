@@ -134,7 +134,8 @@ def extract_keywords(
         ['whats', 'capital', 'france']
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     # Tokenize using NLTK
     try:
@@ -151,7 +152,8 @@ def extract_keywords(
         except Exception:
             pass  # Fall through to regular filtering
 
-    return select_lexical_terms(tokens, stopwords)
+    result = select_lexical_terms(tokens, stopwords)
+    return result
 
 
 def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
@@ -171,7 +173,8 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
         deduplicated with order preserved.
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     nlp = get_nlp()
     if not nlp:
@@ -226,14 +229,16 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
         is unavailable or nothing qualifies.
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     _ensure_tagger()
     try:
         tokens = word_tokenize(text)
         tagged = pos_tag(tokens)
     except Exception:
-        return []
+        result = []
+        return result
 
     seen: set[str] = set()
     terms: list[str] = []
@@ -461,9 +466,11 @@ def is_known_word(word: str) -> bool:
     """
     lowered = word.lower()
     if lowered in _known_words():
-        return True
+        result = True
+        return result
     if lemmatize_word(lowered, "v") in _known_words():
-        return True
+        result = True
+        return result
     known = lemmatize_word(lowered, "n") in _known_words()
     return known
 

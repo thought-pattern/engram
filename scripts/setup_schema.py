@@ -50,7 +50,8 @@ def parse_statements(text):
 def label_for(stmt):
     """Compact one-line label for a multi-line statement."""
     first = stmt.split("\n", 1)[0].strip()
-    return first if len(first) <= 80 else first[:77] + "..."
+    result = first if len(first) <= 80 else first[:77] + "..."
+    return result
 
 
 def apply_schema(conn=(), dry_run=False) -> bool:
@@ -67,7 +68,8 @@ def apply_schema(conn=(), dry_run=False) -> bool:
         for stmt in statements:
             print(f"  [dry-run] {label_for(stmt)}")
         print(f"\nDry-run only -- {len(statements)} statement(s) would be applied.\n")
-        return True
+        result = True
+        return result
 
     for stmt in statements:
         label = label_for(stmt)
@@ -96,7 +98,8 @@ def apply_schema(conn=(), dry_run=False) -> bool:
 
     total = succeeded + skipped + failed
     print(f"\nApplied {succeeded} statement(s), skipped {skipped}, failed {failed} (of {total})\n")
-    return failed == 0
+    result = failed == 0
+    return result
 
 
 def main():

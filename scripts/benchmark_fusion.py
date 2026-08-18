@@ -16,30 +16,33 @@ if str(REPOSITORY) not in sys.path:
 
 from engram.artifacts import LifecycleState
 from engram.core import Engram
-from engram.fusion import PERMISSIVE_CANDIDATE_AUTHORITY, CandidateFusionEngine, FusionPolicy
-from engram.identity import ScopeKey
+from engram.fusion import CandidateFusionEngine, fusion_policy, fusion_policy_to_dict, permissive_candidate_authority
+from engram.identity import scope_key
 from engram.resolution import (
     Candidate,
     CandidateSource,
     EvidenceKind,
     EvidenceReference,
-    FeatureSet,
     QueryFrameBuilder,
-    ResolutionBudget,
     ResolutionOutcome,
+    candidate as resolution_candidate,
+    capture_resolution_budget,
+    evidence_reference,
+    feature_set,
 )
 
 DEFAULT_OUTPUT = REPOSITORY / "documentation" / "fusion" / "benchmark-2026-08-15.json"
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
-SCOPE = ScopeKey(namespace="fusion-benchmark")
+SCOPE = scope_key(namespace="fusion-benchmark")
 
 
 def percentile(values: list[float], fraction: float) -> float:
     """Return a deterministic nearest-rank percentile."""
     ordered = sorted(values)
     index = min(len(ordered) - 1, max(0, int(len(ordered) * fraction + 0.999999) - 1))
-    return ordered[index]
+    result = ordered[index]
+    return result
 
 
 def measure(operation, samples: int) -> dict[str, float]:
@@ -50,11 +53,12 @@ def measure(operation, samples: int) -> dict[str, float]:
         started = time.perf_counter_ns()
         operation()
         values.append((time.perf_counter_ns() - started) / 1_000_000)
-    return {
+    result = {
         "p50_ms": statistics.median(values),
         "p95_ms": percentile(values, 0.95),
         "max_ms": max(values),
     }
+    return result
 
 
 def candidate(
@@ -66,27 +70,28 @@ def candidate(
     evidence: tuple[EvidenceReference, ...] = (),
 ) -> Candidate:
     """Build one content-neutral benchmark candidate."""
-    return Candidate(
+    result = resolution_candidate(
         candidate_id=f"candidate:{source.value}:{statement_id}",
         statement_id=statement_id,
         response=response,
         source=source,
-        features=FeatureSet(values=features),
+        features=feature_set(values=features),
         evidence=evidence,
         scope=SCOPE,
         lifecycle=LifecycleState.ACTIVE,
     )
+    return result
 
 
 def supported_pair(statement_id: str, semantic: float = 0.92, lexical: float = 0.95) -> tuple[Candidate, Candidate]:
     """Build independent lexical and support-semantic contributions."""
-    support = EvidenceReference(
+    support = evidence_reference(
         f"claim:{statement_id}",
         "support_semantic",
         EvidenceKind.SUPPORT,
         SCOPE,
     )
-    return (
+    result = (
         candidate(statement_id, CandidateSource.LEXICAL, {"lexical_score": lexical, "recency": 0.9}),
         candidate(
             statement_id,
@@ -95,32 +100,36 @@ def supported_pair(statement_id: str, semantic: float = 0.92, lexical: float = 0
             evidence=(support,),
         ),
     )
+    return result
 
 
 def section4_baseline(candidates: tuple[Candidate, ...]) -> ResolutionOutcome:
     """Represent the prior exact-only direct-selection rule without execution cost."""
     unique = {}
     for value in candidates:
-        unique.setdefault(value.statement_id, value)
-    exact = tuple(value for value in unique.values() if value.source == CandidateSource.EXACT)
+        unique.setdefault(value["statement_id"], value)
+    exact = tuple(value for value in unique.values() if value["source"] == CandidateSource.EXACT)
     if len(exact) == 1:
-        return ResolutionOutcome.ANSWER
+        result = ResolutionOutcome.ANSWER
+        return result
     if unique:
-        return ResolutionOutcome.EVIDENCE
-    return ResolutionOutcome.MISS
+        result = ResolutionOutcome.EVIDENCE
+        return result
+    result = ResolutionOutcome.MISS
+    return result
 
 
 def build_result(samples: int) -> dict[str, object]:
     """Run warmed benchmarks and return the evidence artifact."""
     engine = Engram()
-    budget = ResolutionBudget.capture(lambda: START_NS, total_time_ms=100, resolver_time_ms=25)
+    budget = capture_resolution_budget(lambda: START_NS, total_time_ms=100, resolver_time_ms=25)
     frame = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         "Which benchmark response is supported?",
         SCOPE,
         diagnostic_seed="fusion-benchmark",
         budget=budget,
     )
-    fusion = CandidateFusionEngine(authority=PERMISSIVE_CANDIDATE_AUTHORITY, clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
     exact = (candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}),)
     reinforced = supported_pair("reinforced")
     ambiguous = (*supported_pair("ambiguous-a"), *supported_pair("ambiguous-b", semantic=0.91, lexical=0.94))
@@ -144,7 +153,7 @@ def build_result(samples: int) -> dict[str, object]:
                 "scenario": name,
                 "expected": expected,
                 "section4_baseline": section4_baseline(values).value,
-                "section5_fusion_v1": fusion.decide(frame, values).outcome.value,
+                "section5_fusion_v1": fusion.decide(frame, values)["outcome"].value,
             }
         )
     scaling = {}
@@ -170,16 +179,16 @@ def build_result(samples: int) -> dict[str, object]:
         "thousand_candidates_p95_under_1250_ms": scaling["1000"]["p95_ms"] < 1_250.0,
         "thousand_candidates_peak_under_64_mib": peak_bytes < 67_108_864,
         "thousand_candidates_estimate_within_frame_budget": (
-            peak_decision.working_memory_bytes <= frame.budget.max_working_memory_bytes
+            peak_decision["working_memory_bytes"] <= frame["budget"]["max_working_memory_bytes"]
         ),
         "acceptance_scenarios_correct": all(value["section5_fusion_v1"] == value["expected"] for value in acceptance),
     }
-    return {
+    result = {
         "schema_version": 1,
         "benchmark_version": "section5-fusion-benchmark-v1.1",
         "recorded_at": "2026-08-15",
         "environment": {"python": platform.python_version(), "platform": platform.platform()},
-        "policy": FusionPolicy().to_dict(),
+        "policy": fusion_policy_to_dict(fusion_policy()),
         "policy_provenance": {
             "selection": "hand_authored_conservative_unfitted",
             "unit_or_conformance_fixtures_used_for_parameter_selection": False,
@@ -190,10 +199,11 @@ def build_result(samples: int) -> dict[str, object]:
         "acceptance": acceptance,
         "scaling": scaling,
         "thousand_candidates_peak_bytes": peak_bytes,
-        "thousand_candidates_fusion_estimated_bytes": peak_decision.working_memory_bytes,
+        "thousand_candidates_fusion_estimated_bytes": peak_decision["working_memory_bytes"],
         "gates": gates,
         "all_gates_passed": all(gates.values()),
     }
+    return result
 
 
 def main() -> int:
@@ -213,7 +223,8 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text, encoding="utf-8")
         print(args.output)
-    return 0 if result["all_gates_passed"] else 1
+    result = 0 if result["all_gates_passed"] else 1
+    return result
 
 
 if __name__ == "__main__":

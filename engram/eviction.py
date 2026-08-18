@@ -53,7 +53,8 @@ def evict_statement_at(engram, idx: int) -> bool:
         True if evicted successfully, False if index invalid.
     """
     if idx < 0 or idx >= len(engram.statements):
-        return False
+        result = False
+        return result
 
     stmt = engram.statements[idx]
 
@@ -96,7 +97,8 @@ def evict_statement_at(engram, idx: int) -> bool:
 
     engram._remove_index_projection_if_present(stmt["id"])
     engram.eviction_count += 1
-    return True
+    result = True
+    return result
 
 
 def evict_dynamic(engram) -> bool:
@@ -114,7 +116,8 @@ def evict_dynamic(engram) -> bool:
 
     candidates = get_eviction_candidates(engram)
     if not candidates:
-        return False
+        result = False
+        return result
 
     policy = engram.config["eviction_policy"]
     target_idx: int

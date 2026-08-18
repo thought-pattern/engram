@@ -281,7 +281,8 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
         best = (best_match[0], best_match[1], best_match[2])
         return best
 
-    return ()
+    result = ()
+    return result
 
 
 def pattern_entry(
@@ -317,6 +318,14 @@ def is_pure_wildcard(pattern: str) -> bool:
     words = pattern.split()
     is_wildcard = bool(words) and all(word.lstrip("$") in WILDCARD_TOKENS for word in words)
     return is_wildcard
+
+
+def specific_pattern_result(result: tuple) -> tuple:
+    """Discard a pure-wildcard match while retaining any specific match."""
+    if result and is_pure_wildcard(result[4]):
+        result = ()
+        return result
+    return result
 
 
 class PatternMatcher:
@@ -476,8 +485,10 @@ class PatternMatcher:
             if entry["pattern"] == pattern and entry["that"] == that and entry["topic"] == topic:
                 del self._patterns[i]
                 self._rebuild_indexes()
-                return True
-        return False
+                result = True
+                return result
+        result = False
+        return result
 
     def match(
         self,
@@ -499,7 +510,8 @@ class PatternMatcher:
         words = normalized.split()
 
         if not words:
-            return ()
+            result = ()
+            return result
 
         # Normalize context
         that_normalized = normalize(that) if that else ""
@@ -521,7 +533,7 @@ class PatternMatcher:
         if not result and self._use_lemmatization:
             lemmatized = self._lemmatize(normalized)
             lemma_first = self._lemmatize(first_word)
-            result = self._specific(
+            result = specific_pattern_result(
                 self._match_internal(
                     lemmatized,
                     that_normalized,
@@ -535,19 +547,12 @@ class PatternMatcher:
         if not result and self._use_stemming:
             stemmed = stem_text(normalized)
             stemmed_first = stem_text(first_word)
-            result = self._specific(
+            result = specific_pattern_result(
                 self._match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
             )
 
         final = result if result else catchall
         return final
-
-    @staticmethod
-    def _specific(result: tuple) -> tuple:
-        """Return result unless it is a pure-wildcard (catch-all) match, then ()."""
-        if result and is_pure_wildcard(result[4]):
-            return ()
-        return result
 
     def _get_candidate_indices(
         self,
@@ -659,7 +664,8 @@ class PatternMatcher:
             best_result = (best[0], best[1], best[2], best[3], best[5], best[6], best[7])
             return best_result
 
-        return ()
+        result = ()
+        return result
 
     def get_patterns(self) -> list[tuple[str, str]]:
         """Get all pattern-response pairs.

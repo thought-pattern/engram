@@ -59,7 +59,8 @@ def load_corpus() -> list:
     corpus_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json")
     with open(corpus_path, encoding="utf-8") as f:
         data = json.load(f)
-    return data.get("prompts", [])
+    result = data.get("prompts", [])
+    return result
 
 
 def classify(engram, prompt: dict) -> dict:
@@ -88,7 +89,7 @@ def classify(engram, prompt: dict) -> dict:
     if matches and top_score > WEAK_SCORE:
         engram.record_hit(keyword_result["keywords"])
 
-    return {
+    result = {
         "text": text,
         "category": prompt.get("category", ""),
         "kind": kind,
@@ -97,13 +98,16 @@ def classify(engram, prompt: dict) -> dict:
         "top_score": round(top_score, 3),
         "keyword_matches": len(matches),
     }
+    return result
 
 
 def pct(part: int, total: int) -> str:
     """Format a count as a percentage of the total."""
     if total == 0:
-        return "0.0%"
-    return f"{100.0 * part / total:.1f}%"
+        result = "0.0%"
+        return result
+    result = f"{100.0 * part / total:.1f}%"
+    return result
 
 
 def main() -> int:
@@ -150,7 +154,8 @@ def main() -> int:
             json.dump({"results": results}, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

@@ -173,7 +173,8 @@ def split_sentences(text: str) -> list[str]:
         List of sentences (stripped of leading/trailing whitespace).
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     # Use NLTK's sentence tokenizer (ensure punkt is present locally first)
     _ensure_punkt()

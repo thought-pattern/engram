@@ -5,139 +5,137 @@ import json
 import math
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from types import MappingProxyType
-from typing import cast
+from typing import TypedDict, cast
 
 from engram.artifacts import LifecycleState
-from engram.eligibility import EligibilityContext, EligibilityContextFactory
-from engram.errors import InvalidRequestError
+from engram.constants import (
+    ACCOUNTING_OBSERVATION_FIELDS,
+    ACCOUNTING_OBSERVATION_SCHEMA_VERSION,
+    BUDGET_CONSUMPTION_FIELDS,
+    BUDGET_CONSUMPTION_SCHEMA_VERSION,
+    CANDIDATE_FIELDS,
+    CANDIDATE_SCHEMA_VERSION,
+    CANONICAL_CLAIM_REFERENCES_FIELDS,
+    CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION,
+    CLAIM_EVIDENCE_RECORD_FIELDS,
+    CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION,
+    CLAIM_TRUST_INPUTS_FIELDS,
+    CLAIM_TRUST_INPUTS_SCHEMA_VERSION,
+    CLAIM_VALIDITY_INPUTS_FIELDS,
+    CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
+    DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
+    DEFAULT_RESOLUTION_MAX_CANDIDATES,
+    DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES,
+    DEFAULT_RESOLUTION_MAX_EVIDENCE,
+    DEFAULT_RESOLUTION_MAX_EVIDENCE_BYTES,
+    DEFAULT_RESOLUTION_MAX_GRAPH_ROWS,
+    DEFAULT_RESOLUTION_MAX_OUTPUT_BYTES,
+    DEFAULT_RESOLUTION_MAX_RESOLVERS,
+    DEFAULT_RESOLUTION_MAX_VECTOR_RESULTS,
+    DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES,
+    DEFAULT_RESOLUTION_RESOLVER_TIME_MS,
+    DEFAULT_RESOLUTION_TOTAL_TIME_MS,
+    DISCLOSURE_DECISION_FIELDS,
+    DISCLOSURE_DECISION_SCHEMA_VERSION,
+    EMPTY_MAPPING,
+    EMPTY_SCOPE_KEY,
+    EVIDENCE_PACKAGE_FIELDS,
+    EVIDENCE_PACKAGE_WIRE_VERSION,
+    EVIDENCE_REFERENCE_FIELDS,
+    EVIDENCE_REFERENCE_SCHEMA_VERSION,
+    FEATURE_SET_FIELDS,
+    FEATURE_SET_SCHEMA_VERSION,
+    INHERITANCE_PROVENANCE_FIELDS,
+    MAX_ACCOUNTING_KEYWORD_BYTES,
+    MAX_ACCOUNTING_KEYWORDS,
+    MAX_CANDIDATE_ID_BYTES,
+    MAX_CLAIM_IDENTIFIER_BYTES,
+    MAX_CLAIM_SELECTION_REASONS,
+    MAX_CLAIM_SOURCE_CONTRIBUTIONS,
+    MAX_CLAIM_TIMESTAMP_BYTES,
+    MAX_CLAIM_TRUST_CATEGORY_BYTES,
+    MAX_DIAGNOSTIC_ID_BYTES,
+    MAX_DISCLOSURE_AUTHORITY_BYTES,
+    MAX_DISCLOSURE_ENUM_BYTES,
+    MAX_EVIDENCE_PACKAGE_BYTES,
+    MAX_EVIDENCE_PACKAGE_INPUT_RECORDS,
+    MAX_EVIDENCE_PACKAGE_RECORDS,
+    MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS,
+    MAX_EXHAUSTED_DIMENSION_BYTES,
+    MAX_EXHAUSTED_DIMENSIONS,
+    MAX_FEATURES,
+    MAX_JSON_BYTES,
+    MAX_JSON_DEPTH,
+    MAX_JSON_ITEMS,
+    MAX_JSON_STRING_BYTES,
+    MAX_REASON_CODE_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_REQUIRED_SOURCE_LABEL_BYTES,
+    MAX_RESOLUTION_CANDIDATES,
+    MAX_RESOLUTION_DIAGNOSTIC_BYTES,
+    MAX_RESOLUTION_EVIDENCE,
+    MAX_RESOLUTION_EVIDENCE_BYTES,
+    MAX_RESOLUTION_GRAPH_ROWS,
+    MAX_RESOLUTION_OUTPUT_BYTES,
+    MAX_RESOLUTION_REASON_CODES,
+    MAX_RESOLUTION_RESOLVERS,
+    MAX_RESOLUTION_TIME_MS,
+    MAX_RESOLUTION_VALUES,
+    MAX_RESOLUTION_VECTOR_RESULTS,
+    MAX_RESOLUTION_WORKING_MEMORY_BYTES,
+    MAX_RESOLVER_NAME_BYTES,
+    MAX_RESOURCE_COUNTER,
+    MAX_RESPONSE_BYTES,
+    MAX_STATEMENT_ID_BYTES,
+    MAX_TRACE_STEPS,
+    MIN_RESOLUTION_CANDIDATES,
+    MIN_RESOLUTION_OUTPUT_BYTES,
+    MIN_RESOLUTION_RESOLVERS,
+    MIN_RESOLUTION_TIME_MS,
+    QUERY_FRAME_FIELDS,
+    QUERY_FRAME_SCHEMA_VERSION,
+    RESOLUTION_BUDGET_FIELDS,
+    RESOLUTION_BUDGET_SCHEMA_VERSION,
+    RESOLUTION_RESULT_FIELDS,
+    RESOLUTION_RESULT_SCHEMA_VERSION,
+    RESOLVER_RESULT_FIELDS,
+    RESOLVER_RESULT_SCHEMA_VERSION,
+    REWRITE_TRACE_STEP_FIELDS,
+    CandidateSource,
+    ClaimOwnership,
+    CostClass,
+    DisclosureBasis,
+    EvidenceKind,
+    EvidencePackageTruncationReason,
+    ExpectedObjectType,
+    ResolutionOutcome,
+    ResolverState,
+)
+from engram.eligibility import (
+    EligibilityContext,
+    EligibilityContextFactory,
+    eligibility_context_from_dict,
+    eligibility_context_to_dict,
+    validate_eligibility_context,
+)
+from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
     QueryIdentity,
     ScopeKey,
     build_retrieval_representation,
     build_standalone_identity,
+    query_identity_from_dict,
+    query_identity_to_dict,
+    query_identity_to_json,
+    scope_key_from_dict,
+    scope_key_to_dict,
     validate_authoritative_identity,
+    validate_query_identity,
+    validate_scope_key,
 )
 from engram.substitutions import expand_contractions
-
-RESOLUTION_BUDGET_SCHEMA_VERSION = 1
-BUDGET_CONSUMPTION_SCHEMA_VERSION = 1
-QUERY_FRAME_SCHEMA_VERSION = 1
-FEATURE_SET_SCHEMA_VERSION = 1
-CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION = 1
-CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION = 1
-CLAIM_TRUST_INPUTS_SCHEMA_VERSION = 1
-DISCLOSURE_DECISION_SCHEMA_VERSION = 1
-CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION = 1
-EVIDENCE_REFERENCE_SCHEMA_VERSION = 1
-CANDIDATE_SCHEMA_VERSION = 1
-ACCOUNTING_OBSERVATION_SCHEMA_VERSION = 1
-RESOLVER_RESULT_SCHEMA_VERSION = 1
-RESOLUTION_RESULT_SCHEMA_VERSION = 1
-
-MAX_REQUEST_BYTES = 16_384
-MAX_DIAGNOSTIC_ID_BYTES = 256
-MAX_RESOLVER_NAME_BYTES = 96
-MAX_REASON_CODE_BYTES = 96
-MAX_FEATURES = 64
-MAX_TRACE_STEPS = 32
-MAX_JSON_DEPTH = 8
-MAX_JSON_ITEMS = 4_096
-MAX_JSON_STRING_BYTES = 16_384
-MAX_JSON_BYTES = 65_536
-MAX_RESOLUTION_VALUES = 1_000
-MAX_CLAIM_IDENTIFIER_BYTES = 256
-MAX_CLAIM_SOURCE_CONTRIBUTIONS = 8
-MAX_CLAIM_SELECTION_REASONS = 16
-MAX_CLAIM_TIMESTAMP_BYTES = 40
-MAX_EVIDENCE_PACKAGE_RECORDS = 10
-MAX_EVIDENCE_PACKAGE_INPUT_RECORDS = 1_000
-MAX_EVIDENCE_PACKAGE_BYTES = 65_536
-MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS = 8
-
-
-class CostClass(StrEnum):
-    """Closed cost classes used by deterministic resolver plans."""
-
-    EXACT = "exact"
-    CHEAP = "cheap"
-    STANDARD = "standard"
-    EXPENSIVE = "expensive"
-
-
-class ExpectedObjectType(StrEnum):
-    """Base object-type vocabulary populated further by Section 8."""
-
-    UNKNOWN = "UNKNOWN"
-    PERSON = "PERSON"
-    PLACE = "PLACE"
-    DATE = "DATE"
-    NUMBER = "NUMBER"
-    BOOLEAN = "BOOLEAN"
-    ENTITY = "ENTITY"
-
-
-class EvidenceKind(StrEnum):
-    """Kinds safe for the minimal Section 4 evidence-reference contract."""
-
-    CLAIM = "claim"
-    GRAPH_FACT = "graph_fact"
-    SUPPORT = "support"
-
-
-class ClaimOwnership(StrEnum):
-    """Allow-listed canonical Claim ownership categories."""
-
-    PUBLIC = "PUBLIC"
-    COMPANY = "COMPANY"
-    CUSTOMER = "CUSTOMER"
-
-
-class DisclosureBasis(StrEnum):
-    """Stable provenance for a successful Claim visibility decision."""
-
-    PUBLIC_RULE = "public_rule"
-    TRUSTED_SCOPE_AUTHORITY = "trusted_scope_authority"
-
-
-class EvidencePackageTruncationReason(StrEnum):
-    """Stable reasons that a package retained fewer records than supplied."""
-
-    DUPLICATE_CLAIM_ID = "duplicate_claim_id"
-    RECORD_LIMIT = "record_limit"
-    SERIALIZED_SIZE_LIMIT = "serialized_size_limit"
-
-
-class CandidateSource(StrEnum):
-    """Initial and future candidate-producing resolver sources."""
-
-    EXACT = "exact"
-    PATTERN = "pattern"
-    LEXICAL = "lexical"
-    SUPPORT_SEMANTIC = "support_semantic"
-    STANDALONE_SEMANTIC = "standalone_semantic"
-    UTILITY = "utility"
-
-
-class ResolverState(StrEnum):
-    """Stable resolver completion vocabulary."""
-
-    COMPLETED = "completed"
-    UNAVAILABLE = "unavailable"
-    SKIPPED = "skipped"
-    EXHAUSTED = "exhausted"
-    FAILED = "failed"
-
-
-class ResolutionOutcome(StrEnum):
-    """Closed unified core outcomes."""
-
-    ANSWER = "ANSWER"
-    EVIDENCE = "EVIDENCE"
-    MISS = "MISS"
 
 
 def _require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
@@ -186,7 +184,8 @@ def _require_claim_timestamp(value: object, available: object, name: str) -> tup
     if not presence:
         if text:
             raise InvalidRequestError(f"{name} must be empty when unavailable")
-        return text, presence
+        result = text, presence
+        return result
     if not text or not text.endswith("Z"):
         raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
     try:
@@ -195,7 +194,8 @@ def _require_claim_timestamp(value: object, available: object, name: str) -> tup
         raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
     if parsed.isoformat().replace("+00:00", "Z") != text:
         raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return text, presence
+    result = text, presence
+    return result
 
 
 def _exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[str, object]:
@@ -210,7 +210,8 @@ def _exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[st
 def _require_list(value: object, name: str) -> list[object]:
     if not isinstance(value, (list, tuple)):
         raise InvalidRequestError(f"{name} must be an array")
-    return list(value)
+    result = list(value)
+    return result
 
 
 def _freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
@@ -224,7 +225,8 @@ def _freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return _require_text(value, name, MAX_JSON_STRING_BYTES, allow_empty=True)
+        result = _require_text(value, name, MAX_JSON_STRING_BYTES, allow_empty=True)
+        return result
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, float):
@@ -238,9 +240,11 @@ def _freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
                 raise InvalidRequestError(f"{name} keys must be strings")
             _require_text(key, f"{name} key", 128, allow_empty=False)
             frozen[key] = _freeze_json(value[key], name, depth + 1, count)
-        return MappingProxyType(frozen)
+        result = MappingProxyType(frozen)
+        return result
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(item, name, depth + 1, count) for item in value)
+        result = tuple(_freeze_json(item, name, depth + 1, count) for item in value)
+        return result
     raise InvalidRequestError(f"{name} values must be concrete JSON values")
 
 
@@ -256,14 +260,17 @@ def _freeze_mapping(value: object, name: str) -> Mapping[str, object]:
 
 def _thaw_json(value: object) -> object:
     if isinstance(value, Mapping):
-        return {key: _thaw_json(item) for key, item in value.items()}
+        result = {key: _thaw_json(item) for key, item in value.items()}
+        return result
     if isinstance(value, tuple):
-        return [_thaw_json(item) for item in value]
+        result = [_thaw_json(item) for item in value]
+        return result
     return value
 
 
 def _json_text(value: Mapping[str, object]) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    result = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return result
 
 
 def _load_json_mapping(value: str, name: str) -> Mapping[str, object]:
@@ -290,1578 +297,2447 @@ def _enum_tuple(values: object, enum_type, name: str, maximum: int) -> tuple:
     return values
 
 
-@dataclass(frozen=True, slots=True)
-class ResolutionBudget:
-    """Immutable limits and captured monotonic deadline for one resolution."""
-
-    total_time_ms: int = 2_000
-    resolver_time_ms: int = 500
-    max_resolvers: int = 8
-    max_candidates: int = 10
-    max_graph_rows: int = 100
-    max_vector_results: int = 100
-    max_evidence: int = 20
-    max_evidence_bytes: int = 32_768
-    max_output_bytes: int = 65_536
-    max_diagnostic_bytes: int = 16_384
-    max_working_memory_bytes: int = 16_777_216
-    allowed_cost_classes: tuple[CostClass, ...] = tuple(CostClass)
-    started_ns: int = 0
-    deadline_ns: int = 0
-    schema_version: int = RESOLUTION_BUDGET_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != RESOLUTION_BUDGET_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported resolution budget schema_version: {self.schema_version}")
-        _require_int(self.total_time_ms, "total_time_ms", 1, 60_000)
-        _require_int(self.resolver_time_ms, "resolver_time_ms", 1, self.total_time_ms)
-        _require_int(self.max_resolvers, "max_resolvers", 1, 64)
-        _require_int(self.max_candidates, "max_candidates", 1, 1_000)
-        _require_int(self.max_graph_rows, "max_graph_rows", 0, 100_000)
-        _require_int(self.max_vector_results, "max_vector_results", 0, 100_000)
-        _require_int(self.max_evidence, "max_evidence", 0, 1_000)
-        _require_int(self.max_evidence_bytes, "max_evidence_bytes", 0, 1_048_576)
-        _require_int(self.max_output_bytes, "max_output_bytes", 4_096, 2_097_152)
-        _require_int(self.max_diagnostic_bytes, "max_diagnostic_bytes", 0, 1_048_576)
-        _require_int(self.max_working_memory_bytes, "max_working_memory_bytes", 1, 1_073_741_824)
-        _enum_tuple(self.allowed_cost_classes, CostClass, "allowed_cost_classes", len(CostClass))
-        if not self.allowed_cost_classes:
-            raise InvalidRequestError("allowed_cost_classes must not be empty")
-        _require_int(self.started_ns, "started_ns", 0, 9_223_372_036_854_775_807)
-        _require_int(self.deadline_ns, "deadline_ns", 0, 9_223_372_036_854_775_807)
-        if (self.started_ns == 0) != (self.deadline_ns == 0):
-            raise InvalidRequestError("started_ns and deadline_ns must be present or absent together")
-        if self.started_ns and self.deadline_ns <= self.started_ns:
-            raise InvalidRequestError("deadline_ns must be after started_ns")
-
-    @classmethod
-    def capture(cls, clock_ns: Callable[[], int], **limits) -> "ResolutionBudget":
-        if not callable(clock_ns):
-            raise InvalidRequestError("budget clock_ns must be callable")
-        started = clock_ns()
-        if isinstance(started, bool) or not isinstance(started, int) or started < 1:
-            raise InvalidRequestError("budget clock_ns must return a positive integer")
-        total_time_ms = limits.get("total_time_ms", 2_000)
-        _require_int(total_time_ms, "total_time_ms", 1, 60_000)
-        values = dict(limits)
-        values["total_time_ms"] = total_time_ms
-        values["started_ns"] = started
-        values["deadline_ns"] = started + total_time_ms * 1_000_000
-        return cls(**values)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "total_time_ms": self.total_time_ms,
-            "resolver_time_ms": self.resolver_time_ms,
-            "max_resolvers": self.max_resolvers,
-            "max_candidates": self.max_candidates,
-            "max_graph_rows": self.max_graph_rows,
-            "max_vector_results": self.max_vector_results,
-            "max_evidence": self.max_evidence,
-            "max_evidence_bytes": self.max_evidence_bytes,
-            "max_output_bytes": self.max_output_bytes,
-            "max_diagnostic_bytes": self.max_diagnostic_bytes,
-            "max_working_memory_bytes": self.max_working_memory_bytes,
-            "allowed_cost_classes": [value.value for value in self.allowed_cost_classes],
-            "started_ns": self.started_ns,
-            "deadline_ns": self.deadline_ns,
-        }
-
-    def recapture(self, clock_ns: Callable[[], int]) -> "ResolutionBudget":
-        """Capture a fresh deadline from these immutable configured limits."""
-        return ResolutionBudget.capture(
-            clock_ns,
-            total_time_ms=self.total_time_ms,
-            resolver_time_ms=self.resolver_time_ms,
-            max_resolvers=self.max_resolvers,
-            max_candidates=self.max_candidates,
-            max_graph_rows=self.max_graph_rows,
-            max_vector_results=self.max_vector_results,
-            max_evidence=self.max_evidence,
-            max_evidence_bytes=self.max_evidence_bytes,
-            max_output_bytes=self.max_output_bytes,
-            max_diagnostic_bytes=self.max_diagnostic_bytes,
-            max_working_memory_bytes=self.max_working_memory_bytes,
-            allowed_cost_classes=self.allowed_cost_classes,
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ResolutionBudget":
-        keys = frozenset(
-            {
-                "schema_version",
-                "total_time_ms",
-                "resolver_time_ms",
-                "max_resolvers",
-                "max_candidates",
-                "max_graph_rows",
-                "max_vector_results",
-                "max_evidence",
-                "max_evidence_bytes",
-                "max_output_bytes",
-                "max_diagnostic_bytes",
-                "max_working_memory_bytes",
-                "allowed_cost_classes",
-                "started_ns",
-                "deadline_ns",
-            }
-        )
-        data = _exact_mapping(value, "ResolutionBudget", keys)
-        raw_costs = _require_list(data["allowed_cost_classes"], "allowed_cost_classes")
-        try:
-            costs = tuple(CostClass(_require_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
-        except ValueError as error:
-            raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from error
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            total_time_ms=_require_int(data["total_time_ms"], "total_time_ms", 1, 60_000),
-            resolver_time_ms=_require_int(data["resolver_time_ms"], "resolver_time_ms", 1, 60_000),
-            max_resolvers=_require_int(data["max_resolvers"], "max_resolvers", 1, 64),
-            max_candidates=_require_int(data["max_candidates"], "max_candidates", 1, 1_000),
-            max_graph_rows=_require_int(data["max_graph_rows"], "max_graph_rows", 0, 100_000),
-            max_vector_results=_require_int(data["max_vector_results"], "max_vector_results", 0, 100_000),
-            max_evidence=_require_int(data["max_evidence"], "max_evidence", 0, 1_000),
-            max_evidence_bytes=_require_int(data["max_evidence_bytes"], "max_evidence_bytes", 0, 1_048_576),
-            max_output_bytes=_require_int(data["max_output_bytes"], "max_output_bytes", 4_096, 2_097_152),
-            max_diagnostic_bytes=_require_int(data["max_diagnostic_bytes"], "max_diagnostic_bytes", 0, 1_048_576),
-            max_working_memory_bytes=_require_int(data["max_working_memory_bytes"], "max_working_memory_bytes", 1, 1_073_741_824),
-            allowed_cost_classes=costs,
-            started_ns=_require_int(data["started_ns"], "started_ns", 0, 9_223_372_036_854_775_807),
-            deadline_ns=_require_int(data["deadline_ns"], "deadline_ns", 0, 9_223_372_036_854_775_807),
-        )
-
-    @classmethod
-    def from_json(cls, value: str) -> "ResolutionBudget":
-        try:
-            decoded = json.loads(value)
-        except (TypeError, json.JSONDecodeError) as error:
-            raise InvalidRequestError("ResolutionBudget JSON must be valid JSON") from error
-        if not isinstance(decoded, Mapping):
-            raise InvalidRequestError("ResolutionBudget JSON must contain an object")
-        return cls.from_dict(decoded)
-
-
-@dataclass(frozen=True, slots=True)
-class BudgetConsumption:
-    """Concrete resource use for a resolver or complete resolution."""
-
-    elapsed_ns: int = 0
-    resolvers: int = 0
-    candidates: int = 0
-    graph_rows: int = 0
-    vector_results: int = 0
-    evidence: int = 0
-    evidence_bytes: int = 0
-    output_bytes: int = 0
-    diagnostic_bytes: int = 0
-    working_memory_bytes: int = 0
-    exhausted_dimensions: tuple[str, ...] = ()
-    measurement_available: bool = True
-    schema_version: int = BUDGET_CONSUMPTION_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != BUDGET_CONSUMPTION_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported budget consumption schema_version: {self.schema_version}")
-        for name in (
-            "elapsed_ns",
-            "resolvers",
-            "candidates",
-            "graph_rows",
-            "vector_results",
-            "evidence",
-            "evidence_bytes",
-            "output_bytes",
-            "diagnostic_bytes",
-            "working_memory_bytes",
-        ):
-            _require_int(getattr(self, name), name, 0, 9_223_372_036_854_775_807)
-        if not isinstance(self.exhausted_dimensions, tuple):
-            raise InvalidRequestError("exhausted_dimensions must be a tuple")
-        if len(self.exhausted_dimensions) > 64:
-            raise InvalidRequestError("exhausted_dimensions exceeds the limit of 64")
-        normalized = tuple(
-            _require_text(value, "exhausted dimension", 64, allow_empty=False) for value in self.exhausted_dimensions
-        )
-        if normalized != tuple(sorted(set(normalized))):
-            raise InvalidRequestError("exhausted_dimensions must be unique and sorted")
-        if not isinstance(self.measurement_available, bool):
-            raise InvalidRequestError("measurement_available must be a boolean")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "elapsed_ns": self.elapsed_ns,
-            "resolvers": self.resolvers,
-            "candidates": self.candidates,
-            "graph_rows": self.graph_rows,
-            "vector_results": self.vector_results,
-            "evidence": self.evidence,
-            "evidence_bytes": self.evidence_bytes,
-            "output_bytes": self.output_bytes,
-            "diagnostic_bytes": self.diagnostic_bytes,
-            "working_memory_bytes": self.working_memory_bytes,
-            "exhausted_dimensions": list(self.exhausted_dimensions),
-            "measurement_available": self.measurement_available,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "BudgetConsumption":
-        keys = frozenset(cls().to_dict())
-        data = _exact_mapping(value, "BudgetConsumption", keys)
-        exhausted = _require_list(data["exhausted_dimensions"], "exhausted_dimensions")
-        if not isinstance(data["measurement_available"], bool):
-            raise InvalidRequestError("measurement_available must be a boolean")
-        kwargs = {
-            name: _require_int(data[name], name, 0, 9_223_372_036_854_775_807)
-            for name in keys
-            if name not in {"schema_version", "exhausted_dimensions", "measurement_available"}
-        }
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            exhausted_dimensions=tuple(_require_text(item, "exhausted dimension", 64, allow_empty=False) for item in exhausted),
-            measurement_available=data["measurement_available"],
-            **kwargs,
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "BudgetConsumption":
-        return cls.from_dict(_load_json_mapping(value, "BudgetConsumption JSON"))
-
-
-@dataclass(frozen=True, order=True, slots=True)
-class InheritanceProvenance:
-    """Concrete empty-capable contextual field provenance owned by Section 8."""
-
-    field_name: str
-    source_turn: int
-
-    def __post_init__(self) -> None:
-        _require_text(self.field_name, "inheritance field_name", 64, allow_empty=False)
-        _require_int(self.source_turn, "inheritance source_turn", 1, 1_000_000)
-
-    def to_dict(self) -> dict[str, object]:
-        return {"field_name": self.field_name, "source_turn": self.source_turn}
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "InheritanceProvenance":
-        data = _exact_mapping(value, "InheritanceProvenance", frozenset({"field_name", "source_turn"}))
-        return cls(
-            field_name=_require_text(data["field_name"], "inheritance field_name", 64, allow_empty=False),
-            source_turn=_require_int(data["source_turn"], "inheritance source_turn", 1, 1_000_000),
-        )
-
-
-@dataclass(frozen=True, order=True, slots=True)
-class RewriteTraceStep:
-    """Empty-capable rewrite trace container whose rule semantics belong to Section 11."""
-
-    rule_id: str
-    input_text: str
-    output_text: str
-
-    def __post_init__(self) -> None:
-        _require_text(self.rule_id, "rewrite rule_id", 128, allow_empty=False)
-        _require_text(self.input_text, "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False)
-        _require_text(self.output_text, "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False)
-
-    def to_dict(self) -> dict[str, object]:
-        return {"rule_id": self.rule_id, "input_text": self.input_text, "output_text": self.output_text}
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "RewriteTraceStep":
-        data = _exact_mapping(value, "RewriteTraceStep", frozenset({"rule_id", "input_text", "output_text"}))
-        return cls(
-            rule_id=_require_text(data["rule_id"], "rewrite rule_id", 128, allow_empty=False),
-            input_text=_require_text(data["input_text"], "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False),
-            output_text=_require_text(data["output_text"], "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class QueryFrame:
-    """Immutable base interpretation passed to every resolver."""
-
-    original_text: str
-    resolved_text: str
-    identity: QueryIdentity
-    expected_object_type: ExpectedObjectType
-    inheritance: tuple[InheritanceProvenance, ...]
-    rewrite_chain: tuple[RewriteTraceStep, ...]
-    scope: ScopeKey
-    required_metadata: Mapping[str, object]
-    required_source_label: str
-    budget: ResolutionBudget
-    eligibility_context: EligibilityContext
-    diagnostic_id: str
-    schema_version: int = QUERY_FRAME_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != QUERY_FRAME_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported query frame schema_version: {self.schema_version}")
-        _require_text(self.original_text, "frame original_text", MAX_REQUEST_BYTES, allow_empty=False)
-        _require_text(self.resolved_text, "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False)
-        if not isinstance(self.identity, QueryIdentity):
-            raise InvalidRequestError("frame identity must be a QueryIdentity")
-        if not isinstance(self.expected_object_type, ExpectedObjectType):
-            raise InvalidRequestError("frame expected_object_type must be an ExpectedObjectType")
-        if not isinstance(self.inheritance, tuple) or not all(
-            isinstance(value, InheritanceProvenance) for value in self.inheritance
-        ):
-            raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values")
-        if len(self.inheritance) > MAX_TRACE_STEPS or len(set(self.inheritance)) != len(self.inheritance):
-            raise InvalidRequestError("frame inheritance must be bounded and unique")
-        if not isinstance(self.rewrite_chain, tuple) or not all(
-            isinstance(value, RewriteTraceStep) for value in self.rewrite_chain
-        ):
-            raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values")
-        if len(self.rewrite_chain) > MAX_TRACE_STEPS:
-            raise InvalidRequestError(f"frame rewrite_chain exceeds the limit of {MAX_TRACE_STEPS}")
-        if not isinstance(self.scope, ScopeKey) or self.identity.scope != self.scope:
-            raise InvalidRequestError("frame scope must match identity scope")
-        object.__setattr__(self, "required_metadata", _freeze_mapping(self.required_metadata, "frame required_metadata"))
-        _require_text(self.required_source_label, "frame required_source_label", 256, allow_empty=True)
-        if not isinstance(self.budget, ResolutionBudget):
-            raise InvalidRequestError("frame budget must be a ResolutionBudget")
-        if not isinstance(self.eligibility_context, EligibilityContext):
-            raise InvalidRequestError("frame eligibility_context must be an EligibilityContext")
-        if self.eligibility_context.namespace != self.scope.namespace:
-            raise InvalidRequestError("frame eligibility context namespace must match scope")
-        _require_text(self.diagnostic_id, "frame diagnostic_id", MAX_DIAGNOSTIC_ID_BYTES, allow_empty=False)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "original_text": self.original_text,
-            "resolved_text": self.resolved_text,
-            "identity": self.identity.to_dict(),
-            "expected_object_type": self.expected_object_type.value,
-            "inheritance": [value.to_dict() for value in self.inheritance],
-            "rewrite_chain": [value.to_dict() for value in self.rewrite_chain],
-            "scope": self.scope.to_dict(),
-            "required_metadata": _thaw_json(self.required_metadata),
-            "required_source_label": self.required_source_label,
-            "budget": self.budget.to_dict(),
-            "eligibility_context": self.eligibility_context.to_dict(),
-            "diagnostic_id": self.diagnostic_id,
-        }
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "QueryFrame":
-        keys = frozenset(
-            {
-                "schema_version",
-                "original_text",
-                "resolved_text",
-                "identity",
-                "expected_object_type",
-                "inheritance",
-                "rewrite_chain",
-                "scope",
-                "required_metadata",
-                "required_source_label",
-                "budget",
-                "eligibility_context",
-                "diagnostic_id",
-            }
-        )
-        data = _exact_mapping(value, "QueryFrame", keys)
-        inheritance = _require_list(data["inheritance"], "frame inheritance")
-        rewrites = _require_list(data["rewrite_chain"], "frame rewrite_chain")
-        try:
-            expected_type = ExpectedObjectType(
-                _require_text(data["expected_object_type"], "expected_object_type", 32, allow_empty=False)
-            )
-        except ValueError as error:
-            raise InvalidRequestError("unsupported expected_object_type") from error
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            original_text=_require_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
-            resolved_text=_require_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
-            identity=QueryIdentity.from_dict(
-                cast(Mapping[str, object], _thaw_json(_freeze_mapping(data["identity"], "frame identity")))
-            ),
-            expected_object_type=expected_type,
-            inheritance=tuple(InheritanceProvenance.from_dict(_freeze_mapping(item, "inheritance item")) for item in inheritance),
-            rewrite_chain=tuple(RewriteTraceStep.from_dict(_freeze_mapping(item, "rewrite item")) for item in rewrites),
-            scope=ScopeKey.from_dict(_freeze_mapping(data["scope"], "frame scope")),
-            required_metadata=_freeze_mapping(data["required_metadata"], "frame required_metadata"),
-            required_source_label=_require_text(
-                data["required_source_label"], "frame required_source_label", 256, allow_empty=True
-            ),
-            budget=ResolutionBudget.from_dict(_freeze_mapping(data["budget"], "frame budget")),
-            eligibility_context=EligibilityContext.from_dict(
-                _freeze_mapping(data["eligibility_context"], "frame eligibility_context")
-            ),
-            diagnostic_id=_require_text(data["diagnostic_id"], "frame diagnostic_id", MAX_DIAGNOSTIC_ID_BYTES, allow_empty=False),
-        )
-
-    @classmethod
-    def from_json(cls, value: str) -> "QueryFrame":
-        try:
-            decoded = json.loads(value)
-        except (TypeError, json.JSONDecodeError) as error:
-            raise InvalidRequestError("QueryFrame JSON must be valid JSON") from error
-        if not isinstance(decoded, Mapping):
-            raise InvalidRequestError("QueryFrame JSON must contain an object")
-        return cls.from_dict(decoded)
-
-
-@dataclass(frozen=True, slots=True)
-class FeatureSet:
-    """Generic feature value/availability container; Section 5 owns semantics."""
-
-    values: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
-    unavailable: tuple[str, ...] = ()
-    schema_version: int = FEATURE_SET_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != FEATURE_SET_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported feature set schema_version: {self.schema_version}")
-        if not isinstance(self.values, Mapping):
-            raise InvalidRequestError("feature values must be an object")
-        validated = {}
-        for name in sorted(self.values):
-            key = _require_text(name, "feature name", 96, allow_empty=False)
-            validated[key] = _require_float(self.values[name], f"feature {key}", -1_000_000.0, 1_000_000.0)
-        if len(validated) > MAX_FEATURES:
-            raise InvalidRequestError(f"feature values exceed the limit of {MAX_FEATURES}")
-        if not isinstance(self.unavailable, tuple):
-            raise InvalidRequestError("unavailable features must be a tuple")
-        unavailable = tuple(_require_text(name, "unavailable feature", 96, allow_empty=False) for name in self.unavailable)
-        if unavailable != tuple(sorted(set(unavailable))):
-            raise InvalidRequestError("unavailable features must be unique and sorted")
-        if set(validated).intersection(unavailable):
-            raise InvalidRequestError("a feature cannot be both available and unavailable")
-        if len(validated) + len(unavailable) > MAX_FEATURES:
-            raise InvalidRequestError(f"features exceed the limit of {MAX_FEATURES}")
-        object.__setattr__(self, "values", MappingProxyType(validated))
-
-    def to_dict(self) -> dict[str, object]:
-        return {"schema_version": self.schema_version, "values": dict(self.values), "unavailable": list(self.unavailable)}
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "FeatureSet":
-        data = _exact_mapping(value, "FeatureSet", frozenset({"schema_version", "values", "unavailable"}))
-        unavailable = _require_list(data["unavailable"], "unavailable features")
-        raw_values = _freeze_mapping(data["values"], "feature values")
-        values = {name: _require_float(item, f"feature {name}", -1_000_000.0, 1_000_000.0) for name, item in raw_values.items()}
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            values=values,
-            unavailable=tuple(_require_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable),
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "FeatureSet":
-        return cls.from_dict(_load_json_mapping(value, "FeatureSet JSON"))
-
-
-@dataclass(frozen=True, slots=True)
-class CanonicalClaimReferences:
-    """Canonical graph identifiers permitted in a full Claim evidence record."""
-
-    subject_entity_id: str
-    predicate_id: str
-    object_entity_id: str
-    schema_version: int = CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported canonical Claim references schema_version: {self.schema_version}")
-        _require_identifier(self.subject_entity_id, "Claim subject_entity_id")
-        _require_identifier(self.predicate_id, "Claim predicate_id")
-        _require_identifier(self.object_entity_id, "Claim object_entity_id")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "subject_entity_id": self.subject_entity_id,
-            "predicate_id": self.predicate_id,
-            "object_entity_id": self.object_entity_id,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "CanonicalClaimReferences":
-        data = _exact_mapping(
-            value,
-            "CanonicalClaimReferences",
-            frozenset({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"}),
-        )
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            subject_entity_id=_require_identifier(data["subject_entity_id"], "Claim subject_entity_id"),
-            predicate_id=_require_identifier(data["predicate_id"], "Claim predicate_id"),
-            object_entity_id=_require_identifier(data["object_entity_id"], "Claim object_entity_id"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimValidityInputs:
-    """Current-time Claim validity decision and the disclosed world-validity bounds."""
-
-    evaluation_time: str
-    active: bool
-    system_current: bool
-    valid_time_current: bool
-    valid_from: str = ""
-    valid_from_available: bool = False
-    valid_to: str = ""
-    valid_to_available: bool = False
-    schema_version: int = CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported Claim validity inputs schema_version: {self.schema_version}")
-        evaluation, _ = _require_claim_timestamp(self.evaluation_time, True, "Claim evaluation_time")
-        _require_bool(self.active, "Claim active")
-        _require_bool(self.system_current, "Claim system_current")
-        _require_bool(self.valid_time_current, "Claim valid_time_current")
-        lower, lower_available = _require_claim_timestamp(self.valid_from, self.valid_from_available, "Claim valid_from")
-        upper, upper_available = _require_claim_timestamp(self.valid_to, self.valid_to_available, "Claim valid_to")
-        if lower_available and upper_available:
-            lower_time = datetime.fromisoformat(lower[:-1] + "+00:00")
-            upper_time = datetime.fromisoformat(upper[:-1] + "+00:00")
-            if lower_time >= upper_time:
-                raise InvalidRequestError("Claim valid_from must be earlier than valid_to")
-        evaluation_time = datetime.fromisoformat(evaluation[:-1] + "+00:00")
-        observed_current = (not lower_available or evaluation_time >= datetime.fromisoformat(lower[:-1] + "+00:00")) and (
-            not upper_available or evaluation_time < datetime.fromisoformat(upper[:-1] + "+00:00")
-        )
-        if self.valid_time_current != observed_current:
-            raise InvalidRequestError("Claim valid_time_current conflicts with the disclosed validity bounds")
-        if not (self.active and self.system_current and self.valid_time_current):
-            raise InvalidRequestError("Claim evidence validity inputs must describe a currently eligible Claim")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "evaluation_time": self.evaluation_time,
-            "active": self.active,
-            "system_current": self.system_current,
-            "valid_time_current": self.valid_time_current,
-            "valid_from": self.valid_from,
-            "valid_from_available": self.valid_from_available,
-            "valid_to": self.valid_to,
-            "valid_to_available": self.valid_to_available,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ClaimValidityInputs":
-        data = _exact_mapping(
-            value,
-            "ClaimValidityInputs",
-            frozenset(
-                {
-                    "schema_version",
-                    "evaluation_time",
-                    "active",
-                    "system_current",
-                    "valid_time_current",
-                    "valid_from",
-                    "valid_from_available",
-                    "valid_to",
-                    "valid_to_available",
-                }
-            ),
-        )
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            evaluation_time=_require_text(
-                data["evaluation_time"], "Claim evaluation_time", MAX_CLAIM_TIMESTAMP_BYTES, allow_empty=False
-            ),
-            active=_require_bool(data["active"], "Claim active"),
-            system_current=_require_bool(data["system_current"], "Claim system_current"),
-            valid_time_current=_require_bool(data["valid_time_current"], "Claim valid_time_current"),
-            valid_from=_require_text(data["valid_from"], "Claim valid_from", MAX_CLAIM_TIMESTAMP_BYTES, allow_empty=True),
-            valid_from_available=_require_bool(data["valid_from_available"], "Claim valid_from_available"),
-            valid_to=_require_text(data["valid_to"], "Claim valid_to", MAX_CLAIM_TIMESTAMP_BYTES, allow_empty=True),
-            valid_to_available=_require_bool(data["valid_to_available"], "Claim valid_to_available"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimTrustInputs:
-    """Supplied Claim trust values with concrete availability semantics."""
-
-    trust_category: str = ""
-    trust_category_available: bool = False
-    supplied_trust: float = 0.0
-    supplied_trust_available: bool = False
-    supplied_trust_version: int = 0
-    supplied_trust_version_available: bool = False
-    schema_version: int = CLAIM_TRUST_INPUTS_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != CLAIM_TRUST_INPUTS_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported Claim trust inputs schema_version: {self.schema_version}")
-        category_available = _require_bool(self.trust_category_available, "Claim trust_category_available")
-        category = _require_text(self.trust_category, "Claim trust_category", 96, allow_empty=not category_available)
-        if not category_available and category:
-            raise InvalidRequestError("Claim trust_category must be empty when unavailable")
-        supplied_available = _require_bool(self.supplied_trust_available, "Claim supplied_trust_available")
-        supplied = _require_float(self.supplied_trust, "Claim supplied_trust", 0.0, 1.0)
-        if not supplied_available and supplied != 0.0:
-            raise InvalidRequestError("Claim supplied_trust must be zero when unavailable")
-        version_available = _require_bool(self.supplied_trust_version_available, "Claim supplied_trust_version_available")
-        version = _require_int(self.supplied_trust_version, "Claim supplied_trust_version", 0, 2_147_483_647)
-        if not version_available and version != 0:
-            raise InvalidRequestError("Claim supplied_trust_version must be zero when unavailable")
-        if supplied_available != version_available:
-            raise InvalidRequestError("Claim supplied trust value and version availability must match")
-        if version_available and version == 0:
-            raise InvalidRequestError("Claim supplied_trust_version must be positive when available")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "trust_category": self.trust_category,
-            "trust_category_available": self.trust_category_available,
-            "supplied_trust": self.supplied_trust,
-            "supplied_trust_available": self.supplied_trust_available,
-            "supplied_trust_version": self.supplied_trust_version,
-            "supplied_trust_version_available": self.supplied_trust_version_available,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ClaimTrustInputs":
-        data = _exact_mapping(
-            value,
-            "ClaimTrustInputs",
-            frozenset(
-                {
-                    "schema_version",
-                    "trust_category",
-                    "trust_category_available",
-                    "supplied_trust",
-                    "supplied_trust_available",
-                    "supplied_trust_version",
-                    "supplied_trust_version_available",
-                }
-            ),
-        )
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            trust_category=_require_text(data["trust_category"], "Claim trust_category", 96, allow_empty=True),
-            trust_category_available=_require_bool(data["trust_category_available"], "Claim trust_category_available"),
-            supplied_trust=_require_float(data["supplied_trust"], "Claim supplied_trust", 0.0, 1.0),
-            supplied_trust_available=_require_bool(data["supplied_trust_available"], "Claim supplied_trust_available"),
-            supplied_trust_version=_require_int(data["supplied_trust_version"], "Claim supplied_trust_version", 0, 2_147_483_647),
-            supplied_trust_version_available=_require_bool(
-                data["supplied_trust_version_available"], "Claim supplied_trust_version_available"
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class DisclosureDecision:
-    """Exact caller scope and allow-listed provenance for Claim disclosure."""
-
-    ownership: ClaimOwnership
-    basis: DisclosureBasis
-    scope: ScopeKey
-    policy_version: str
-    authority: str = ""
-    authority_available: bool = False
-    schema_version: int = DISCLOSURE_DECISION_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != DISCLOSURE_DECISION_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported disclosure decision schema_version: {self.schema_version}")
-        if not isinstance(self.ownership, ClaimOwnership):
-            raise InvalidRequestError("disclosure ownership must be a ClaimOwnership")
-        if not isinstance(self.basis, DisclosureBasis):
-            raise InvalidRequestError("disclosure basis must be a DisclosureBasis")
-        if not isinstance(self.scope, ScopeKey):
-            raise InvalidRequestError("disclosure scope must be a ScopeKey")
-        _require_identifier(self.policy_version, "disclosure policy_version")
-        authority_available = _require_bool(self.authority_available, "disclosure authority_available")
-        authority = self.authority
-        if authority_available:
-            _require_identifier(authority, "disclosure authority")
-        else:
-            _require_text(authority, "disclosure authority", 256, allow_empty=True)
-        if not authority_available and authority:
-            raise InvalidRequestError("disclosure authority must be empty when unavailable")
-        if self.ownership == ClaimOwnership.PUBLIC:
-            if self.basis != DisclosureBasis.PUBLIC_RULE or authority_available:
-                raise InvalidRequestError("PUBLIC Claim disclosure requires the public rule without an authority")
-        elif self.basis != DisclosureBasis.TRUSTED_SCOPE_AUTHORITY or not authority_available:
-            raise InvalidRequestError("non-PUBLIC Claim disclosure requires an available trusted scope authority")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "ownership": self.ownership.value,
-            "basis": self.basis.value,
-            "scope": self.scope.to_dict(),
-            "policy_version": self.policy_version,
-            "authority": self.authority,
-            "authority_available": self.authority_available,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "DisclosureDecision":
-        data = _exact_mapping(
-            value,
-            "DisclosureDecision",
-            frozenset(
-                {
-                    "schema_version",
-                    "ownership",
-                    "basis",
-                    "scope",
-                    "policy_version",
-                    "authority",
-                    "authority_available",
-                }
-            ),
-        )
-        try:
-            ownership = ClaimOwnership(_require_text(data["ownership"], "disclosure ownership", 32, allow_empty=False))
-            basis = DisclosureBasis(_require_text(data["basis"], "disclosure basis", 32, allow_empty=False))
-        except ValueError as error:
-            raise InvalidRequestError("unsupported disclosure ownership or basis") from error
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            ownership=ownership,
-            basis=basis,
-            scope=ScopeKey.from_dict(_freeze_mapping(data["scope"], "disclosure scope")),
-            policy_version=_require_identifier(data["policy_version"], "disclosure policy_version"),
-            authority=_require_text(data["authority"], "disclosure authority", 256, allow_empty=True),
-            authority_available=_require_bool(data["authority_available"], "disclosure authority_available"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimEvidenceRecord:
-    """Strict wire-safe full-Claim evidence without unrestricted graph content."""
-
-    claim_id: str
-    source_resolver: str
-    source_contributions: tuple[str, ...]
-    features: FeatureSet
-    canonical_references: CanonicalClaimReferences
-    validity: ClaimValidityInputs
-    trust: ClaimTrustInputs
-    disclosure: DisclosureDecision
-    path: tuple[str, ...]
-    selection_reasons: tuple[str, ...]
-    schema_version: int = CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported Claim evidence record schema_version: {self.schema_version}")
-        claim_id = _require_identifier(self.claim_id, "Claim evidence claim_id")
-        source = _require_identifier(self.source_resolver, "Claim evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
-        if not isinstance(self.source_contributions, tuple):
-            raise InvalidRequestError("Claim evidence source_contributions must be a tuple")
-        contributions = tuple(
-            _require_identifier(value, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES)
-            for value in self.source_contributions
-        )
-        if not contributions or len(contributions) > MAX_CLAIM_SOURCE_CONTRIBUTIONS:
-            raise InvalidRequestError(
-                f"Claim evidence source_contributions must contain 1 through {MAX_CLAIM_SOURCE_CONTRIBUTIONS} values"
-            )
-        if contributions != tuple(sorted(set(contributions))):
-            raise InvalidRequestError("Claim evidence source_contributions must be unique and sorted")
-        if source not in contributions:
-            raise InvalidRequestError("Claim evidence source_resolver must be present in source_contributions")
-        if not isinstance(self.features, FeatureSet):
-            raise InvalidRequestError("Claim evidence features must be a FeatureSet")
-        if not isinstance(self.canonical_references, CanonicalClaimReferences):
-            raise InvalidRequestError("Claim evidence canonical_references must be CanonicalClaimReferences")
-        if not isinstance(self.validity, ClaimValidityInputs):
-            raise InvalidRequestError("Claim evidence validity must be ClaimValidityInputs")
-        if not isinstance(self.trust, ClaimTrustInputs):
-            raise InvalidRequestError("Claim evidence trust must be ClaimTrustInputs")
-        if not isinstance(self.disclosure, DisclosureDecision):
-            raise InvalidRequestError("Claim evidence disclosure must be DisclosureDecision")
-        if not isinstance(self.path, tuple):
-            raise InvalidRequestError("Claim evidence path must be a tuple")
-        path = tuple(_require_identifier(value, "Claim evidence path identifier") for value in self.path)
-        if path != (claim_id,):
-            raise InvalidRequestError("Section 7 Claim evidence path must be the singleton claim_id")
-        if not isinstance(self.selection_reasons, tuple):
-            raise InvalidRequestError("Claim evidence selection_reasons must be a tuple")
-        reasons = tuple(
-            _require_identifier(value, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for value in self.selection_reasons
-        )
-        if not reasons or len(reasons) > MAX_CLAIM_SELECTION_REASONS:
-            raise InvalidRequestError(
-                "Claim evidence selection_reasons must contain " f"1 through {MAX_CLAIM_SELECTION_REASONS} values"
-            )
-        if reasons != tuple(sorted(set(reasons))):
-            raise InvalidRequestError("Claim evidence selection_reasons must be unique and sorted")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "claim_id": self.claim_id,
-            "source_resolver": self.source_resolver,
-            "source_contributions": list(self.source_contributions),
-            "features": self.features.to_dict(),
-            "canonical_references": self.canonical_references.to_dict(),
-            "validity": self.validity.to_dict(),
-            "trust": self.trust.to_dict(),
-            "disclosure": self.disclosure.to_dict(),
-            "path": list(self.path),
-            "selection_reasons": list(self.selection_reasons),
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ClaimEvidenceRecord":
-        data = _exact_mapping(
-            value,
-            "ClaimEvidenceRecord",
-            frozenset(
-                {
-                    "schema_version",
-                    "claim_id",
-                    "source_resolver",
-                    "source_contributions",
-                    "features",
-                    "canonical_references",
-                    "validity",
-                    "trust",
-                    "disclosure",
-                    "path",
-                    "selection_reasons",
-                }
-            ),
-        )
-        contributions = _require_list(data["source_contributions"], "Claim evidence source_contributions")
-        path = _require_list(data["path"], "Claim evidence path")
-        reasons = _require_list(data["selection_reasons"], "Claim evidence selection_reasons")
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            claim_id=_require_identifier(data["claim_id"], "Claim evidence claim_id"),
-            source_resolver=_require_identifier(
-                data["source_resolver"],
-                "Claim evidence source_resolver",
-                MAX_RESOLVER_NAME_BYTES,
-            ),
-            source_contributions=tuple(
-                _require_identifier(value, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES) for value in contributions
-            ),
-            features=FeatureSet.from_dict(_freeze_mapping(data["features"], "Claim evidence features")),
-            canonical_references=CanonicalClaimReferences.from_dict(
-                _freeze_mapping(data["canonical_references"], "Claim evidence canonical_references")
-            ),
-            validity=ClaimValidityInputs.from_dict(_freeze_mapping(data["validity"], "Claim evidence validity")),
-            trust=ClaimTrustInputs.from_dict(_freeze_mapping(data["trust"], "Claim evidence trust")),
-            disclosure=DisclosureDecision.from_dict(_freeze_mapping(data["disclosure"], "Claim evidence disclosure")),
-            path=tuple(_require_identifier(value, "Claim evidence path identifier") for value in path),
-            selection_reasons=tuple(
-                _require_identifier(value, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for value in reasons
-            ),
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "ClaimEvidenceRecord":
-        return cls.from_dict(_load_json_mapping(value, "ClaimEvidenceRecord JSON"))
-
-
-@dataclass(frozen=True, slots=True)
-class EvidencePackage:
-    """Canonical, deduplicated, count- and byte-bounded full-Claim package."""
-
-    records: tuple[ClaimEvidenceRecord, ...]
-    retained_count: int
-    omitted_count: int
-    truncated: bool
-    truncation_reasons: tuple[EvidencePackageTruncationReason, ...]
-    wire_version: int = 1
-
-    def __post_init__(self) -> None:
-        if self.wire_version != 1:
-            raise InvalidRequestError(f"unsupported evidence package wire_version: {self.wire_version}")
-        if not isinstance(self.records, tuple) or not all(isinstance(record, ClaimEvidenceRecord) for record in self.records):
-            raise InvalidRequestError("evidence package records must be a tuple of ClaimEvidenceRecord values")
-        if len(self.records) > MAX_EVIDENCE_PACKAGE_RECORDS:
-            raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
-        identifiers = tuple(record.claim_id for record in self.records)
-        if identifiers != tuple(sorted(identifiers)):
-            raise InvalidRequestError("evidence package records must use canonical Claim-ID order")
-        if len(set(identifiers)) != len(identifiers):
-            raise InvalidRequestError("evidence package records must have unique Claim IDs")
-        retained = _require_int(self.retained_count, "evidence package retained_count", 0, 2_147_483_647)
-        omitted = _require_int(self.omitted_count, "evidence package omitted_count", 0, 2_147_483_647)
-        if retained != len(self.records):
-            raise InvalidRequestError("evidence package retained_count must equal the number of records")
-        _require_bool(self.truncated, "evidence package truncated")
-        if not isinstance(self.truncation_reasons, tuple):
-            raise InvalidRequestError("evidence package truncation_reasons must be a tuple")
-        if len(self.truncation_reasons) > MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS:
-            raise InvalidRequestError(
-                "evidence package truncation_reasons exceeds the limit of " f"{MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS}"
-            )
-        if not all(isinstance(reason, EvidencePackageTruncationReason) for reason in self.truncation_reasons):
-            raise InvalidRequestError("evidence package truncation_reasons must contain EvidencePackageTruncationReason values")
-        reason_values = tuple(reason.value for reason in self.truncation_reasons)
-        if reason_values != tuple(sorted(set(reason_values))):
-            raise InvalidRequestError("evidence package truncation_reasons must be unique and sorted")
-        if self.truncated != (omitted > 0):
-            raise InvalidRequestError("evidence package truncated must equal whether omitted_count is positive")
-        if self.truncated != bool(self.truncation_reasons):
-            raise InvalidRequestError("evidence package truncation_reasons must be present exactly when truncated")
-        encoded = _json_text(self.to_dict()).encode("utf-8")
-        if len(encoded) > MAX_EVIDENCE_PACKAGE_BYTES:
-            raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
-
-    @staticmethod
-    def _canonical_records(
-        records: tuple[ClaimEvidenceRecord, ...],
-    ) -> tuple[tuple[ClaimEvidenceRecord, ...], int]:
-        if not isinstance(records, tuple) or not all(isinstance(record, ClaimEvidenceRecord) for record in records):
-            raise InvalidRequestError("evidence package input must be a tuple of ClaimEvidenceRecord values")
-        if len(records) > MAX_EVIDENCE_PACKAGE_INPUT_RECORDS:
-            raise InvalidRequestError(f"evidence package input exceeds the limit of {MAX_EVIDENCE_PACKAGE_INPUT_RECORDS}")
-        by_claim_id: dict[str, ClaimEvidenceRecord] = {}
-        duplicate_count = 0
-        for record in records:
-            if record.claim_id in by_claim_id:
-                previous = by_claim_id[record.claim_id]
-                if previous != record:
-                    raise InvalidRequestError(f"conflicting Claim evidence projections for Claim ID: {record.claim_id}")
-                duplicate_count += 1
-                continue
-            by_claim_id[record.claim_id] = record
-        return tuple(by_claim_id[claim_id] for claim_id in sorted(by_claim_id)), duplicate_count
-
-    @classmethod
-    def build(
-        cls,
-        records: tuple[ClaimEvidenceRecord, ...],
-        *,
-        max_records: int = MAX_EVIDENCE_PACKAGE_RECORDS,
-        max_bytes: int = MAX_EVIDENCE_PACKAGE_BYTES,
-    ) -> "EvidencePackage":
-        retained_limit = _require_int(max_records, "evidence package max_records", 0, MAX_EVIDENCE_PACKAGE_RECORDS)
-        byte_limit = _require_int(max_bytes, "evidence package max_bytes", 256, MAX_EVIDENCE_PACKAGE_BYTES)
-        canonical, duplicate_count = cls._canonical_records(records)
-        reasons: set[EvidencePackageTruncationReason] = set()
-        omitted = duplicate_count
-        if duplicate_count:
-            reasons.add(EvidencePackageTruncationReason.DUPLICATE_CLAIM_ID)
-        retained = canonical[:retained_limit]
-        if len(canonical) > retained_limit:
-            omitted += len(canonical) - retained_limit
-            reasons.add(EvidencePackageTruncationReason.RECORD_LIMIT)
-
-        while True:
-            ordered_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
-            payload = {
-                "wire_version": 1,
-                "records": [record.to_dict() for record in retained],
-                "retained_count": len(retained),
-                "omitted_count": omitted,
-                "truncated": omitted > 0,
-                "truncation_reasons": [reason.value for reason in ordered_reasons],
-            }
-            if len(_json_text(payload).encode("utf-8")) <= byte_limit:
-                return cls(
-                    records=retained,
-                    retained_count=len(retained),
-                    omitted_count=omitted,
-                    truncated=omitted > 0,
-                    truncation_reasons=ordered_reasons,
-                )
-            if not retained:
-                raise InvalidRequestError("evidence package max_bytes cannot contain the empty package envelope")
-            retained = retained[:-1]
-            omitted += 1
-            reasons.add(EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "wire_version": self.wire_version,
-            "records": [record.to_dict() for record in self.records],
-            "retained_count": self.retained_count,
-            "omitted_count": self.omitted_count,
-            "truncated": self.truncated,
-            "truncation_reasons": [reason.value for reason in self.truncation_reasons],
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "EvidencePackage":
-        data = _exact_mapping(
-            value,
-            "EvidencePackage",
-            frozenset(
-                {
-                    "wire_version",
-                    "records",
-                    "retained_count",
-                    "omitted_count",
-                    "truncated",
-                    "truncation_reasons",
-                }
-            ),
-        )
-        records = _require_list(data["records"], "evidence package records")
-        if len(records) > MAX_EVIDENCE_PACKAGE_RECORDS:
-            raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
-        raw_reasons = _require_list(data["truncation_reasons"], "evidence package truncation_reasons")
-        reasons = []
-        for reason_value in raw_reasons:
-            try:
-                reasons.append(
-                    EvidencePackageTruncationReason(
-                        _require_text(
-                            reason_value,
-                            "evidence package truncation reason",
-                            MAX_REASON_CODE_BYTES,
-                            allow_empty=False,
-                        )
-                    )
-                )
-            except ValueError as error:
-                raise InvalidRequestError("unsupported evidence package truncation reason") from error
-        return cls(
-            wire_version=_require_int(data["wire_version"], "wire_version", 1, 1),
-            records=tuple(ClaimEvidenceRecord.from_dict(_freeze_mapping(record, "evidence package record")) for record in records),
-            retained_count=_require_int(data["retained_count"], "evidence package retained_count", 0, 2_147_483_647),
-            omitted_count=_require_int(data["omitted_count"], "evidence package omitted_count", 0, 2_147_483_647),
-            truncated=_require_bool(data["truncated"], "evidence package truncated"),
-            truncation_reasons=tuple(reasons),
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "EvidencePackage":
-        if not isinstance(value, str):
-            raise InvalidRequestError("EvidencePackage JSON must be a string")
-        if len(value.encode("utf-8")) > MAX_EVIDENCE_PACKAGE_BYTES:
-            raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
-        return cls.from_dict(_load_json_mapping(value, "EvidencePackage JSON"))
-
-
-EMPTY_EVIDENCE_PACKAGE = EvidencePackage((), 0, 0, False, ())
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceReference:
-    """Minimal stable evidence reference safe for Section 4 results."""
-
-    evidence_id: str
-    resolver: str
-    kind: EvidenceKind
-    scope: ScopeKey
-    provenance: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-    diagnostics: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-    schema_version: int = EVIDENCE_REFERENCE_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != EVIDENCE_REFERENCE_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported evidence reference schema_version: {self.schema_version}")
-        _require_text(self.evidence_id, "evidence_id", 256, allow_empty=False)
-        _require_text(self.resolver, "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
-        if not isinstance(self.kind, EvidenceKind):
-            raise InvalidRequestError("evidence kind must be an EvidenceKind")
-        if not isinstance(self.scope, ScopeKey):
-            raise InvalidRequestError("evidence scope must be a ScopeKey")
-        object.__setattr__(self, "provenance", _freeze_mapping(self.provenance, "evidence provenance"))
-        object.__setattr__(self, "diagnostics", _freeze_mapping(self.diagnostics, "evidence diagnostics"))
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "evidence_id": self.evidence_id,
-            "resolver": self.resolver,
-            "kind": self.kind.value,
-            "scope": self.scope.to_dict(),
-            "provenance": _thaw_json(self.provenance),
-            "diagnostics": _thaw_json(self.diagnostics),
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "EvidenceReference":
-        keys = frozenset({"schema_version", "evidence_id", "resolver", "kind", "scope", "provenance", "diagnostics"})
-        data = _exact_mapping(value, "EvidenceReference", keys)
-        try:
-            kind = EvidenceKind(_require_text(data["kind"], "evidence kind", 32, allow_empty=False))
-        except ValueError as error:
-            raise InvalidRequestError("unsupported evidence kind") from error
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            evidence_id=_require_text(data["evidence_id"], "evidence_id", 256, allow_empty=False),
-            resolver=_require_text(data["resolver"], "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
-            kind=kind,
-            scope=ScopeKey.from_dict(_freeze_mapping(data["scope"], "evidence scope")),
-            provenance=_freeze_mapping(data["provenance"], "evidence provenance"),
-            diagnostics=_freeze_mapping(data["diagnostics"], "evidence diagnostics"),
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "EvidenceReference":
-        return cls.from_dict(_load_json_mapping(value, "EvidenceReference JSON"))
-
-
-@dataclass(frozen=True, slots=True)
-class Candidate:
-    """One response candidate emitted by a resolver without selecting it."""
-
-    candidate_id: str
-    statement_id: str
-    response: str
-    source: CandidateSource
-    features: FeatureSet
-    evidence: tuple[EvidenceReference, ...]
-    scope: ScopeKey
-    lifecycle: LifecycleState
-    provenance: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-    diagnostics: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-    schema_version: int = CANDIDATE_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != CANDIDATE_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported candidate schema_version: {self.schema_version}")
-        _require_text(self.candidate_id, "candidate_id", 256, allow_empty=False)
-        _require_text(self.statement_id, "candidate statement_id", 256, allow_empty=False)
-        _require_text(self.response, "candidate response", 1_048_576, allow_empty=False)
-        if not isinstance(self.source, CandidateSource):
-            raise InvalidRequestError("candidate source must be a CandidateSource")
-        if not isinstance(self.features, FeatureSet):
-            raise InvalidRequestError("candidate features must be a FeatureSet")
-        if not isinstance(self.evidence, tuple) or not all(isinstance(item, EvidenceReference) for item in self.evidence):
-            raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values")
-        if len(self.evidence) > MAX_RESOLUTION_VALUES:
-            raise InvalidRequestError(f"candidate evidence exceeds the limit of {MAX_RESOLUTION_VALUES}")
-        if not isinstance(self.scope, ScopeKey):
-            raise InvalidRequestError("candidate scope must be a ScopeKey")
-        if not isinstance(self.lifecycle, LifecycleState):
-            raise InvalidRequestError("candidate lifecycle must be a LifecycleState")
-        object.__setattr__(self, "provenance", _freeze_mapping(self.provenance, "candidate provenance"))
-        object.__setattr__(self, "diagnostics", _freeze_mapping(self.diagnostics, "candidate diagnostics"))
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "candidate_id": self.candidate_id,
-            "statement_id": self.statement_id,
-            "response": self.response,
-            "source": self.source.value,
-            "features": self.features.to_dict(),
-            "evidence": [item.to_dict() for item in self.evidence],
-            "scope": self.scope.to_dict(),
-            "lifecycle": self.lifecycle.value,
-            "provenance": _thaw_json(self.provenance),
-            "diagnostics": _thaw_json(self.diagnostics),
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "Candidate":
-        keys = frozenset(
-            {
-                "schema_version",
-                "candidate_id",
-                "statement_id",
-                "response",
-                "source",
-                "features",
-                "evidence",
-                "scope",
-                "lifecycle",
-                "provenance",
-                "diagnostics",
-            }
-        )
-        data = _exact_mapping(value, "Candidate", keys)
-        try:
-            source = CandidateSource(_require_text(data["source"], "candidate source", 32, allow_empty=False))
-            lifecycle = LifecycleState(_require_text(data["lifecycle"], "candidate lifecycle", 32, allow_empty=False))
-        except ValueError as error:
-            raise InvalidRequestError("candidate source or lifecycle is unsupported") from error
-        evidence = _require_list(data["evidence"], "candidate evidence")
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            candidate_id=_require_text(data["candidate_id"], "candidate_id", 256, allow_empty=False),
-            statement_id=_require_text(data["statement_id"], "candidate statement_id", 256, allow_empty=False),
-            response=_require_text(data["response"], "candidate response", 1_048_576, allow_empty=False),
-            source=source,
-            features=FeatureSet.from_dict(_freeze_mapping(data["features"], "candidate features")),
-            evidence=tuple(EvidenceReference.from_dict(_freeze_mapping(item, "candidate evidence item")) for item in evidence),
-            scope=ScopeKey.from_dict(_freeze_mapping(data["scope"], "candidate scope")),
-            lifecycle=lifecycle,
-            provenance=_freeze_mapping(data["provenance"], "candidate provenance"),
-            diagnostics=_freeze_mapping(data["diagnostics"], "candidate diagnostics"),
-        )
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_json(cls, value: str) -> "Candidate":
-        return cls.from_dict(_load_json_mapping(value, "Candidate JSON"))
-
-
-@dataclass(frozen=True, slots=True)
-class AccountingObservation:
-    """Pure resolver observation applied only by the Section 4 finalizer."""
-
-    statement_id: str
-    keywords: tuple[str, ...] = ()
-    schema_version: int = ACCOUNTING_OBSERVATION_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != ACCOUNTING_OBSERVATION_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported accounting observation schema_version: {self.schema_version}")
-        _require_text(self.statement_id, "accounting statement_id", 256, allow_empty=False)
-        if not isinstance(self.keywords, tuple):
-            raise InvalidRequestError("accounting keywords must be a tuple")
-        if len(self.keywords) > 256:
-            raise InvalidRequestError("accounting keywords exceeds the limit of 256")
-        for keyword in self.keywords:
-            _require_text(keyword, "accounting keyword", 256, allow_empty=False)
-        if len(set(self.keywords)) != len(self.keywords):
-            raise InvalidRequestError("accounting keywords must be unique")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "statement_id": self.statement_id,
-            "keywords": list(self.keywords),
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "AccountingObservation":
-        data = _exact_mapping(
-            value,
-            "AccountingObservation",
-            frozenset({"schema_version", "statement_id", "keywords"}),
-        )
-        keywords = _require_list(data["keywords"], "accounting keywords")
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            statement_id=_require_text(data["statement_id"], "accounting statement_id", 256, allow_empty=False),
-            keywords=tuple(_require_text(item, "accounting keyword", 256, allow_empty=False) for item in keywords),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ResolverResult:
-    """Bounded typed output from one side-effect-free resolver invocation."""
-
-    resolver: str
-    state: ResolverState
-    reason_code: str = ""
-    candidates: tuple[Candidate, ...] = ()
-    evidence: tuple[EvidenceReference, ...] = ()
-    claim_evidence: tuple[ClaimEvidenceRecord, ...] = ()
-    accounting: tuple[AccountingObservation, ...] = ()
-    diagnostics: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-    consumption: BudgetConsumption = field(default_factory=BudgetConsumption)
-    schema_version: int = RESOLVER_RESULT_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != RESOLVER_RESULT_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported resolver result schema_version: {self.schema_version}")
-        _require_text(self.resolver, "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
-        if not isinstance(self.state, ResolverState):
-            raise InvalidRequestError("resolver result state must be a ResolverState")
-        _require_text(self.reason_code, "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True)
-        if self.state != ResolverState.COMPLETED and (self.candidates or self.evidence or self.claim_evidence or self.accounting):
-            raise InvalidRequestError("non-completed resolver results cannot contain output or accounting")
-        if not isinstance(self.candidates, tuple) or not all(isinstance(value, Candidate) for value in self.candidates):
-            raise InvalidRequestError("resolver candidates must be a tuple of Candidate values")
-        if not isinstance(self.evidence, tuple) or not all(isinstance(value, EvidenceReference) for value in self.evidence):
-            raise InvalidRequestError("resolver evidence must be a tuple of EvidenceReference values")
-        if not isinstance(self.claim_evidence, tuple) or not all(
-            isinstance(value, ClaimEvidenceRecord) for value in self.claim_evidence
-        ):
-            raise InvalidRequestError("resolver claim_evidence must be a tuple of ClaimEvidenceRecord values")
-        if any(
-            value.source_resolver != self.resolver or value.source_contributions != (self.resolver,)
-            for value in self.claim_evidence
-        ):
-            raise InvalidRequestError("resolver claim_evidence source must match its producing resolver")
-        if not isinstance(self.accounting, tuple) or not all(isinstance(value, AccountingObservation) for value in self.accounting):
-            raise InvalidRequestError("resolver accounting must be a tuple of AccountingObservation values")
-        if max(len(self.candidates), len(self.evidence), len(self.claim_evidence), len(self.accounting)) > MAX_RESOLUTION_VALUES:
-            raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
-        object.__setattr__(self, "diagnostics", _freeze_mapping(self.diagnostics, "resolver diagnostics"))
-        if not isinstance(self.consumption, BudgetConsumption):
-            raise InvalidRequestError("resolver consumption must be a BudgetConsumption")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "resolver": self.resolver,
-            "state": self.state.value,
-            "reason_code": self.reason_code,
-            "candidates": [value.to_dict() for value in self.candidates],
-            "evidence": [value.to_dict() for value in self.evidence],
-            "claim_evidence": [value.to_dict() for value in self.claim_evidence],
-            "accounting": [value.to_dict() for value in self.accounting],
-            "diagnostics": _thaw_json(self.diagnostics),
-            "consumption": self.consumption.to_dict(),
-        }
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ResolverResult":
-        data = _exact_mapping(
-            value,
-            "ResolverResult",
-            frozenset(
-                {
-                    "schema_version",
-                    "resolver",
-                    "state",
-                    "reason_code",
-                    "candidates",
-                    "evidence",
-                    "claim_evidence",
-                    "accounting",
-                    "diagnostics",
-                    "consumption",
-                }
-            ),
-        )
-        try:
-            state = ResolverState(_require_text(data["state"], "resolver state", 32, allow_empty=False))
-        except ValueError as error:
-            raise InvalidRequestError("unsupported resolver state") from error
-        candidates = _require_list(data["candidates"], "resolver candidates")
-        evidence = _require_list(data["evidence"], "resolver evidence")
-        claim_evidence = _require_list(data["claim_evidence"], "resolver Claim evidence")
-        accounting = _require_list(data["accounting"], "resolver accounting")
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            resolver=_require_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
-            state=state,
-            reason_code=_require_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
-            candidates=tuple(Candidate.from_dict(_freeze_mapping(item, "resolver candidate")) for item in candidates),
-            evidence=tuple(EvidenceReference.from_dict(_freeze_mapping(item, "resolver evidence item")) for item in evidence),
-            claim_evidence=tuple(
-                ClaimEvidenceRecord.from_dict(_freeze_mapping(item, "resolver Claim evidence item")) for item in claim_evidence
-            ),
-            accounting=tuple(
-                AccountingObservation.from_dict(_freeze_mapping(item, "resolver accounting item")) for item in accounting
-            ),
-            diagnostics=_freeze_mapping(data["diagnostics"], "resolver diagnostics"),
-            consumption=BudgetConsumption.from_dict(_freeze_mapping(data["consumption"], "resolver consumption")),
-        )
-
-    @classmethod
-    def from_json(cls, value: str) -> "ResolverResult":
-        return cls.from_dict(_load_json_mapping(value, "ResolverResult JSON"))
-
-
-@dataclass(frozen=True, slots=True)
-class ResolutionResult:
-    """Strict unified result with concrete ANSWER/EVIDENCE/MISS invariants."""
-
-    outcome: ResolutionOutcome
-    selected_candidate: Candidate
-    selected_candidate_available: bool
-    response_candidates: tuple[Candidate, ...]
-    evidence: tuple[EvidenceReference, ...]
-    confidence: float
-    confidence_available: bool
-    reason_codes: tuple[str, ...]
-    frame_diagnostics: Mapping[str, object]
-    resolver_results: tuple[ResolverResult, ...]
-    budget: BudgetConsumption
-    evidence_package_available: bool = False
-    evidence_package: EvidencePackage = EMPTY_EVIDENCE_PACKAGE
-    schema_version: int = RESOLUTION_RESULT_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != RESOLUTION_RESULT_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported resolution result schema_version: {self.schema_version}")
-        if not isinstance(self.outcome, ResolutionOutcome):
-            raise InvalidRequestError("resolution outcome must be a ResolutionOutcome")
-        if not isinstance(self.selected_candidate, Candidate):
-            raise InvalidRequestError("selected_candidate must be a Candidate")
-        if not isinstance(self.selected_candidate_available, bool):
-            raise InvalidRequestError("selected_candidate_available must be a boolean")
-        if not isinstance(self.response_candidates, tuple) or not all(
-            isinstance(value, Candidate) for value in self.response_candidates
-        ):
-            raise InvalidRequestError("response_candidates must be a tuple of Candidate values")
-        if not isinstance(self.evidence, tuple) or not all(isinstance(value, EvidenceReference) for value in self.evidence):
-            raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values")
-        _require_float(self.confidence, "resolution confidence", 0.0, 1.0)
-        if not isinstance(self.confidence_available, bool):
-            raise InvalidRequestError("confidence_available must be a boolean")
-        if not isinstance(self.reason_codes, tuple):
-            raise InvalidRequestError("reason_codes must be a tuple")
-        if len(self.reason_codes) > 64:
-            raise InvalidRequestError("reason_codes exceeds the limit of 64")
-        reason_codes = tuple(
-            _require_text(value, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for value in self.reason_codes
-        )
-        if reason_codes != tuple(dict.fromkeys(reason_codes)):
-            raise InvalidRequestError("reason_codes must be unique and ordered")
-        object.__setattr__(self, "frame_diagnostics", _freeze_mapping(self.frame_diagnostics, "frame diagnostics"))
-        if not isinstance(self.resolver_results, tuple) or not all(
-            isinstance(value, ResolverResult) for value in self.resolver_results
-        ):
-            raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values")
-        if len(self.response_candidates) > MAX_RESOLUTION_VALUES or len(self.evidence) > MAX_RESOLUTION_VALUES:
-            raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
-        if len(self.resolver_results) > 64:
-            raise InvalidRequestError("resolver_results exceeds the limit of 64")
-        if any(result.claim_evidence for result in self.resolver_results):
-            raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Claim evidence")
-        if not isinstance(self.budget, BudgetConsumption):
-            raise InvalidRequestError("resolution budget must be a BudgetConsumption")
-        if not isinstance(self.evidence_package_available, bool):
-            raise InvalidRequestError("evidence_package_available must be a boolean")
-        if not isinstance(self.evidence_package, EvidencePackage):
-            raise InvalidRequestError("evidence_package must be an EvidencePackage")
-        if not self.evidence_package_available and self.evidence_package != EMPTY_EVIDENCE_PACKAGE:
-            raise InvalidRequestError("unavailable evidence_package must use the concrete empty package")
-        if self.outcome == ResolutionOutcome.ANSWER:
-            if not self.selected_candidate_available:
-                raise InvalidRequestError("ANSWER requires one selected candidate")
-            if self.response_candidates != (self.selected_candidate,):
-                raise InvalidRequestError("ANSWER response_candidates must contain only the selected candidate")
-            if self.evidence:
-                raise InvalidRequestError("ANSWER cannot contain top-level evidence")
-            if not self.confidence_available or self.confidence <= 0.0:
-                raise InvalidRequestError("ANSWER requires available positive confidence")
-            if self.evidence_package_available or self.evidence_package != EMPTY_EVIDENCE_PACKAGE:
-                raise InvalidRequestError("ANSWER cannot contain a response-less evidence package")
-        else:
-            if self.selected_candidate_available:
-                raise InvalidRequestError("only ANSWER can make selected_candidate available")
-            if self.selected_candidate != EMPTY_CANDIDATE:
-                raise InvalidRequestError("an unavailable selected_candidate must be EMPTY_CANDIDATE")
-            if self.confidence_available or self.confidence != 0.0:
-                raise InvalidRequestError("non-ANSWER confidence must be unavailable and zero")
-        if self.outcome == ResolutionOutcome.EVIDENCE and not (
-            self.response_candidates or self.evidence or self.evidence_package.records
-        ):
-            raise InvalidRequestError("EVIDENCE requires response candidates, evidence references, or package records")
-        if self.outcome == ResolutionOutcome.MISS and (self.response_candidates or self.evidence or self.evidence_package.records):
-            raise InvalidRequestError("MISS cannot contain response candidates or retained evidence")
-
-    def to_dict(self) -> dict[str, object]:
-        selected = self.selected_candidate.to_dict() if self.selected_candidate_available else {}
-        return {
-            "schema_version": self.schema_version,
-            "outcome": self.outcome.value,
-            "selected_candidate": selected,
-            "selected_candidate_available": self.selected_candidate_available,
-            "response_candidates": [value.to_dict() for value in self.response_candidates],
-            "evidence": [value.to_dict() for value in self.evidence],
-            "confidence": self.confidence,
-            "confidence_available": self.confidence_available,
-            "reason_codes": list(self.reason_codes),
-            "frame_diagnostics": _thaw_json(self.frame_diagnostics),
-            "resolver_results": [value.to_dict() for value in self.resolver_results],
-            "budget": self.budget.to_dict(),
-            "evidence_package_available": self.evidence_package_available,
-            "evidence_package": self.evidence_package.to_dict(),
-        }
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ResolutionResult":
-        data = _exact_mapping(
-            value,
-            "ResolutionResult",
-            frozenset(
-                {
-                    "schema_version",
-                    "outcome",
-                    "selected_candidate",
-                    "selected_candidate_available",
-                    "response_candidates",
-                    "evidence",
-                    "confidence",
-                    "confidence_available",
-                    "reason_codes",
-                    "frame_diagnostics",
-                    "resolver_results",
-                    "budget",
-                    "evidence_package_available",
-                    "evidence_package",
-                }
-            ),
-        )
-        try:
-            outcome = ResolutionOutcome(_require_text(data["outcome"], "resolution outcome", 32, allow_empty=False))
-        except ValueError as error:
-            raise InvalidRequestError("unsupported resolution outcome") from error
-        if not isinstance(data["selected_candidate_available"], bool):
-            raise InvalidRequestError("selected_candidate_available must be a boolean")
-        selected_available = data["selected_candidate_available"]
-        selected_mapping = _freeze_mapping(data["selected_candidate"], "selected_candidate")
-        selected = Candidate.from_dict(selected_mapping) if selected_available else EMPTY_CANDIDATE
-        if not selected_available and selected_mapping:
-            raise InvalidRequestError("unavailable selected_candidate must be an empty object")
-        if not isinstance(data["confidence_available"], bool):
-            raise InvalidRequestError("confidence_available must be a boolean")
-        response_candidates = _require_list(data["response_candidates"], "response_candidates")
-        evidence = _require_list(data["evidence"], "resolution evidence")
-        reasons = _require_list(data["reason_codes"], "reason_codes")
-        resolver_results = _require_list(data["resolver_results"], "resolver_results")
-        if not isinstance(data["evidence_package_available"], bool):
-            raise InvalidRequestError("evidence_package_available must be a boolean")
-        return cls(
-            schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
-            outcome=outcome,
-            selected_candidate=selected,
-            selected_candidate_available=selected_available,
-            response_candidates=tuple(
-                Candidate.from_dict(_freeze_mapping(item, "response candidate")) for item in response_candidates
-            ),
-            evidence=tuple(EvidenceReference.from_dict(_freeze_mapping(item, "resolution evidence item")) for item in evidence),
-            confidence=_require_float(data["confidence"], "resolution confidence", 0.0, 1.0),
-            confidence_available=data["confidence_available"],
-            reason_codes=tuple(_require_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
-            frame_diagnostics=_freeze_mapping(data["frame_diagnostics"], "frame diagnostics"),
-            resolver_results=tuple(ResolverResult.from_dict(_freeze_mapping(item, "resolver result")) for item in resolver_results),
-            budget=BudgetConsumption.from_dict(_freeze_mapping(data["budget"], "resolution budget")),
-            evidence_package_available=data["evidence_package_available"],
-            evidence_package=EvidencePackage.from_dict(_freeze_mapping(data["evidence_package"], "evidence package")),
-        )
-
-    @classmethod
-    def from_json(cls, value: str) -> "ResolutionResult":
-        return cls.from_dict(_load_json_mapping(value, "ResolutionResult JSON"))
-
-
-EMPTY_SCOPE = ScopeKey()
-EMPTY_CANDIDATE = Candidate(
-    candidate_id="empty",
-    statement_id="empty",
-    response="empty",
-    source=CandidateSource.EXACT,
-    features=FeatureSet(),
-    evidence=(),
-    scope=EMPTY_SCOPE,
-    lifecycle=LifecycleState.ACTIVE,
+ResolutionBudget = TypedDict(
+    "ResolutionBudget",
+    {
+        "schema_version": int,
+        "total_time_ms": int,
+        "resolver_time_ms": int,
+        "max_resolvers": int,
+        "max_candidates": int,
+        "max_graph_rows": int,
+        "max_vector_results": int,
+        "max_evidence": int,
+        "max_evidence_bytes": int,
+        "max_output_bytes": int,
+        "max_diagnostic_bytes": int,
+        "max_working_memory_bytes": int,
+        "allowed_cost_classes": tuple[CostClass, ...],
+        "started_ns": int,
+        "deadline_ns": int,
+    },
 )
+
+
+def resolution_budget(
+    total_time_ms: object = DEFAULT_RESOLUTION_TOTAL_TIME_MS,
+    resolver_time_ms: object = DEFAULT_RESOLUTION_RESOLVER_TIME_MS,
+    max_resolvers: object = DEFAULT_RESOLUTION_MAX_RESOLVERS,
+    max_candidates: object = DEFAULT_RESOLUTION_MAX_CANDIDATES,
+    max_graph_rows: object = DEFAULT_RESOLUTION_MAX_GRAPH_ROWS,
+    max_vector_results: object = DEFAULT_RESOLUTION_MAX_VECTOR_RESULTS,
+    max_evidence: object = DEFAULT_RESOLUTION_MAX_EVIDENCE,
+    max_evidence_bytes: object = DEFAULT_RESOLUTION_MAX_EVIDENCE_BYTES,
+    max_output_bytes: object = DEFAULT_RESOLUTION_MAX_OUTPUT_BYTES,
+    max_diagnostic_bytes: object = DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES,
+    max_working_memory_bytes: object = DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES,
+    allowed_cost_classes: object = DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
+    started_ns: object = 0,
+    deadline_ns: object = 0,
+    schema_version: object = RESOLUTION_BUDGET_SCHEMA_VERSION,
+) -> ResolutionBudget:
+    """Build immutable limits and a captured monotonic deadline for one resolution."""
+    version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if version != RESOLUTION_BUDGET_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported resolution budget schema_version: {version}")
+    normalized_total_time = _require_int(
+        total_time_ms,
+        "total_time_ms",
+        MIN_RESOLUTION_TIME_MS,
+        MAX_RESOLUTION_TIME_MS,
+    )
+    normalized_resolver_time = _require_int(
+        resolver_time_ms,
+        "resolver_time_ms",
+        MIN_RESOLUTION_TIME_MS,
+        normalized_total_time,
+    )
+    normalized_costs = _enum_tuple(allowed_cost_classes, CostClass, "allowed_cost_classes", len(CostClass))
+    if not normalized_costs:
+        raise InvalidRequestError("allowed_cost_classes must not be empty")
+    normalized_started = _require_int(started_ns, "started_ns", 0, MAX_RESOURCE_COUNTER)
+    normalized_deadline = _require_int(deadline_ns, "deadline_ns", 0, MAX_RESOURCE_COUNTER)
+    if (normalized_started == 0) != (normalized_deadline == 0):
+        raise InvalidRequestError("started_ns and deadline_ns must be present or absent together")
+    if normalized_started and normalized_deadline <= normalized_started:
+        raise InvalidRequestError("deadline_ns must be after started_ns")
+    result: ResolutionBudget = {
+        "schema_version": version,
+        "total_time_ms": normalized_total_time,
+        "resolver_time_ms": normalized_resolver_time,
+        "max_resolvers": _require_int(max_resolvers, "max_resolvers", MIN_RESOLUTION_RESOLVERS, MAX_RESOLUTION_RESOLVERS),
+        "max_candidates": _require_int(
+            max_candidates,
+            "max_candidates",
+            MIN_RESOLUTION_CANDIDATES,
+            MAX_RESOLUTION_CANDIDATES,
+        ),
+        "max_graph_rows": _require_int(max_graph_rows, "max_graph_rows", 0, MAX_RESOLUTION_GRAPH_ROWS),
+        "max_vector_results": _require_int(max_vector_results, "max_vector_results", 0, MAX_RESOLUTION_VECTOR_RESULTS),
+        "max_evidence": _require_int(max_evidence, "max_evidence", 0, MAX_RESOLUTION_EVIDENCE),
+        "max_evidence_bytes": _require_int(max_evidence_bytes, "max_evidence_bytes", 0, MAX_RESOLUTION_EVIDENCE_BYTES),
+        "max_output_bytes": _require_int(
+            max_output_bytes,
+            "max_output_bytes",
+            MIN_RESOLUTION_OUTPUT_BYTES,
+            MAX_RESOLUTION_OUTPUT_BYTES,
+        ),
+        "max_diagnostic_bytes": _require_int(
+            max_diagnostic_bytes,
+            "max_diagnostic_bytes",
+            0,
+            MAX_RESOLUTION_DIAGNOSTIC_BYTES,
+        ),
+        "max_working_memory_bytes": _require_int(
+            max_working_memory_bytes,
+            "max_working_memory_bytes",
+            1,
+            MAX_RESOLUTION_WORKING_MEMORY_BYTES,
+        ),
+        "allowed_cost_classes": normalized_costs,
+        "started_ns": normalized_started,
+        "deadline_ns": normalized_deadline,
+    }
+    return result
+
+
+def validate_resolution_budget(value: object) -> ResolutionBudget:
+    data = _exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
+    result = resolution_budget(
+        total_time_ms=data["total_time_ms"],
+        resolver_time_ms=data["resolver_time_ms"],
+        max_resolvers=data["max_resolvers"],
+        max_candidates=data["max_candidates"],
+        max_graph_rows=data["max_graph_rows"],
+        max_vector_results=data["max_vector_results"],
+        max_evidence=data["max_evidence"],
+        max_evidence_bytes=data["max_evidence_bytes"],
+        max_output_bytes=data["max_output_bytes"],
+        max_diagnostic_bytes=data["max_diagnostic_bytes"],
+        max_working_memory_bytes=data["max_working_memory_bytes"],
+        allowed_cost_classes=data["allowed_cost_classes"],
+        started_ns=data["started_ns"],
+        deadline_ns=data["deadline_ns"],
+        schema_version=data["schema_version"],
+    )
+    return result
+
+
+def resolution_budget_with_changes(value: object, changes: object) -> ResolutionBudget:
+    budget = validate_resolution_budget(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("resolution budget changes must be an object")
+    if not frozenset(changes).issubset(RESOLUTION_BUDGET_FIELDS):
+        raise InvalidRequestError("resolution budget changes contain an unknown field")
+    updated: dict[str, object] = dict(budget)
+    updated.update(changes)
+    result = validate_resolution_budget(updated)
+    return result
+
+
+def capture_resolution_budget(clock_ns: Callable[[], int], **limits: object) -> ResolutionBudget:
+    if not callable(clock_ns):
+        raise InvalidRequestError("budget clock_ns must be callable")
+    if not frozenset(limits).issubset(RESOLUTION_BUDGET_FIELDS):
+        raise InvalidRequestError("resolution budget limits contain an unknown field")
+    started = clock_ns()
+    if isinstance(started, bool) or not isinstance(started, int) or started < 1:
+        raise InvalidRequestError("budget clock_ns must return a positive integer")
+    total_time_ms = limits.get("total_time_ms", DEFAULT_RESOLUTION_TOTAL_TIME_MS)
+    normalized_total_time = _require_int(
+        total_time_ms,
+        "total_time_ms",
+        MIN_RESOLUTION_TIME_MS,
+        MAX_RESOLUTION_TIME_MS,
+    )
+    values = dict(limits)
+    values["total_time_ms"] = normalized_total_time
+    values["started_ns"] = started
+    values["deadline_ns"] = started + normalized_total_time * 1_000_000
+    result = resolution_budget(**values)
+    return result
+
+
+def recapture_resolution_budget(value: object, clock_ns: Callable[[], int]) -> ResolutionBudget:
+    """Capture a fresh deadline from immutable configured limits."""
+    budget = validate_resolution_budget(value)
+    result = capture_resolution_budget(
+        clock_ns,
+        total_time_ms=budget["total_time_ms"],
+        resolver_time_ms=budget["resolver_time_ms"],
+        max_resolvers=budget["max_resolvers"],
+        max_candidates=budget["max_candidates"],
+        max_graph_rows=budget["max_graph_rows"],
+        max_vector_results=budget["max_vector_results"],
+        max_evidence=budget["max_evidence"],
+        max_evidence_bytes=budget["max_evidence_bytes"],
+        max_output_bytes=budget["max_output_bytes"],
+        max_diagnostic_bytes=budget["max_diagnostic_bytes"],
+        max_working_memory_bytes=budget["max_working_memory_bytes"],
+        allowed_cost_classes=budget["allowed_cost_classes"],
+        schema_version=budget["schema_version"],
+    )
+    return result
+
+
+def resolution_budget_to_dict(value: object) -> dict[str, object]:
+    budget = validate_resolution_budget(value)
+    result = {
+        "schema_version": budget["schema_version"],
+        "total_time_ms": budget["total_time_ms"],
+        "resolver_time_ms": budget["resolver_time_ms"],
+        "max_resolvers": budget["max_resolvers"],
+        "max_candidates": budget["max_candidates"],
+        "max_graph_rows": budget["max_graph_rows"],
+        "max_vector_results": budget["max_vector_results"],
+        "max_evidence": budget["max_evidence"],
+        "max_evidence_bytes": budget["max_evidence_bytes"],
+        "max_output_bytes": budget["max_output_bytes"],
+        "max_diagnostic_bytes": budget["max_diagnostic_bytes"],
+        "max_working_memory_bytes": budget["max_working_memory_bytes"],
+        "allowed_cost_classes": [cost.value for cost in budget["allowed_cost_classes"]],
+        "started_ns": budget["started_ns"],
+        "deadline_ns": budget["deadline_ns"],
+    }
+    return result
+
+
+def resolution_budget_from_dict(value: object) -> ResolutionBudget:
+    data = _exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
+    raw_costs = _require_list(data["allowed_cost_classes"], "allowed_cost_classes")
+    try:
+        costs = tuple(CostClass(_require_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
+    except ValueError as error:
+        raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from error
+    result = resolution_budget(
+        schema_version=data["schema_version"],
+        total_time_ms=data["total_time_ms"],
+        resolver_time_ms=data["resolver_time_ms"],
+        max_resolvers=data["max_resolvers"],
+        max_candidates=data["max_candidates"],
+        max_graph_rows=data["max_graph_rows"],
+        max_vector_results=data["max_vector_results"],
+        max_evidence=data["max_evidence"],
+        max_evidence_bytes=data["max_evidence_bytes"],
+        max_output_bytes=data["max_output_bytes"],
+        max_diagnostic_bytes=data["max_diagnostic_bytes"],
+        max_working_memory_bytes=data["max_working_memory_bytes"],
+        allowed_cost_classes=costs,
+        started_ns=data["started_ns"],
+        deadline_ns=data["deadline_ns"],
+    )
+    return result
+
+
+def resolution_budget_to_json(value: object) -> str:
+    payload = resolution_budget_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def resolution_budget_from_json(value: str) -> ResolutionBudget:
+    data = _load_json_mapping(value, "ResolutionBudget JSON")
+    result = resolution_budget_from_dict(data)
+    return result
+
+
+BudgetConsumption = TypedDict(
+    "BudgetConsumption",
+    {
+        "schema_version": int,
+        "elapsed_ns": int,
+        "resolvers": int,
+        "candidates": int,
+        "graph_rows": int,
+        "vector_results": int,
+        "evidence": int,
+        "evidence_bytes": int,
+        "output_bytes": int,
+        "diagnostic_bytes": int,
+        "working_memory_bytes": int,
+        "exhausted_dimensions": tuple[str, ...],
+        "measurement_available": bool,
+    },
+)
+
+
+def budget_consumption(
+    elapsed_ns: object = 0,
+    resolvers: object = 0,
+    candidates: object = 0,
+    graph_rows: object = 0,
+    vector_results: object = 0,
+    evidence: object = 0,
+    evidence_bytes: object = 0,
+    output_bytes: object = 0,
+    diagnostic_bytes: object = 0,
+    working_memory_bytes: object = 0,
+    exhausted_dimensions: object = (),
+    measurement_available: object = True,
+    schema_version: object = BUDGET_CONSUMPTION_SCHEMA_VERSION,
+) -> BudgetConsumption:
+    """Build concrete resource use for a resolver or complete resolution."""
+    version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if version != BUDGET_CONSUMPTION_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported budget consumption schema_version: {version}")
+    numeric_values = {
+        "elapsed_ns": elapsed_ns,
+        "resolvers": resolvers,
+        "candidates": candidates,
+        "graph_rows": graph_rows,
+        "vector_results": vector_results,
+        "evidence": evidence,
+        "evidence_bytes": evidence_bytes,
+        "output_bytes": output_bytes,
+        "diagnostic_bytes": diagnostic_bytes,
+        "working_memory_bytes": working_memory_bytes,
+    }
+    normalized_numbers = {
+        name: _require_int(field_value, name, 0, MAX_RESOURCE_COUNTER) for name, field_value in numeric_values.items()
+    }
+    if not isinstance(exhausted_dimensions, tuple):
+        raise InvalidRequestError("exhausted_dimensions must be a tuple")
+    if len(exhausted_dimensions) > MAX_EXHAUSTED_DIMENSIONS:
+        raise InvalidRequestError(f"exhausted_dimensions exceeds the limit of {MAX_EXHAUSTED_DIMENSIONS}")
+    normalized_exhausted = tuple(
+        _require_text(value, "exhausted dimension", MAX_EXHAUSTED_DIMENSION_BYTES, allow_empty=False)
+        for value in exhausted_dimensions
+    )
+    if normalized_exhausted != tuple(sorted(set(normalized_exhausted))):
+        raise InvalidRequestError("exhausted_dimensions must be unique and sorted")
+    if not isinstance(measurement_available, bool):
+        raise InvalidRequestError("measurement_available must be a boolean")
+    result: BudgetConsumption = {
+        "schema_version": version,
+        "elapsed_ns": normalized_numbers["elapsed_ns"],
+        "resolvers": normalized_numbers["resolvers"],
+        "candidates": normalized_numbers["candidates"],
+        "graph_rows": normalized_numbers["graph_rows"],
+        "vector_results": normalized_numbers["vector_results"],
+        "evidence": normalized_numbers["evidence"],
+        "evidence_bytes": normalized_numbers["evidence_bytes"],
+        "output_bytes": normalized_numbers["output_bytes"],
+        "diagnostic_bytes": normalized_numbers["diagnostic_bytes"],
+        "working_memory_bytes": normalized_numbers["working_memory_bytes"],
+        "exhausted_dimensions": normalized_exhausted,
+        "measurement_available": measurement_available,
+    }
+    return result
+
+
+def validate_budget_consumption(value: object) -> BudgetConsumption:
+    data = _exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
+    result = budget_consumption(
+        schema_version=data["schema_version"],
+        elapsed_ns=data["elapsed_ns"],
+        resolvers=data["resolvers"],
+        candidates=data["candidates"],
+        graph_rows=data["graph_rows"],
+        vector_results=data["vector_results"],
+        evidence=data["evidence"],
+        evidence_bytes=data["evidence_bytes"],
+        output_bytes=data["output_bytes"],
+        diagnostic_bytes=data["diagnostic_bytes"],
+        working_memory_bytes=data["working_memory_bytes"],
+        exhausted_dimensions=data["exhausted_dimensions"],
+        measurement_available=data["measurement_available"],
+    )
+    return result
+
+
+def budget_consumption_with_changes(value: object, changes: object) -> BudgetConsumption:
+    consumption = validate_budget_consumption(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("budget consumption changes must be an object")
+    if not frozenset(changes).issubset(BUDGET_CONSUMPTION_FIELDS):
+        raise InvalidRequestError("budget consumption changes contain an unknown field")
+    updated: dict[str, object] = dict(consumption)
+    updated.update(changes)
+    result = validate_budget_consumption(updated)
+    return result
+
+
+def budget_consumption_to_dict(value: object) -> dict[str, object]:
+    consumption = validate_budget_consumption(value)
+    result = {
+        "schema_version": consumption["schema_version"],
+        "elapsed_ns": consumption["elapsed_ns"],
+        "resolvers": consumption["resolvers"],
+        "candidates": consumption["candidates"],
+        "graph_rows": consumption["graph_rows"],
+        "vector_results": consumption["vector_results"],
+        "evidence": consumption["evidence"],
+        "evidence_bytes": consumption["evidence_bytes"],
+        "output_bytes": consumption["output_bytes"],
+        "diagnostic_bytes": consumption["diagnostic_bytes"],
+        "working_memory_bytes": consumption["working_memory_bytes"],
+        "exhausted_dimensions": list(consumption["exhausted_dimensions"]),
+        "measurement_available": consumption["measurement_available"],
+    }
+    return result
+
+
+def budget_consumption_from_dict(value: object) -> BudgetConsumption:
+    data = _exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
+    exhausted = _require_list(data["exhausted_dimensions"], "exhausted_dimensions")
+    result = budget_consumption(
+        schema_version=data["schema_version"],
+        elapsed_ns=data["elapsed_ns"],
+        resolvers=data["resolvers"],
+        candidates=data["candidates"],
+        graph_rows=data["graph_rows"],
+        vector_results=data["vector_results"],
+        evidence=data["evidence"],
+        evidence_bytes=data["evidence_bytes"],
+        output_bytes=data["output_bytes"],
+        diagnostic_bytes=data["diagnostic_bytes"],
+        working_memory_bytes=data["working_memory_bytes"],
+        exhausted_dimensions=tuple(exhausted),
+        measurement_available=data["measurement_available"],
+    )
+    return result
+
+
+def budget_consumption_to_json(value: object) -> str:
+    payload = budget_consumption_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def budget_consumption_from_json(value: str) -> BudgetConsumption:
+    data = _load_json_mapping(value, "BudgetConsumption JSON")
+    result = budget_consumption_from_dict(data)
+    return result
+
+
+InheritanceProvenance = TypedDict("InheritanceProvenance", {"field_name": str, "source_turn": int})
+
+
+def inheritance_provenance(field_name: object, source_turn: object) -> InheritanceProvenance:
+    """Build concrete empty-capable contextual field provenance owned by Section 8."""
+    result: InheritanceProvenance = {
+        "field_name": _require_text(field_name, "inheritance field_name", 64, allow_empty=False),
+        "source_turn": _require_int(source_turn, "inheritance source_turn", 1, 1_000_000),
+    }
+    return result
+
+
+def validate_inheritance_provenance(value: object) -> InheritanceProvenance:
+    data = _exact_mapping(value, "InheritanceProvenance", INHERITANCE_PROVENANCE_FIELDS)
+    result = inheritance_provenance(data["field_name"], data["source_turn"])
+    return result
+
+
+def inheritance_provenance_signature(value: object) -> tuple[str, int]:
+    provenance = validate_inheritance_provenance(value)
+    result = (provenance["field_name"], provenance["source_turn"])
+    return result
+
+
+def inheritance_provenance_to_dict(value: object) -> dict[str, object]:
+    provenance = validate_inheritance_provenance(value)
+    result: dict[str, object] = dict(provenance)
+    return result
+
+
+def inheritance_provenance_from_dict(value: object) -> InheritanceProvenance:
+    result = validate_inheritance_provenance(value)
+    return result
+
+
+RewriteTraceStep = TypedDict("RewriteTraceStep", {"rule_id": str, "input_text": str, "output_text": str})
+
+
+def rewrite_trace_step(rule_id: object, input_text: object, output_text: object) -> RewriteTraceStep:
+    """Build an empty-capable rewrite trace whose rule semantics belong to Section 11."""
+    result: RewriteTraceStep = {
+        "rule_id": _require_text(rule_id, "rewrite rule_id", 128, allow_empty=False),
+        "input_text": _require_text(input_text, "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False),
+        "output_text": _require_text(output_text, "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False),
+    }
+    return result
+
+
+def validate_rewrite_trace_step(value: object) -> RewriteTraceStep:
+    data = _exact_mapping(value, "RewriteTraceStep", REWRITE_TRACE_STEP_FIELDS)
+    result = rewrite_trace_step(data["rule_id"], data["input_text"], data["output_text"])
+    return result
+
+
+def rewrite_trace_step_to_dict(value: object) -> dict[str, object]:
+    step = validate_rewrite_trace_step(value)
+    result: dict[str, object] = dict(step)
+    return result
+
+
+def rewrite_trace_step_from_dict(value: object) -> RewriteTraceStep:
+    result = validate_rewrite_trace_step(value)
+    return result
+
+
+QueryFrame = TypedDict(
+    "QueryFrame",
+    {
+        "original_text": str,
+        "resolved_text": str,
+        "identity": QueryIdentity,
+        "expected_object_type": ExpectedObjectType,
+        "inheritance": tuple[InheritanceProvenance, ...],
+        "rewrite_chain": tuple[RewriteTraceStep, ...],
+        "scope": ScopeKey,
+        "required_metadata": Mapping[str, object],
+        "required_source_label": str,
+        "budget": ResolutionBudget,
+        "eligibility_context": EligibilityContext,
+        "diagnostic_id": str,
+        "schema_version": int,
+    },
+)
+
+
+def query_frame(
+    original_text: object,
+    resolved_text: object,
+    identity: object,
+    expected_object_type: object,
+    inheritance: object,
+    rewrite_chain: object,
+    scope: object,
+    required_metadata: object,
+    required_source_label: object,
+    budget: object,
+    eligibility_context: object,
+    diagnostic_id: object,
+    schema_version: object = QUERY_FRAME_SCHEMA_VERSION,
+) -> QueryFrame:
+    """Build the immutable base interpretation passed to every resolver."""
+    validated_schema_version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if validated_schema_version != QUERY_FRAME_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported query frame schema_version: {validated_schema_version}")
+    original = _require_text(original_text, "frame original_text", MAX_REQUEST_BYTES, allow_empty=False)
+    resolved = _require_text(resolved_text, "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False)
+    try:
+        validated_identity = validate_query_identity(identity)
+    except IdentityValidationError as error:
+        raise InvalidRequestError("frame identity must be a QueryIdentity") from error
+    if not isinstance(expected_object_type, ExpectedObjectType):
+        raise InvalidRequestError("frame expected_object_type must be an ExpectedObjectType")
+    if not isinstance(inheritance, tuple):
+        raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values")
+    try:
+        validated_inheritance = tuple(validate_inheritance_provenance(value) for value in inheritance)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values") from error
+    inheritance_signatures = tuple(inheritance_provenance_signature(value) for value in validated_inheritance)
+    if len(validated_inheritance) > MAX_TRACE_STEPS or len(set(inheritance_signatures)) != len(validated_inheritance):
+        raise InvalidRequestError("frame inheritance must be bounded and unique")
+    if not isinstance(rewrite_chain, tuple):
+        raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values")
+    try:
+        validated_rewrite_chain = tuple(validate_rewrite_trace_step(value) for value in rewrite_chain)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values") from error
+    if len(validated_rewrite_chain) > MAX_TRACE_STEPS:
+        raise InvalidRequestError(f"frame rewrite_chain exceeds the limit of {MAX_TRACE_STEPS}")
+    try:
+        validated_scope = validate_scope_key(scope)
+    except IdentityValidationError as error:
+        raise InvalidRequestError("frame scope must match identity scope") from error
+    if validated_identity["scope"] != validated_scope:
+        raise InvalidRequestError("frame scope must match identity scope")
+    frozen_metadata = _freeze_mapping(required_metadata, "frame required_metadata")
+    source_label = _require_text(
+        required_source_label,
+        "frame required_source_label",
+        MAX_REQUIRED_SOURCE_LABEL_BYTES,
+        allow_empty=True,
+    )
+    try:
+        validated_budget = validate_resolution_budget(budget)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("frame budget must be a ResolutionBudget") from error
+    try:
+        validated_context = validate_eligibility_context(eligibility_context)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("frame eligibility_context must be an EligibilityContext") from error
+    if validated_context["namespace"] != validated_scope["namespace"]:
+        raise InvalidRequestError("frame eligibility context namespace must match scope")
+    validated_diagnostic_id = _require_text(
+        diagnostic_id,
+        "frame diagnostic_id",
+        MAX_DIAGNOSTIC_ID_BYTES,
+        allow_empty=False,
+    )
+    result: QueryFrame = {
+        "original_text": original,
+        "resolved_text": resolved,
+        "identity": validated_identity,
+        "expected_object_type": expected_object_type,
+        "inheritance": validated_inheritance,
+        "rewrite_chain": validated_rewrite_chain,
+        "scope": validated_scope,
+        "required_metadata": frozen_metadata,
+        "required_source_label": source_label,
+        "budget": validated_budget,
+        "eligibility_context": validated_context,
+        "diagnostic_id": validated_diagnostic_id,
+        "schema_version": validated_schema_version,
+    }
+    return result
+
+
+def validate_query_frame(value: object) -> QueryFrame:
+    data = _exact_mapping(value, "QueryFrame", QUERY_FRAME_FIELDS)
+    result = query_frame(
+        data["original_text"],
+        data["resolved_text"],
+        data["identity"],
+        data["expected_object_type"],
+        data["inheritance"],
+        data["rewrite_chain"],
+        data["scope"],
+        data["required_metadata"],
+        data["required_source_label"],
+        data["budget"],
+        data["eligibility_context"],
+        data["diagnostic_id"],
+        data["schema_version"],
+    )
+    return result
+
+
+def query_frame_with_changes(value: object, changes: object) -> QueryFrame:
+    current = validate_query_frame(value)
+    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(QUERY_FRAME_FIELDS):
+        raise InvalidRequestError("query frame changes contain invalid fields")
+    updated: dict[str, object] = dict(current)
+    updated.update(changes)
+    result = validate_query_frame(updated)
+    return result
+
+
+def query_frame_to_dict(value: object) -> dict[str, object]:
+    frame = validate_query_frame(value)
+    result = {
+        "schema_version": frame["schema_version"],
+        "original_text": frame["original_text"],
+        "resolved_text": frame["resolved_text"],
+        "identity": query_identity_to_dict(frame["identity"]),
+        "expected_object_type": frame["expected_object_type"].value,
+        "inheritance": [inheritance_provenance_to_dict(item) for item in frame["inheritance"]],
+        "rewrite_chain": [rewrite_trace_step_to_dict(item) for item in frame["rewrite_chain"]],
+        "scope": scope_key_to_dict(frame["scope"]),
+        "required_metadata": _thaw_json(frame["required_metadata"]),
+        "required_source_label": frame["required_source_label"],
+        "budget": resolution_budget_to_dict(frame["budget"]),
+        "eligibility_context": eligibility_context_to_dict(frame["eligibility_context"]),
+        "diagnostic_id": frame["diagnostic_id"],
+    }
+    return result
+
+
+def query_frame_to_json(value: object) -> str:
+    payload = query_frame_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def query_frame_from_dict(value: object) -> QueryFrame:
+    data = _exact_mapping(value, "QueryFrame", QUERY_FRAME_FIELDS)
+    inheritance = _require_list(data["inheritance"], "frame inheritance")
+    rewrites = _require_list(data["rewrite_chain"], "frame rewrite_chain")
+    try:
+        expected_type = ExpectedObjectType(
+            _require_text(data["expected_object_type"], "expected_object_type", 32, allow_empty=False)
+        )
+    except ValueError as error:
+        raise InvalidRequestError("unsupported expected_object_type") from error
+    result = query_frame(
+        schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
+        original_text=_require_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
+        resolved_text=_require_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
+        identity=query_identity_from_dict(
+            cast(Mapping[str, object], _thaw_json(_freeze_mapping(data["identity"], "frame identity")))
+        ),
+        expected_object_type=expected_type,
+        inheritance=tuple(inheritance_provenance_from_dict(_freeze_mapping(item, "inheritance item")) for item in inheritance),
+        rewrite_chain=tuple(rewrite_trace_step_from_dict(_freeze_mapping(item, "rewrite item")) for item in rewrites),
+        scope=scope_key_from_dict(_freeze_mapping(data["scope"], "frame scope")),
+        required_metadata=_freeze_mapping(data["required_metadata"], "frame required_metadata"),
+        required_source_label=_require_text(
+            data["required_source_label"],
+            "frame required_source_label",
+            MAX_REQUIRED_SOURCE_LABEL_BYTES,
+            allow_empty=True,
+        ),
+        budget=resolution_budget_from_dict(_freeze_mapping(data["budget"], "frame budget")),
+        eligibility_context=eligibility_context_from_dict(
+            _freeze_mapping(data["eligibility_context"], "frame eligibility_context")
+        ),
+        diagnostic_id=_require_text(
+            data["diagnostic_id"],
+            "frame diagnostic_id",
+            MAX_DIAGNOSTIC_ID_BYTES,
+            allow_empty=False,
+        ),
+    )
+    return result
+
+
+def query_frame_from_json(value: str) -> QueryFrame:
+    decoded = _load_json_mapping(value, "QueryFrame JSON")
+    result = query_frame_from_dict(decoded)
+    return result
+
+
+FeatureSet = TypedDict(
+    "FeatureSet",
+    {"values": Mapping[str, float], "unavailable": tuple[str, ...], "schema_version": int},
+)
+
+
+def feature_set(
+    values: object = EMPTY_MAPPING,
+    unavailable: object = (),
+    schema_version: object = FEATURE_SET_SCHEMA_VERSION,
+) -> FeatureSet:
+    """Build a generic feature value/availability dictionary; Section 5 owns semantics."""
+    version = _require_int(schema_version, "schema_version", 0, 2_147_483_647)
+    if version != FEATURE_SET_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported feature set schema_version: {version}")
+    if not isinstance(values, Mapping):
+        raise InvalidRequestError("feature values must be an object")
+    validated_values = {}
+    for name in sorted(values):
+        key = _require_text(name, "feature name", 96, allow_empty=False)
+        validated_values[key] = _require_float(values[name], f"feature {key}", -1_000_000.0, 1_000_000.0)
+    if len(validated_values) > MAX_FEATURES:
+        raise InvalidRequestError(f"feature values exceed the limit of {MAX_FEATURES}")
+    if not isinstance(unavailable, tuple):
+        raise InvalidRequestError("unavailable features must be a tuple")
+    normalized_unavailable = tuple(_require_text(name, "unavailable feature", 96, allow_empty=False) for name in unavailable)
+    if normalized_unavailable != tuple(sorted(set(normalized_unavailable))):
+        raise InvalidRequestError("unavailable features must be unique and sorted")
+    if set(validated_values).intersection(normalized_unavailable):
+        raise InvalidRequestError("a feature cannot be both available and unavailable")
+    if len(validated_values) + len(normalized_unavailable) > MAX_FEATURES:
+        raise InvalidRequestError(f"features exceed the limit of {MAX_FEATURES}")
+    result: FeatureSet = {
+        "schema_version": version,
+        "values": MappingProxyType(validated_values),
+        "unavailable": normalized_unavailable,
+    }
+    return result
+
+
+def validate_feature_set(value: object) -> FeatureSet:
+    """Revalidate and defensively copy one feature-set dictionary."""
+    data = _exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
+    result = feature_set(data["values"], data["unavailable"], data["schema_version"])
+    return result
+
+
+def feature_set_with_changes(value: object, changes: object) -> FeatureSet:
+    """Apply named fields and revalidate one feature-set dictionary."""
+    features = validate_feature_set(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("feature set changes must be an object")
+    if not frozenset(changes).issubset(FEATURE_SET_FIELDS):
+        raise InvalidRequestError("feature set changes contain an unknown field")
+    updated: dict[str, object] = dict(features)
+    updated.update(changes)
+    result = validate_feature_set(updated)
+    return result
+
+
+def feature_set_to_dict(value: object) -> dict[str, object]:
+    """Serialize one feature set."""
+    features = validate_feature_set(value)
+    result = {
+        "schema_version": features["schema_version"],
+        "values": dict(features["values"]),
+        "unavailable": list(features["unavailable"]),
+    }
+    return result
+
+
+def feature_set_from_dict(value: object) -> FeatureSet:
+    """Decode one feature set from its exact serialized form."""
+    data = _exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
+    unavailable = _require_list(data["unavailable"], "unavailable features")
+    raw_values = _freeze_mapping(data["values"], "feature values")
+    values = {name: _require_float(item, f"feature {name}", -1_000_000.0, 1_000_000.0) for name, item in raw_values.items()}
+    normalized_unavailable = tuple(_require_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable)
+    result = feature_set(values, normalized_unavailable, data["schema_version"])
+    return result
+
+
+def feature_set_to_json(value: object) -> str:
+    """Serialize one feature set deterministically."""
+    payload = feature_set_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def feature_set_from_json(value: str) -> FeatureSet:
+    """Decode one feature set from deterministic JSON."""
+    data = _load_json_mapping(value, "FeatureSet JSON")
+    result = feature_set_from_dict(data)
+    return result
+
+
+CanonicalClaimReferences = TypedDict(
+    "CanonicalClaimReferences",
+    {
+        "subject_entity_id": str,
+        "predicate_id": str,
+        "object_entity_id": str,
+        "schema_version": int,
+    },
+)
+
+
+def canonical_claim_references(
+    subject_entity_id: object,
+    predicate_id: object,
+    object_entity_id: object,
+    schema_version: object = CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION,
+) -> CanonicalClaimReferences:
+    """Build canonical graph identifiers for one full Claim record."""
+    version = _require_int(schema_version, "schema_version", 1, 1)
+    result: CanonicalClaimReferences = {
+        "schema_version": version,
+        "subject_entity_id": _require_identifier(subject_entity_id, "Claim subject_entity_id"),
+        "predicate_id": _require_identifier(predicate_id, "Claim predicate_id"),
+        "object_entity_id": _require_identifier(object_entity_id, "Claim object_entity_id"),
+    }
+    return result
+
+
+def validate_canonical_claim_references(value: object) -> CanonicalClaimReferences:
+    """Revalidate and copy one canonical Claim-reference dictionary."""
+    data = _exact_mapping(value, "CanonicalClaimReferences", CANONICAL_CLAIM_REFERENCES_FIELDS)
+    result = canonical_claim_references(
+        data["subject_entity_id"],
+        data["predicate_id"],
+        data["object_entity_id"],
+        data["schema_version"],
+    )
+    return result
+
+
+def canonical_claim_references_with_changes(value: object, changes: object) -> CanonicalClaimReferences:
+    """Apply named fields and revalidate canonical Claim references."""
+    references = validate_canonical_claim_references(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("canonical Claim reference changes must be an object")
+    if not frozenset(changes).issubset(CANONICAL_CLAIM_REFERENCES_FIELDS):
+        raise InvalidRequestError("canonical Claim reference changes contain an unknown field")
+    updated: dict[str, object] = dict(references)
+    updated.update(changes)
+    result = validate_canonical_claim_references(updated)
+    return result
+
+
+def canonical_claim_references_to_dict(value: object) -> dict[str, object]:
+    """Serialize canonical Claim references."""
+    references = validate_canonical_claim_references(value)
+    result: dict[str, object] = dict(references)
+    return result
+
+
+def canonical_claim_references_from_dict(value: object) -> CanonicalClaimReferences:
+    """Decode canonical Claim references from their exact serialized form."""
+    result = validate_canonical_claim_references(value)
+    return result
+
+
+ClaimValidityInputs = TypedDict(
+    "ClaimValidityInputs",
+    {
+        "evaluation_time": str,
+        "active": bool,
+        "system_current": bool,
+        "valid_time_current": bool,
+        "valid_from": str,
+        "valid_from_available": bool,
+        "valid_to": str,
+        "valid_to_available": bool,
+        "schema_version": int,
+    },
+)
+
+
+def claim_validity_inputs(
+    evaluation_time: object,
+    active: object,
+    system_current: object,
+    valid_time_current: object,
+    valid_from: object = "",
+    valid_from_available: object = False,
+    valid_to: object = "",
+    valid_to_available: object = False,
+    schema_version: object = CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
+) -> ClaimValidityInputs:
+    """Build current-time validity inputs for one eligible Claim."""
+    version = _require_int(schema_version, "schema_version", 1, 1)
+    evaluation, _evaluation_available = _require_claim_timestamp(evaluation_time, True, "Claim evaluation_time")
+    normalized_active = _require_bool(active, "Claim active")
+    normalized_system_current = _require_bool(system_current, "Claim system_current")
+    normalized_valid_time_current = _require_bool(valid_time_current, "Claim valid_time_current")
+    lower, lower_available = _require_claim_timestamp(valid_from, valid_from_available, "Claim valid_from")
+    upper, upper_available = _require_claim_timestamp(valid_to, valid_to_available, "Claim valid_to")
+    if lower_available and upper_available:
+        lower_time = datetime.fromisoformat(lower[:-1] + "+00:00")
+        upper_time = datetime.fromisoformat(upper[:-1] + "+00:00")
+        if lower_time >= upper_time:
+            raise InvalidRequestError("Claim valid_from must be earlier than valid_to")
+    evaluated_at = datetime.fromisoformat(evaluation[:-1] + "+00:00")
+    observed_current = (not lower_available or evaluated_at >= datetime.fromisoformat(lower[:-1] + "+00:00")) and (
+        not upper_available or evaluated_at < datetime.fromisoformat(upper[:-1] + "+00:00")
+    )
+    if normalized_valid_time_current != observed_current:
+        raise InvalidRequestError("Claim valid_time_current conflicts with the disclosed validity bounds")
+    if not (normalized_active and normalized_system_current and normalized_valid_time_current):
+        raise InvalidRequestError("Claim evidence validity inputs must describe a currently eligible Claim")
+    result: ClaimValidityInputs = {
+        "schema_version": version,
+        "evaluation_time": evaluation,
+        "active": normalized_active,
+        "system_current": normalized_system_current,
+        "valid_time_current": normalized_valid_time_current,
+        "valid_from": lower,
+        "valid_from_available": lower_available,
+        "valid_to": upper,
+        "valid_to_available": upper_available,
+    }
+    return result
+
+
+def validate_claim_validity_inputs(value: object) -> ClaimValidityInputs:
+    """Revalidate and copy one Claim-validity input dictionary."""
+    data = _exact_mapping(value, "ClaimValidityInputs", CLAIM_VALIDITY_INPUTS_FIELDS)
+    result = claim_validity_inputs(
+        data["evaluation_time"],
+        data["active"],
+        data["system_current"],
+        data["valid_time_current"],
+        data["valid_from"],
+        data["valid_from_available"],
+        data["valid_to"],
+        data["valid_to_available"],
+        data["schema_version"],
+    )
+    return result
+
+
+def claim_validity_inputs_with_changes(value: object, changes: object) -> ClaimValidityInputs:
+    """Apply named fields and revalidate complete Claim-validity inputs."""
+    validity = validate_claim_validity_inputs(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("Claim validity changes must be an object")
+    if not frozenset(changes).issubset(CLAIM_VALIDITY_INPUTS_FIELDS):
+        raise InvalidRequestError("Claim validity changes contain an unknown field")
+    updated: dict[str, object] = dict(validity)
+    updated.update(changes)
+    result = validate_claim_validity_inputs(updated)
+    return result
+
+
+def claim_validity_inputs_to_dict(value: object) -> dict[str, object]:
+    """Serialize Claim-validity inputs."""
+    validity = validate_claim_validity_inputs(value)
+    result: dict[str, object] = dict(validity)
+    return result
+
+
+def claim_validity_inputs_from_dict(value: object) -> ClaimValidityInputs:
+    """Decode Claim-validity inputs from their exact serialized form."""
+    result = validate_claim_validity_inputs(value)
+    return result
+
+
+ClaimTrustInputs = TypedDict(
+    "ClaimTrustInputs",
+    {
+        "trust_category": str,
+        "trust_category_available": bool,
+        "supplied_trust": float,
+        "supplied_trust_available": bool,
+        "supplied_trust_version": int,
+        "supplied_trust_version_available": bool,
+        "schema_version": int,
+    },
+)
+
+
+def claim_trust_inputs(
+    trust_category: object = "",
+    trust_category_available: object = False,
+    supplied_trust: object = 0.0,
+    supplied_trust_available: object = False,
+    supplied_trust_version: object = 0,
+    supplied_trust_version_available: object = False,
+    schema_version: object = CLAIM_TRUST_INPUTS_SCHEMA_VERSION,
+) -> ClaimTrustInputs:
+    """Build supplied Claim trust values with concrete availability."""
+    version = _require_int(schema_version, "schema_version", 1, 1)
+    category_available = _require_bool(trust_category_available, "Claim trust_category_available")
+    category = _require_text(
+        trust_category,
+        "Claim trust_category",
+        MAX_CLAIM_TRUST_CATEGORY_BYTES,
+        allow_empty=not category_available,
+    )
+    if not category_available and category:
+        raise InvalidRequestError("Claim trust_category must be empty when unavailable")
+    supplied_available = _require_bool(supplied_trust_available, "Claim supplied_trust_available")
+    supplied = _require_float(supplied_trust, "Claim supplied_trust", 0.0, 1.0)
+    if not supplied_available and supplied != 0.0:
+        raise InvalidRequestError("Claim supplied_trust must be zero when unavailable")
+    version_available = _require_bool(supplied_trust_version_available, "Claim supplied_trust_version_available")
+    trust_version = _require_int(supplied_trust_version, "Claim supplied_trust_version", 0, 2_147_483_647)
+    if not version_available and trust_version != 0:
+        raise InvalidRequestError("Claim supplied_trust_version must be zero when unavailable")
+    if supplied_available != version_available:
+        raise InvalidRequestError("Claim supplied trust value and version availability must match")
+    if version_available and trust_version == 0:
+        raise InvalidRequestError("Claim supplied_trust_version must be positive when available")
+    result: ClaimTrustInputs = {
+        "schema_version": version,
+        "trust_category": category,
+        "trust_category_available": category_available,
+        "supplied_trust": supplied,
+        "supplied_trust_available": supplied_available,
+        "supplied_trust_version": trust_version,
+        "supplied_trust_version_available": version_available,
+    }
+    return result
+
+
+def validate_claim_trust_inputs(value: object) -> ClaimTrustInputs:
+    """Revalidate and copy one Claim-trust input dictionary."""
+    data = _exact_mapping(value, "ClaimTrustInputs", CLAIM_TRUST_INPUTS_FIELDS)
+    result = claim_trust_inputs(
+        data["trust_category"],
+        data["trust_category_available"],
+        data["supplied_trust"],
+        data["supplied_trust_available"],
+        data["supplied_trust_version"],
+        data["supplied_trust_version_available"],
+        data["schema_version"],
+    )
+    return result
+
+
+def claim_trust_inputs_with_changes(value: object, changes: object) -> ClaimTrustInputs:
+    """Apply named fields and revalidate complete Claim-trust inputs."""
+    trust = validate_claim_trust_inputs(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("Claim trust changes must be an object")
+    if not frozenset(changes).issubset(CLAIM_TRUST_INPUTS_FIELDS):
+        raise InvalidRequestError("Claim trust changes contain an unknown field")
+    updated: dict[str, object] = dict(trust)
+    updated.update(changes)
+    result = validate_claim_trust_inputs(updated)
+    return result
+
+
+def claim_trust_inputs_to_dict(value: object) -> dict[str, object]:
+    """Serialize Claim-trust inputs."""
+    trust = validate_claim_trust_inputs(value)
+    result: dict[str, object] = dict(trust)
+    return result
+
+
+def claim_trust_inputs_from_dict(value: object) -> ClaimTrustInputs:
+    """Decode Claim-trust inputs from their exact serialized form."""
+    result = validate_claim_trust_inputs(value)
+    return result
+
+
+DisclosureDecision = TypedDict(
+    "DisclosureDecision",
+    {
+        "ownership": ClaimOwnership,
+        "basis": DisclosureBasis,
+        "scope": ScopeKey,
+        "policy_version": str,
+        "authority": str,
+        "authority_available": bool,
+        "schema_version": int,
+    },
+)
+
+
+def disclosure_decision(
+    ownership: object,
+    basis: object,
+    scope: object,
+    policy_version: object,
+    authority: object = "",
+    authority_available: object = False,
+    schema_version: object = DISCLOSURE_DECISION_SCHEMA_VERSION,
+) -> DisclosureDecision:
+    """Build an exact scoped Claim-disclosure decision."""
+    version = _require_int(schema_version, "schema_version", 1, 1)
+    if not isinstance(ownership, ClaimOwnership):
+        raise InvalidRequestError("disclosure ownership must be a ClaimOwnership")
+    if not isinstance(basis, DisclosureBasis):
+        raise InvalidRequestError("disclosure basis must be a DisclosureBasis")
+    try:
+        validated_scope = validate_scope_key(scope)
+    except IdentityValidationError as error:
+        raise InvalidRequestError("disclosure scope must be a ScopeKey") from error
+    normalized_policy_version = _require_identifier(policy_version, "disclosure policy_version")
+    normalized_authority_available = _require_bool(authority_available, "disclosure authority_available")
+    if normalized_authority_available:
+        normalized_authority = _require_identifier(authority, "disclosure authority")
+    else:
+        normalized_authority = _require_text(
+            authority,
+            "disclosure authority",
+            MAX_DISCLOSURE_AUTHORITY_BYTES,
+            allow_empty=True,
+        )
+    if not normalized_authority_available and normalized_authority:
+        raise InvalidRequestError("disclosure authority must be empty when unavailable")
+    if ownership == ClaimOwnership.PUBLIC:
+        if basis != DisclosureBasis.PUBLIC_RULE or normalized_authority_available:
+            raise InvalidRequestError("PUBLIC Claim disclosure requires the public rule without an authority")
+    elif basis != DisclosureBasis.TRUSTED_SCOPE_AUTHORITY or not normalized_authority_available:
+        raise InvalidRequestError("non-PUBLIC Claim disclosure requires an available trusted scope authority")
+    result: DisclosureDecision = {
+        "schema_version": version,
+        "ownership": ownership,
+        "basis": basis,
+        "scope": validated_scope,
+        "policy_version": normalized_policy_version,
+        "authority": normalized_authority,
+        "authority_available": normalized_authority_available,
+    }
+    return result
+
+
+def validate_disclosure_decision(value: object) -> DisclosureDecision:
+    """Revalidate and copy one disclosure-decision dictionary."""
+    data = _exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
+    result = disclosure_decision(
+        data["ownership"],
+        data["basis"],
+        data["scope"],
+        data["policy_version"],
+        data["authority"],
+        data["authority_available"],
+        data["schema_version"],
+    )
+    return result
+
+
+def disclosure_decision_with_changes(value: object, changes: object) -> DisclosureDecision:
+    """Apply named fields and revalidate one disclosure decision."""
+    decision = validate_disclosure_decision(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("disclosure decision changes must be an object")
+    if not frozenset(changes).issubset(DISCLOSURE_DECISION_FIELDS):
+        raise InvalidRequestError("disclosure decision changes contain an unknown field")
+    updated: dict[str, object] = dict(decision)
+    updated.update(changes)
+    result = validate_disclosure_decision(updated)
+    return result
+
+
+def disclosure_decision_to_dict(value: object) -> dict[str, object]:
+    """Serialize one disclosure decision."""
+    decision = validate_disclosure_decision(value)
+    result = {
+        "schema_version": decision["schema_version"],
+        "ownership": decision["ownership"].value,
+        "basis": decision["basis"].value,
+        "scope": scope_key_to_dict(decision["scope"]),
+        "policy_version": decision["policy_version"],
+        "authority": decision["authority"],
+        "authority_available": decision["authority_available"],
+    }
+    return result
+
+
+def disclosure_decision_from_dict(value: object) -> DisclosureDecision:
+    """Decode one disclosure decision from its exact serialized form."""
+    data = _exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
+    try:
+        ownership = ClaimOwnership(
+            _require_text(data["ownership"], "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
+        )
+        basis = DisclosureBasis(_require_text(data["basis"], "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False))
+    except ValueError as error:
+        raise InvalidRequestError("unsupported disclosure ownership or basis") from error
+    result = disclosure_decision(
+        ownership,
+        basis,
+        scope_key_from_dict(_freeze_mapping(data["scope"], "disclosure scope")),
+        data["policy_version"],
+        data["authority"],
+        data["authority_available"],
+        data["schema_version"],
+    )
+    return result
+
+
+ClaimEvidenceRecord = TypedDict(
+    "ClaimEvidenceRecord",
+    {
+        "claim_id": str,
+        "source_resolver": str,
+        "source_contributions": tuple[str, ...],
+        "features": FeatureSet,
+        "canonical_references": CanonicalClaimReferences,
+        "validity": ClaimValidityInputs,
+        "trust": ClaimTrustInputs,
+        "disclosure": DisclosureDecision,
+        "path": tuple[str, ...],
+        "selection_reasons": tuple[str, ...],
+        "schema_version": int,
+    },
+)
+
+
+def claim_evidence_record(
+    claim_id: object,
+    source_resolver: object,
+    source_contributions: object,
+    features: object,
+    canonical_references: object,
+    validity: object,
+    trust: object,
+    disclosure: object,
+    path: object,
+    selection_reasons: object,
+    schema_version: object = CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION,
+) -> ClaimEvidenceRecord:
+    """Build strict wire-safe full-Claim evidence without unrestricted graph content."""
+    version = _require_int(schema_version, "schema_version", 1, CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION)
+    normalized_claim_id = _require_identifier(claim_id, "Claim evidence claim_id")
+    source = _require_identifier(source_resolver, "Claim evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
+    if not isinstance(source_contributions, tuple):
+        raise InvalidRequestError("Claim evidence source_contributions must be a tuple")
+    contributions = tuple(
+        _require_identifier(value, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES) for value in source_contributions
+    )
+    if not contributions or len(contributions) > MAX_CLAIM_SOURCE_CONTRIBUTIONS:
+        raise InvalidRequestError(
+            f"Claim evidence source_contributions must contain 1 through {MAX_CLAIM_SOURCE_CONTRIBUTIONS} values"
+        )
+    if contributions != tuple(sorted(set(contributions))):
+        raise InvalidRequestError("Claim evidence source_contributions must be unique and sorted")
+    if source not in contributions:
+        raise InvalidRequestError("Claim evidence source_resolver must be present in source_contributions")
+    try:
+        validated_features = validate_feature_set(features)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("Claim evidence features must be a FeatureSet") from error
+    try:
+        validated_references = validate_canonical_claim_references(canonical_references)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("Claim evidence canonical_references must be CanonicalClaimReferences") from error
+    try:
+        validated_validity = validate_claim_validity_inputs(validity)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("Claim evidence validity must be ClaimValidityInputs") from error
+    try:
+        validated_trust = validate_claim_trust_inputs(trust)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("Claim evidence trust must be ClaimTrustInputs") from error
+    try:
+        validated_disclosure = validate_disclosure_decision(disclosure)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("Claim evidence disclosure must be DisclosureDecision") from error
+    if not isinstance(path, tuple):
+        raise InvalidRequestError("Claim evidence path must be a tuple")
+    normalized_path = tuple(_require_identifier(value, "Claim evidence path identifier") for value in path)
+    if normalized_path != (normalized_claim_id,):
+        raise InvalidRequestError("Section 7 Claim evidence path must be the singleton claim_id")
+    if not isinstance(selection_reasons, tuple):
+        raise InvalidRequestError("Claim evidence selection_reasons must be a tuple")
+    reasons = tuple(
+        _require_identifier(value, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for value in selection_reasons
+    )
+    if not reasons or len(reasons) > MAX_CLAIM_SELECTION_REASONS:
+        raise InvalidRequestError(
+            "Claim evidence selection_reasons must contain " f"1 through {MAX_CLAIM_SELECTION_REASONS} values"
+        )
+    if reasons != tuple(sorted(set(reasons))):
+        raise InvalidRequestError("Claim evidence selection_reasons must be unique and sorted")
+    result: ClaimEvidenceRecord = {
+        "schema_version": version,
+        "claim_id": normalized_claim_id,
+        "source_resolver": source,
+        "source_contributions": contributions,
+        "features": validated_features,
+        "canonical_references": validated_references,
+        "validity": validated_validity,
+        "trust": validated_trust,
+        "disclosure": validated_disclosure,
+        "path": normalized_path,
+        "selection_reasons": reasons,
+    }
+    return result
+
+
+def validate_claim_evidence_record(value: object) -> ClaimEvidenceRecord:
+    """Revalidate and defensively copy one full-Claim evidence dictionary."""
+    data = _exact_mapping(value, "ClaimEvidenceRecord", CLAIM_EVIDENCE_RECORD_FIELDS)
+    result = claim_evidence_record(
+        data["claim_id"],
+        data["source_resolver"],
+        data["source_contributions"],
+        data["features"],
+        data["canonical_references"],
+        data["validity"],
+        data["trust"],
+        data["disclosure"],
+        data["path"],
+        data["selection_reasons"],
+        data["schema_version"],
+    )
+    return result
+
+
+def claim_evidence_record_with_changes(value: object, changes: object) -> ClaimEvidenceRecord:
+    """Apply named fields and revalidate one full-Claim evidence dictionary."""
+    record = validate_claim_evidence_record(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("Claim evidence changes must be an object")
+    if not frozenset(changes).issubset(CLAIM_EVIDENCE_RECORD_FIELDS):
+        raise InvalidRequestError("Claim evidence changes contain an unknown field")
+    updated: dict[str, object] = dict(record)
+    updated.update(changes)
+    result = validate_claim_evidence_record(updated)
+    return result
+
+
+def claim_evidence_record_to_dict(value: object) -> dict[str, object]:
+    """Serialize one full-Claim evidence record."""
+    record = validate_claim_evidence_record(value)
+    result = {
+        "schema_version": record["schema_version"],
+        "claim_id": record["claim_id"],
+        "source_resolver": record["source_resolver"],
+        "source_contributions": list(record["source_contributions"]),
+        "features": feature_set_to_dict(record["features"]),
+        "canonical_references": canonical_claim_references_to_dict(record["canonical_references"]),
+        "validity": claim_validity_inputs_to_dict(record["validity"]),
+        "trust": claim_trust_inputs_to_dict(record["trust"]),
+        "disclosure": disclosure_decision_to_dict(record["disclosure"]),
+        "path": list(record["path"]),
+        "selection_reasons": list(record["selection_reasons"]),
+    }
+    return result
+
+
+def claim_evidence_record_from_dict(value: object) -> ClaimEvidenceRecord:
+    """Decode one full-Claim evidence record from its exact serialized form."""
+    data = _exact_mapping(value, "ClaimEvidenceRecord", CLAIM_EVIDENCE_RECORD_FIELDS)
+    contributions = _require_list(data["source_contributions"], "Claim evidence source_contributions")
+    path = _require_list(data["path"], "Claim evidence path")
+    reasons = _require_list(data["selection_reasons"], "Claim evidence selection_reasons")
+    normalized_contributions = tuple(
+        _require_identifier(item, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
+    )
+    normalized_path = tuple(_require_identifier(item, "Claim evidence path identifier") for item in path)
+    normalized_reasons = tuple(
+        _require_identifier(item, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for item in reasons
+    )
+    validated_features = feature_set_from_dict(_freeze_mapping(data["features"], "Claim evidence features"))
+    validated_references = canonical_claim_references_from_dict(
+        _freeze_mapping(data["canonical_references"], "Claim evidence canonical_references")
+    )
+    validated_validity = claim_validity_inputs_from_dict(_freeze_mapping(data["validity"], "Claim evidence validity"))
+    validated_trust = claim_trust_inputs_from_dict(_freeze_mapping(data["trust"], "Claim evidence trust"))
+    validated_disclosure = disclosure_decision_from_dict(_freeze_mapping(data["disclosure"], "Claim evidence disclosure"))
+    result = claim_evidence_record(
+        data["claim_id"],
+        data["source_resolver"],
+        normalized_contributions,
+        validated_features,
+        validated_references,
+        validated_validity,
+        validated_trust,
+        validated_disclosure,
+        normalized_path,
+        normalized_reasons,
+        data["schema_version"],
+    )
+    return result
+
+
+def claim_evidence_record_to_json(value: object) -> str:
+    """Serialize one full-Claim evidence record deterministically."""
+    payload = claim_evidence_record_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def claim_evidence_record_from_json(value: object) -> ClaimEvidenceRecord:
+    """Decode one full-Claim evidence record from deterministic JSON."""
+    if not isinstance(value, str):
+        raise InvalidRequestError("ClaimEvidenceRecord JSON must be a string")
+    data = _load_json_mapping(value, "ClaimEvidenceRecord JSON")
+    result = claim_evidence_record_from_dict(data)
+    return result
+
+
+EvidencePackage = TypedDict(
+    "EvidencePackage",
+    {
+        "records": tuple[ClaimEvidenceRecord, ...],
+        "retained_count": int,
+        "omitted_count": int,
+        "truncated": bool,
+        "truncation_reasons": tuple[EvidencePackageTruncationReason, ...],
+        "wire_version": int,
+    },
+)
+
+
+def _evidence_package_payload(value: EvidencePackage) -> dict[str, object]:
+    result = {
+        "wire_version": value["wire_version"],
+        "records": [claim_evidence_record_to_dict(record) for record in value["records"]],
+        "retained_count": value["retained_count"],
+        "omitted_count": value["omitted_count"],
+        "truncated": value["truncated"],
+        "truncation_reasons": [reason.value for reason in value["truncation_reasons"]],
+    }
+    return result
+
+
+def evidence_package(
+    records: object,
+    retained_count: object,
+    omitted_count: object,
+    truncated: object,
+    truncation_reasons: object,
+    wire_version: object = EVIDENCE_PACKAGE_WIRE_VERSION,
+) -> EvidencePackage:
+    """Build one canonical, count- and byte-bounded full-Claim package."""
+    version = _require_int(wire_version, "wire_version", 1, EVIDENCE_PACKAGE_WIRE_VERSION)
+    if not isinstance(records, tuple):
+        raise InvalidRequestError("evidence package records must be a tuple of ClaimEvidenceRecord values")
+    try:
+        validated_records = tuple(validate_claim_evidence_record(record) for record in records)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("evidence package records must be a tuple of ClaimEvidenceRecord values") from error
+    if len(validated_records) > MAX_EVIDENCE_PACKAGE_RECORDS:
+        raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
+    identifiers = tuple(record["claim_id"] for record in validated_records)
+    if identifiers != tuple(sorted(identifiers)):
+        raise InvalidRequestError("evidence package records must use canonical Claim-ID order")
+    if len(set(identifiers)) != len(identifiers):
+        raise InvalidRequestError("evidence package records must have unique Claim IDs")
+    retained = _require_int(retained_count, "evidence package retained_count", 0, 2_147_483_647)
+    omitted = _require_int(omitted_count, "evidence package omitted_count", 0, 2_147_483_647)
+    if retained != len(validated_records):
+        raise InvalidRequestError("evidence package retained_count must equal the number of records")
+    normalized_truncated = _require_bool(truncated, "evidence package truncated")
+    if not isinstance(truncation_reasons, tuple):
+        raise InvalidRequestError("evidence package truncation_reasons must be a tuple")
+    if len(truncation_reasons) > MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS:
+        raise InvalidRequestError(
+            "evidence package truncation_reasons exceeds the limit of " f"{MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS}"
+        )
+    if not all(isinstance(reason, EvidencePackageTruncationReason) for reason in truncation_reasons):
+        raise InvalidRequestError("evidence package truncation_reasons must contain EvidencePackageTruncationReason values")
+    normalized_reasons = tuple(truncation_reasons)
+    reason_values = tuple(reason.value for reason in normalized_reasons)
+    if reason_values != tuple(sorted(set(reason_values))):
+        raise InvalidRequestError("evidence package truncation_reasons must be unique and sorted")
+    if normalized_truncated != (omitted > 0):
+        raise InvalidRequestError("evidence package truncated must equal whether omitted_count is positive")
+    if normalized_truncated != bool(normalized_reasons):
+        raise InvalidRequestError("evidence package truncation_reasons must be present exactly when truncated")
+    result: EvidencePackage = {
+        "wire_version": version,
+        "records": validated_records,
+        "retained_count": retained,
+        "omitted_count": omitted,
+        "truncated": normalized_truncated,
+        "truncation_reasons": normalized_reasons,
+    }
+    encoded = _json_text(_evidence_package_payload(result)).encode("utf-8")
+    if len(encoded) > MAX_EVIDENCE_PACKAGE_BYTES:
+        raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
+    return result
+
+
+def empty_evidence_package() -> EvidencePackage:
+    """Return one isolated concrete empty evidence package."""
+    result = evidence_package((), 0, 0, False, ())
+    return result
+
+
+def validate_evidence_package(value: object) -> EvidencePackage:
+    """Revalidate and defensively copy one evidence-package dictionary."""
+    data = _exact_mapping(value, "EvidencePackage", EVIDENCE_PACKAGE_FIELDS)
+    result = evidence_package(
+        data["records"],
+        data["retained_count"],
+        data["omitted_count"],
+        data["truncated"],
+        data["truncation_reasons"],
+        data["wire_version"],
+    )
+    return result
+
+
+def evidence_package_with_changes(value: object, changes: object) -> EvidencePackage:
+    """Apply named fields and revalidate one evidence-package dictionary."""
+    package = validate_evidence_package(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("evidence package changes must be an object")
+    if not frozenset(changes).issubset(EVIDENCE_PACKAGE_FIELDS):
+        raise InvalidRequestError("evidence package changes contain an unknown field")
+    updated: dict[str, object] = dict(package)
+    updated.update(changes)
+    result = validate_evidence_package(updated)
+    return result
+
+
+def _canonical_claim_evidence_records(records: object) -> tuple[tuple[ClaimEvidenceRecord, ...], int]:
+    if not isinstance(records, tuple):
+        raise InvalidRequestError("evidence package input must be a tuple of ClaimEvidenceRecord values")
+    if len(records) > MAX_EVIDENCE_PACKAGE_INPUT_RECORDS:
+        raise InvalidRequestError(f"evidence package input exceeds the limit of {MAX_EVIDENCE_PACKAGE_INPUT_RECORDS}")
+    try:
+        validated_records = tuple(validate_claim_evidence_record(record) for record in records)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("evidence package input must be a tuple of ClaimEvidenceRecord values") from error
+    by_claim_id: dict[str, ClaimEvidenceRecord] = {}
+    duplicate_count = 0
+    for record in validated_records:
+        claim_id = record["claim_id"]
+        if claim_id in by_claim_id:
+            previous = by_claim_id[claim_id]
+            if previous != record:
+                raise InvalidRequestError(f"conflicting Claim evidence projections for Claim ID: {claim_id}")
+            duplicate_count += 1
+            continue
+        by_claim_id[claim_id] = record
+    canonical = tuple(by_claim_id[claim_id] for claim_id in sorted(by_claim_id))
+    result = (canonical, duplicate_count)
+    return result
+
+
+def build_evidence_package(
+    records: object,
+    *,
+    max_records: object = MAX_EVIDENCE_PACKAGE_RECORDS,
+    max_bytes: object = MAX_EVIDENCE_PACKAGE_BYTES,
+) -> EvidencePackage:
+    """Canonicalize, deduplicate, and fit full-Claim evidence to configured bounds."""
+    retained_limit = _require_int(max_records, "evidence package max_records", 0, MAX_EVIDENCE_PACKAGE_RECORDS)
+    byte_limit = _require_int(max_bytes, "evidence package max_bytes", 256, MAX_EVIDENCE_PACKAGE_BYTES)
+    canonical, duplicate_count = _canonical_claim_evidence_records(records)
+    reasons: set[EvidencePackageTruncationReason] = set()
+    omitted = duplicate_count
+    if duplicate_count:
+        reasons.add(EvidencePackageTruncationReason.DUPLICATE_CLAIM_ID)
+    retained = canonical[:retained_limit]
+    if len(canonical) > retained_limit:
+        omitted += len(canonical) - retained_limit
+        reasons.add(EvidencePackageTruncationReason.RECORD_LIMIT)
+
+    while True:
+        ordered_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
+        candidate: EvidencePackage = {
+            "wire_version": EVIDENCE_PACKAGE_WIRE_VERSION,
+            "records": retained,
+            "retained_count": len(retained),
+            "omitted_count": omitted,
+            "truncated": omitted > 0,
+            "truncation_reasons": ordered_reasons,
+        }
+        payload = _evidence_package_payload(candidate)
+        if len(_json_text(payload).encode("utf-8")) <= byte_limit:
+            result = evidence_package(retained, len(retained), omitted, omitted > 0, ordered_reasons)
+            break
+        if not retained:
+            raise InvalidRequestError("evidence package max_bytes cannot contain the empty package envelope")
+        retained = retained[:-1]
+        omitted += 1
+        reasons.add(EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT)
+    return result
+
+
+def evidence_package_to_dict(value: object) -> dict[str, object]:
+    """Serialize one evidence package."""
+    package = validate_evidence_package(value)
+    result = _evidence_package_payload(package)
+    return result
+
+
+def evidence_package_from_dict(value: object) -> EvidencePackage:
+    """Decode one evidence package from its exact serialized form."""
+    data = _exact_mapping(value, "EvidencePackage", EVIDENCE_PACKAGE_FIELDS)
+    records = _require_list(data["records"], "evidence package records")
+    if len(records) > MAX_EVIDENCE_PACKAGE_RECORDS:
+        raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
+    raw_reasons = _require_list(data["truncation_reasons"], "evidence package truncation_reasons")
+    reasons = []
+    for reason_value in raw_reasons:
+        try:
+            reason = EvidencePackageTruncationReason(
+                _require_text(
+                    reason_value,
+                    "evidence package truncation reason",
+                    MAX_REASON_CODE_BYTES,
+                    allow_empty=False,
+                )
+            )
+        except ValueError as error:
+            raise InvalidRequestError("unsupported evidence package truncation reason") from error
+        reasons.append(reason)
+    decoded_records = tuple(
+        claim_evidence_record_from_dict(_freeze_mapping(record, "evidence package record")) for record in records
+    )
+    result = evidence_package(
+        decoded_records,
+        data["retained_count"],
+        data["omitted_count"],
+        data["truncated"],
+        tuple(reasons),
+        data["wire_version"],
+    )
+    return result
+
+
+def evidence_package_to_json(value: object) -> str:
+    """Serialize one evidence package deterministically."""
+    payload = evidence_package_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def evidence_package_from_json(value: str) -> EvidencePackage:
+    """Decode one bounded evidence package from deterministic JSON."""
+    if not isinstance(value, str):
+        raise InvalidRequestError("EvidencePackage JSON must be a string")
+    if len(value.encode("utf-8")) > MAX_EVIDENCE_PACKAGE_BYTES:
+        raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
+    data = _load_json_mapping(value, "EvidencePackage JSON")
+    result = evidence_package_from_dict(data)
+    return result
+
+
+EvidenceReference = TypedDict(
+    "EvidenceReference",
+    {
+        "evidence_id": str,
+        "resolver": str,
+        "kind": EvidenceKind,
+        "scope": ScopeKey,
+        "provenance": Mapping[str, object],
+        "diagnostics": Mapping[str, object],
+        "schema_version": int,
+    },
+)
+
+
+def evidence_reference(
+    evidence_id: object,
+    resolver: object,
+    kind: object,
+    scope: object,
+    provenance: object = EMPTY_MAPPING,
+    diagnostics: object = EMPTY_MAPPING,
+    schema_version: object = EVIDENCE_REFERENCE_SCHEMA_VERSION,
+) -> EvidenceReference:
+    """Build one minimal stable evidence reference safe for Section 4 results."""
+    version = _require_int(schema_version, "schema_version", 0, 2_147_483_647)
+    if version != EVIDENCE_REFERENCE_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported evidence reference schema_version: {version}")
+    normalized_id = _require_text(evidence_id, "evidence_id", 256, allow_empty=False)
+    normalized_resolver = _require_text(resolver, "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
+    if not isinstance(kind, EvidenceKind):
+        raise InvalidRequestError("evidence kind must be an EvidenceKind")
+    try:
+        validated_scope = validate_scope_key(scope)
+    except IdentityValidationError as error:
+        raise InvalidRequestError("evidence scope must be a ScopeKey") from error
+    result: EvidenceReference = {
+        "schema_version": version,
+        "evidence_id": normalized_id,
+        "resolver": normalized_resolver,
+        "kind": kind,
+        "scope": validated_scope,
+        "provenance": _freeze_mapping(provenance, "evidence provenance"),
+        "diagnostics": _freeze_mapping(diagnostics, "evidence diagnostics"),
+    }
+    return result
+
+
+def validate_evidence_reference(value: object) -> EvidenceReference:
+    """Revalidate and defensively copy one evidence-reference dictionary."""
+    data = _exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
+    result = evidence_reference(
+        data["evidence_id"],
+        data["resolver"],
+        data["kind"],
+        data["scope"],
+        data["provenance"],
+        data["diagnostics"],
+        data["schema_version"],
+    )
+    return result
+
+
+def evidence_reference_with_changes(value: object, changes: object) -> EvidenceReference:
+    reference = validate_evidence_reference(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("evidence reference changes must be an object")
+    if not frozenset(changes).issubset(EVIDENCE_REFERENCE_FIELDS):
+        raise InvalidRequestError("evidence reference changes contain an unknown field")
+    updated: dict[str, object] = dict(reference)
+    updated.update(changes)
+    result = validate_evidence_reference(updated)
+    return result
+
+
+def evidence_reference_to_dict(value: object) -> dict[str, object]:
+    """Serialize one evidence reference."""
+    reference = validate_evidence_reference(value)
+    result = {
+        "schema_version": reference["schema_version"],
+        "evidence_id": reference["evidence_id"],
+        "resolver": reference["resolver"],
+        "kind": reference["kind"].value,
+        "scope": scope_key_to_dict(reference["scope"]),
+        "provenance": _thaw_json(reference["provenance"]),
+        "diagnostics": _thaw_json(reference["diagnostics"]),
+    }
+    return result
+
+
+def evidence_reference_from_dict(value: object) -> EvidenceReference:
+    """Decode one evidence reference from its exact serialized form."""
+    data = _exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
+    try:
+        kind = EvidenceKind(_require_text(data["kind"], "evidence kind", 32, allow_empty=False))
+    except ValueError as error:
+        raise InvalidRequestError("unsupported evidence kind") from error
+    result = evidence_reference(
+        data["evidence_id"],
+        data["resolver"],
+        kind,
+        scope_key_from_dict(_freeze_mapping(data["scope"], "evidence scope")),
+        _freeze_mapping(data["provenance"], "evidence provenance"),
+        _freeze_mapping(data["diagnostics"], "evidence diagnostics"),
+        data["schema_version"],
+    )
+    return result
+
+
+def evidence_reference_to_json(value: object) -> str:
+    payload = evidence_reference_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def evidence_reference_from_json(value: str) -> EvidenceReference:
+    data = _load_json_mapping(value, "EvidenceReference JSON")
+    result = evidence_reference_from_dict(data)
+    return result
+
+
+Candidate = TypedDict(
+    "Candidate",
+    {
+        "schema_version": int,
+        "candidate_id": str,
+        "statement_id": str,
+        "response": str,
+        "source": CandidateSource,
+        "features": FeatureSet,
+        "evidence": tuple[EvidenceReference, ...],
+        "scope": ScopeKey,
+        "lifecycle": LifecycleState,
+        "provenance": Mapping[str, object],
+        "diagnostics": Mapping[str, object],
+    },
+)
+
+
+def candidate(
+    candidate_id: object,
+    statement_id: object,
+    response: object,
+    source: object,
+    features: object,
+    evidence: object,
+    scope: object,
+    lifecycle: object,
+    provenance: object = EMPTY_MAPPING,
+    diagnostics: object = EMPTY_MAPPING,
+    schema_version: object = CANDIDATE_SCHEMA_VERSION,
+) -> Candidate:
+    """Build one response candidate emitted by a resolver without selecting it."""
+    version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if version != CANDIDATE_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported candidate schema_version: {version}")
+    if not isinstance(source, CandidateSource):
+        raise InvalidRequestError("candidate source must be a CandidateSource")
+    try:
+        validated_features = validate_feature_set(features)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("candidate features must be a FeatureSet") from error
+    if not isinstance(evidence, tuple):
+        raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values")
+    try:
+        validated_evidence = tuple(validate_evidence_reference(item) for item in evidence)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values") from error
+    if len(validated_evidence) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"candidate evidence exceeds the limit of {MAX_RESOLUTION_VALUES}")
+    try:
+        validated_scope = validate_scope_key(scope)
+    except IdentityValidationError as error:
+        raise InvalidRequestError("candidate scope must be a ScopeKey") from error
+    if not isinstance(lifecycle, LifecycleState):
+        raise InvalidRequestError("candidate lifecycle must be a LifecycleState")
+    result: Candidate = {
+        "schema_version": version,
+        "candidate_id": _require_text(candidate_id, "candidate_id", MAX_CANDIDATE_ID_BYTES, allow_empty=False),
+        "statement_id": _require_text(
+            statement_id,
+            "candidate statement_id",
+            MAX_STATEMENT_ID_BYTES,
+            allow_empty=False,
+        ),
+        "response": _require_text(response, "candidate response", MAX_RESPONSE_BYTES, allow_empty=False),
+        "source": source,
+        "features": validated_features,
+        "evidence": validated_evidence,
+        "scope": validated_scope,
+        "lifecycle": lifecycle,
+        "provenance": _freeze_mapping(provenance, "candidate provenance"),
+        "diagnostics": _freeze_mapping(diagnostics, "candidate diagnostics"),
+    }
+    return result
+
+
+def validate_candidate(value: object) -> Candidate:
+    data = _exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
+    result = candidate(
+        candidate_id=data["candidate_id"],
+        statement_id=data["statement_id"],
+        response=data["response"],
+        source=data["source"],
+        features=data["features"],
+        evidence=data["evidence"],
+        scope=data["scope"],
+        lifecycle=data["lifecycle"],
+        provenance=data["provenance"],
+        diagnostics=data["diagnostics"],
+        schema_version=data["schema_version"],
+    )
+    return result
+
+
+def candidate_with_changes(value: object, changes: object) -> Candidate:
+    current = validate_candidate(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("candidate changes must be an object")
+    if not frozenset(changes).issubset(CANDIDATE_FIELDS):
+        raise InvalidRequestError("candidate changes contain an unknown field")
+    updated: dict[str, object] = dict(current)
+    updated.update(changes)
+    result = validate_candidate(updated)
+    return result
+
+
+def candidate_to_dict(value: object) -> dict[str, object]:
+    current = validate_candidate(value)
+    result = {
+        "schema_version": current["schema_version"],
+        "candidate_id": current["candidate_id"],
+        "statement_id": current["statement_id"],
+        "response": current["response"],
+        "source": current["source"].value,
+        "features": feature_set_to_dict(current["features"]),
+        "evidence": [evidence_reference_to_dict(item) for item in current["evidence"]],
+        "scope": scope_key_to_dict(current["scope"]),
+        "lifecycle": current["lifecycle"].value,
+        "provenance": _thaw_json(current["provenance"]),
+        "diagnostics": _thaw_json(current["diagnostics"]),
+    }
+    return result
+
+
+def candidate_from_dict(value: object) -> Candidate:
+    data = _exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
+    try:
+        source = CandidateSource(_require_text(data["source"], "candidate source", 32, allow_empty=False))
+        lifecycle = LifecycleState(_require_text(data["lifecycle"], "candidate lifecycle", 32, allow_empty=False))
+    except ValueError as error:
+        raise InvalidRequestError("candidate source or lifecycle is unsupported") from error
+    evidence = _require_list(data["evidence"], "candidate evidence")
+    result = candidate(
+        schema_version=data["schema_version"],
+        candidate_id=data["candidate_id"],
+        statement_id=data["statement_id"],
+        response=data["response"],
+        source=source,
+        features=feature_set_from_dict(_freeze_mapping(data["features"], "candidate features")),
+        evidence=tuple(evidence_reference_from_dict(_freeze_mapping(item, "candidate evidence item")) for item in evidence),
+        scope=scope_key_from_dict(_freeze_mapping(data["scope"], "candidate scope")),
+        lifecycle=lifecycle,
+        provenance=_freeze_mapping(data["provenance"], "candidate provenance"),
+        diagnostics=_freeze_mapping(data["diagnostics"], "candidate diagnostics"),
+    )
+    return result
+
+
+def candidate_to_json(value: object) -> str:
+    payload = candidate_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def candidate_from_json(value: str) -> Candidate:
+    data = _load_json_mapping(value, "Candidate JSON")
+    result = candidate_from_dict(data)
+    return result
+
+
+def empty_candidate() -> Candidate:
+    result = candidate(
+        candidate_id="empty",
+        statement_id="empty",
+        response="empty",
+        source=CandidateSource.EXACT,
+        features=feature_set(),
+        evidence=(),
+        scope=EMPTY_SCOPE_KEY,
+        lifecycle=LifecycleState.ACTIVE,
+    )
+    return result
+
+
+AccountingObservation = TypedDict(
+    "AccountingObservation",
+    {
+        "schema_version": int,
+        "statement_id": str,
+        "keywords": tuple[str, ...],
+    },
+)
+
+
+def accounting_observation(
+    statement_id: object,
+    keywords: object = (),
+    schema_version: object = ACCOUNTING_OBSERVATION_SCHEMA_VERSION,
+) -> AccountingObservation:
+    """Build one pure resolver observation applied only by the finalizer."""
+    version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if version != ACCOUNTING_OBSERVATION_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported accounting observation schema_version: {version}")
+    if not isinstance(keywords, tuple):
+        raise InvalidRequestError("accounting keywords must be a tuple")
+    if len(keywords) > MAX_ACCOUNTING_KEYWORDS:
+        raise InvalidRequestError(f"accounting keywords exceeds the limit of {MAX_ACCOUNTING_KEYWORDS}")
+    normalized_keywords = tuple(
+        _require_text(keyword, "accounting keyword", MAX_ACCOUNTING_KEYWORD_BYTES, allow_empty=False) for keyword in keywords
+    )
+    if len(set(normalized_keywords)) != len(normalized_keywords):
+        raise InvalidRequestError("accounting keywords must be unique")
+    result: AccountingObservation = {
+        "schema_version": version,
+        "statement_id": _require_text(
+            statement_id,
+            "accounting statement_id",
+            MAX_STATEMENT_ID_BYTES,
+            allow_empty=False,
+        ),
+        "keywords": normalized_keywords,
+    }
+    return result
+
+
+def validate_accounting_observation(value: object) -> AccountingObservation:
+    data = _exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
+    result = accounting_observation(data["statement_id"], data["keywords"], data["schema_version"])
+    return result
+
+
+def accounting_observation_with_changes(value: object, changes: object) -> AccountingObservation:
+    observation = validate_accounting_observation(value)
+    if not isinstance(changes, Mapping):
+        raise InvalidRequestError("accounting observation changes must be an object")
+    if not frozenset(changes).issubset(ACCOUNTING_OBSERVATION_FIELDS):
+        raise InvalidRequestError("accounting observation changes contain an unknown field")
+    updated: dict[str, object] = dict(observation)
+    updated.update(changes)
+    result = validate_accounting_observation(updated)
+    return result
+
+
+def accounting_observation_to_dict(value: object) -> dict[str, object]:
+    observation = validate_accounting_observation(value)
+    result = {
+        "schema_version": observation["schema_version"],
+        "statement_id": observation["statement_id"],
+        "keywords": list(observation["keywords"]),
+    }
+    return result
+
+
+def accounting_observation_from_dict(value: object) -> AccountingObservation:
+    data = _exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
+    keywords = _require_list(data["keywords"], "accounting keywords")
+    result = accounting_observation(data["statement_id"], tuple(keywords), data["schema_version"])
+    return result
+
+
+ResolverResult = TypedDict(
+    "ResolverResult",
+    {
+        "resolver": str,
+        "state": ResolverState,
+        "reason_code": str,
+        "candidates": tuple[Candidate, ...],
+        "evidence": tuple[EvidenceReference, ...],
+        "claim_evidence": tuple[ClaimEvidenceRecord, ...],
+        "accounting": tuple[AccountingObservation, ...],
+        "diagnostics": Mapping[str, object],
+        "consumption": BudgetConsumption,
+        "schema_version": int,
+    },
+)
+
+
+def resolver_result(
+    resolver: object,
+    state: object,
+    reason_code: object = "",
+    candidates: object = (),
+    evidence: object = (),
+    claim_evidence: object = (),
+    accounting: object = (),
+    diagnostics: object = EMPTY_MAPPING,
+    consumption: object = EMPTY_MAPPING,
+    schema_version: object = RESOLVER_RESULT_SCHEMA_VERSION,
+) -> ResolverResult:
+    """Build the bounded output from one side-effect-free resolver invocation."""
+    validated_schema_version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if validated_schema_version != RESOLVER_RESULT_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported resolver result schema_version: {validated_schema_version}")
+    resolver_name = _require_text(resolver, "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
+    if not isinstance(state, ResolverState):
+        raise InvalidRequestError("resolver result state must be a ResolverState")
+    validated_reason_code = _require_text(
+        reason_code,
+        "resolver result reason_code",
+        MAX_REASON_CODE_BYTES,
+        allow_empty=True,
+    )
+    if (
+        not isinstance(candidates, tuple)
+        or not isinstance(evidence, tuple)
+        or not isinstance(claim_evidence, tuple)
+        or not isinstance(accounting, tuple)
+    ):
+        raise InvalidRequestError("resolver outputs and accounting must be tuples")
+    try:
+        validated_candidates = tuple(validate_candidate(value) for value in candidates)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver candidates must be a tuple of Candidate values") from error
+    try:
+        validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver evidence must be a tuple of EvidenceReference values") from error
+    try:
+        validated_claim_evidence = tuple(validate_claim_evidence_record(value) for value in claim_evidence)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver claim_evidence must be a tuple of ClaimEvidenceRecord values") from error
+    try:
+        validated_accounting = tuple(validate_accounting_observation(value) for value in accounting)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver accounting must be a tuple of AccountingObservation values") from error
+    if state != ResolverState.COMPLETED and (
+        validated_candidates or validated_evidence or validated_claim_evidence or validated_accounting
+    ):
+        raise InvalidRequestError("non-completed resolver results cannot contain output or accounting")
+    if any(
+        value["source_resolver"] != resolver_name or value["source_contributions"] != (resolver_name,)
+        for value in validated_claim_evidence
+    ):
+        raise InvalidRequestError("resolver claim_evidence source must match its producing resolver")
+    if (
+        max(
+            len(validated_candidates),
+            len(validated_evidence),
+            len(validated_claim_evidence),
+            len(validated_accounting),
+        )
+        > MAX_RESOLUTION_VALUES
+    ):
+        raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
+    frozen_diagnostics = _freeze_mapping(diagnostics, "resolver diagnostics")
+    if not isinstance(consumption, Mapping):
+        raise InvalidRequestError("resolver consumption must be a BudgetConsumption")
+    try:
+        validated_consumption = budget_consumption() if not consumption else validate_budget_consumption(consumption)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver consumption must be a BudgetConsumption") from error
+    result: ResolverResult = {
+        "resolver": resolver_name,
+        "state": state,
+        "reason_code": validated_reason_code,
+        "candidates": validated_candidates,
+        "evidence": validated_evidence,
+        "claim_evidence": validated_claim_evidence,
+        "accounting": validated_accounting,
+        "diagnostics": frozen_diagnostics,
+        "consumption": validated_consumption,
+        "schema_version": validated_schema_version,
+    }
+    return result
+
+
+def validate_resolver_result(value: object) -> ResolverResult:
+    data = _exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
+    result = resolver_result(
+        data["resolver"],
+        data["state"],
+        data["reason_code"],
+        data["candidates"],
+        data["evidence"],
+        data["claim_evidence"],
+        data["accounting"],
+        data["diagnostics"],
+        data["consumption"],
+        data["schema_version"],
+    )
+    return result
+
+
+def resolver_result_with_changes(value: object, changes: object) -> ResolverResult:
+    current = validate_resolver_result(value)
+    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(RESOLVER_RESULT_FIELDS):
+        raise InvalidRequestError("resolver result changes contain invalid fields")
+    updated: dict[str, object] = dict(current)
+    updated.update(changes)
+    result = validate_resolver_result(updated)
+    return result
+
+
+def resolver_result_to_dict(value: object) -> dict[str, object]:
+    current = validate_resolver_result(value)
+    result = {
+        "schema_version": current["schema_version"],
+        "resolver": current["resolver"],
+        "state": current["state"].value,
+        "reason_code": current["reason_code"],
+        "candidates": [candidate_to_dict(item) for item in current["candidates"]],
+        "evidence": [evidence_reference_to_dict(item) for item in current["evidence"]],
+        "claim_evidence": [claim_evidence_record_to_dict(item) for item in current["claim_evidence"]],
+        "accounting": [accounting_observation_to_dict(item) for item in current["accounting"]],
+        "diagnostics": _thaw_json(current["diagnostics"]),
+        "consumption": budget_consumption_to_dict(current["consumption"]),
+    }
+    return result
+
+
+def resolver_result_to_json(value: object) -> str:
+    payload = resolver_result_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def resolver_result_from_dict(value: object) -> ResolverResult:
+    data = _exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
+    try:
+        state = ResolverState(_require_text(data["state"], "resolver state", 32, allow_empty=False))
+    except ValueError as error:
+        raise InvalidRequestError("unsupported resolver state") from error
+    candidates = _require_list(data["candidates"], "resolver candidates")
+    evidence = _require_list(data["evidence"], "resolver evidence")
+    claim_evidence = _require_list(data["claim_evidence"], "resolver Claim evidence")
+    accounting = _require_list(data["accounting"], "resolver accounting")
+    result = resolver_result(
+        schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
+        resolver=_require_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
+        state=state,
+        reason_code=_require_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
+        candidates=tuple(candidate_from_dict(_freeze_mapping(item, "resolver candidate")) for item in candidates),
+        evidence=tuple(evidence_reference_from_dict(_freeze_mapping(item, "resolver evidence item")) for item in evidence),
+        claim_evidence=tuple(
+            claim_evidence_record_from_dict(_freeze_mapping(item, "resolver Claim evidence item")) for item in claim_evidence
+        ),
+        accounting=tuple(
+            accounting_observation_from_dict(_freeze_mapping(item, "resolver accounting item")) for item in accounting
+        ),
+        diagnostics=_freeze_mapping(data["diagnostics"], "resolver diagnostics"),
+        consumption=budget_consumption_from_dict(_freeze_mapping(data["consumption"], "resolver consumption")),
+    )
+    return result
+
+
+def resolver_result_from_json(value: str) -> ResolverResult:
+    decoded = _load_json_mapping(value, "ResolverResult JSON")
+    result = resolver_result_from_dict(decoded)
+    return result
+
+
+ResolutionResult = TypedDict(
+    "ResolutionResult",
+    {
+        "outcome": ResolutionOutcome,
+        "selected_candidate": Candidate,
+        "selected_candidate_available": bool,
+        "response_candidates": tuple[Candidate, ...],
+        "evidence": tuple[EvidenceReference, ...],
+        "confidence": float,
+        "confidence_available": bool,
+        "reason_codes": tuple[str, ...],
+        "frame_diagnostics": Mapping[str, object],
+        "resolver_results": tuple[ResolverResult, ...],
+        "budget": BudgetConsumption,
+        "evidence_package_available": bool,
+        "evidence_package": EvidencePackage,
+        "schema_version": int,
+    },
+)
+
+
+def resolution_result(
+    outcome: object,
+    selected_candidate: object,
+    selected_candidate_available: object,
+    response_candidates: object,
+    evidence: object,
+    confidence: object,
+    confidence_available: object,
+    reason_codes: object,
+    frame_diagnostics: object,
+    resolver_results: object,
+    budget: object,
+    evidence_package_available: object = False,
+    evidence_package: object = EMPTY_MAPPING,
+    schema_version: object = RESOLUTION_RESULT_SCHEMA_VERSION,
+) -> ResolutionResult:
+    """Build a strict unified result with concrete ANSWER/EVIDENCE/MISS invariants."""
+    validated_schema_version = _require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
+    if validated_schema_version != RESOLUTION_RESULT_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported resolution result schema_version: {validated_schema_version}")
+    if not isinstance(outcome, ResolutionOutcome):
+        raise InvalidRequestError("resolution outcome must be a ResolutionOutcome")
+    try:
+        validated_selected_candidate = validate_candidate(selected_candidate)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("selected_candidate must be a Candidate") from error
+    if (
+        not isinstance(selected_candidate_available, bool)
+        or not isinstance(confidence_available, bool)
+        or not isinstance(evidence_package_available, bool)
+    ):
+        raise InvalidRequestError("resolution availability fields must be booleans")
+    if not isinstance(response_candidates, tuple):
+        raise InvalidRequestError("response_candidates must be a tuple of Candidate values")
+    try:
+        validated_response_candidates = tuple(validate_candidate(value) for value in response_candidates)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("response_candidates must be a tuple of Candidate values") from error
+    if not isinstance(evidence, tuple):
+        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values")
+    try:
+        validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values") from error
+    validated_confidence = _require_float(confidence, "resolution confidence", 0.0, 1.0)
+    if not isinstance(reason_codes, tuple):
+        raise InvalidRequestError("reason_codes must be a tuple")
+    if len(reason_codes) > MAX_RESOLUTION_REASON_CODES:
+        raise InvalidRequestError(f"reason_codes exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
+    validated_reason_codes = tuple(
+        _require_text(value, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for value in reason_codes
+    )
+    if validated_reason_codes != tuple(dict.fromkeys(validated_reason_codes)):
+        raise InvalidRequestError("reason_codes must be unique and ordered")
+    frozen_diagnostics = _freeze_mapping(frame_diagnostics, "frame diagnostics")
+    if not isinstance(resolver_results, tuple):
+        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values")
+    try:
+        validated_resolver_results = tuple(validate_resolver_result(value) for value in resolver_results)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values") from error
+    if len(validated_response_candidates) > MAX_RESOLUTION_VALUES or len(validated_evidence) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
+    if len(validated_resolver_results) > MAX_RESOLUTION_REASON_CODES:
+        raise InvalidRequestError(f"resolver_results exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
+    if any(value["claim_evidence"] for value in validated_resolver_results):
+        raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Claim evidence")
+    try:
+        validated_budget = validate_budget_consumption(budget)
+    except InvalidRequestError as error:
+        raise InvalidRequestError("resolution budget must be a BudgetConsumption") from error
+    if not isinstance(evidence_package, Mapping):
+        raise InvalidRequestError("evidence_package must be an EvidencePackage")
+    try:
+        validated_evidence_package = (
+            empty_evidence_package() if not evidence_package else validate_evidence_package(evidence_package)
+        )
+    except InvalidRequestError as error:
+        raise InvalidRequestError("evidence_package must be an EvidencePackage") from error
+    concrete_empty_package = empty_evidence_package()
+    if not evidence_package_available and validated_evidence_package != concrete_empty_package:
+        raise InvalidRequestError("unavailable evidence_package must use the concrete empty package")
+    if outcome == ResolutionOutcome.ANSWER:
+        if not selected_candidate_available:
+            raise InvalidRequestError("ANSWER requires one selected candidate")
+        if validated_response_candidates != (validated_selected_candidate,):
+            raise InvalidRequestError("ANSWER response_candidates must contain only the selected candidate")
+        if validated_evidence:
+            raise InvalidRequestError("ANSWER cannot contain top-level evidence")
+        if not confidence_available or validated_confidence <= 0.0:
+            raise InvalidRequestError("ANSWER requires available positive confidence")
+        if evidence_package_available or validated_evidence_package != concrete_empty_package:
+            raise InvalidRequestError("ANSWER cannot contain a response-less evidence package")
+    else:
+        if selected_candidate_available:
+            raise InvalidRequestError("only ANSWER can make selected_candidate available")
+        if validated_selected_candidate != empty_candidate():
+            raise InvalidRequestError("an unavailable selected_candidate must be the concrete empty candidate")
+        if confidence_available or validated_confidence != 0.0:
+            raise InvalidRequestError("non-ANSWER confidence must be unavailable and zero")
+    retained_evidence_available = bool(validated_response_candidates or validated_evidence or validated_evidence_package["records"])
+    if outcome == ResolutionOutcome.EVIDENCE and not retained_evidence_available:
+        raise InvalidRequestError("EVIDENCE requires response candidates, evidence references, or package records")
+    if outcome == ResolutionOutcome.MISS and retained_evidence_available:
+        raise InvalidRequestError("MISS cannot contain response candidates or retained evidence")
+    result: ResolutionResult = {
+        "outcome": outcome,
+        "selected_candidate": validated_selected_candidate,
+        "selected_candidate_available": selected_candidate_available,
+        "response_candidates": validated_response_candidates,
+        "evidence": validated_evidence,
+        "confidence": validated_confidence,
+        "confidence_available": confidence_available,
+        "reason_codes": validated_reason_codes,
+        "frame_diagnostics": frozen_diagnostics,
+        "resolver_results": validated_resolver_results,
+        "budget": validated_budget,
+        "evidence_package_available": evidence_package_available,
+        "evidence_package": validated_evidence_package,
+        "schema_version": validated_schema_version,
+    }
+    return result
+
+
+def validate_resolution_result(value: object) -> ResolutionResult:
+    data = _exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
+    result = resolution_result(
+        data["outcome"],
+        data["selected_candidate"],
+        data["selected_candidate_available"],
+        data["response_candidates"],
+        data["evidence"],
+        data["confidence"],
+        data["confidence_available"],
+        data["reason_codes"],
+        data["frame_diagnostics"],
+        data["resolver_results"],
+        data["budget"],
+        data["evidence_package_available"],
+        data["evidence_package"],
+        data["schema_version"],
+    )
+    return result
+
+
+def resolution_result_with_changes(value: object, changes: object) -> ResolutionResult:
+    current = validate_resolution_result(value)
+    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(RESOLUTION_RESULT_FIELDS):
+        raise InvalidRequestError("resolution result changes contain invalid fields")
+    updated: dict[str, object] = dict(current)
+    updated.update(changes)
+    result = validate_resolution_result(updated)
+    return result
+
+
+def resolution_result_to_dict(value: object) -> dict[str, object]:
+    current = validate_resolution_result(value)
+    selected = candidate_to_dict(current["selected_candidate"]) if current["selected_candidate_available"] else {}
+    result = {
+        "schema_version": current["schema_version"],
+        "outcome": current["outcome"].value,
+        "selected_candidate": selected,
+        "selected_candidate_available": current["selected_candidate_available"],
+        "response_candidates": [candidate_to_dict(item) for item in current["response_candidates"]],
+        "evidence": [evidence_reference_to_dict(item) for item in current["evidence"]],
+        "confidence": current["confidence"],
+        "confidence_available": current["confidence_available"],
+        "reason_codes": list(current["reason_codes"]),
+        "frame_diagnostics": _thaw_json(current["frame_diagnostics"]),
+        "resolver_results": [resolver_result_to_dict(item) for item in current["resolver_results"]],
+        "budget": budget_consumption_to_dict(current["budget"]),
+        "evidence_package_available": current["evidence_package_available"],
+        "evidence_package": evidence_package_to_dict(current["evidence_package"]),
+    }
+    return result
+
+
+def resolution_result_to_json(value: object) -> str:
+    payload = resolution_result_to_dict(value)
+    result = _json_text(payload)
+    return result
+
+
+def resolution_result_from_dict(value: object) -> ResolutionResult:
+    data = _exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
+    try:
+        outcome = ResolutionOutcome(_require_text(data["outcome"], "resolution outcome", 32, allow_empty=False))
+    except ValueError as error:
+        raise InvalidRequestError("unsupported resolution outcome") from error
+    if not isinstance(data["selected_candidate_available"], bool):
+        raise InvalidRequestError("selected_candidate_available must be a boolean")
+    selected_available = data["selected_candidate_available"]
+    selected_mapping = _freeze_mapping(data["selected_candidate"], "selected_candidate")
+    selected = candidate_from_dict(selected_mapping) if selected_available else empty_candidate()
+    if not selected_available and selected_mapping:
+        raise InvalidRequestError("unavailable selected_candidate must be an empty object")
+    if not isinstance(data["confidence_available"], bool):
+        raise InvalidRequestError("confidence_available must be a boolean")
+    response_candidates = _require_list(data["response_candidates"], "response_candidates")
+    evidence = _require_list(data["evidence"], "resolution evidence")
+    reasons = _require_list(data["reason_codes"], "reason_codes")
+    resolver_results = _require_list(data["resolver_results"], "resolver_results")
+    if not isinstance(data["evidence_package_available"], bool):
+        raise InvalidRequestError("evidence_package_available must be a boolean")
+    result = resolution_result(
+        schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
+        outcome=outcome,
+        selected_candidate=selected,
+        selected_candidate_available=selected_available,
+        response_candidates=tuple(candidate_from_dict(_freeze_mapping(item, "response candidate")) for item in response_candidates),
+        evidence=tuple(evidence_reference_from_dict(_freeze_mapping(item, "resolution evidence item")) for item in evidence),
+        confidence=_require_float(data["confidence"], "resolution confidence", 0.0, 1.0),
+        confidence_available=data["confidence_available"],
+        reason_codes=tuple(_require_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
+        frame_diagnostics=_freeze_mapping(data["frame_diagnostics"], "frame diagnostics"),
+        resolver_results=tuple(resolver_result_from_dict(_freeze_mapping(item, "resolver result")) for item in resolver_results),
+        budget=budget_consumption_from_dict(_freeze_mapping(data["budget"], "resolution budget")),
+        evidence_package_available=data["evidence_package_available"],
+        evidence_package=evidence_package_from_dict(_freeze_mapping(data["evidence_package"], "evidence package")),
+    )
+    return result
+
+
+def resolution_result_from_json(value: str) -> ResolutionResult:
+    decoded = _load_json_mapping(value, "ResolutionResult JSON")
+    result = resolution_result_from_dict(decoded)
+    return result
 
 
 class QueryFrameBuilder:
@@ -1877,7 +2753,7 @@ class QueryFrameBuilder:
     def build(
         self,
         request: str,
-        scope: ScopeKey = EMPTY_SCOPE,
+        scope: object = EMPTY_SCOPE_KEY,
         identity=(),
         required_metadata: Mapping[str, object] = MappingProxyType({}),
         required_source_label: str = "",
@@ -1885,31 +2761,35 @@ class QueryFrameBuilder:
         budget=(),
     ) -> QueryFrame:
         original = _require_text(request, "request", MAX_REQUEST_BYTES, allow_empty=False)
-        if not isinstance(scope, ScopeKey):
-            raise InvalidRequestError("scope must be a ScopeKey")
+        try:
+            scope = validate_scope_key(scope)
+        except IdentityValidationError as error:
+            raise InvalidRequestError("scope must be a ScopeKey") from error
         if identity:
-            if not isinstance(identity, QueryIdentity):
-                raise InvalidRequestError("identity must be a QueryIdentity")
-            selected_identity = identity
+            try:
+                selected_identity = validate_query_identity(identity)
+            except IdentityValidationError as error:
+                raise InvalidRequestError("identity must be a QueryIdentity") from error
             validate_authoritative_identity(selected_identity, build_retrieval_representation(original))
         else:
             selected_identity = build_standalone_identity(original, scope)
-        if selected_identity.scope != scope:
+        if selected_identity["scope"] != scope:
             raise InvalidRequestError("identity scope must match frame scope")
         if budget:
-            if not isinstance(budget, ResolutionBudget):
-                raise InvalidRequestError("budget must be a ResolutionBudget")
-            selected_budget = budget.recapture(self._monotonic_clock_ns)
+            try:
+                selected_budget = recapture_resolution_budget(budget, self._monotonic_clock_ns)
+            except InvalidRequestError as error:
+                raise InvalidRequestError("budget must be a ResolutionBudget") from error
         else:
-            selected_budget = ResolutionBudget.capture(self._monotonic_clock_ns)
+            selected_budget = capture_resolution_budget(self._monotonic_clock_ns)
         resolved = original
         if self._engram.config["expand_contractions"]:
             resolved = expand_contractions(original, self._engram.substitution_maps["contractions"])
         eligibility = EligibilityContextFactory(self._utc_clock, self._engram.namespace_epochs).capture_standalone(scope, True)
-        seed = diagnostic_seed or f"{selected_identity.to_json()}:{resolved}"
+        seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
         _require_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
         diagnostic_id = f"resolution:sha256:{hashlib.sha256(seed.encode('utf-8')).hexdigest()}"
-        return QueryFrame(
+        result = query_frame(
             original_text=original,
             resolved_text=resolved,
             identity=selected_identity,
@@ -1923,39 +2803,48 @@ class QueryFrameBuilder:
             eligibility_context=eligibility,
             diagnostic_id=diagnostic_id,
         )
+        return result
 
 
 class BudgetLedger:
     """Thread-safe deterministic aggregate consumption and allowance checker."""
 
     def __init__(self, budget: ResolutionBudget, clock_ns: Callable[[], int]) -> None:
-        if not isinstance(budget, ResolutionBudget):
-            raise InvalidRequestError("ledger budget must be a ResolutionBudget")
+        try:
+            validated_budget = validate_resolution_budget(budget)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("ledger budget must be a ResolutionBudget") from error
         if not callable(clock_ns):
             raise InvalidRequestError("ledger clock_ns must be callable")
-        self._budget = budget
+        self._budget = validated_budget
         self._clock_ns = clock_ns
         self._lock = threading.RLock()
-        self._totals = BudgetConsumption()
+        self._totals = budget_consumption()
 
     @property
     def budget(self) -> ResolutionBudget:
-        return self._budget
+        result = validate_resolution_budget(self._budget)
+        return result
 
     def deadline_exhausted(self) -> bool:
-        return bool(self._budget.deadline_ns and self._clock_ns() >= self._budget.deadline_ns)
+        result = bool(self._budget["deadline_ns"] and self._clock_ns() >= self._budget["deadline_ns"])
+        return result
 
     def remaining_candidates(self) -> int:
         with self._lock:
-            return max(0, self._budget.max_candidates - self._totals.candidates)
+            result = max(0, self._budget["max_candidates"] - self._totals["candidates"])
+            return result
 
     def remaining_evidence(self) -> int:
         with self._lock:
-            return max(0, self._budget.max_evidence - self._totals.evidence)
+            result = max(0, self._budget["max_evidence"] - self._totals["evidence"])
+            return result
 
     def add(self, consumption: BudgetConsumption) -> BudgetConsumption:
-        if not isinstance(consumption, BudgetConsumption):
-            raise InvalidRequestError("ledger consumption must be a BudgetConsumption")
+        try:
+            validated_consumption = validate_budget_consumption(consumption)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("ledger consumption must be a BudgetConsumption") from error
         with self._lock:
             values = {}
             for name in (
@@ -1970,18 +2859,18 @@ class BudgetLedger:
                 "diagnostic_bytes",
                 "working_memory_bytes",
             ):
-                values[name] = getattr(self._totals, name) + getattr(consumption, name)
-            exhausted = set(self._totals.exhausted_dimensions).union(consumption.exhausted_dimensions)
+                values[name] = self._totals[name] + validated_consumption[name]
+            exhausted = set(self._totals["exhausted_dimensions"]).union(validated_consumption["exhausted_dimensions"])
             limits = {
-                "resolvers": self._budget.max_resolvers,
-                "candidates": self._budget.max_candidates,
-                "graph_rows": self._budget.max_graph_rows,
-                "vector_results": self._budget.max_vector_results,
-                "evidence": self._budget.max_evidence,
-                "evidence_bytes": self._budget.max_evidence_bytes,
-                "output_bytes": self._budget.max_output_bytes,
-                "diagnostic_bytes": self._budget.max_diagnostic_bytes,
-                "working_memory_bytes": self._budget.max_working_memory_bytes,
+                "resolvers": self._budget["max_resolvers"],
+                "candidates": self._budget["max_candidates"],
+                "graph_rows": self._budget["max_graph_rows"],
+                "vector_results": self._budget["max_vector_results"],
+                "evidence": self._budget["max_evidence"],
+                "evidence_bytes": self._budget["max_evidence_bytes"],
+                "output_bytes": self._budget["max_output_bytes"],
+                "diagnostic_bytes": self._budget["max_diagnostic_bytes"],
+                "working_memory_bytes": self._budget["max_working_memory_bytes"],
             }
             for name, limit in limits.items():
                 if values[name] > limit:
@@ -1989,10 +2878,14 @@ class BudgetLedger:
             if self.deadline_exhausted():
                 exhausted.add("total_time")
             values["exhausted_dimensions"] = tuple(sorted(exhausted))
-            values["measurement_available"] = self._totals.measurement_available and consumption.measurement_available
-            self._totals = BudgetConsumption(**values)
-            return self._totals
+            values["measurement_available"] = (
+                self._totals["measurement_available"] and validated_consumption["measurement_available"]
+            )
+            self._totals = budget_consumption(**values)
+            result = validate_budget_consumption(self._totals)
+            return result
 
     def snapshot(self) -> BudgetConsumption:
         with self._lock:
-            return self._totals
+            result = validate_budget_consumption(self._totals)
+            return result

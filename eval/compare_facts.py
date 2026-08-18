@@ -37,7 +37,8 @@ CORPUS = [
 
 def _triple(fact: dict) -> str:
     """Render a fact dict as a compact triple string."""
-    return f"({fact['subject']}, {fact['predicate']}, {fact['obj']})"
+    result = f"({fact['subject']}, {fact['predicate']}, {fact['obj']})"
+    return result
 
 
 def main() -> int:
@@ -63,7 +64,8 @@ def main() -> int:
     print(f"Sentences:        {len(CORPUS)}")
     print(f"Copula extracted: {copula_hits}")
     print(f"spaCy extracted:  {spacy_hits}")
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

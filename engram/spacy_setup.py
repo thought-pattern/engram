@@ -23,7 +23,8 @@ def _load(model_name: str, disable):
         nlp = spacy.load(model_name, disable=list(disable))
         return nlp
     except OSError:
-        return ()
+        result = ()
+        return result
 
 
 @lru_cache(maxsize=4)

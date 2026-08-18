@@ -10,7 +10,7 @@ from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.identity import ScopedRetrievalKey, ScopeKey
+from engram.identity import build_scoped_retrieval_key, scope_key
 from engram.indexes import ExactLookupOutcome, IndexIssueReason
 from engram.service import EngramCore
 
@@ -19,7 +19,7 @@ REGULATED_FIXTURE = REPOSITORY / "documentation" / "baseline" / "fixtures" / "re
 
 
 def _baseline_engram() -> Engram:
-    return Engram(
+    result = Engram(
         config=engram_config(
             learn_user_facts=False,
             use_lemmatization=False,
@@ -28,6 +28,7 @@ def _baseline_engram() -> Engram:
             use_synonyms=False,
         )
     )
+    return result
 
 
 def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
@@ -57,12 +58,12 @@ def test_baseline_has_no_non_executable_retrieval_alias_storage() -> None:
 def test_section2_exact_lookup_does_not_invent_a_legacy_key() -> None:
     engram = _baseline_engram()
     statement_id = engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
-    guessed_key = ScopedRetrievalKey.build(ScopeKey(), "What are the support hours?")
+    guessed_key = build_scoped_retrieval_key(scope_key(), "What are the support hours?")
 
     assert not hasattr(engram, "exact_retrieval_index")
-    assert engram.exact_lookup(guessed_key).outcome == ExactLookupOutcome.MISS
-    assert engram.index_snapshot().statement_to_retrieval[statement_id] == ()
-    assert IndexIssueReason.MISSING_IDENTITY in {issue.reason for issue in engram.index_snapshot().build_report.issues}
+    assert engram.exact_lookup(guessed_key)["outcome"] == ExactLookupOutcome.MISS
+    assert engram.index_snapshot()["statement_to_retrieval"][statement_id] == ()
+    assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in engram.index_snapshot()["build_report"]["issues"]}
 
 
 def test_baseline_couples_eviction_to_tier_without_lifecycle_state() -> None:
@@ -91,8 +92,8 @@ def test_section2_claim_support_reverse_index_preserves_current_metadata() -> No
     )
 
     state = engram.index_snapshot()
-    assert state.claim_to_statements == {"claim-synthetic": (statement_id,)}
-    assert state.statement_to_claims == {statement_id: ("claim-synthetic",)}
+    assert state["claim_to_statements"] == {"claim-synthetic": (statement_id,)}
+    assert state["statement_to_claims"] == {statement_id: ("claim-synthetic",)}
 
 
 def test_sanitized_regulated_response_fixture_matches_persistence_v1() -> None:

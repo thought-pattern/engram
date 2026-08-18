@@ -6,10 +6,8 @@ retrieval, updates, expiration, and cleanup of user sessions.
 
 from datetime import UTC, datetime, timedelta
 
-from engram.constants import DEFAULT_USER_ID, SessionOverflow
+from engram.constants import DEFAULT_USER_ID, EARLIEST_UTC, SessionOverflow
 from engram.models import session, session_update_context
-
-EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
 
 
 class SessionLimitExceededError(Exception):
@@ -60,7 +58,8 @@ def create_session(engram, session_id: str = "", metadata=()) -> str:
 
         sess = session(session_id=session_id, metadata=metadata)
         engram.sessions[sess["session_id"]] = sess
-        return sess["session_id"]
+        result = sess["session_id"]
+        return result
 
 
 def get_session(engram, session_id: str, create_if_missing: bool = True):
@@ -114,8 +113,10 @@ def delete_session(engram, session_id: str) -> bool:
     with engram.session_lock:
         if session_id in engram.sessions:
             del engram.sessions[session_id]
-            return True
-        return False
+            result = True
+            return result
+        result = False
+        return result
 
 
 def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:

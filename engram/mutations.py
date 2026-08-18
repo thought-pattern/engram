@@ -6,73 +6,36 @@ import math
 import threading
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from types import MappingProxyType
+from typing import TypedDict
 
+from engram.constants import (
+    ARTIFACT_GENERATION_CHANGE_FIELDS,
+    MAX_AFFECTED_GENERATIONS,
+    MAX_RECEIPT_JSON_BYTES,
+    MAX_RECEIPT_STATEMENT_ID_BYTES,
+    MAX_RECEIPT_TIMESTAMP_BYTES,
+    MAX_RECEIPTS,
+    MAX_REQUEST_ID_BYTES,
+    MAX_RESULT_BYTES,
+    MAX_RESULT_DEPTH,
+    MAX_RESULT_ITEMS,
+    MAX_RESULT_KEY_BYTES,
+    MAX_RESULT_STRING_BYTES,
+    MAX_SIGNATURE_INPUT_BYTES,
+    MAX_TOMBSTONES,
+    MUTATION_LEDGER_SCHEMA_VERSION,
+    MUTATION_RECEIPT_FIELDS,
+    MUTATION_RECEIPT_SCHEMA_VERSION,
+    RECEIPT_LOOKUP_FIELDS,
+    RECEIPT_TOMBSTONE_FIELDS,
+    MutationOperation,
+    MutationResultCode,
+    ReceiptCompletionState,
+    ReceiptLookupOutcome,
+)
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
-
-MUTATION_RECEIPT_SCHEMA_VERSION = 1
-MUTATION_LEDGER_SCHEMA_VERSION = 1
-MAX_REQUEST_ID_BYTES = 256
-MAX_RECEIPT_STATEMENT_ID_BYTES = 256
-MAX_RECEIPT_TIMESTAMP_BYTES = 40
-MAX_RESULT_BYTES = 65_536
-MAX_RECEIPT_JSON_BYTES = 1_048_576
-MAX_SIGNATURE_INPUT_BYTES = 1_048_576
-MAX_RESULT_DEPTH = 8
-MAX_RESULT_ITEMS = 1_024
-MAX_RESULT_KEY_BYTES = 256
-MAX_RESULT_STRING_BYTES = 16_384
-MAX_AFFECTED_GENERATIONS = 1_024
-MAX_RECEIPTS = 100_000
-MAX_TOMBSTONES = 100_000
-
-
-class MutationOperation(StrEnum):
-    """Transport-neutral accepted-response mutations."""
-
-    COMMIT_RESPONSE = "COMMIT_RESPONSE"
-    INVALIDATE_RESPONSE = "INVALIDATE_RESPONSE"
-    RETIRE_RESPONSE = "RETIRE_RESPONSE"
-    SUPERSEDE_RESPONSE = "SUPERSEDE_RESPONSE"
-    RECORD_RESPONSE_QUERY = "RECORD_RESPONSE_QUERY"
-    RECORD_RESPONSE_HIT = "RECORD_RESPONSE_HIT"
-    FINALIZE_RESOLUTION_ACCOUNTING = "FINALIZE_RESOLUTION_ACCOUNTING"
-    RECORD_FEEDBACK = "RECORD_FEEDBACK"
-
-
-class MutationResultCode(StrEnum):
-    """Stable results that can be replayed from a receipt."""
-
-    CREATED = "CREATED"
-    CREATED_WITH_EVICTION = "CREATED_WITH_EVICTION"
-    INVALIDATED = "INVALIDATED"
-    RETIRED = "RETIRED"
-    SUPERSEDED = "SUPERSEDED"
-    REJECTED_CAPACITY = "REJECTED_CAPACITY"
-    QUERY_RECORDED = "QUERY_RECORDED"
-    HIT_RECORDED = "HIT_RECORDED"
-    RESOLUTION_ACCOUNTING_RECORDED = "RESOLUTION_ACCOUNTING_RECORDED"
-    FEEDBACK_RECORDED = "FEEDBACK_RECORDED"
-
-
-class ReceiptCompletionState(StrEnum):
-    """Durable progress state of one mutation identity."""
-
-    PREPARED = "PREPARED"
-    COMPLETED = "COMPLETED"
-
-
-class ReceiptLookupOutcome(StrEnum):
-    """Complete outcomes before applying a mutation request."""
-
-    NEW = "NEW"
-    REPLAY = "REPLAY"
-    IN_PROGRESS = "IN_PROGRESS"
-    EXPIRED = "EXPIRED"
-    CONFLICT = "CONFLICT"
 
 
 def _require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
@@ -127,9 +90,10 @@ def _freeze_json(value: object, name: str, depth: int, count: list[int]) -> obje
     count[0] += 1
     if count[0] > MAX_RESULT_ITEMS:
         raise InvalidRequestError(f"{name} exceeds the item limit of {MAX_RESULT_ITEMS}")
-    if isinstance(value, bool | int | str):
+    if isinstance(value, (bool, int, str)):
         if isinstance(value, str):
-            return _require_text(value, name, MAX_RESULT_STRING_BYTES, allow_empty=True)
+            text = _require_text(value, name, MAX_RESULT_STRING_BYTES, allow_empty=True)
+            return text
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -140,19 +104,23 @@ def _freeze_json(value: object, name: str, depth: int, count: list[int]) -> obje
         for key, item in value.items():
             normalized_key = _require_text(key, f"{name} key", MAX_RESULT_KEY_BYTES, allow_empty=False)
             pairs.append((normalized_key, item))
-        return MappingProxyType(
+        result = MappingProxyType(
             {key: _freeze_json(item, f"{name}.{key}", depth + 1, count) for key, item in sorted(pairs, key=lambda pair: pair[0])}
         )
-    if isinstance(value, list | tuple):
-        return tuple(_freeze_json(item, f"{name}[{position}]", depth + 1, count) for position, item in enumerate(value))
+        return result
+    if isinstance(value, (list, tuple)):
+        result = tuple(_freeze_json(item, f"{name}[{position}]", depth + 1, count) for position, item in enumerate(value))
+        return result
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
 
 def _thaw_json(value: object) -> object:
     if isinstance(value, Mapping):
-        return {key: _thaw_json(item) for key, item in value.items()}
+        result = {key: _thaw_json(item) for key, item in value.items()}
+        return result
     if isinstance(value, tuple):
-        return [_thaw_json(item) for item in value]
+        result = [_thaw_json(item) for item in value]
+        return result
     return value
 
 
@@ -169,7 +137,8 @@ def _freeze_result(value: object) -> Mapping[str, object]:
 
 
 def _json_text(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return text
 
 
 def canonical_payload_signature(payload: Mapping[str, object]) -> str:
@@ -181,7 +150,8 @@ def canonical_payload_signature(payload: Mapping[str, object]) -> str:
     encoded = _json_text(_thaw_json(frozen)).encode("utf-8")
     if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
         raise InvalidRequestError(f"mutation payload exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    signature = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+    return signature
 
 
 def _signature(value: object) -> str:
@@ -191,235 +161,396 @@ def _signature(value: object) -> str:
     return text
 
 
-@dataclass(frozen=True, order=True, slots=True)
-class ArtifactGenerationChange:
-    """One affected artifact generation; zero denotes concrete absence."""
-
-    statement_id: str
-    before_generation: int
-    after_generation: int
-
-    def __post_init__(self) -> None:
-        _require_text(self.statement_id, "affected statement_id", MAX_RECEIPT_STATEMENT_ID_BYTES, allow_empty=False)
-        before = _nonnegative_int(self.before_generation, "affected before_generation")
-        after = _nonnegative_int(self.after_generation, "affected after_generation")
-        if before == 0 and after == 0:
-            raise InvalidRequestError("an affected generation must exist before or after")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "statement_id": self.statement_id,
-            "before_generation": self.before_generation,
-            "after_generation": self.after_generation,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ArtifactGenerationChange":
-        data = _exact_mapping(
-            value,
-            "ArtifactGenerationChange",
-            frozenset({"statement_id", "before_generation", "after_generation"}),
-        )
-        return cls(
-            statement_id=_require_text(
-                data["statement_id"],
-                "affected statement_id",
-                MAX_RECEIPT_STATEMENT_ID_BYTES,
-                allow_empty=False,
-            ),
-            before_generation=_nonnegative_int(data["before_generation"], "affected before_generation"),
-            after_generation=_nonnegative_int(data["after_generation"], "affected after_generation"),
-        )
+ArtifactGenerationChange = TypedDict(
+    "ArtifactGenerationChange",
+    {
+        "statement_id": str,
+        "before_generation": int,
+        "after_generation": int,
+    },
+)
 
 
-@dataclass(frozen=True, slots=True)
-class MutationReceipt:
-    """Durable replay authority for one mutation request identity."""
-
-    sequence: int
-    request_id: str
-    operation: MutationOperation
-    payload_signature: str
-    result_code: MutationResultCode
-    affected_generations: tuple[ArtifactGenerationChange, ...]
-    result: Mapping[str, object]
-    completion_state: ReceiptCompletionState
-    created_at: str
-    schema_version: int = MUTATION_RECEIPT_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != MUTATION_RECEIPT_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported mutation receipt schema_version: {self.schema_version}")
-        _positive_int(self.sequence, "mutation receipt sequence")
-        _require_text(self.request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
-        if not isinstance(self.operation, MutationOperation):
-            raise InvalidRequestError("mutation operation must be a MutationOperation")
-        _signature(self.payload_signature)
-        if not isinstance(self.result_code, MutationResultCode):
-            raise InvalidRequestError("mutation result_code must be a MutationResultCode")
-        if not isinstance(self.affected_generations, tuple) or not all(
-            isinstance(change, ArtifactGenerationChange) for change in self.affected_generations
-        ):
-            raise InvalidRequestError("affected_generations must be a tuple of ArtifactGenerationChange values")
-        if len(self.affected_generations) > MAX_AFFECTED_GENERATIONS:
-            raise InvalidRequestError(f"affected_generations exceed the limit of {MAX_AFFECTED_GENERATIONS}")
-        ordered = tuple(sorted(set(self.affected_generations)))
-        if len(ordered) != len(self.affected_generations):
-            raise InvalidRequestError("affected_generations must be unique")
-        if tuple(sorted(change.statement_id for change in ordered)) != tuple(change.statement_id for change in ordered):
-            raise InvalidRequestError("affected_generations must be ordered by statement_id")
-        object.__setattr__(self, "affected_generations", ordered)
-        object.__setattr__(self, "result", _freeze_result(self.result))
-        if not isinstance(self.completion_state, ReceiptCompletionState):
-            raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
-        _timestamp(self.created_at, "mutation receipt created_at")
-        if self.completion_state == ReceiptCompletionState.PREPARED and (
-            self.affected_generations or self.result or self.result_code != MutationResultCode.REJECTED_CAPACITY
-        ):
-            raise InvalidRequestError("a PREPARED receipt must carry empty effects and the concrete placeholder result code")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "sequence": self.sequence,
-            "request_id": self.request_id,
-            "operation": self.operation.value,
-            "payload_signature": self.payload_signature,
-            "result_code": self.result_code.value,
-            "affected_generations": [change.to_dict() for change in self.affected_generations],
-            "result": _thaw_json(self.result),
-            "completion_state": self.completion_state.value,
-            "created_at": self.created_at,
-        }
-
-    def to_json(self) -> str:
-        return _json_text(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "MutationReceipt":
-        keys = frozenset(
-            {
-                "schema_version",
-                "sequence",
-                "request_id",
-                "operation",
-                "payload_signature",
-                "result_code",
-                "affected_generations",
-                "result",
-                "completion_state",
-                "created_at",
-            }
-        )
-        data = _exact_mapping(value, "MutationReceipt", keys)
-        try:
-            operation = MutationOperation(data["operation"])
-            result_code = MutationResultCode(data["result_code"])
-            completion_state = ReceiptCompletionState(data["completion_state"])
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError("mutation receipt contains an unsupported enum value") from error
-        affected = data["affected_generations"]
-        if not isinstance(affected, list):
-            raise InvalidRequestError("mutation receipt affected_generations must be an array")
-        result = data["result"]
-        if not isinstance(result, Mapping):
-            raise InvalidRequestError("mutation receipt result must be an object")
-        return cls(
-            schema_version=_positive_int(data["schema_version"], "mutation receipt schema_version"),
-            sequence=_positive_int(data["sequence"], "mutation receipt sequence"),
-            request_id=_require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
-            operation=operation,
-            payload_signature=_signature(data["payload_signature"]),
-            result_code=result_code,
-            affected_generations=tuple(ArtifactGenerationChange.from_dict(change) for change in affected),
-            result=result,
-            completion_state=completion_state,
-            created_at=_timestamp(data["created_at"], "mutation receipt created_at"),
-        )
-
-    @classmethod
-    def from_json(cls, value: str) -> "MutationReceipt":
-        if not isinstance(value, str):
-            raise InvalidRequestError("MutationReceipt JSON must be a string")
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError as error:
-            raise InvalidRequestError("MutationReceipt JSON is malformed") from error
-        if not isinstance(decoded, Mapping):
-            raise InvalidRequestError("MutationReceipt JSON must contain an object")
-        return cls.from_dict(decoded)
+def artifact_generation_change(
+    statement_id: str,
+    before_generation: int,
+    after_generation: int,
+) -> ArtifactGenerationChange:
+    """Build one validated artifact generation-change dictionary."""
+    normalized_statement_id = _require_text(
+        statement_id,
+        "affected statement_id",
+        MAX_RECEIPT_STATEMENT_ID_BYTES,
+        allow_empty=False,
+    )
+    before = _nonnegative_int(before_generation, "affected before_generation")
+    after = _nonnegative_int(after_generation, "affected after_generation")
+    if before == 0 and after == 0:
+        raise InvalidRequestError("an affected generation must exist before or after")
+    result: ArtifactGenerationChange = {
+        "statement_id": normalized_statement_id,
+        "before_generation": before,
+        "after_generation": after,
+    }
+    return result
 
 
-@dataclass(frozen=True, order=True, slots=True)
-class ReceiptTombstone:
-    """Bounded protection against ambiguous reuse after result pruning."""
-
-    sequence: int
-    request_id: str
-    operation: MutationOperation
-    payload_signature: str
-
-    def __post_init__(self) -> None:
-        _positive_int(self.sequence, "receipt tombstone sequence")
-        _require_text(self.request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
-        if not isinstance(self.operation, MutationOperation):
-            raise InvalidRequestError("mutation operation must be a MutationOperation")
-        _signature(self.payload_signature)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "sequence": self.sequence,
-            "request_id": self.request_id,
-            "operation": self.operation.value,
-            "payload_signature": self.payload_signature,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, object]) -> "ReceiptTombstone":
-        data = _exact_mapping(
-            value,
-            "ReceiptTombstone",
-            frozenset({"sequence", "request_id", "operation", "payload_signature"}),
-        )
-        try:
-            operation = MutationOperation(data["operation"])
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError("receipt tombstone contains an unsupported operation") from error
-        return cls(
-            sequence=_positive_int(data["sequence"], "receipt tombstone sequence"),
-            request_id=_require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
-            operation=operation,
-            payload_signature=_signature(data["payload_signature"]),
-        )
+def validate_artifact_generation_change(value: object) -> ArtifactGenerationChange:
+    """Validate and copy one artifact generation-change dictionary."""
+    data = _exact_mapping(value, "ArtifactGenerationChange", ARTIFACT_GENERATION_CHANGE_FIELDS)
+    statement_id = data.get("statement_id", ())
+    before_generation = data.get("before_generation", ())
+    after_generation = data.get("after_generation", ())
+    if not isinstance(statement_id, str):
+        raise InvalidRequestError("affected statement_id must be a string")
+    if not isinstance(before_generation, int) or not isinstance(after_generation, int):
+        raise InvalidRequestError("affected generations must be integers")
+    result = artifact_generation_change(statement_id, before_generation, after_generation)
+    return result
 
 
-@dataclass(frozen=True, slots=True)
-class ReceiptLookup:
-    """Concrete pre-mutation lookup without an optional receipt object."""
+def artifact_generation_change_to_dict(value: object) -> dict[str, object]:
+    """Return one validated serializable generation-change dictionary."""
+    validated = validate_artifact_generation_change(value)
+    result = dict(validated)
+    return result
 
-    outcome: ReceiptLookupOutcome
-    request_id: str
-    receipt_json: str
-    receipt_available: bool
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.outcome, ReceiptLookupOutcome):
-            raise InvalidRequestError("receipt lookup outcome must be a ReceiptLookupOutcome")
-        _require_text(self.request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
-        _require_text(self.receipt_json, "receipt_json", MAX_RECEIPT_JSON_BYTES, allow_empty=True)
-        if not isinstance(self.receipt_available, bool):
-            raise InvalidRequestError("receipt_available must be a boolean")
-        if self.receipt_available != bool(self.receipt_json):
-            raise InvalidRequestError("receipt availability must agree with receipt_json")
-        if self.outcome in {ReceiptLookupOutcome.REPLAY, ReceiptLookupOutcome.IN_PROGRESS} and not self.receipt_available:
-            raise InvalidRequestError("replay or in-progress lookup must carry a receipt")
-        if self.outcome not in {ReceiptLookupOutcome.REPLAY, ReceiptLookupOutcome.IN_PROGRESS} and self.receipt_available:
-            raise InvalidRequestError("new, expired, or conflict lookup must not carry a receipt")
+def artifact_generation_change_from_dict(value: object) -> ArtifactGenerationChange:
+    """Decode one generation change from its exact dictionary form."""
+    result = validate_artifact_generation_change(value)
+    return result
 
-    def receipt(self) -> MutationReceipt:
-        if not self.receipt_available:
-            raise ResourceNotFoundError(f"mutation receipt is not available for lookup outcome: {self.outcome.value}")
-        return MutationReceipt.from_json(self.receipt_json)
+
+def _artifact_generation_change_key(value: ArtifactGenerationChange) -> tuple[str, int, int]:
+    key = (value["statement_id"], value["before_generation"], value["after_generation"])
+    return key
+
+
+def normalize_artifact_generation_changes(value: object) -> tuple[ArtifactGenerationChange, ...]:
+    """Validate, deduplicate-check, and deterministically order generation changes."""
+    if not isinstance(value, tuple):
+        raise InvalidRequestError("affected_generations must be a tuple of ArtifactGenerationChange values")
+    if len(value) > MAX_AFFECTED_GENERATIONS:
+        raise InvalidRequestError(f"affected_generations exceed the limit of {MAX_AFFECTED_GENERATIONS}")
+    validated = tuple(validate_artifact_generation_change(change) for change in value)
+    keys = tuple(_artifact_generation_change_key(change) for change in validated)
+    if len(set(keys)) != len(keys):
+        raise InvalidRequestError("affected_generations must be unique")
+    ordered = tuple(sorted(validated, key=_artifact_generation_change_key))
+    return ordered
+
+
+MutationReceipt = TypedDict(
+    "MutationReceipt",
+    {
+        "sequence": int,
+        "request_id": str,
+        "operation": MutationOperation,
+        "payload_signature": str,
+        "result_code": MutationResultCode,
+        "affected_generations": tuple[ArtifactGenerationChange, ...],
+        "result": Mapping[str, object],
+        "completion_state": ReceiptCompletionState,
+        "created_at": str,
+        "schema_version": int,
+    },
+)
+
+
+def mutation_receipt(
+    sequence: int,
+    request_id: str,
+    operation: MutationOperation,
+    payload_signature: str,
+    result_code: MutationResultCode,
+    affected_generations: tuple[ArtifactGenerationChange, ...],
+    result: Mapping[str, object],
+    completion_state: ReceiptCompletionState,
+    created_at: str,
+    schema_version: int = MUTATION_RECEIPT_SCHEMA_VERSION,
+) -> MutationReceipt:
+    """Build one validated durable mutation-receipt dictionary."""
+    if schema_version != MUTATION_RECEIPT_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported mutation receipt schema_version: {schema_version}")
+    normalized_sequence = _positive_int(sequence, "mutation receipt sequence")
+    normalized_request_id = _require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
+    if not isinstance(operation, MutationOperation):
+        raise InvalidRequestError("mutation operation must be a MutationOperation")
+    normalized_signature = _signature(payload_signature)
+    if not isinstance(result_code, MutationResultCode):
+        raise InvalidRequestError("mutation result_code must be a MutationResultCode")
+    ordered_generations = normalize_artifact_generation_changes(affected_generations)
+    frozen_result = _freeze_result(result)
+    if not isinstance(completion_state, ReceiptCompletionState):
+        raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
+    normalized_created_at = _timestamp(created_at, "mutation receipt created_at")
+    if completion_state == ReceiptCompletionState.PREPARED and (
+        ordered_generations or frozen_result or result_code != MutationResultCode.REJECTED_CAPACITY
+    ):
+        raise InvalidRequestError("a PREPARED receipt must carry empty effects and the concrete placeholder result code")
+    receipt: MutationReceipt = {
+        "schema_version": schema_version,
+        "sequence": normalized_sequence,
+        "request_id": normalized_request_id,
+        "operation": operation,
+        "payload_signature": normalized_signature,
+        "result_code": result_code,
+        "affected_generations": ordered_generations,
+        "result": frozen_result,
+        "completion_state": completion_state,
+        "created_at": normalized_created_at,
+    }
+    return receipt
+
+
+def validate_mutation_receipt(value: object) -> MutationReceipt:
+    """Validate and copy one internal mutation-receipt dictionary."""
+    data = _exact_mapping(value, "MutationReceipt", MUTATION_RECEIPT_FIELDS)
+    sequence = data.get("sequence", ())
+    request_id = data.get("request_id", ())
+    operation = data.get("operation", ())
+    payload_signature = data.get("payload_signature", ())
+    result_code = data.get("result_code", ())
+    affected_generations = data.get("affected_generations", ())
+    result = data.get("result", ())
+    completion_state = data.get("completion_state", ())
+    created_at = data.get("created_at", ())
+    schema_version = data.get("schema_version", ())
+    if not isinstance(sequence, int) or not isinstance(request_id, str):
+        raise InvalidRequestError("mutation receipt fields are malformed")
+    if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
+        raise InvalidRequestError("mutation receipt fields are malformed")
+    if not isinstance(result_code, MutationResultCode) or not isinstance(affected_generations, tuple):
+        raise InvalidRequestError("mutation receipt fields are malformed")
+    if not isinstance(result, Mapping) or not isinstance(completion_state, ReceiptCompletionState):
+        raise InvalidRequestError("mutation receipt fields are malformed")
+    if not isinstance(created_at, str) or not isinstance(schema_version, int):
+        raise InvalidRequestError("mutation receipt fields are malformed")
+    receipt = mutation_receipt(
+        sequence=sequence,
+        request_id=request_id,
+        operation=operation,
+        payload_signature=payload_signature,
+        result_code=result_code,
+        affected_generations=affected_generations,
+        result=result,
+        completion_state=completion_state,
+        created_at=created_at,
+        schema_version=schema_version,
+    )
+    return receipt
+
+
+def mutation_receipt_to_dict(value: object) -> dict[str, object]:
+    """Return the exact persistent dictionary for one mutation receipt."""
+    receipt = validate_mutation_receipt(value)
+    affected = [artifact_generation_change_to_dict(change) for change in receipt["affected_generations"]]
+    result_value = _thaw_json(receipt["result"])
+    result = {
+        "schema_version": receipt["schema_version"],
+        "sequence": receipt["sequence"],
+        "request_id": receipt["request_id"],
+        "operation": receipt["operation"].value,
+        "payload_signature": receipt["payload_signature"],
+        "result_code": receipt["result_code"].value,
+        "affected_generations": affected,
+        "result": result_value,
+        "completion_state": receipt["completion_state"].value,
+        "created_at": receipt["created_at"],
+    }
+    return result
+
+
+def mutation_receipt_to_json(value: object) -> str:
+    """Return the canonical JSON representation of one mutation receipt."""
+    data = mutation_receipt_to_dict(value)
+    text = _json_text(data)
+    return text
+
+
+def mutation_receipt_from_dict(value: object) -> MutationReceipt:
+    """Decode one mutation receipt from its exact persistent dictionary."""
+    data = _exact_mapping(value, "MutationReceipt", MUTATION_RECEIPT_FIELDS)
+    try:
+        operation = MutationOperation(data["operation"])
+        result_code = MutationResultCode(data["result_code"])
+        completion_state = ReceiptCompletionState(data["completion_state"])
+    except (TypeError, ValueError) as error:
+        raise InvalidRequestError("mutation receipt contains an unsupported enum value") from error
+    affected = data["affected_generations"]
+    if not isinstance(affected, list):
+        raise InvalidRequestError("mutation receipt affected_generations must be an array")
+    result = data["result"]
+    if not isinstance(result, Mapping):
+        raise InvalidRequestError("mutation receipt result must be an object")
+    receipt = mutation_receipt(
+        schema_version=_positive_int(data["schema_version"], "mutation receipt schema_version"),
+        sequence=_positive_int(data["sequence"], "mutation receipt sequence"),
+        request_id=_require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
+        operation=operation,
+        payload_signature=_signature(data["payload_signature"]),
+        result_code=result_code,
+        affected_generations=tuple(artifact_generation_change_from_dict(change) for change in affected),
+        result=result,
+        completion_state=completion_state,
+        created_at=_timestamp(data["created_at"], "mutation receipt created_at"),
+    )
+    return receipt
+
+
+def mutation_receipt_from_json(value: str) -> MutationReceipt:
+    """Decode one mutation receipt from canonical JSON."""
+    if not isinstance(value, str):
+        raise InvalidRequestError("MutationReceipt JSON must be a string")
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise InvalidRequestError("MutationReceipt JSON is malformed") from error
+    if not isinstance(decoded, Mapping):
+        raise InvalidRequestError("MutationReceipt JSON must contain an object")
+    receipt = mutation_receipt_from_dict(decoded)
+    return receipt
+
+
+ReceiptTombstone = TypedDict(
+    "ReceiptTombstone",
+    {
+        "sequence": int,
+        "request_id": str,
+        "operation": MutationOperation,
+        "payload_signature": str,
+    },
+)
+
+
+def receipt_tombstone(
+    sequence: int,
+    request_id: str,
+    operation: MutationOperation,
+    payload_signature: str,
+) -> ReceiptTombstone:
+    """Build one validated receipt-tombstone dictionary."""
+    normalized_sequence = _positive_int(sequence, "receipt tombstone sequence")
+    normalized_request_id = _require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
+    if not isinstance(operation, MutationOperation):
+        raise InvalidRequestError("mutation operation must be a MutationOperation")
+    normalized_signature = _signature(payload_signature)
+    result: ReceiptTombstone = {
+        "sequence": normalized_sequence,
+        "request_id": normalized_request_id,
+        "operation": operation,
+        "payload_signature": normalized_signature,
+    }
+    return result
+
+
+def validate_receipt_tombstone(value: object) -> ReceiptTombstone:
+    """Validate and copy one receipt-tombstone dictionary."""
+    data = _exact_mapping(value, "ReceiptTombstone", RECEIPT_TOMBSTONE_FIELDS)
+    sequence = data.get("sequence", ())
+    request_id = data.get("request_id", ())
+    operation = data.get("operation", ())
+    payload_signature = data.get("payload_signature", ())
+    if not isinstance(sequence, int) or not isinstance(request_id, str):
+        raise InvalidRequestError("receipt tombstone fields are malformed")
+    if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
+        raise InvalidRequestError("receipt tombstone fields are malformed")
+    result = receipt_tombstone(sequence, request_id, operation, payload_signature)
+    return result
+
+
+def receipt_tombstone_to_dict(value: object) -> dict[str, object]:
+    """Return the exact serializable form of one receipt tombstone."""
+    validated = validate_receipt_tombstone(value)
+    result = {
+        "sequence": validated["sequence"],
+        "request_id": validated["request_id"],
+        "operation": validated["operation"].value,
+        "payload_signature": validated["payload_signature"],
+    }
+    return result
+
+
+def receipt_tombstone_from_dict(value: object) -> ReceiptTombstone:
+    """Decode one receipt tombstone from its exact wire dictionary."""
+    data = _exact_mapping(value, "ReceiptTombstone", RECEIPT_TOMBSTONE_FIELDS)
+    try:
+        operation = MutationOperation(data["operation"])
+    except (TypeError, ValueError) as error:
+        raise InvalidRequestError("receipt tombstone contains an unsupported operation") from error
+    result = receipt_tombstone(
+        sequence=_positive_int(data["sequence"], "receipt tombstone sequence"),
+        request_id=_require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
+        operation=operation,
+        payload_signature=_signature(data["payload_signature"]),
+    )
+    return result
+
+
+ReceiptLookup = TypedDict(
+    "ReceiptLookup",
+    {
+        "outcome": ReceiptLookupOutcome,
+        "request_id": str,
+        "receipt_json": str,
+        "receipt_available": bool,
+    },
+)
+
+
+def receipt_lookup(
+    outcome: ReceiptLookupOutcome,
+    request_id: str,
+    receipt_json: str,
+    receipt_available: bool,
+) -> ReceiptLookup:
+    """Build one validated concrete receipt-lookup dictionary."""
+    if not isinstance(outcome, ReceiptLookupOutcome):
+        raise InvalidRequestError("receipt lookup outcome must be a ReceiptLookupOutcome")
+    normalized_request_id = _require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
+    normalized_receipt_json = _require_text(receipt_json, "receipt_json", MAX_RECEIPT_JSON_BYTES, allow_empty=True)
+    if not isinstance(receipt_available, bool):
+        raise InvalidRequestError("receipt_available must be a boolean")
+    if receipt_available != bool(normalized_receipt_json):
+        raise InvalidRequestError("receipt availability must agree with receipt_json")
+    carries_receipt = outcome in {ReceiptLookupOutcome.REPLAY, ReceiptLookupOutcome.IN_PROGRESS}
+    if carries_receipt and not receipt_available:
+        raise InvalidRequestError("replay or in-progress lookup must carry a receipt")
+    if not carries_receipt and receipt_available:
+        raise InvalidRequestError("new, expired, or conflict lookup must not carry a receipt")
+    result: ReceiptLookup = {
+        "outcome": outcome,
+        "request_id": normalized_request_id,
+        "receipt_json": normalized_receipt_json,
+        "receipt_available": receipt_available,
+    }
+    return result
+
+
+def validate_receipt_lookup(value: object) -> ReceiptLookup:
+    """Validate and copy one receipt-lookup dictionary."""
+    data = _exact_mapping(value, "ReceiptLookup", RECEIPT_LOOKUP_FIELDS)
+    outcome = data.get("outcome", ())
+    request_id = data.get("request_id", ())
+    receipt_json = data.get("receipt_json", ())
+    receipt_available = data.get("receipt_available", ())
+    if not isinstance(outcome, ReceiptLookupOutcome):
+        raise InvalidRequestError("receipt lookup outcome must be a ReceiptLookupOutcome")
+    if not isinstance(request_id, str) or not isinstance(receipt_json, str) or not isinstance(receipt_available, bool):
+        raise InvalidRequestError("receipt lookup fields are malformed")
+    result = receipt_lookup(outcome, request_id, receipt_json, receipt_available)
+    return result
+
+
+def receipt_lookup_receipt(value: object) -> MutationReceipt:
+    """Decode the available receipt carried by one validated lookup."""
+    lookup = validate_receipt_lookup(value)
+    if not lookup["receipt_available"]:
+        outcome = lookup["outcome"]
+        raise ResourceNotFoundError(f"mutation receipt is not available for lookup outcome: {outcome.value}")
+    receipt = mutation_receipt_from_json(lookup["receipt_json"])
+    return receipt
 
 
 class MutationReceiptLedger:
@@ -436,28 +567,35 @@ class MutationReceiptLedger:
         self.max_receipts = _positive_int(max_receipts, "max_receipts", MAX_RECEIPTS)
         self.max_tombstones = _positive_int(max_tombstones, "max_tombstones", MAX_TOMBSTONES)
         self._next_sequence = _positive_int(next_sequence, "next receipt sequence")
-        if not isinstance(receipts, tuple) or not all(isinstance(receipt, MutationReceipt) for receipt in receipts):
+        if not isinstance(receipts, tuple):
             raise InvalidRequestError("receipts must be a tuple of MutationReceipt values")
-        if not isinstance(tombstones, tuple) or not all(isinstance(tombstone, ReceiptTombstone) for tombstone in tombstones):
+        validated_receipts = tuple(validate_mutation_receipt(receipt) for receipt in receipts)
+        if not isinstance(tombstones, tuple):
             raise InvalidRequestError("tombstones must be a tuple of ReceiptTombstone values")
+        validated_tombstones = tuple(validate_receipt_tombstone(tombstone) for tombstone in tombstones)
         if len(receipts) > self.max_receipts or len(tombstones) > self.max_tombstones:
             raise InvalidRequestError("receipt ledger state exceeds its configured retention bounds")
-        all_sequences = [receipt.sequence for receipt in receipts] + [tombstone.sequence for tombstone in tombstones]
+        all_sequences = [receipt["sequence"] for receipt in validated_receipts] + [
+            tombstone["sequence"] for tombstone in validated_tombstones
+        ]
         if len(set(all_sequences)) != len(all_sequences):
             raise InvalidRequestError("receipt ledger sequences must be unique")
-        request_ids = [receipt.request_id for receipt in receipts] + [tombstone.request_id for tombstone in tombstones]
+        request_ids = [receipt["request_id"] for receipt in validated_receipts] + [
+            tombstone["request_id"] for tombstone in validated_tombstones
+        ]
         if len(set(request_ids)) != len(request_ids):
             raise InvalidRequestError("receipt ledger request IDs must be unique")
         if all_sequences and self._next_sequence <= max(all_sequences):
             raise InvalidRequestError("next receipt sequence must exceed every retained sequence")
         self._lock = threading.RLock()
-        self._receipts = {receipt.request_id: receipt for receipt in receipts}
-        self._tombstones = {tombstone.request_id: tombstone for tombstone in tombstones}
+        self._receipts = {receipt["request_id"]: receipt for receipt in validated_receipts}
+        self._tombstones = {tombstone["request_id"]: tombstone for tombstone in validated_tombstones}
 
     @property
     def next_sequence(self) -> int:
         with self._lock:
-            return self._next_sequence
+            sequence = self._next_sequence
+            return sequence
 
     def lookup(self, request_id: str, operation: MutationOperation, payload_signature: str) -> ReceiptLookup:
         normalized_id = _require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
@@ -467,82 +605,100 @@ class MutationReceiptLedger:
         with self._lock:
             if normalized_id in self._receipts:
                 receipt = self._receipts[normalized_id]
-                if receipt.operation != operation or receipt.payload_signature != normalized_signature:
-                    return ReceiptLookup(ReceiptLookupOutcome.CONFLICT, normalized_id, "", False)
+                if receipt["operation"] != operation or receipt["payload_signature"] != normalized_signature:
+                    result = receipt_lookup(ReceiptLookupOutcome.CONFLICT, normalized_id, "", False)
+                    return result
                 outcome = (
                     ReceiptLookupOutcome.REPLAY
-                    if receipt.completion_state == ReceiptCompletionState.COMPLETED
+                    if receipt["completion_state"] == ReceiptCompletionState.COMPLETED
                     else ReceiptLookupOutcome.IN_PROGRESS
                 )
-                return ReceiptLookup(outcome, normalized_id, receipt.to_json(), True)
+                receipt_json = mutation_receipt_to_json(receipt)
+                result = receipt_lookup(outcome, normalized_id, receipt_json, True)
+                return result
             if normalized_id in self._tombstones:
                 tombstone = self._tombstones[normalized_id]
                 outcome = (
                     ReceiptLookupOutcome.EXPIRED
-                    if tombstone.operation == operation and tombstone.payload_signature == normalized_signature
+                    if tombstone["operation"] == operation and tombstone["payload_signature"] == normalized_signature
                     else ReceiptLookupOutcome.CONFLICT
                 )
-                return ReceiptLookup(outcome, normalized_id, "", False)
-            return ReceiptLookup(ReceiptLookupOutcome.NEW, normalized_id, "", False)
+                result = receipt_lookup(outcome, normalized_id, "", False)
+                return result
+            result = receipt_lookup(ReceiptLookupOutcome.NEW, normalized_id, "", False)
+            return result
 
     def record(self, receipt: MutationReceipt) -> MutationReceipt:
-        if not isinstance(receipt, MutationReceipt):
-            raise InvalidRequestError("receipt must be a MutationReceipt")
+        validated_receipt = validate_mutation_receipt(receipt)
+        request_id = validated_receipt["request_id"]
+        operation = validated_receipt["operation"]
+        payload_signature = validated_receipt["payload_signature"]
         with self._lock:
-            lookup = self.lookup(receipt.request_id, receipt.operation, receipt.payload_signature)
-            if lookup.outcome == ReceiptLookupOutcome.CONFLICT:
-                raise ConflictError(f"request_id is already associated with a different mutation: {receipt.request_id}")
-            if lookup.outcome == ReceiptLookupOutcome.EXPIRED:
-                raise ConflictError(f"request_id result was pruned and cannot be replayed safely: {receipt.request_id}")
-            if lookup.outcome == ReceiptLookupOutcome.REPLAY:
-                existing = lookup.receipt()
-                if existing != receipt:
-                    raise ConflictError(f"completed mutation receipt cannot be changed: {receipt.request_id}")
+            lookup = self.lookup(request_id, operation, payload_signature)
+            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+                raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
+            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+                raise ConflictError(f"request_id result was pruned and cannot be replayed safely: {request_id}")
+            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+                existing = receipt_lookup_receipt(lookup)
+                if existing != validated_receipt:
+                    raise ConflictError(f"completed mutation receipt cannot be changed: {request_id}")
                 return existing
-            if lookup.outcome == ReceiptLookupOutcome.IN_PROGRESS:
-                existing = lookup.receipt()
-                if receipt.completion_state != ReceiptCompletionState.COMPLETED or receipt.sequence != existing.sequence:
-                    raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {receipt.request_id}")
-                self._receipts[receipt.request_id] = receipt
-                return receipt
-            if receipt.sequence != self._next_sequence:
-                raise ConflictError(f"receipt sequence conflict: expected {self._next_sequence}, received {receipt.sequence}")
-            self._receipts[receipt.request_id] = receipt
+            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+                existing = receipt_lookup_receipt(lookup)
+                if (
+                    validated_receipt["completion_state"] != ReceiptCompletionState.COMPLETED
+                    or validated_receipt["sequence"] != existing["sequence"]
+                ):
+                    raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {request_id}")
+                self._receipts[request_id] = validated_receipt
+                return validated_receipt
+            if validated_receipt["sequence"] != self._next_sequence:
+                received_sequence = validated_receipt["sequence"]
+                raise ConflictError(f"receipt sequence conflict: expected {self._next_sequence}, received {received_sequence}")
+            self._receipts[request_id] = validated_receipt
             self._next_sequence += 1
             self._prune()
-            return receipt
+            return validated_receipt
 
     def _prune(self) -> None:
         while len(self._receipts) > self.max_receipts:
-            oldest = min(self._receipts.values(), key=lambda receipt: receipt.sequence)
-            del self._receipts[oldest.request_id]
-            self._tombstones[oldest.request_id] = ReceiptTombstone(
-                oldest.sequence,
-                oldest.request_id,
-                oldest.operation,
-                oldest.payload_signature,
+            oldest = min(self._receipts.values(), key=lambda receipt: receipt["sequence"])
+            oldest_request_id = oldest["request_id"]
+            del self._receipts[oldest_request_id]
+            tombstone = receipt_tombstone(
+                oldest["sequence"],
+                oldest_request_id,
+                oldest["operation"],
+                oldest["payload_signature"],
             )
+            self._tombstones[oldest_request_id] = tombstone
         while len(self._tombstones) > self.max_tombstones:
-            oldest = min(self._tombstones.values(), key=lambda tombstone: tombstone.sequence)
-            del self._tombstones[oldest.request_id]
+            oldest = min(self._tombstones.values(), key=lambda tombstone: tombstone["sequence"])
+            del self._tombstones[oldest["request_id"]]
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
-            return {
+            result = {
                 "schema_version": MUTATION_LEDGER_SCHEMA_VERSION,
                 "max_receipts": self.max_receipts,
                 "max_tombstones": self.max_tombstones,
                 "next_sequence": self._next_sequence,
-                "receipts": [receipt.to_dict() for receipt in sorted(self._receipts.values(), key=lambda item: item.sequence)],
+                "receipts": [
+                    mutation_receipt_to_dict(receipt)
+                    for receipt in sorted(self._receipts.values(), key=lambda item: item["sequence"])
+                ],
                 "tombstones": [
-                    tombstone.to_dict() for tombstone in sorted(self._tombstones.values(), key=lambda item: item.sequence)
+                    receipt_tombstone_to_dict(tombstone)
+                    for tombstone in sorted(self._tombstones.values(), key=lambda item: item["sequence"])
                 ],
             }
+            return result
 
     def replace_from_snapshot(self, value: Mapping[str, object]) -> None:
         """Atomically restore a validated ledger without changing owner identity."""
 
-        replacement = self.from_snapshot(value)
+        replacement = mutation_receipt_ledger_from_snapshot(value)
         with self._lock:
             self.max_receipts = replacement.max_receipts
             self.max_tombstones = replacement.max_tombstones
@@ -550,32 +706,34 @@ class MutationReceiptLedger:
             self._receipts = dict(replacement._receipts)
             self._tombstones = dict(replacement._tombstones)
 
-    @classmethod
-    def from_snapshot(cls, value: Mapping[str, object]) -> "MutationReceiptLedger":
-        data = _exact_mapping(
-            value,
-            "MutationReceiptLedger",
-            frozenset(
-                {
-                    "schema_version",
-                    "max_receipts",
-                    "max_tombstones",
-                    "next_sequence",
-                    "receipts",
-                    "tombstones",
-                }
-            ),
-        )
-        if data["schema_version"] != MUTATION_LEDGER_SCHEMA_VERSION:
-            raise InvalidRequestError(f"unsupported mutation ledger schema_version: {data['schema_version']}")
-        receipts = data["receipts"]
-        tombstones = data["tombstones"]
-        if not isinstance(receipts, list) or not isinstance(tombstones, list):
-            raise InvalidRequestError("mutation ledger receipts and tombstones must be arrays")
-        return cls(
-            max_receipts=_positive_int(data["max_receipts"], "max_receipts", MAX_RECEIPTS),
-            max_tombstones=_positive_int(data["max_tombstones"], "max_tombstones", MAX_TOMBSTONES),
-            receipts=tuple(MutationReceipt.from_dict(receipt) for receipt in receipts),
-            tombstones=tuple(ReceiptTombstone.from_dict(tombstone) for tombstone in tombstones),
-            next_sequence=_positive_int(data["next_sequence"], "next receipt sequence"),
-        )
+
+def mutation_receipt_ledger_from_snapshot(value: Mapping[str, object]) -> MutationReceiptLedger:
+    """Construct a mutation receipt ledger from one exact snapshot."""
+    data = _exact_mapping(
+        value,
+        "MutationReceiptLedger",
+        frozenset(
+            {
+                "schema_version",
+                "max_receipts",
+                "max_tombstones",
+                "next_sequence",
+                "receipts",
+                "tombstones",
+            }
+        ),
+    )
+    if data["schema_version"] != MUTATION_LEDGER_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported mutation ledger schema_version: {data['schema_version']}")
+    receipts = data["receipts"]
+    tombstones = data["tombstones"]
+    if not isinstance(receipts, list) or not isinstance(tombstones, list):
+        raise InvalidRequestError("mutation ledger receipts and tombstones must be arrays")
+    result = MutationReceiptLedger(
+        max_receipts=_positive_int(data["max_receipts"], "max_receipts", MAX_RECEIPTS),
+        max_tombstones=_positive_int(data["max_tombstones"], "max_tombstones", MAX_TOMBSTONES),
+        receipts=tuple(mutation_receipt_from_dict(receipt) for receipt in receipts),
+        tombstones=tuple(receipt_tombstone_from_dict(tombstone) for tombstone in tombstones),
+        next_sequence=_positive_int(data["next_sequence"], "next receipt sequence"),
+    )
+    return result

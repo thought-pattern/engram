@@ -13,13 +13,28 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import ArtifactProvenance, ArtifactStatistics, CachedResponseArtifact, LifecycleState
+from engram.artifacts import (
+    CachedResponseArtifact,
+    LifecycleState,
+    artifact_provenance,
+    artifact_statistics,
+    cached_response_artifact,
+)
 from engram.constants import Tier
 from engram.core import Engram
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity
+from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import BudgetConsumption, CostClass, QueryFrameBuilder, ResolverResult, ResolverState
-from engram.resolvers import ExactResolver, LexicalResolver, ResolverBudget, ResolverExecutor, ResolverRegistry
+from engram.resolution import (
+    CostClass,
+    QueryFrameBuilder,
+    ResolverResult,
+    ResolverState,
+    budget_consumption,
+    resolver_result,
+    resolver_result_from_json,
+    resolver_result_to_json,
+)
+from engram.resolvers import ExactResolver, LexicalResolver, ResolverBudget, ResolverExecutor, ResolverRegistry, resolver_budget
 
 DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "section4-benchmark-2026-08-12.json"
 START_NS = 1_000_000_000
@@ -30,7 +45,8 @@ def percentile(values: list[float], fraction: float) -> float:
     """Return a deterministic nearest-rank percentile."""
     ordered = sorted(values)
     index = min(len(ordered) - 1, max(0, int(len(ordered) * fraction + 0.999999) - 1))
-    return ordered[index]
+    result = ordered[index]
+    return result
 
 
 def measure(operation, samples: int) -> dict[str, float]:
@@ -41,18 +57,19 @@ def measure(operation, samples: int) -> dict[str, float]:
         started = time.perf_counter_ns()
         operation()
         values.append((time.perf_counter_ns() - started) / 1_000_000)
-    return {
+    result = {
         "median_ms": statistics.median(values),
         "p95_ms": percentile(values, 0.95),
         "max_ms": max(values),
     }
+    return result
 
 
 def accepted_artifact() -> CachedResponseArtifact:
     """Build one exact artifact without external dependencies."""
-    scope = ScopeKey(namespace="benchmark")
+    scope = scope_key(namespace="benchmark")
     request = "What is the Section 4 benchmark answer?"
-    return CachedResponseArtifact(
+    artifact = cached_response_artifact(
         statement_id="stmt-resolution-benchmark",
         generation=1,
         response="This is the exact Section 4 benchmark answer.",
@@ -69,36 +86,39 @@ def accepted_artifact() -> CachedResponseArtifact:
         knowledge_epoch=0,
         knowledge_epoch_available=False,
         superseded_by="",
-        provenance=ArtifactProvenance("benchmark", "section4", "2026-08-12T16:00:00Z"),
-        statistics=ArtifactStatistics(),
+        provenance=artifact_provenance("benchmark", "section4", "2026-08-12T16:00:00Z"),
+        statistics=artifact_statistics(),
         metadata={},
     )
+    return artifact
 
 
-class CompletedResolver:
-    """Minimal deterministic benchmark resolver."""
+class BenchmarkResolver:
+    """Configured benchmark resolver that records invocations across calls."""
 
-    name = "completed"
     cost_class = CostClass.CHEAP
 
+    def __init__(self, name: str, fail: bool = False) -> None:
+        self.name = name
+        self.fail = fail
+        self.calls = 0
+
     def available(self, frame) -> bool:
-        return True
+        del frame
+        result = True
+        return result
 
     def resolve(self, frame, budget: ResolverBudget) -> ResolverResult:
-        return ResolverResult(
+        del frame
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("benchmark failure")
+        result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
-            consumption=BudgetConsumption(resolvers=1),
+            consumption=budget_consumption(resolvers=1),
         )
-
-
-class FailedResolver(CompletedResolver):
-    """Resolver used to measure fail-soft exception translation."""
-
-    name = "failed"
-
-    def resolve(self, frame, budget: ResolverBudget) -> ResolverResult:
-        raise RuntimeError("benchmark failure")
+        return result
 
 
 def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
@@ -106,22 +126,23 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     exact_engine = Engram()
     exact_engine.response_repository = ArtifactRepository((accepted_artifact(),))
     builder = QueryFrameBuilder(exact_engine, lambda: START_NS, lambda: NOW)
-    scope = ScopeKey(namespace="benchmark")
+    scope = scope_key(namespace="benchmark")
 
     def build_frame():
-        return builder.build("Explain the Section 4 benchmark answer", scope, diagnostic_seed="benchmark")
+        result = builder.build("Explain the Section 4 benchmark answer", scope, diagnostic_seed="benchmark")
+        return result
 
     exact_frame = build_frame()
-    exact_budget = ResolverBudget(
-        deadline_ns=exact_frame.budget.deadline_ns,
-        max_candidates=exact_frame.budget.max_candidates,
-        max_graph_rows=exact_frame.budget.max_graph_rows,
-        max_vector_results=exact_frame.budget.max_vector_results,
-        max_evidence=exact_frame.budget.max_evidence,
-        max_evidence_bytes=exact_frame.budget.max_evidence_bytes,
-        max_output_bytes=exact_frame.budget.max_output_bytes,
-        max_diagnostic_bytes=exact_frame.budget.max_diagnostic_bytes,
-        max_working_memory_bytes=exact_frame.budget.max_working_memory_bytes,
+    exact_budget = resolver_budget(
+        deadline_ns=exact_frame["budget"]["deadline_ns"],
+        max_candidates=exact_frame["budget"]["max_candidates"],
+        max_graph_rows=exact_frame["budget"]["max_graph_rows"],
+        max_vector_results=exact_frame["budget"]["max_vector_results"],
+        max_evidence=exact_frame["budget"]["max_evidence"],
+        max_evidence_bytes=exact_frame["budget"]["max_evidence_bytes"],
+        max_output_bytes=exact_frame["budget"]["max_output_bytes"],
+        max_diagnostic_bytes=exact_frame["budget"]["max_diagnostic_bytes"],
+        max_working_memory_bytes=exact_frame["budget"]["max_working_memory_bytes"],
     )
     exact_resolver = ExactResolver(exact_engine, lambda: START_NS)
 
@@ -133,19 +154,19 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         diagnostic_seed="lexical-benchmark",
     )
     lexical_resolver = LexicalResolver(lexical_engine, lambda: START_NS)
-    lexical_budget = ResolverBudget(
-        deadline_ns=lexical_frame.budget.deadline_ns,
+    lexical_budget = resolver_budget(
+        deadline_ns=lexical_frame["budget"]["deadline_ns"],
         max_candidates=10,
         max_graph_rows=0,
         max_vector_results=0,
         max_evidence=0,
         max_evidence_bytes=0,
-        max_output_bytes=lexical_frame.budget.max_output_bytes,
-        max_diagnostic_bytes=lexical_frame.budget.max_diagnostic_bytes,
-        max_working_memory_bytes=lexical_frame.budget.max_working_memory_bytes,
+        max_output_bytes=lexical_frame["budget"]["max_output_bytes"],
+        max_diagnostic_bytes=lexical_frame["budget"]["max_diagnostic_bytes"],
+        max_working_memory_bytes=lexical_frame["budget"]["max_working_memory_bytes"],
     )
-    completed_plan = ResolverRegistry((CompletedResolver(),)).plan(lexical_frame)
-    failed_plan = ResolverRegistry((FailedResolver(),)).plan(lexical_frame)
+    completed_plan = ResolverRegistry((BenchmarkResolver("completed"),)).plan(lexical_frame)
+    failed_plan = ResolverRegistry((BenchmarkResolver("failed", fail=True),)).plan(lexical_frame)
     executor = ResolverExecutor(lambda: START_NS)
     exact_result = exact_resolver.resolve(exact_frame, exact_budget)
 
@@ -155,7 +176,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         "lexical_adapter": measure(lambda: lexical_resolver.resolve(lexical_frame, lexical_budget), samples),
         "executor_completed": measure(lambda: executor.execute(lexical_frame, completed_plan), samples),
         "executor_failed": measure(lambda: executor.execute(lexical_frame, failed_plan), samples),
-        "result_codec": measure(lambda: ResolverResult.from_json(exact_result.to_json()), samples),
+        "result_codec": measure(lambda: resolver_result_from_json(resolver_result_to_json(exact_result)), samples),
     }
 
     tracemalloc.start()
@@ -182,7 +203,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         "result_codec": measurements["result_codec"]["p95_ms"] <= limits["result_codec_p95_ms"],
         "peak_traced_memory": peak_bytes <= limits["peak_traced_bytes"],
     }
-    return {
+    result = {
         "schema_version": 1,
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "samples": samples,
@@ -193,6 +214,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         "gates": gates,
         "passed": all(gates.values()),
     }
+    return result
 
 
 def main() -> int:
@@ -207,7 +229,8 @@ def main() -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["passed"] else 1
+    result = 0 if result["passed"] else 1
+    return result
 
 
 if __name__ == "__main__":

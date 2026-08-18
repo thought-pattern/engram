@@ -22,14 +22,18 @@ from engram.feedback import (
     FeedbackObservationKind,
     FeedbackOutcome,
     FeedbackReferenceKind,
-    FeedbackState,
     FeedbackStore,
     NegativeResolutionKey,
     NegativeResolutionStore,
     canonical_fingerprint,
     constraint_fingerprint,
+    feedback_observation,
+    feedback_state,
+    feedback_state_from_json,
+    feedback_state_to_json,
+    negative_resolution_key,
 )
-from engram.identity import ScopeKey, build_standalone_identity
+from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore
 
 DEFAULT_OUTPUT = REPOSITORY / "documentation" / "feedback" / "benchmark-2026-08-16.json"
@@ -41,22 +45,24 @@ POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
 def _latency(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
     p95_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))
-    return {
+    result = {
         "p50_ms": round(statistics.median(ordered), 4),
         "p95_ms": round(ordered[p95_index], 4),
         "max_ms": round(ordered[-1], 4),
     }
+    return result
 
 
 def _time(call) -> tuple[object, float]:
     started = time.perf_counter_ns()
     value = call()
-    return value, (time.perf_counter_ns() - started) / 1_000_000
+    result = value, (time.perf_counter_ns() - started) / 1_000_000
+    return result
 
 
 def _observation(index: int, *, statement_id: str = "statement-benchmark") -> FeedbackObservation:
-    scope = ScopeKey(namespace="section6-benchmark")
-    return FeedbackObservation(
+    scope = scope_key(namespace="section6-benchmark")
+    result = feedback_observation(
         reference_kind=FeedbackReferenceKind.RESOLUTION_REQUEST,
         reference_id=f"resolution-{index}",
         kind=FeedbackObservationKind.VERDICT,
@@ -70,17 +76,18 @@ def _observation(index: int, *, statement_id: str = "statement-benchmark") -> Fe
         policy_fingerprint=POLICY_FINGERPRINT,
         observed_at=NOW_TEXT,
     )
+    return result
 
 
 def _apply(store: FeedbackStore, request_id: str, value: FeedbackObservation) -> None:
     candidate = store.prepare(request_id, (value,))
-    if not candidate.replayed:
-        store.replace_from_snapshot(candidate.after)
+    if not candidate["replayed"]:
+        store.replace_from_snapshot(candidate["after"])
 
 
 def _negative_key(index: int) -> NegativeResolutionKey:
-    scope = ScopeKey(namespace="section6-benchmark")
-    return NegativeResolutionKey(
+    scope = scope_key(namespace="section6-benchmark")
+    result = negative_resolution_key(
         query_identity=build_standalone_identity(f"negative benchmark request {index}", scope),
         scope=scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
@@ -91,6 +98,7 @@ def _negative_key(index: int) -> NegativeResolutionKey:
         capability_readiness_fingerprint=canonical_fingerprint("ready"),
         policy_fingerprint=POLICY_FINGERPRINT,
     )
+    return result
 
 
 def _populated_store(record_count: int, prefix: str) -> FeedbackStore:
@@ -99,7 +107,7 @@ def _populated_store(record_count: int, prefix: str) -> FeedbackStore:
         stop = min(record_count, start + 1_000)
         observations = tuple(_observation(index, statement_id=f"{prefix}-statement-{index}") for index in range(start, stop))
         candidate = store.prepare(f"{prefix}-batch-{start // 1_000}", observations)
-        store.replace_from_snapshot(candidate.after)
+        store.replace_from_snapshot(candidate["after"])
     return store
 
 
@@ -114,9 +122,9 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     for _ in range(samples):
         _, elapsed = _time(
             lambda: store.history(
-                target.query_identity,
-                target.constraint_fingerprint,
-                target.statement_id,
+                target["query_identity"],
+                target["constraint_fingerprint"],
+                target["statement_id"],
                 1,
                 POLICY_FINGERPRINT,
                 NOW_TEXT,
@@ -125,10 +133,10 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         history.append(elapsed)
 
     state = store.snapshot()
-    encoded = state.to_json()
+    encoded = feedback_state_to_json(state)
     round_trip = []
     for _ in range(samples):
-        _, elapsed = _time(lambda: FeedbackState.from_json(encoded))
+        _, elapsed = _time(lambda: feedback_state_from_json(encoded))
         round_trip.append(elapsed)
 
     scale_store = _populated_store(scale_records, "scale")
@@ -138,9 +146,9 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         (_observation(scale_records, statement_id="scale-probe-statement"),),
     )
     scale_prepare_ms = (time.perf_counter_ns() - scale_started_ns) / 1_000_000
-    scale_state = scale_probe.after
-    scale_encoded = scale_state.to_json()
-    _, scale_round_trip_ms = _time(lambda: FeedbackState.from_json(scale_encoded))
+    scale_state = scale_probe["after"]
+    scale_encoded = feedback_state_to_json(scale_state)
+    _, scale_round_trip_ms = _time(lambda: feedback_state_from_json(scale_encoded))
 
     ordinary_engine = Engram()
     ordinary = EngramCore(ordinary_engine, clock=lambda: NOW)
@@ -199,7 +207,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "scale_round_trip_under_5_s": scale_round_trip_ms < 5_000.0,
         "scale_state_under_64_mib": len(scale_encoded.encode("utf-8")) < 64 * 1024 * 1024,
     }
-    return {
+    result = {
         "benchmark_version": "section6-feedback-negative-v1.1",
         "generated_at": NOW_TEXT,
         "provenance": "synthetic offline engineering regression; no formula or threshold was fitted from these samples",
@@ -219,14 +227,14 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
             "scale_feedback_state_round_trip_ms": round(scale_round_trip_ms, 4),
         },
         "persistence": {
-            "empty_feedback_state_bytes": len(FeedbackState().to_json().encode("utf-8")),
+            "empty_feedback_state_bytes": len(feedback_state_to_json(feedback_state()).encode("utf-8")),
             "populated_feedback_state_bytes": len(encoded.encode("utf-8")),
-            "statement_records": len(state.statement_records),
-            "relationship_records": len(state.relationship_records),
+            "statement_records": len(state["statement_records"]),
+            "relationship_records": len(state["relationship_records"]),
             "receipts": store.inspect()["receipt_count"],
             "scale_feedback_state_bytes": len(scale_encoded.encode("utf-8")),
-            "scale_statement_records": len(scale_state.statement_records),
-            "scale_relationship_records": len(scale_state.relationship_records),
+            "scale_statement_records": len(scale_state["statement_records"]),
+            "scale_relationship_records": len(scale_state["relationship_records"]),
         },
         "memory": {
             "feedback_records": memory_records,
@@ -238,6 +246,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "engineering_gates": gates,
         "all_engineering_gates_passed": all(gates.values()),
     }
+    return result
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
 """Current disclosure and publication revalidation tests for EGR-705."""
 
-from dataclasses import replace
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 
@@ -11,31 +11,35 @@ from engram.evidence import (
     ClaimEligibilityEvaluator,
     ClaimEligibilityReason,
     ExactScopeVisibilityAuthority,
-    VisibilityAuthorization,
-    VisibilityGrant,
     claim_evidence_record,
+    claim_validity_inputs_from_eligibility,
     revalidate_claims,
+    validate_claim_eligibility_decision,
+    visibility_authorization,
+    visibility_grant,
 )
-from engram.graph import ClaimProjection, ClaimProjectionQuery
-from engram.identity import ScopeKey
-from engram.resolution import ClaimOwnership, QueryFrame, QueryFrameBuilder
+from engram.graph import ClaimProjection, ClaimProjectionQuery, claim_projection, claim_projection_from_graph_row
+from engram.identity import ScopeKey, scope_key
+from engram.resolution import ClaimOwnership, QueryFrame, QueryFrameBuilder, query_frame_with_changes
 
 EVALUATION_TIME = "2026-08-16T12:00:00Z"
 
 
 def _scope(context: str = "tenant:acme") -> ScopeKey:
-    return ScopeKey(namespace="support", context_fingerprint=context)
+    result = scope_key(namespace="support", context_fingerprint=context)
+    return result
 
 
 DEFAULT_SCOPE = _scope()
 
 
 def _frame(scope: ScopeKey = DEFAULT_SCOPE) -> QueryFrame:
-    return QueryFrameBuilder(
+    result = QueryFrameBuilder(
         Engram(),
         lambda: 1_000_000_000,
         lambda: datetime(2026, 8, 16, 12, 0, tzinfo=UTC),
     ).build("What is the account status?", scope)
+    return result
 
 
 def _projection(ownership: str = "PUBLIC") -> ClaimProjection:
@@ -67,11 +71,19 @@ def _projection(ownership: str = "PUBLIC") -> ClaimProjection:
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    return ClaimProjection.from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = claim_projection_from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    return result
+
+
+def _changed_projection(projection: ClaimProjection, **changes) -> ClaimProjection:
+    values = dict(projection)
+    values.update(changes)
+    result = claim_projection(**values)
+    return result
 
 
 def _current(projection: ClaimProjection, **changes) -> ClaimProjection:
-    return replace(
+    result = _changed_projection(
         projection,
         projection_id=ClaimProjectionQuery.BY_ID_V1,
         structured_match=0.0,
@@ -80,6 +92,7 @@ def _current(projection: ClaimProjection, **changes) -> ClaimProjection:
         semantic_similarity_available=False,
         **changes,
     )
+    return result
 
 
 @pytest.mark.parametrize(
@@ -114,32 +127,38 @@ def _current(projection: ClaimProjection, **changes) -> ClaimProjection:
     ],
 )
 def test_current_claim_eligibility_truth_table(changes, reason) -> None:
-    decision = ClaimEligibilityEvaluator().evaluate(replace(_projection(), **changes), _frame())
+    decision = ClaimEligibilityEvaluator().evaluate(_changed_projection(_projection(), **changes), _frame())
 
-    assert decision.eligible is False
-    assert decision.disclosure_available is False
-    assert decision.reason == reason
+    assert decision["eligible"] is False
+    assert decision["disclosure_available"] is False
+    assert decision["reason"] == reason
 
 
 def test_current_validity_is_lower_inclusive_and_upper_exclusive() -> None:
     evaluator = ClaimEligibilityEvaluator()
     frame = _frame()
-    lower = replace(_projection(), valid_from=EVALUATION_TIME, valid_from_available=True)
-    upper = replace(_projection(), valid_to=EVALUATION_TIME, valid_to_available=True)
+    lower = _changed_projection(_projection(), valid_from=EVALUATION_TIME, valid_from_available=True)
+    upper = _changed_projection(_projection(), valid_to=EVALUATION_TIME, valid_to_available=True)
 
-    assert evaluator.evaluate(lower, frame).eligible is True
-    assert evaluator.evaluate(upper, frame).reason == ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT
+    assert evaluator.evaluate(lower, frame)["eligible"] is True
+    assert evaluator.evaluate(upper, frame)["reason"] == ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT
 
 
 def test_public_claim_uses_explicit_public_rule_without_authority() -> None:
     frame = _frame()
     decision = ClaimEligibilityEvaluator().evaluate(_projection(), frame)
 
-    assert decision.eligible is True
-    assert decision.reason == ClaimEligibilityReason.ELIGIBLE_PUBLIC
-    assert decision.disclosure.scope == frame.scope
-    assert decision.disclosure.authority_available is False
-    assert decision.disclosure.policy_version == "claim-disclosure-v1"
+    assert type(decision) is dict
+    assert decision["eligible"] is True
+    assert decision["reason"] == ClaimEligibilityReason.ELIGIBLE_PUBLIC
+    assert decision["disclosure"]["scope"] == frame["scope"]
+    assert decision["disclosure"]["authority_available"] is False
+    assert decision["disclosure"]["policy_version"] == "claim-disclosure-v1"
+    copied = validate_claim_eligibility_decision(decision)
+    assert copied == decision
+    assert copied is not decision
+    assert copied["projection"] is not decision["projection"]
+    assert copied["disclosure"] is not decision["disclosure"]
 
 
 def test_private_claim_requires_configured_exact_scope_and_ownership() -> None:
@@ -149,25 +168,25 @@ def test_private_claim_requires_configured_exact_scope_and_ownership() -> None:
     authority = ExactScopeVisibilityAuthority(
         "tapestry-visibility",
         "visibility-v3",
-        (VisibilityGrant(frame.scope, ClaimOwnership.COMPANY),),
+        (visibility_grant(frame["scope"], ClaimOwnership.COMPANY),),
     )
     allowed = ClaimEligibilityEvaluator(authority).evaluate(projection, frame)
     wrong_context = ClaimEligibilityEvaluator(authority).evaluate(projection, _frame(_scope("tenant:other")))
     wrong_ownership = ClaimEligibilityEvaluator(authority).evaluate(_projection("CUSTOMER"), frame)
 
-    assert unavailable.reason == ClaimEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
-    assert allowed.eligible is True
-    assert allowed.reason == ClaimEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
-    assert allowed.disclosure.authority == "tapestry-visibility"
-    assert allowed.disclosure.scope == frame.scope
-    assert wrong_context.reason == ClaimEligibilityReason.VISIBILITY_DENIED
-    assert wrong_ownership.reason == ClaimEligibilityReason.VISIBILITY_DENIED
-    assert allowed.projection.supplied_trust == 0.0
-    assert allowed.projection.supplied_trust_available is False
+    assert unavailable["reason"] == ClaimEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
+    assert allowed["eligible"] is True
+    assert allowed["reason"] == ClaimEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
+    assert allowed["disclosure"]["authority"] == "tapestry-visibility"
+    assert allowed["disclosure"]["scope"] == frame["scope"]
+    assert wrong_context["reason"] == ClaimEligibilityReason.VISIBILITY_DENIED
+    assert wrong_ownership["reason"] == ClaimEligibilityReason.VISIBILITY_DENIED
+    assert allowed["projection"]["supplied_trust"] == 0.0
+    assert allowed["projection"]["supplied_trust_available"] is False
 
 
 def test_visibility_authority_configuration_is_bounded() -> None:
-    grant = VisibilityGrant(_scope(), ClaimOwnership.COMPANY)
+    grant = visibility_grant(_scope(), ClaimOwnership.COMPANY)
 
     with pytest.raises(InvalidRequestError, match="4096"):
         ExactScopeVisibilityAuthority("authority", "v1", (grant,) * 4_097)
@@ -179,50 +198,57 @@ def test_visibility_evaluator_rejects_falsey_invalid_authority() -> None:
 
 
 def test_visibility_authority_result_must_match_exact_input() -> None:
-    class WrongScopeAuthority:
-        def evaluate(self, _scope_value, ownership):
-            return VisibilityAuthorization(
-                True,
-                _scope("tenant:other"),
-                ownership,
-                "wrong-scope",
-                "v1",
-                "granted",
-            )
+    def wrong_scope(_scope_value, ownership):
+        result = visibility_authorization(
+            True,
+            _scope("tenant:other"),
+            ownership,
+            "wrong-scope",
+            "v1",
+            "granted",
+        )
+        return result
 
-    class WrongOwnershipAuthority:
-        def evaluate(self, scope, _ownership):
-            return VisibilityAuthorization(
-                True,
-                scope,
-                ClaimOwnership.CUSTOMER,
-                "wrong-owner",
-                "v1",
-                "granted",
-            )
+    def wrong_ownership(scope, _ownership):
+        result = visibility_authorization(
+            True,
+            scope,
+            ClaimOwnership.CUSTOMER,
+            "wrong-owner",
+            "v1",
+            "granted",
+        )
+        return result
+
+    wrong_scope_authority = Mock()
+    wrong_scope_authority.evaluate.side_effect = wrong_scope
+    wrong_ownership_authority = Mock()
+    wrong_ownership_authority.evaluate.side_effect = wrong_ownership
 
     projection = _projection("COMPANY")
     frame = _frame()
 
     assert (
-        ClaimEligibilityEvaluator(WrongScopeAuthority()).evaluate(projection, frame).reason
+        ClaimEligibilityEvaluator(wrong_scope_authority).evaluate(projection, frame)["reason"]
         == ClaimEligibilityReason.VISIBILITY_SCOPE_MISMATCH
     )
     assert (
-        ClaimEligibilityEvaluator(WrongOwnershipAuthority()).evaluate(projection, frame).reason
+        ClaimEligibilityEvaluator(wrong_ownership_authority).evaluate(projection, frame)["reason"]
         == ClaimEligibilityReason.VISIBILITY_OWNERSHIP_MISMATCH
     )
 
 
 def test_evaluation_time_unavailability_fails_closed() -> None:
     frame = _frame()
-    context = replace(frame.eligibility_context, evaluation_time="", evaluation_time_available=False)
-    unavailable_frame = replace(frame, eligibility_context=context)
+    context = dict(frame["eligibility_context"])
+    context["evaluation_time"] = ""
+    context["evaluation_time_available"] = False
+    unavailable_frame = query_frame_with_changes(frame, {"eligibility_context": context})
 
     decision = ClaimEligibilityEvaluator().evaluate(_projection(), unavailable_frame)
 
-    assert decision.reason == ClaimEligibilityReason.EVALUATION_TIME_UNAVAILABLE
-    assert decision.eligible is False
+    assert decision["reason"] == ClaimEligibilityReason.EVALUATION_TIME_UNAVAILABLE
+    assert decision["eligible"] is False
 
 
 def test_revalidation_rejects_missing_changed_and_newly_ineligible_claims() -> None:
@@ -236,13 +262,14 @@ def test_revalidation_rejects_missing_changed_and_newly_ineligible_claims() -> N
 
         def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
             del claim_id
-            return self.values
+            result = self.values
+            return result
 
-    missing = evaluator.revalidate(discovered, frame, Reader(()))
+    missing = evaluator.revalidate(discovered, frame, Reader(()).current_claim_projection)
     changed = evaluator.revalidate(
         discovered,
         frame,
-        Reader((_current(discovered, object_entity_id="entity:changed"),)),
+        Reader((_current(discovered, object_entity_id="entity:changed"),)).current_claim_projection,
     )
     inactive = evaluator.revalidate(
         discovered,
@@ -255,17 +282,17 @@ def test_revalidation_rejects_missing_changed_and_newly_ineligible_claims() -> N
                     invalidated_at_available=True,
                 ),
             )
-        ),
+        ).current_claim_projection,
     )
-    wrong_projection = evaluator.revalidate(discovered, frame, Reader((discovered,)))
+    wrong_projection = evaluator.revalidate(discovered, frame, Reader((discovered,)).current_claim_projection)
 
-    assert missing.reason == ClaimEligibilityReason.REVALIDATION_MISSING
-    assert changed.reason == ClaimEligibilityReason.REVALIDATION_IDENTITY_CONFLICT
-    assert changed.revalidated is True
-    assert inactive.reason == ClaimEligibilityReason.CLAIM_INACTIVE
-    assert inactive.revalidated is True
-    assert wrong_projection.reason == ClaimEligibilityReason.REVALIDATION_IDENTITY_CONFLICT
-    assert wrong_projection.revalidated is True
+    assert missing["reason"] == ClaimEligibilityReason.REVALIDATION_MISSING
+    assert changed["reason"] == ClaimEligibilityReason.REVALIDATION_IDENTITY_CONFLICT
+    assert changed["revalidated"] is True
+    assert inactive["reason"] == ClaimEligibilityReason.CLAIM_INACTIVE
+    assert inactive["revalidated"] is True
+    assert wrong_projection["reason"] == ClaimEligibilityReason.REVALIDATION_IDENTITY_CONFLICT
+    assert wrong_projection["revalidated"] is True
 
 
 def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -> None:
@@ -278,35 +305,35 @@ def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -
         supplied_trust_version_available=True,
     )
 
-    class Reader:
-        def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
-            del claim_id
-            return (current,)
+    def current_claim_projection(claim_id: str) -> tuple[ClaimProjection, ...]:
+        del claim_id
+        result = (current,)
+        return result
 
     frame = _frame()
     evaluator = ClaimEligibilityEvaluator()
-    decision = evaluator.revalidate(discovered, frame, Reader())
-    validity = evaluator.validity_inputs(decision, frame)
+    decision = evaluator.revalidate(discovered, frame, current_claim_projection)
+    validity = claim_validity_inputs_from_eligibility(decision, frame)
 
-    assert decision.eligible is True
-    assert decision.revalidated is True
-    assert decision.projection.supplied_trust == 0.0
-    assert decision.projection.supplied_trust_available is True
-    assert decision.projection.supplied_trust_version == 4
-    assert validity.evaluation_time == EVALUATION_TIME
-    assert validity.active is validity.system_current is validity.valid_time_current is True
+    assert decision["eligible"] is True
+    assert decision["revalidated"] is True
+    assert decision["projection"]["supplied_trust"] == 0.0
+    assert decision["projection"]["supplied_trust_available"] is True
+    assert decision["projection"]["supplied_trust_version"] == 4
+    assert validity["evaluation_time"] == EVALUATION_TIME
+    assert validity["active"] is validity["system_current"] is validity["valid_time_current"] is True
 
 
 def test_claim_record_construction_requires_allowed_matching_discovery_provenance() -> None:
     discovered = _projection()
     frame = _frame()
 
-    class Reader:
-        def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
-            del claim_id
-            return (_current(discovered),)
+    def current_claim_projection(claim_id: str) -> tuple[ClaimProjection, ...]:
+        del claim_id
+        result = (_current(discovered),)
+        return result
 
-    decision = ClaimEligibilityEvaluator().revalidate(discovered, frame, Reader())
+    decision = ClaimEligibilityEvaluator().revalidate(discovered, frame, current_claim_projection)
 
     with pytest.raises(InvalidRequestError, match="allowed producer"):
         claim_evidence_record(discovered, decision, frame, "lexical")
@@ -319,23 +346,23 @@ def test_batch_revalidation_is_bounded_and_cooperative() -> None:
     current = _current(discovered)
     checks = []
 
-    class Reader:
-        def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
-            del claim_id
-            return (current,)
+    def current_claim_projection(claim_id: str) -> tuple[ClaimProjection, ...]:
+        del claim_id
+        result = (current,)
+        return result
 
     decisions = revalidate_claims(
         (discovered,),
         _frame(),
         ClaimEligibilityEvaluator(),
-        Reader(),
+        current_claim_projection,
         cooperative_check=lambda: checks.append("checked"),
     )
 
-    assert len(decisions) == 1 and decisions[0].eligible
+    assert len(decisions) == 1 and decisions[0]["eligible"]
     assert checks == ["checked", "checked"]
     with pytest.raises(InvalidRequestError, match="at most 1000"):
-        revalidate_claims((discovered,) * 1_001, _frame(), ClaimEligibilityEvaluator(), Reader())
+        revalidate_claims((discovered,) * 1_001, _frame(), ClaimEligibilityEvaluator(), current_claim_projection)
 
 
 def test_validity_inputs_require_publication_revalidation() -> None:
@@ -343,4 +370,4 @@ def test_validity_inputs_require_publication_revalidation() -> None:
     initial = evaluator.evaluate(_projection(), _frame())
 
     with pytest.raises(InvalidRequestError, match="revalidated"):
-        evaluator.validity_inputs(initial, _frame())
+        claim_validity_inputs_from_eligibility(initial, _frame())

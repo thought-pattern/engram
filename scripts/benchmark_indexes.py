@@ -17,7 +17,7 @@ if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
 from engram.core import Engram
-from engram.identity import RetrievalRepresentation, ScopeKey
+from engram.identity import retrieval_representation, retrieval_representation_bindings, scope_key
 from engram.indexes import (
     MAX_INDEX_LOOKUP_OWNERS,
     ExactLookupOutcome,
@@ -27,6 +27,9 @@ from engram.indexes import (
     add_index_projection,
     build_index_state,
     check_index_state,
+    index_projection,
+    index_state_exact_lookup,
+    index_state_support_lookup,
     projection_from_statement,
     remove_index_projection,
     replace_index_projection,
@@ -52,7 +55,8 @@ ADR_BUILD_MEMORY_BYTES = 11 * 1024 * 1024
 def _percentile(samples: list[float], fraction: float) -> float:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * fraction))))
-    return ordered[index]
+    result = ordered[index]
+    return result
 
 
 def _measure(operation: Callable[[], object], samples: int, batch_size: int = 1) -> dict[str, object]:
@@ -65,7 +69,7 @@ def _measure(operation: Callable[[], object], samples: int, batch_size: int = 1)
             operation()
         elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000 / batch_size
         measurements.append(elapsed_ms)
-    return {
+    result = {
         "samples": samples,
         "batch_size": batch_size,
         "minimum_ms": round(min(measurements), 6),
@@ -73,19 +77,21 @@ def _measure(operation: Callable[[], object], samples: int, batch_size: int = 1)
         "p95_ms": round(_percentile(measurements, 0.95), 6),
         "maximum_ms": round(max(measurements), 6),
     }
+    return result
 
 
 def _projection(index: int, support: tuple[str, ...] = ()) -> IndexProjection:
-    scope = ScopeKey(namespace="benchmark", context_fingerprint="indexes-v1")
-    retrieval = RetrievalRepresentation(f"synthetic exact request {index}")
-    return IndexProjection(
-        statement_id=f"stmt-{index:06d}",
-        generation=1,
-        retrieval_keys=retrieval.bindings(scope),
-        support_claim_ids=support,
-        direct_answer_eligible=True,
-        exclusion_reason="",
+    scope = scope_key(namespace="benchmark", context_fingerprint="indexes-v1")
+    retrieval = retrieval_representation(f"synthetic exact request {index}")
+    result = index_projection(
+        f"stmt-{index:06d}",
+        1,
+        retrieval_representation_bindings(retrieval, scope),
+        support,
+        True,
+        "",
     )
+    return result
 
 
 def _projections(count: int) -> tuple[IndexProjection, ...]:
@@ -96,7 +102,8 @@ def _projections(count: int) -> tuple[IndexProjection, ...]:
             if index < fanout:
                 support.append(f"fanout-{fanout}")
         values.append(_projection(index, tuple(support)))
-    return tuple(values)
+    result = tuple(values)
+    return result
 
 
 def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object]:
@@ -149,7 +156,7 @@ def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object
 
     measurement = _measure(propose, samples)
     expected_count = min(support_fanout, FULL_PROPOSAL_LIMIT)
-    return {
+    result = {
         "corpus_size": FULL_PROPOSAL_CORPUS_SIZE,
         "support_fanout": support_fanout,
         "candidate_limit": FULL_PROPOSAL_LIMIT,
@@ -158,6 +165,7 @@ def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object
         "all_candidates_supported": all(candidate_support_valid),
         "proposal": measurement,
     }
+    return result
 
 
 def _peak_build_memory(projections: tuple[IndexProjection, ...]) -> tuple[IndexState, dict[str, int]]:
@@ -166,14 +174,16 @@ def _peak_build_memory(projections: tuple[IndexProjection, ...]) -> tuple[IndexS
     state = build_index_state(projections)
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    return state, {"current_bytes": current, "peak_bytes": peak}
+    result = state, {"current_bytes": current, "peak_bytes": peak}
+    return result
 
 
 def _latency(result: dict[str, object], name: str) -> float:
     value = result[name]
     if not isinstance(value, (int, float)):
         raise ValueError(f"benchmark result {name} must be numeric")
-    return float(value)
+    latency = float(value)
+    return latency
 
 
 def _baseline_support_p95() -> dict[int, float]:
@@ -197,9 +207,9 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
     mutations = {
         "add": _measure(lambda: add_index_projection(rebuild_state, addition), samples),
         "replace": _measure(lambda: replace_index_projection(rebuild_state, replacement), samples),
-        "remove": _measure(lambda: remove_index_projection(rebuild_state, replacement.statement_id), samples),
+        "remove": _measure(lambda: remove_index_projection(rebuild_state, replacement["statement_id"]), samples),
         "support_update": _measure(
-            lambda: update_index_support(rebuild_state, replacement.statement_id, ("updated-claim",)),
+            lambda: update_index_support(rebuild_state, replacement["statement_id"], ("updated-claim",)),
             samples,
         ),
     }
@@ -211,29 +221,30 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
     for corpus_size in EXACT_CORPUS_SIZES:
         corpus = _projections(corpus_size)
         state = build_index_state(corpus)
-        key = corpus[-1].retrieval_keys[0].key
+        key = corpus[-1]["retrieval_keys"][0]["key"]
         exact_results[str(corpus_size)] = _measure(
-            lambda state=state, key=key: state.exact_lookup(key),
+            lambda state=state, key=key: index_state_exact_lookup(state, key),
             samples,
             lookup_batch_size,
         )
-        correctness.append(state.exact_lookup(key).outcome == ExactLookupOutcome.FOUND)
+        correctness.append(index_state_exact_lookup(state, key)["outcome"] == ExactLookupOutcome.FOUND)
         if corpus_size == EXACT_CORPUS_SIZES[-1]:
             largest_state = state
             for fanout in SUPPORT_FANOUTS:
                 claim_id = f"fanout-{fanout}"
                 support_results[str(fanout)] = _measure(
-                    lambda claim_id=claim_id, state=state: state.support_lookup((claim_id,)),
+                    lambda claim_id=claim_id, state=state: index_state_support_lookup(state, (claim_id,)),
                     samples,
                     lookup_batch_size,
                 )
-                correctness.append(len(state.support_lookup((claim_id,)).matches) == fanout)
+                correctness.append(len(index_state_support_lookup(state, (claim_id,))["matches"]) == fanout)
 
     remediation_state = build_index_state(
         tuple(_projection(index, ("remediation-fanout",)) for index in range(MAX_INDEX_LOOKUP_OWNERS + 1))
     )
-    remediation_lookup = remediation_state.support_lookup(("remediation-fanout",))
-    scan_exhausted = remediation_state.support_lookup(
+    remediation_lookup = index_state_support_lookup(remediation_state, ("remediation-fanout",))
+    scan_exhausted = index_state_support_lookup(
+        remediation_state,
         ("remediation-fanout",),
         scan_limit=MAX_INDEX_LOOKUP_OWNERS,
     )
@@ -265,7 +276,7 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
     support_gate_passed = all(_latency(result, "p95_ms") <= ADR_SUPPORT_P95_MS for result in support_results.values())
     consistency = check_index_state(largest_state)
 
-    return {
+    result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "environment": {
@@ -292,14 +303,14 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
         "build_memory_at_5000": memory,
         "correctness": {
             "all_lookup_expectations_met": all(correctness),
-            "largest_state_consistent": consistency.consistent,
-            "checker_omitted_issue_count": consistency.omitted_issue_count,
+            "largest_state_consistent": consistency["consistent"],
+            "checker_omitted_issue_count": consistency["omitted_issue_count"],
             "lookup_output_truncates_after_complete_scan": (
-                remediation_lookup.complete
-                and remediation_lookup.scanned_edge_count == MAX_INDEX_LOOKUP_OWNERS + 1
-                and remediation_lookup.omitted_match_count == 1
+                remediation_lookup["complete"]
+                and remediation_lookup["scanned_edge_count"] == MAX_INDEX_LOOKUP_OWNERS + 1
+                and remediation_lookup["omitted_match_count"] == 1
             ),
-            "scan_exhaustion_abstains": not scan_exhausted.complete and not scan_exhausted.matches,
+            "scan_exhaustion_abstains": not scan_exhausted["complete"] and not scan_exhausted["matches"],
             "full_proposal_candidates_correct": all(
                 result["candidate_count_stable"] and result["all_candidates_supported"] for result in full_proposal
             ),
@@ -324,6 +335,7 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
             "mutation_latency": "informational; ADR 0004 defines no mutation latency threshold",
         },
     }
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -344,7 +356,8 @@ def main(argv: Sequence[str] = ()) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

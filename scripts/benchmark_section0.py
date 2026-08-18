@@ -53,14 +53,16 @@ class SyntheticVectorGraph:
         ]
 
     def vector_search_claims(self, embedding: list[float], **kwargs) -> list[dict]:
-        return list(self.rows)
+        result = list(self.rows)
+        return result
 
     def execute_read(self, query: str, parameters=()) -> list[dict]:
-        return []
+        result = []
+        return result
 
 
 def _benchmark_config(capacity: int) -> dict:
-    return engram_config(
+    result = engram_config(
         capacity=max(capacity + 10, 100),
         learn_user_facts=False,
         polish_responses=False,
@@ -69,12 +71,14 @@ def _benchmark_config(capacity: int) -> dict:
         use_stemming=False,
         use_synonyms=False,
     )
+    return result
 
 
 def _percentile(samples: list[float], fraction: float) -> float:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * fraction))))
-    return ordered[index]
+    result = ordered[index]
+    return result
 
 
 def _measure(operation: Callable[[], object], iterations: int) -> dict:
@@ -83,13 +87,14 @@ def _measure(operation: Callable[[], object], iterations: int) -> dict:
         started = time.perf_counter_ns()
         operation()
         samples.append((time.perf_counter_ns() - started) / 1_000_000)
-    return {
+    result = {
         "iterations": iterations,
         "minimum_ms": round(min(samples), 6),
         "p50_ms": round(_percentile(samples, 0.50), 6),
         "p95_ms": round(_percentile(samples, 0.95), 6),
         "maximum_ms": round(max(samples), 6),
     }
+    return result
 
 
 def _memory_build[BuildValue](builder: Callable[[], BuildValue]) -> tuple[BuildValue, dict]:
@@ -98,7 +103,8 @@ def _memory_build[BuildValue](builder: Callable[[], BuildValue]) -> tuple[BuildV
     value = builder()
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    return value, {"current_bytes": current, "peak_bytes": peak}
+    result = value, {"current_bytes": current, "peak_bytes": peak}
+    return result
 
 
 def _build_lexical_core(corpus_size: int) -> tuple[EngramCore, str, dict]:
@@ -114,11 +120,13 @@ def _build_lexical_core(corpus_size: int) -> tuple[EngramCore, str, dict]:
             "Baseline support is open from nine to five.",
             source_label="section0:benchmark",
         )
-        return EngramCore(engram, checkpoint_on_mutation=False), target_id
+        result = EngramCore(engram, checkpoint_on_mutation=False), target_id
+        return result
 
     built, memory = _memory_build(build)
     core, target_id = built
-    return core, target_id, memory
+    result = core, target_id, memory
+    return result
 
 
 def _lexical_result(corpus_size: int, iterations: int) -> dict:
@@ -147,7 +155,7 @@ def _lexical_result(corpus_size: int, iterations: int) -> dict:
         store_path = Path(directory) / "engram.json"
         save_latency = _measure(lambda: persistence.save(core.engram, store_path), persistence_iterations)
 
-    return {
+    result = {
         "corpus_size": corpus_size,
         "memory": memory,
         "unique_request_proposal": lexical_latency,
@@ -164,6 +172,7 @@ def _lexical_result(corpus_size: int, iterations: int) -> dict:
             "load": load_latency,
         },
     }
+    return result
 
 
 def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCore, dict]:
@@ -205,10 +214,12 @@ def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCor
         benchmark_engram._graph_client = SyntheticVectorGraph(claim_id)
         benchmark_engram._graph_embedding_model = object()
         benchmark_engram._encode_graph_query = lambda text: [0.0] * 384
-        return EngramCore(engram, checkpoint_on_mutation=False)
+        result = EngramCore(engram, checkpoint_on_mutation=False)
+        return result
 
     core, memory = _memory_build(build)
-    return core, memory
+    result = core, memory
+    return result
 
 
 def _vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dict:
@@ -230,7 +241,7 @@ def _vector_result(corpus_size: int, support_fanout: int, iterations: int) -> di
         return proposal
 
     latency = _measure(propose, iterations)
-    return {
+    result = {
         "corpus_size": corpus_size,
         "support_fanout": support_fanout,
         "returned_candidate_limit": 10,
@@ -239,6 +250,7 @@ def _vector_result(corpus_size: int, support_fanout: int, iterations: int) -> di
         "memory": memory,
         "proposal": latency,
     }
+    return result
 
 
 def _startup_result(iterations: int) -> dict:
@@ -248,14 +260,16 @@ def _startup_result(iterations: int) -> dict:
     command = [sys.executable, "-c", "from engram.core import Engram; Engram()"]
 
     def cold_start() -> object:
-        return subprocess.run(command, cwd=REPOSITORY, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, cwd=REPOSITORY, check=True, capture_output=True, text=True)
+        return result
 
     cold = _measure(cold_start, cold_iterations)
-    return {
+    result = {
         "warm_process_core_construction": warm,
         "cold_process_import_and_construction": cold,
         "mode": "offline graph-disabled startup",
     }
+    return result
 
 
 def _package_versions() -> dict[str, str]:
@@ -270,13 +284,14 @@ def _package_versions() -> dict[str, str]:
 
 def _git_output(*arguments: str) -> str:
     completed = subprocess.run(["git", *arguments], cwd=REPOSITORY, check=True, capture_output=True, text=True)
-    return completed.stdout.strip()
+    result = completed.stdout.strip()
+    return result
 
 
 def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict:
     lexical = [_lexical_result(size, iterations) for size in sizes]
     vector = [_vector_result(size, fanout, iterations) for size in sizes for fanout in fanouts if fanout <= size]
-    return {
+    result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "source": {
@@ -306,6 +321,7 @@ def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict
         "lexical": lexical,
         "support_vector": vector,
     }
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -329,7 +345,8 @@ def main(argv: Sequence[str] = ()) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

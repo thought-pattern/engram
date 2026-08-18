@@ -18,12 +18,14 @@ REPOSITORY_ROOT = os.path.dirname(ENGRAM_DIR)
 
 
 def _engram_files() -> list[str]:
-    return [os.path.join(ENGRAM_DIR, f) for f in sorted(os.listdir(ENGRAM_DIR)) if f.endswith(".py")]
+    result = [os.path.join(ENGRAM_DIR, f) for f in sorted(os.listdir(ENGRAM_DIR)) if f.endswith(".py")]
+    return result
 
 
 def _parse(path: str) -> ast.Module:
     with open(path, encoding="utf-8") as f:
-        return ast.parse(f.read(), filename=path)
+        result = ast.parse(f.read(), filename=path)
+        return result
 
 
 def test_no_dynamic_imports() -> None:
