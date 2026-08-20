@@ -23,7 +23,7 @@ classifiers = [
 # requirements.txt, which carries the pinned versions.
 dependencies = [
     "PyYAML>=6.0.3",
-    "nltk>=3.10.1",
+    "nltk>=3.10.3",
     "spacy>=3.8.14",
     "pymgclient>=1.6.0",
     "mcp>=2.0.0,<3",
@@ -47,13 +47,13 @@ dev = [
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.16.1",
+    "ruff>=0.16.3",
     "grpcio-tools==1.83.0",
     "vulture>=2.16",
 ]
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
