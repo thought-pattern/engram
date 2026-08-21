@@ -67,10 +67,11 @@ from engram.constants import (
 )
 from engram.errors import IdentityValidationError, UnsupportedIdentityVersionError
 from engram.lexical import select_lexical_terms
+from engram.temporal import parse_temporal_query
 
 
 def _byte_length(value: str) -> int:
-    result = len(value.encode("utf-8"))
+    result = len(value) if value.isascii() else len(value.encode("utf-8"))
     return result
 
 
@@ -81,7 +82,10 @@ def _require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: 
         raise IdentityValidationError(f"{name} must be a non-empty string")
     if _byte_length(value) > maximum_bytes:
         raise IdentityValidationError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
-    if any(unicodedata.category(character) in {"Cc", "Cs"} for character in value):
+    if value.isascii():
+        if value and not value.isprintable():
+            raise IdentityValidationError(f"{name} contains a control or surrogate character")
+    elif any(unicodedata.category(character) in {"Cc", "Cs"} for character in value):
         raise IdentityValidationError(f"{name} contains a control or surrogate character")
     return value
 
@@ -93,6 +97,8 @@ def _require_raw_text(value: object, name: str, maximum_bytes: int, *, allow_emp
         raise IdentityValidationError(f"{name} must contain non-whitespace text")
     if _byte_length(value) > maximum_bytes:
         raise IdentityValidationError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
+    if value.isascii() and (not value or value.isprintable()):
+        return value
     for character in value:
         category = unicodedata.category(character)
         if category in {"Cc", "Cs"} and character not in _ALLOWED_RAW_WHITESPACE:
@@ -526,11 +532,18 @@ def scoped_retrieval_key_signature(value: object) -> ScopedRetrievalKeySignature
     """Return the hashable exact signature for one validated retrieval key."""
 
     key = validate_scoped_retrieval_key(value)
+    result = trusted_scoped_retrieval_key_signature(key)
+    return result
+
+
+def trusted_scoped_retrieval_key_signature(value: ScopedRetrievalKey) -> ScopedRetrievalKeySignature:
+    """Return a signature for a key already validated inside a locked boundary."""
+
     result = (
-        key["schema_version"],
-        key["normalization_version"],
-        scope_key_signature(key["scope"]),
-        key["normalized_key"],
+        value["schema_version"],
+        value["normalization_version"],
+        (value["scope"]["schema_version"], value["scope"]["namespace"], value["scope"]["context_fingerprint"]),
+        value["normalized_key"],
     )
     return result
 
@@ -589,8 +602,8 @@ RetrievalKeyBinding = TypedDict(
 
 
 def retrieval_key_binding(
-    key: ScopedRetrievalKey,
-    origin: RetrievalOrigin,
+    key: object,
+    origin: object,
     representation: object,
 ) -> RetrievalKeyBinding:
     """Build one validated scoped retrieval-key binding dictionary."""
@@ -622,16 +635,10 @@ def validate_retrieval_key_binding(value: object) -> RetrievalKeyBinding:
 
     data = _require_mapping(value, "RetrievalKeyBinding")
     _require_exact_keys(data, RETRIEVAL_KEY_BINDING_FIELDS, "RetrievalKeyBinding")
-    key = data.get("key", ())
-    origin = data.get("origin", ())
-    representation = data.get("representation", ())
-    if not isinstance(origin, RetrievalOrigin):
-        raise IdentityValidationError("retrieval binding fields are malformed")
     try:
-        validated_key = validate_scoped_retrieval_key(key)
+        result = retrieval_key_binding(data.get("key", ()), data.get("origin", ()), data.get("representation", ()))
     except IdentityValidationError as error:
         raise IdentityValidationError("retrieval binding fields are malformed") from error
-    result = retrieval_key_binding(validated_key, origin, representation)
     return result
 
 
@@ -1198,6 +1205,10 @@ def build_standalone_identity(request: str, scope: object = EMPTY_SCOPE_KEY) -> 
     relation = extract_relation_surface(raw, operator, entities)
     qualifiers = extract_qualifiers(raw, operator)
     lexical_terms = extract_lexical_terms(raw)
+    temporal = parse_temporal_query(raw)
+    if temporal["source_text"]:
+        temporal_terms = set(normalize_retrieval_key(temporal["source_text"]).split())
+        lexical_terms = tuple(term for term in lexical_terms if term not in temporal_terms)
     result = query_identity(
         canonical_form=canonical_form,
         operator=operator,

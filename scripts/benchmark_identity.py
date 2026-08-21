@@ -15,8 +15,9 @@ if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
 from engram.identity import build_scoped_retrieval_key, build_standalone_identity, normalize_retrieval_key, scope_key
+from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "identity" / "remediation-benchmark-2026-08-11.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "identity" / "benchmark-2026-08-19.json"
 REQUESTS = (
     "When was Ada Lovelace born?",
     "Where was Ada Lovelace born?",
@@ -47,6 +48,7 @@ def _measure(operation: Callable[[], object], iterations: int) -> dict:
         "minimum_ms": round(min(samples), 6),
         "p50_ms": round(_percentile(samples, 0.50), 6),
         "p95_ms": round(_percentile(samples, 0.95), 6),
+        "p99_ms": round(_percentile(samples, 0.99), 6),
         "maximum_ms": round(max(samples), 6),
     }
     return result
@@ -74,6 +76,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
     result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
+        "source": benchmark_source_state(),
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),

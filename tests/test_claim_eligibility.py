@@ -33,12 +33,12 @@ def _scope(context: str = "tenant:acme") -> ScopeKey:
 DEFAULT_SCOPE = _scope()
 
 
-def _frame(scope: ScopeKey = DEFAULT_SCOPE) -> QueryFrame:
+def _frame(scope: ScopeKey = DEFAULT_SCOPE, request: str = "What is the account status?") -> QueryFrame:
     result = QueryFrameBuilder(
         Engram(),
         lambda: 1_000_000_000,
         lambda: datetime(2026, 8, 16, 12, 0, tzinfo=UTC),
-    ).build("What is the account status?", scope)
+    ).build(request, scope)
     return result
 
 
@@ -142,6 +142,133 @@ def test_current_validity_is_lower_inclusive_and_upper_exclusive() -> None:
 
     assert evaluator.evaluate(lower, frame)["eligible"] is True
     assert evaluator.evaluate(upper, frame)["reason"] == ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT
+
+
+def test_historical_valid_time_uses_the_requested_interval_without_presenting_it_as_current() -> None:
+    historical = _changed_projection(
+        _projection(),
+        valid_from="2024-01-01T00:00:00Z",
+        valid_from_available=True,
+        valid_to="2025-01-01T00:00:00Z",
+        valid_to_available=True,
+    )
+    evaluator = ClaimEligibilityEvaluator()
+
+    current = evaluator.evaluate(historical, _frame())
+    requested = evaluator.evaluate(historical, _frame(request="What was the account status in 2024?"))
+
+    assert current["reason"] == ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT
+    assert requested["eligible"] is True
+
+
+def test_historical_ranges_preserve_half_open_boundaries() -> None:
+    frame = _frame(request="What was the account status in 2024?")
+    ended_at_start = _changed_projection(
+        _projection(),
+        valid_to="2024-01-01T00:00:00Z",
+        valid_to_available=True,
+    )
+    started_at_end = _changed_projection(
+        _projection(),
+        valid_from="2025-01-01T00:00:00Z",
+        valid_from_available=True,
+    )
+    evaluator = ClaimEligibilityEvaluator()
+
+    assert evaluator.evaluate(ended_at_start, frame)["reason"] == ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT
+    assert evaluator.evaluate(started_at_end, frame)["reason"] == ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT
+
+
+def test_historical_system_time_observes_the_claim_lifecycle_at_the_requested_time() -> None:
+    historical = _changed_projection(
+        _projection(),
+        system_from="2024-01-01T00:00:00Z",
+        invalidated_at="2025-01-01T00:00:00Z",
+        invalidated_at_available=True,
+    )
+    evaluator = ClaimEligibilityEvaluator()
+
+    before_invalidation = evaluator.evaluate(historical, _frame(request="What was the status as known on 2024-06-01?"))
+    after_invalidation = evaluator.evaluate(historical, _frame(request="What was the status as known on 2025-06-01?"))
+
+    assert before_invalidation["eligible"] is True
+    assert after_invalidation["reason"] == ClaimEligibilityReason.SYSTEM_NO_LONGER_CURRENT
+
+
+def test_unresolved_temporal_expression_fails_closed() -> None:
+    decision = ClaimEligibilityEvaluator().evaluate(_projection(), _frame(request="What was the status before last spring?"))
+
+    assert decision["reason"] == ClaimEligibilityReason.TEMPORAL_QUERY_UNRESOLVED
+    assert decision["eligible"] is False
+
+
+def test_historical_queries_reuse_the_same_exact_scope_visibility_decision() -> None:
+    projection = _changed_projection(
+        _projection("COMPANY"),
+        valid_from="2024-01-01T00:00:00Z",
+        valid_from_available=True,
+        valid_to="2025-01-01T00:00:00Z",
+        valid_to_available=True,
+    )
+    frame = _frame(request="What was the status in 2024?")
+    authority = ExactScopeVisibilityAuthority(
+        "tapestry-visibility",
+        "visibility-v3",
+        (visibility_grant(frame["scope"], ClaimOwnership.COMPANY),),
+    )
+
+    unavailable = ClaimEligibilityEvaluator().evaluate(projection, frame)
+    allowed = ClaimEligibilityEvaluator(authority).evaluate(projection, frame)
+
+    assert unavailable["reason"] == ClaimEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
+    assert allowed["reason"] == ClaimEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
+
+
+def test_latest_valid_time_excludes_claims_that_have_not_started() -> None:
+    future = _changed_projection(
+        _projection(),
+        valid_from="2027-01-01T00:00:00Z",
+        valid_from_available=True,
+    )
+
+    decision = ClaimEligibilityEvaluator().evaluate(future, _frame(request="What is the latest status?"))
+
+    assert decision["reason"] == ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT
+
+
+def test_historical_evidence_reports_request_match_without_marking_the_claim_current() -> None:
+    valid_history = _changed_projection(
+        _projection(),
+        valid_from="2024-01-01T00:00:00Z",
+        valid_from_available=True,
+        valid_to="2025-01-01T00:00:00Z",
+        valid_to_available=True,
+    )
+    system_history = _changed_projection(
+        _projection(),
+        system_from="2024-01-01T00:00:00Z",
+        invalidated_at="2025-01-01T00:00:00Z",
+        invalidated_at_available=True,
+    )
+    evaluator = ClaimEligibilityEvaluator()
+
+    valid_frame = _frame(request="What was the status in 2024?")
+    valid_decision = evaluator.revalidate(valid_history, valid_frame, lambda _claim_id: (_current(valid_history),))
+    valid_inputs = claim_validity_inputs_from_eligibility(valid_decision, valid_frame)
+
+    system_frame = _frame(request="What was the status as known on 2024-06-01?")
+    system_decision = evaluator.revalidate(system_history, system_frame, lambda _claim_id: (_current(system_history),))
+    system_inputs = claim_validity_inputs_from_eligibility(system_decision, system_frame)
+
+    assert valid_inputs["eligible_for_request"] is True
+    assert valid_inputs["active"] is valid_inputs["system_current"] is True
+    assert valid_inputs["valid_time_current"] is False
+    assert valid_inputs["system_time_match"] is valid_inputs["valid_time_match"] is True
+    assert valid_inputs["valid_time_match_available"] is True
+
+    assert system_inputs["eligible_for_request"] is system_inputs["system_time_match"] is True
+    assert system_inputs["active"] is system_inputs["system_current"] is False
+    assert system_inputs["valid_time_match"] is system_inputs["valid_time_match_available"] is False
 
 
 def test_public_claim_uses_explicit_public_rule_without_authority() -> None:
@@ -322,6 +449,10 @@ def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -
     assert decision["projection"]["supplied_trust_version"] == 4
     assert validity["evaluation_time"] == EVALUATION_TIME
     assert validity["active"] is validity["system_current"] is validity["valid_time_current"] is True
+    assert validity["temporal_operator"].value == "unspecified"
+    assert validity["temporal_axis"].value == "valid_time"
+    assert validity["system_from"] == "2026-01-01T00:00:00Z"
+    assert validity["system_from_available"] is True
 
 
 def test_claim_record_construction_requires_allowed_matching_discovery_provenance() -> None:

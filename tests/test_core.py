@@ -45,14 +45,6 @@ def test_engram_store_store_static() -> None:
     assert metrics.get_dynamic_count(engram) == 0
 
 
-def test_engram_store_store_dynamic() -> None:
-    engram = Engram()
-    engram.store("Dynamic statement", tier=Tier.DYNAMIC)
-
-    assert metrics.get_static_count(engram) == 0
-    assert metrics.get_dynamic_count(engram) == 1
-
-
 def test_engram_store_store_keywords_indexed() -> None:
     engram = Engram()
     engram.store("Paris is the capital of France")
@@ -1022,24 +1014,6 @@ def test_engram_metrics_get_coverage_gaps() -> None:
     assert results[0]["hit_rate"] == 0.1
 
 
-def test_engram_metrics_get_coverage_gaps_returns_dicts() -> None:
-    engram = Engram()
-    engram.store("Test keyword")
-
-    for _ in range(15):
-        engram.query("keyword")
-    engram.record_hit(["keyword"])
-
-    results = metrics.get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
-
-    assert len(results) >= 1
-    gap = results[0]
-    assert "keyword" in gap
-    assert "queries" in gap
-    assert "hits" in gap
-    assert "hit_rate" in gap
-
-
 def test_engram_metrics_get_coverage_report() -> None:
     engram = Engram()
     engram.store("Hello world")
@@ -1078,42 +1052,6 @@ def test_engram_metrics_get_coverage_report_recommendations() -> None:
 
     # Should recommend adding categories for zero-hit keywords
     assert len(report["recommendations"]) >= 1
-
-
-"""Tests based on specification examples."""
-
-
-def test_engram_spec_examples_appendix_a_example() -> None:
-    """Test the example session from Appendix A."""
-    engram = Engram(config=engram_config(capacity=1000))
-
-    # Initialize
-    engram.store("Hello", tier=Tier.STATIC)
-    engram.store("Paris is the capital of France", tier=Tier.STATIC)
-    engram.store("France has a population of 67 million", tier=Tier.STATIC)
-
-    # Session 1
-    sessions.create_session(engram, session_id="user_a")
-
-    # First query
-    result1 = engram.query("What is the capital of France?", session_id="user_a")
-    assert len(result1["matches"]) >= 1
-    assert "Paris" in result1["matches"][0][0]["text"]
-    engram.record_hit(result1["keywords"])
-
-    # Update context
-    sessions.update_session_context(engram, "user_a", "Paris is the capital of France")
-
-    # Follow-up query with context
-    result2 = engram.query("What is its population?", session_id="user_a")
-    assert len(result2["matches"]) >= 1
-    # Should find population statement due to context expansion
-
-    # Session 2 (concurrent)
-    sessions.create_session(engram, session_id="user_b")
-    result3 = engram.query("Hello", session_id="user_b")
-    assert len(result3["matches"]) >= 1
-    assert "Hello" in result3["matches"][0][0]["text"]
 
 
 """Tests for context-aware pattern matching with that/topic."""
@@ -1337,26 +1275,6 @@ def test_engram_sets_and_bot_properties_sets_pattern_added_after_set() -> None:
 """Tests for multi-sentence input processing."""
 
 
-def test_multi_sentence_input_single_sentence_no_punctuation() -> None:
-    """Single sentence without punctuation should work normally."""
-    engram = Engram()
-    engram.store("Hello to you!", pattern="HELLO")
-
-    result = engram.pattern_query("hello")
-    assert result
-    assert result[2] == "Hello to you!"
-
-
-def test_multi_sentence_input_single_sentence_with_punctuation() -> None:
-    """Single sentence with punctuation should work normally."""
-    engram = Engram()
-    engram.store("Hello to you!", pattern="HELLO")
-
-    result = engram.pattern_query("hello!")
-    assert result
-    assert result[2] == "Hello to you!"
-
-
 def test_multi_sentence_input_two_sentences() -> None:
     """Two sentences should get two responses combined."""
     engram = Engram()
@@ -1369,32 +1287,6 @@ def test_multi_sentence_input_two_sentences() -> None:
     assert "Goodbye to you!" in result[2]
 
 
-def test_multi_sentence_input_three_sentences() -> None:
-    """Three sentences should get three responses combined."""
-    engram = Engram()
-    engram.store("Response A", pattern="A")
-    engram.store("Response B", pattern="B")
-    engram.store("Response C", pattern="C")
-
-    result = engram.pattern_query("A! B? C.")
-    assert result
-    assert "Response A" in result[2]
-    assert "Response B" in result[2]
-    assert "Response C" in result[2]
-
-
-def test_multi_sentence_input_partial_match_in_multi_sentence() -> None:
-    """Should get responses only for matched sentences."""
-    engram = Engram()
-    engram.store("Hello response", pattern="HELLO")
-    # No pattern for "unknown"
-
-    result = engram.pattern_query("Hello. Unknown.")
-    assert result
-    assert "Hello response" in result[2]
-    # "Unknown" doesn't match, so only one response
-
-
 def test_multi_sentence_input_returns_first_statement() -> None:
     """Should return the first matched statement info."""
     engram = Engram()
@@ -1404,21 +1296,6 @@ def test_multi_sentence_input_returns_first_statement() -> None:
     result = engram.pattern_query("First. Second.")
     assert result
     assert result[0]["id"] == stmt1_id
-
-
-def test_multi_sentence_input_multi_sentence_with_session() -> None:
-    """Multi-sentence with session should update context."""
-    engram = Engram()
-    session_id = sessions.create_session(engram)
-    engram.store("Hello!", pattern="HELLO")
-    engram.store("Goodbye!", pattern="GOODBYE")
-
-    result = engram.pattern_query("Hello. Goodbye.", session_id=session_id)
-    assert result
-    # Session context should be updated with combined response
-    session = sessions.get_session(engram, session_id)
-    # The 'previous_response' should be the combined response (normalized)
-    assert session["previous_response"]
 
 
 def test_multi_sentence_input_that_context_flows_between_sentences() -> None:

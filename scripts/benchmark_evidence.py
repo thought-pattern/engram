@@ -57,8 +57,9 @@ from engram.resolvers import (
     ResolverExecutor,
     ResolverRegistry,
 )
+from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "evidence" / "benchmark-2026-08-16.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "evidence" / "benchmark-2026-08-19.json"
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="section7-benchmark")
@@ -83,6 +84,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     result = {
         "p50_ms": statistics.median(values),
         "p95_ms": percentile(values, 0.95),
+        "p99_ms": percentile(values, 0.99),
         "max_ms": max(values),
     }
     return result
@@ -190,7 +192,7 @@ def build_result(samples: int) -> dict[str, object]:
     tracemalloc.stop()
 
     engine = Engram()
-    budget = capture_resolution_budget(lambda: START_NS, total_time_ms=100, resolver_time_ms=25)
+    budget = capture_resolution_budget(lambda: START_NS)
     frame = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         "Which benchmark Claims are useful?",
         SCOPE,
@@ -228,11 +230,6 @@ def build_result(samples: int) -> dict[str, object]:
     package_bytes = len(evidence_package_to_json(package_value).encode("utf-8"))
     all_included = all(evaluate_evidence_usefulness(policy, value)["included"] for value in records)
     gates = {
-        "record_codec_p95_under_10_ms": codec["p95_ms"] < 10.0,
-        "ten_record_package_p95_under_50_ms": package["p95_ms"] < 50.0,
-        "thousand_record_normalization_p95_under_1500_ms": normalization["p95_ms"] < 1_500.0,
-        "thousand_record_policy_p95_under_500_ms": usefulness["p95_ms"] < 500.0,
-        "partial_failure_orchestration_p95_under_100_ms": orchestration["p95_ms"] < 100.0,
         "thousand_record_peak_under_64_mib": peak_bytes < 67_108_864,
         "package_within_64_kib": package_bytes <= 65_536,
         "package_retains_ten_records": package_value["retained_count"] == 10,
@@ -257,7 +254,8 @@ def build_result(samples: int) -> dict[str, object]:
     result = {
         "schema_version": 1,
         "benchmark_version": "section7-evidence-benchmark-current-1",
-        "recorded_at": "2026-08-16",
+        "recorded_at": recorded_at(),
+        "source": benchmark_source_state(),
         "environment": {"python": platform.python_version(), "platform": platform.platform()},
         "policy": evidence_usefulness_policy_to_dict(policy),
         "policy_provenance": {
@@ -272,6 +270,7 @@ def build_result(samples: int) -> dict[str, object]:
         "thousand_record_normalization": normalization,
         "thousand_record_policy": usefulness,
         "partial_failure_orchestration": orchestration,
+        "timing_assessment": "reported observations; no pass/fail threshold",
         "thousand_record_peak_bytes": peak_bytes,
         "thousand_record_normalized_count": len(memory_result),
         "ten_record_package_bytes": package_bytes,

@@ -11,24 +11,27 @@ Section 7 does not change CLI, MCP, the committed gRPC v1 protocol, or persisten
 
 ## Exact unified fields
 
-The deterministic `ResolutionResult.to_dict()` shape contains every field below:
+The runtime `ResolutionResult` is a validated dictionary containing every
+field below. `resolution_result_to_dict()` produces its JSON-compatible
+dictionary shape; the runtime result intentionally has no attribute or
+`.to_dict()` compatibility facade.
 
 | Field | Concrete type and absence | Meaning |
 | --- | --- | --- |
 | `schema_version` | integer `1` | Exact format marker for the one current core shape |
-| `outcome` | `ANSWER`, `EVIDENCE`, or `MISS` | Closed orchestration outcome |
-| `selected_candidate` | candidate object or `{}` | Present only for `ANSWER` |
+| `outcome` | `ResolutionOutcome` enum (`ANSWER`, `EVIDENCE`, or `MISS`) | Closed orchestration outcome; codec emits its string value |
+| `selected_candidate` | candidate dictionary or `{}` | Present only for `ANSWER` |
 | `selected_candidate_available` | boolean | Presence of `selected_candidate` |
-| `response_candidates` | array | Bounded non-answer fallback candidates; exactly the selected candidate for `ANSWER` |
-| `evidence` | array | Bounded minimal `EvidenceReference` values; empty when absent |
+| `response_candidates` | tuple; codec array | Bounded non-answer fallback candidates; exactly the selected candidate for `ANSWER` |
+| `evidence` | tuple; codec array | Bounded minimal `EvidenceReference` values; empty when absent |
 | `confidence` | finite number | Positive only for `ANSWER`; otherwise `0.0` |
 | `confidence_available` | boolean | True only for `ANSWER` |
-| `reason_codes` | ordered unique string array | Stable policy, exhaustion, truncation, and accounting reasons |
-| `frame_diagnostics` | object | Bounded content-free counts and policy/execution summaries; `{}` when omitted |
-| `resolver_results` | array | Bounded internal execution summaries with `claim_evidence: []` at this handoff |
-| `budget` | `BudgetConsumption` object | Aggregate measured/capped use and sorted exhausted dimensions |
+| `reason_codes` | ordered unique string tuple; codec array | Stable policy, exhaustion, truncation, and accounting reasons |
+| `frame_diagnostics` | dictionary | Bounded content-free counts and policy/execution summaries; `{}` when omitted |
+| `resolver_results` | tuple; codec array | Bounded internal execution summaries with empty `claim_evidence` at this handoff |
+| `budget` | `BudgetConsumption` dictionary | Aggregate measured/capped use and sorted exhausted dimensions |
 | `evidence_package_available` | boolean | Whether full-Claim package evaluation completed |
-| `evidence_package` | `EvidencePackage` object | Concrete empty or populated package; never omitted or null |
+| `evidence_package` | `EvidencePackage` dictionary | Concrete empty or populated package; never omitted or null |
 
 Decoders require exactly these fields and reject missing fields, extra fields, non-integer or unsupported schema values, malformed nested values, and any nested raw full-Claim records. Development-only Section 4 JSON lacking the new required fields is stale internal data, not a supported external payload.
 
@@ -76,7 +79,6 @@ Resolver execution remains authoritative for resolver count, candidate count, gr
 | Source, frame-scope/time, or cross-producer conflict | Package unavailable, stable `claim_evidence_conflict`, retain other response output or `MISS` |
 | Projection or resolver failure | Fail soft through typed resolver state; never synthesize a Claim or answer |
 | Usefulness exclusion | Available empty/partial package, stable reason counts and `claim_evidence_excluded`; retain response-candidate output or `MISS` |
-| Deadline exhausted during normalization/policy | No package publication, `claim_evidence_deadline_exhausted`, `total_time` exhausted |
 | Evidence-byte allowance exhausted | No over-budget package, `claim_evidence_bytes_exhausted` when orchestration cannot fit the envelope; producer truncation remains typed in aggregate exhaustion |
 | Working memory exhausted | No package publication, `claim_evidence_memory_exhausted`, capped reported consumption |
 | Diagnostic allowance exhausted | Content-free compact marker or `{}`, `diagnostics_truncated`, `diagnostic_bytes` exhausted |
@@ -88,7 +90,11 @@ Claim-only records create no response candidate or accounting observation. The f
 
 ### Python core
 
-`EngramCore.resolve_request` returns the typed current `ResolutionResult` directly. Section 15 may define a separately documented stable Python adapter, but it must preserve the concrete absence and outcome rules above. It must not add an internal version negotiation layer.
+`EngramCore.resolve_request` returns the typed current `ResolutionResult`
+dictionary directly. The stable version-1 mapping, authoritative identity and
+budget inputs, concrete absence rules, feedback handoff, and compatibility
+policy are documented in [Python API v1](../python-api.md). It does not add
+an internal version-negotiation layer.
 
 ### CLI
 

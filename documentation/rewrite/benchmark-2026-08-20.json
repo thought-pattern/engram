@@ -1,0 +1,544 @@
+{
+  "accuracy": {
+    "absolute_recall_gain": 0.8695652173913043,
+    "baseline_exact_hits": 3,
+    "baseline_exact_recall": 0.13043478260869565,
+    "false_direct_answer_rate": 0.0,
+    "false_direct_answers": 0,
+    "rewritten_exact_hits": 23,
+    "rewritten_exact_recall": 1.0,
+    "semantic_collision_rate": 0.0,
+    "semantic_collisions": 0
+  },
+  "cases": [
+    {
+      "baseline_exact_hit": true,
+      "case_id": "h01",
+      "category": "contractions",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "contraction-what-is@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": true,
+      "case_id": "h02",
+      "category": "contractions",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "contraction-cannot@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": true,
+      "case_id": "h03",
+      "category": "contractions",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "contraction-do-not@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h04",
+      "category": "question_normalization",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "question-could-you-tell-me@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h05",
+      "category": "question_normalization",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "question-can-you-tell-me@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h06",
+      "category": "question_normalization",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "question-i-would-like-to-know@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h07",
+      "category": "paraphrase_reduction",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "paraphrase-at-what-time@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h08",
+      "category": "paraphrase_reduction",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "paraphrase-in-what-place@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h09",
+      "category": "paraphrase_reduction",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "paraphrase-which-person-created@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h10",
+      "category": "synonym_classes",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "synonym-customer-assistance@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h11",
+      "category": "synonym_classes",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "synonym-help-desk@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h12",
+      "category": "synonym_classes",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "synonym-sign-in@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h13",
+      "category": "conversational_repair",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "repair-sorry-i-meant@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h14",
+      "category": "conversational_repair",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "repair-no-wait-i-meant@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h15",
+      "category": "conversational_repair",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "repair-let-me-rephrase@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h16",
+      "category": "pronoun_transformations",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "pronoun-what-about-it@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h17",
+      "category": "pronoun_transformations",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "pronoun-and-where-is-it@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h18",
+      "category": "pronoun_transformations",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "pronoun-who-created-it@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h19",
+      "category": "context_dependent_reductions",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "context-and-its-status@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h20",
+      "category": "context_dependent_reductions",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "context-what-about-that@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h21",
+      "category": "technical_phrasing",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "technical-http-status-code@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h22",
+      "category": "technical_phrasing",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "technical-exception-message@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "h23",
+      "category": "technical_phrasing",
+      "passed": true,
+      "rewritten_exact_hit": true,
+      "rules": [
+        "technical-software-version-number@1"
+      ],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n01",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n02",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n03",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n04",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n05",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n06",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n07",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n08",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n09",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n10",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n11",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    },
+    {
+      "baseline_exact_hit": false,
+      "case_id": "n12",
+      "category": "negative_control",
+      "passed": true,
+      "rewritten_exact_hit": false,
+      "rules": [],
+      "stop_reason": "fixed_point"
+    }
+  ],
+  "corpus": {
+    "category_counts": {
+      "context_dependent_reductions": 2,
+      "contractions": 3,
+      "conversational_repair": 3,
+      "paraphrase_reduction": 3,
+      "pronoun_transformations": 3,
+      "question_normalization": 3,
+      "synonym_classes": 3,
+      "technical_phrasing": 3
+    },
+    "corpus_id": "section11-rewrite-held-out-engineering",
+    "frozen_at": "2026-08-20T18:00:00Z",
+    "negative_controls": 12,
+    "partition": {
+      "authoring": "Authored independently from historical ALICE/AIML source and response corpora.",
+      "license": "Apache-2.0",
+      "partition": "Repository-visible engineering holdout; excluded from rule authoring inputs and not Section 16 protected release data."
+    },
+    "path": "eval/section11-rewrite-v1.json",
+    "positive_cases": 23
+  },
+  "created_at": "2026-08-21T03:49:28Z",
+  "gates": {
+    "maximum_false_direct_answer_rate": 0.005,
+    "maximum_semantic_collision_rate": 0.0,
+    "minimum_recall_gain": 0.25
+  },
+  "latency_observation": {
+    "maximum_ms": 2.1152,
+    "p50_ms": 0.50945,
+    "p95_ms": 0.6955,
+    "p99_ms": 0.8665,
+    "repeats": 100,
+    "samples": 3500,
+    "timing_gate_applied": false
+  },
+  "passed": true,
+  "release_authority": "component engineering promotion only; Section 16 protected release authority remains unprovisioned",
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "9b007641199148fb5fb9bce652ba1fb44f05cd0c",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/artifacts/section4-benchmark-2026-08-19.json",
+      "documentation/artifacts/section4-conformance-2026-08-12.md",
+      "documentation/code-style.md",
+      "documentation/composition/",
+      "documentation/contextual/",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/evaluation/",
+      "documentation/evidence/benchmark-2026-08-19.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/evidence/core-handoff.md",
+      "documentation/evidence/section7-conformance-2026-08-16.md",
+      "documentation/feedback/benchmark-2026-08-19.json",
+      "documentation/feedback/contracts-v1.md",
+      "documentation/fusion/benchmark-2026-08-19.json",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/identity/benchmark-2026-08-19.json",
+      "documentation/indexes/benchmark-2026-08-19.json",
+      "documentation/mcp-integration.md",
+      "documentation/operations/",
+      "documentation/python-api.md",
+      "documentation/rewrite/",
+      "documentation/temporal/",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/core.py",
+      "engram/data/",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/rewrite.py",
+      "engram/service.py",
+      "engram/temporal.py",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_conversation.py",
+      "eval/run_release_gate_foundation.py",
+      "eval/section10-composition-v1.json",
+      "eval/section11-mcp-seed.json",
+      "eval/section11-rewrite-v1.json",
+      "eval/section8-relation-followup-v1.json",
+      "eval/section9-mcp-seed.json",
+      "eval/section9-temporal-conflict-v1.json",
+      "pyproject.toml",
+      "schema.cypher",
+      "scripts/benchmark_composition.py",
+      "scripts/benchmark_contextual_graph.py",
+      "scripts/benchmark_evidence.py",
+      "scripts/benchmark_feedback.py",
+      "scripts/benchmark_fusion.py",
+      "scripts/benchmark_identity.py",
+      "scripts/benchmark_indexes.py",
+      "scripts/benchmark_metadata.py",
+      "scripts/benchmark_resolution.py",
+      "scripts/benchmark_rewrites.py",
+      "scripts/benchmark_section0.py",
+      "scripts/benchmark_temporal_conflict.py",
+      "scripts/compare_mcp_memgraph.py",
+      "scripts/lint_rewrite_corpus.py",
+      "scripts/probe_composition_memgraph.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_baseline_gaps.py",
+      "tests/test_benchmark_metadata.py",
+      "tests/test_claim_eligibility.py",
+      "tests/test_code_style.py",
+      "tests/test_composition.py",
+      "tests/test_concrete_absence.py",
+      "tests/test_config.py",
+      "tests/test_contextual.py",
+      "tests/test_core.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_evidence.py",
+      "tests/test_feedback.py",
+      "tests/test_fusion.py",
+      "tests/test_graph.py",
+      "tests/test_identity.py",
+      "tests/test_import_hygiene.py",
+      "tests/test_indexes.py",
+      "tests/test_models.py",
+      "tests/test_nltk_data.py",
+      "tests/test_operations.py",
+      "tests/test_pattern.py",
+      "tests/test_pipeline.py",
+      "tests/test_relation.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_rewrite.py",
+      "tests/test_scoring.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_temporal.py",
+      "tests/test_temporal_conflict.py"
+    ],
+    "governed_source_sha256": "f7d7804b89b8eef7703d4b8c124c4fac0d4236d76268ee6933bfdb8d61444f52",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "verdicts": {
+    "all_cases_pass": true,
+    "false_direct_answer_rate": true,
+    "recall_gain": true,
+    "semantic_collision_rate": true
+  }
+}

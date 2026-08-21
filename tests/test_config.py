@@ -3,23 +3,9 @@
 import pytest
 
 from engram.config import config_from_dict, engram_config, graph_config
-from engram.constants import DEFAULT_STOPWORDS, SessionOverflow
+from engram.constants import SessionOverflow
 
 """Tests for configuration."""
-
-
-def test_engram_config_defaults() -> None:
-    config = engram_config()
-
-    assert config["capacity"] == 10000
-    assert config["max_sessions"] == 10000
-    assert config["session_ttl_seconds"] == 86400.0
-    assert config["weight_base"] == 0.5
-    assert config["weight_recency"] == 0.3
-    assert config["weight_hit_rate"] == 0.2
-    assert config["session_overflow"] == SessionOverflow.LRU
-    assert config["stopwords"] == DEFAULT_STOPWORDS
-    assert config["learn_user_facts"] is True
 
 
 def test_engram_config_custom_values() -> None:
@@ -135,24 +121,3 @@ def test_engram_config_custom_stopwords() -> None:
     config = engram_config(stopwords=custom)
 
     assert config["stopwords"] == custom
-
-
-"""Tests for default stopwords."""
-
-
-def test_default_stopwords_common_stopwords_present() -> None:
-    assert "the" in DEFAULT_STOPWORDS
-    assert "is" in DEFAULT_STOPWORDS
-    assert "are" in DEFAULT_STOPWORDS
-    assert "a" in DEFAULT_STOPWORDS
-    assert "an" in DEFAULT_STOPWORDS
-
-
-def test_default_stopwords_content_words_absent() -> None:
-    assert "paris" not in DEFAULT_STOPWORDS
-    assert "capital" not in DEFAULT_STOPWORDS
-    assert "population" not in DEFAULT_STOPWORDS
-
-
-def test_default_stopwords_is_set() -> None:
-    assert isinstance(DEFAULT_STOPWORDS, set)

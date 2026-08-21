@@ -645,6 +645,14 @@ class ArtifactRepository:
             artifact = validate_cached_response_artifact(self._state["artifacts"][statement_id])
             return artifact
 
+    def _trusted_get_artifact(self, statement_id: str) -> CachedResponseArtifact:
+        """Return an immutable artifact already validated at repository publication."""
+        with self._lock:
+            if statement_id not in self._state["artifacts"]:
+                raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
+            artifact = self._state["artifacts"][statement_id]
+            return artifact
+
     def get_statement(self, statement_id: str) -> dict[str, object]:
         self.get_artifact(statement_id)
         with self._lock:
@@ -858,11 +866,11 @@ class ArtifactRepository:
         epoch_policy: EpochEligibilityPolicy,
     ) -> ContextualExactLookupResult:
         with self._lock:
-            lookup = ContextualExactLookup(self._state["artifacts"], self._indexes).exact_lookup(
-                key,
-                context,
-                epoch_policy,
-            )
+            lookup = ContextualExactLookup(
+                self._state["artifacts"],
+                self._indexes,
+                trusted_artifacts=True,
+            ).exact_lookup(key, context, epoch_policy)
             if lookup["index_refreshed"]:
                 self._state = repository_state(
                     state_generation=self._state["state_generation"] + 1,

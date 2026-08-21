@@ -29,6 +29,14 @@ class LifecycleError(ValueError, EngramCoreError):
     """The core is not in a state that permits the requested operation."""
 
 
+class ResolutionCancelledError(EngramCoreError):
+    """A caller cancelled transport-neutral resolution cooperatively."""
+
+
+class RewriteLimitError(EngramCoreError):
+    """A retrieval rewrite bound stopped processing before a fixed point."""
+
+
 class PersistenceError(EngramCoreError):
     """A store checkpoint failed after an optional in-memory mutation.
 

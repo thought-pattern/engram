@@ -43,6 +43,9 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Type check
+        run: pyright
+
       - name: Format check
         run: black --check .
 

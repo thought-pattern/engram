@@ -48,6 +48,7 @@ dev = [
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pyright==1.1.411",
     "ruff>=0.16.1",
     "grpcio-tools==1.83.0",
     "vulture>=2.16",
@@ -62,7 +63,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["v1/*.proto", "v1/*.pyi"]
+engram = ["v1/*.proto", "v1/*.pyi", "data/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}

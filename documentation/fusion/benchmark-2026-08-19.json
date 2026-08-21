@@ -1,0 +1,221 @@
+{
+  "acceptance": [
+    {
+      "expected": "ANSWER",
+      "scenario": "exact",
+      "section4_baseline": "ANSWER",
+      "section5_fusion_v1": "ANSWER"
+    },
+    {
+      "expected": "ANSWER",
+      "scenario": "reinforced",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "ANSWER"
+    },
+    {
+      "expected": "EVIDENCE",
+      "scenario": "ambiguous",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "EVIDENCE"
+    },
+    {
+      "expected": "EVIDENCE",
+      "scenario": "unsupported",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "EVIDENCE"
+    },
+    {
+      "expected": "MISS",
+      "scenario": "noise",
+      "section4_baseline": "EVIDENCE",
+      "section5_fusion_v1": "MISS"
+    },
+    {
+      "expected": "MISS",
+      "scenario": "empty",
+      "section4_baseline": "MISS",
+      "section5_fusion_v1": "MISS"
+    }
+  ],
+  "all_gates_passed": true,
+  "before_after_reinforced_pair": {
+    "section4_baseline": {
+      "max_ms": 0.0041,
+      "p50_ms": 0.0016,
+      "p95_ms": 0.0017,
+      "p99_ms": 0.0021
+    },
+    "section5_fusion_v1": {
+      "max_ms": 5.2057,
+      "p50_ms": 2.4314,
+      "p95_ms": 3.2343,
+      "p99_ms": 4.0179
+    }
+  },
+  "benchmark_version": "section5-fusion-benchmark-v1.1",
+  "environment": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.2"
+  },
+  "gates": {
+    "acceptance_scenarios_correct": true,
+    "thousand_candidates_estimate_within_frame_budget": true,
+    "thousand_candidates_peak_under_64_mib": true
+  },
+  "policy": {
+    "ambiguity_margin": 0.12,
+    "answer_threshold": 0.78,
+    "evidence_threshold": 0.35,
+    "formula_version": 1,
+    "max_report_candidates": 8,
+    "minimum_independent_sources": 2,
+    "policy_version": "fusion-v1.0.0",
+    "require_support_for_non_exact": true,
+    "schema_version": 1,
+    "weights": {
+      "agreement": 0.9,
+      "authority": 0.5,
+      "entity": 0.4,
+      "exact": 1.0,
+      "freshness": 0.2,
+      "history": 0.2,
+      "lexical": 1.0,
+      "margin": 0.0,
+      "object_type": 0.3,
+      "pattern": 0.75,
+      "relation": 0.5,
+      "semantic": 1.0,
+      "support": 0.8
+    }
+  },
+  "policy_provenance": {
+    "empirical_calibration_owner": "Section 16",
+    "fixture_authority": "explicit_permissive_conformance_only",
+    "selection": "hand_authored_conservative_unfitted",
+    "unit_or_conformance_fixtures_used_for_parameter_selection": false
+  },
+  "recorded_at": "2026-08-20T20:37:56Z",
+  "scaling": {
+    "1": {
+      "max_ms": 3.3455,
+      "p50_ms": 1.5985999999999998,
+      "p95_ms": 2.1365,
+      "p99_ms": 2.7416,
+      "samples": 200
+    },
+    "10": {
+      "max_ms": 25.111,
+      "p50_ms": 8.802299999999999,
+      "p95_ms": 10.5887,
+      "p99_ms": 13.7726,
+      "samples": 200
+    },
+    "100": {
+      "max_ms": 231.0072,
+      "p50_ms": 65.81085,
+      "p95_ms": 70.3116,
+      "p99_ms": 81.9442,
+      "samples": 100
+    },
+    "1000": {
+      "max_ms": 854.0853,
+      "p50_ms": 642.1096,
+      "p95_ms": 816.9914,
+      "p99_ms": 854.0853,
+      "samples": 20
+    }
+  },
+  "schema_version": 1,
+  "source": {
+    "base_commit": "9b007641199148fb5fb9bce652ba1fb44f05cd0c",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/artifacts/section4-benchmark-2026-08-19.json",
+      "documentation/artifacts/section4-conformance-2026-08-12.md",
+      "documentation/code-style.md",
+      "documentation/contextual/",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/evaluation/",
+      "documentation/evidence/benchmark-2026-08-19.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/evidence/core-handoff.md",
+      "documentation/evidence/section7-conformance-2026-08-16.md",
+      "documentation/feedback/benchmark-2026-08-19.json",
+      "documentation/feedback/contracts-v1.md",
+      "documentation/fusion/benchmark-2026-08-19.json",
+      "documentation/identity/benchmark-2026-08-19.json",
+      "documentation/indexes/benchmark-2026-08-19.json",
+      "documentation/python-api-v1.md",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/core.py",
+      "engram/eligibility.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_conversation.py",
+      "eval/run_release_gate_foundation.py",
+      "eval/section8-relation-followup-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_contextual_graph.py",
+      "scripts/benchmark_evidence.py",
+      "scripts/benchmark_feedback.py",
+      "scripts/benchmark_fusion.py",
+      "scripts/benchmark_identity.py",
+      "scripts/benchmark_indexes.py",
+      "scripts/benchmark_metadata.py",
+      "scripts/benchmark_resolution.py",
+      "scripts/benchmark_section0.py",
+      "scripts/compare_mcp_memgraph.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_baseline_gaps.py",
+      "tests/test_code_style.py",
+      "tests/test_concrete_absence.py",
+      "tests/test_config.py",
+      "tests/test_contextual.py",
+      "tests/test_core.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_feedback.py",
+      "tests/test_fusion.py",
+      "tests/test_graph.py",
+      "tests/test_identity.py",
+      "tests/test_import_hygiene.py",
+      "tests/test_indexes.py",
+      "tests/test_models.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_pipeline.py",
+      "tests/test_relation.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_service.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py"
+    ],
+    "governed_source_sha256": "fe79f7503738fb99719216d457d035c3c6e1d78cdc4c5ee6e973fdfb4d5b3ac3",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "thousand_candidates_fusion_estimated_bytes": 3580777,
+  "thousand_candidates_peak_bytes": 9142685,
+  "timing_assessment": "reported observations; no pass/fail threshold"
+}

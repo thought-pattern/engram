@@ -101,7 +101,7 @@ def _scope() -> ScopeKey:
 
 
 def _budget() -> ResolutionBudget:
-    result = capture_resolution_budget(lambda: 1_000_000_000, total_time_ms=100, resolver_time_ms=25)
+    result = capture_resolution_budget(lambda: 1_000_000_000)
     return result
 
 
@@ -189,11 +189,11 @@ def _resolver_result(candidate_value=()) -> ResolverResult:
     return result
 
 
-def test_budget_codec_and_captured_deadline_are_deterministic() -> None:
+def test_budget_codec_and_measurement_start_are_deterministic() -> None:
     budget = _budget()
 
     assert type(budget) is dict
-    assert budget["deadline_ns"] == 1_100_000_000
+    assert budget["started_ns"] == 1_000_000_000
     assert resolution_budget_from_dict(resolution_budget_to_dict(budget)) == budget
     assert resolution_budget_from_json(resolution_budget_to_json(budget)) == budget
     assert resolution_budget_to_json(budget) == json.dumps(
@@ -206,11 +206,8 @@ def test_budget_codec_and_captured_deadline_are_deterministic() -> None:
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
-        ({"total_time_ms": 0}, "total_time_ms"),
-        ({"resolver_time_ms": 101}, "resolver_time_ms"),
         ({"allowed_cost_classes": ()}, "must not be empty"),
-        ({"started_ns": 1, "deadline_ns": 0}, "present or absent together"),
-        ({"started_ns": 10, "deadline_ns": 10}, "must be after"),
+        ({"started_ns": -1}, "started_ns"),
     ],
 )
 def test_budget_rejects_invalid_limits(changes, message) -> None:
@@ -220,7 +217,7 @@ def test_budget_rejects_invalid_limits(changes, message) -> None:
 
 def test_budget_consumption_codec_and_ledger_exhaustion() -> None:
     budget = resolution_budget_with_changes(_budget(), {"max_candidates": 2, "max_evidence": 1})
-    ledger = BudgetLedger(budget, lambda: 1_050_000_000)
+    ledger = BudgetLedger(budget)
     first = ledger.add(budget_consumption(resolvers=1, candidates=1, evidence=1))
     second = ledger.add(budget_consumption(resolvers=1, candidates=2))
 
@@ -257,7 +254,7 @@ def test_frame_builder_captures_one_clock_and_shared_preprocessing() -> None:
 
 
 def test_frame_builder_recaptures_caller_limits_at_the_trusted_boundary() -> None:
-    supplied = capture_resolution_budget(lambda: 100, total_time_ms=50, resolver_time_ms=10)
+    supplied = capture_resolution_budget(lambda: 100)
     calls = []
 
     def monotonic_clock() -> int:
@@ -271,8 +268,6 @@ def test_frame_builder_recaptures_caller_limits_at_the_trusted_boundary() -> Non
     )
 
     assert frame["budget"]["started_ns"] == 500
-    assert frame["budget"]["deadline_ns"] == 50_000_500
-    assert frame["budget"]["total_time_ms"] == supplied["total_time_ms"]
     assert calls == ["monotonic"]
 
 
@@ -490,9 +485,9 @@ def test_contracts_enforce_nested_byte_and_collection_bounds() -> None:
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: resolution_budget_with_changes(_budget(), {"schema_version": 2}),
+        lambda: resolution_budget_with_changes(_budget(), {"schema_version": 3}),
         lambda: budget_consumption_with_changes(budget_consumption(), {"schema_version": 2}),
-        lambda: query_frame_with_changes(_frame(), {"schema_version": 2}),
+        lambda: query_frame_with_changes(_frame(), {"schema_version": 3}),
         lambda: feature_set_with_changes(feature_set(), {"schema_version": 2}),
         lambda: evidence_reference_with_changes(_evidence(), {"schema_version": 2}),
         lambda: candidate_with_changes(_candidate(), {"schema_version": 2}),

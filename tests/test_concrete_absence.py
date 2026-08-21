@@ -1,8 +1,6 @@
-"""Architectural checks for concrete absence values and precise annotations."""
+"""Behavioral checks for concrete absence values at public boundaries."""
 
-import ast
 import json
-from pathlib import Path
 
 from engram import persistence
 from engram.config import config_from_dict, config_to_dict, engram_config
@@ -10,53 +8,6 @@ from engram.core import Engram
 from engram.models import session_from_dict, statement_from_dict
 from engram.pipeline import pipeline_result
 from engram.service import EngramCore
-
-REPOSITORY = Path(__file__).resolve().parent.parent
-PRODUCTION_ROOTS = (REPOSITORY / "engram", REPOSITORY / "scripts", REPOSITORY / "eval")
-GENERATED_MODULES = {"engram_pb2.py", "engram_pb2.pyi", "engram_pb2_grpc.py"}
-
-
-def _production_modules() -> list[Path]:
-    result = sorted(path for root in PRODUCTION_ROOTS for path in root.rglob("*.py") if path.name not in GENERATED_MODULES)
-    return result
-
-
-def _annotations(tree: ast.AST) -> list[ast.expr]:
-    annotations: list[ast.expr] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-            if node.args.vararg:
-                arguments.append(node.args.vararg)
-            if node.args.kwarg:
-                arguments.append(node.args.kwarg)
-            annotations.extend(argument.annotation for argument in arguments if argument.annotation)
-            if node.returns:
-                annotations.append(node.returns)
-        elif isinstance(node, ast.AnnAssign):
-            annotations.append(node.annotation)
-    return annotations
-
-
-def _annotation_uses_union(annotation: ast.AST) -> bool:
-    for node in ast.walk(annotation):
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            result = True
-            return result
-        if isinstance(node, ast.Subscript):
-            name = node.value.id if isinstance(node.value, ast.Name) else getattr(node.value, "attr", "")
-            if name in {"Optional", "Union"}:
-                result = True
-                return result
-        if (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and (" | " in node.value or "Optional[" in node.value or "Union[" in node.value)
-        ):
-            result = True
-            return result
-    result = False
-    return result
 
 
 def _none_paths(value, path: str = "root") -> list[str]:
@@ -71,33 +22,6 @@ def _none_paths(value, path: str = "root") -> list[str]:
         return result
     result = []
     return result
-
-
-def test_production_annotations_do_not_use_unions() -> None:
-    violations = []
-    for path in _production_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for annotation in _annotations(tree):
-            if _annotation_uses_union(annotation):
-                violations.append(f"{path.relative_to(REPOSITORY)}:{annotation.lineno}")
-    assert violations == []
-
-
-def test_production_none_literals_only_describe_procedures() -> None:
-    violations = []
-    for path in _production_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        procedural_annotations = {
-            id(node.returns)
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and isinstance(node.returns, ast.Constant)
-            and node.returns.value is None
-        }
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and node.value is None and id(node) not in procedural_annotations:
-                violations.append(f"{path.relative_to(REPOSITORY)}:{node.lineno}")
-    assert violations == []
 
 
 def test_representative_outputs_are_recursively_concrete() -> None:

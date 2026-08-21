@@ -1,0 +1,840 @@
+{
+  "case_count": 15,
+  "cases": [
+    {
+      "bounded": true,
+      "elapsed_ms": 3.3373,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 1,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_unique"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "lookup-two-hop-unique",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:owner",
+            "claim:birth"
+          ]
+        ],
+        "complete_paths": 1,
+        "direct": true,
+        "graph_rows": 4,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_unique"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 0.3066,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 0,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_no_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": true
+      },
+      "id": "exists-two-hop-absent",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [],
+        "complete_paths": 0,
+        "direct": true,
+        "graph_rows": 0,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_no_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": true
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 0.2694,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 0,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_no_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "id": "not-two-hop-absent",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [],
+        "complete_paths": 0,
+        "direct": true,
+        "graph_rows": 0,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_no_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 3.4448,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "person:ada",
+          "place:redmond"
+        ],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "id": "and-two-complete-branches",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:location"
+          ],
+          [
+            "claim:owner"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 4,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "person:ada",
+          "place:redmond"
+        ],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 2.0464,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 1,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_unique"
+        ],
+        "terminal_ids": [
+          "person:ada"
+        ],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "id": "or-one-complete-branch",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:owner"
+          ]
+        ],
+        "complete_paths": 1,
+        "direct": true,
+        "graph_rows": 2,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_unique"
+        ],
+        "terminal_ids": [
+          "person:ada"
+        ],
+        "truncated": false,
+        "truth": true,
+        "truth_available": true
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 6.7076,
+      "expected": {
+        "aggregate": "2",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "place:london",
+          "place:paris"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "count-distinct-two-hop-results",
+      "observed": {
+        "aggregate": "2",
+        "complete_claim_paths": [
+          [
+            "claim:owner-a",
+            "claim:birth-a"
+          ],
+          [
+            "claim:owner-b",
+            "claim:birth-b"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 8,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "place:london",
+          "place:paris"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "development",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 6.0067,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "lookup-deduplicates-terminal-identity",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:owner-a",
+            "claim:birth-a"
+          ],
+          [
+            "claim:owner-b",
+            "claim:birth-b"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 8,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 5.7986,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 2,
+        "direct": false,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_cardinality_conflict"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "count-refuses-duplicate-terminal-cardinality",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:owner-a",
+            "claim:birth-a"
+          ],
+          [
+            "claim:owner-b",
+            "claim:birth-b"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": false,
+        "graph_rows": 8,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_cardinality_conflict",
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "place:london"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 4.3211,
+      "expected": {
+        "aggregate": "2",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "minimum-typed-number",
+      "observed": {
+        "aggregate": "2",
+        "complete_claim_paths": [
+          [
+            "claim:owner",
+            "claim:score-10"
+          ],
+          [
+            "claim:owner",
+            "claim:score-2"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 6,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 4.3781,
+      "expected": {
+        "aggregate": "10",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "maximum-typed-number",
+      "observed": {
+        "aggregate": "10",
+        "complete_claim_paths": [
+          [
+            "claim:owner",
+            "claim:score-10"
+          ],
+          [
+            "claim:owner",
+            "claim:score-2"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 6,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 5.3245,
+      "expected": {
+        "aggregate": "2 | 10",
+        "complete_paths": 2,
+        "direct": true,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "order-typed-number",
+      "observed": {
+        "aggregate": "2 | 10",
+        "complete_claim_paths": [
+          [
+            "claim:owner",
+            "claim:score-10"
+          ],
+          [
+            "claim:owner",
+            "claim:score-2"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": true,
+        "graph_rows": 6,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_complete_multiple"
+        ],
+        "terminal_ids": [
+          "number:10",
+          "number:2"
+        ],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 6.1897,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 2,
+        "direct": false,
+        "partial_paths": 0,
+        "reasons": [
+          "composition_candidate_limit",
+          "composition_completeness_unknown"
+        ],
+        "terminal_ids": [
+          "place:london",
+          "place:paris"
+        ],
+        "truncated": true,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "candidate-limit-retains-bounded-evidence",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [
+          [
+            "claim:owner-a",
+            "claim:birth-a"
+          ],
+          [
+            "claim:owner-b",
+            "claim:birth-b"
+          ]
+        ],
+        "complete_paths": 2,
+        "direct": false,
+        "graph_rows": 9,
+        "partial_claim_paths": [],
+        "partial_paths": 0,
+        "reasons": [
+          "composition_candidate_limit",
+          "composition_complete_multiple",
+          "composition_completeness_unknown"
+        ],
+        "terminal_ids": [
+          "place:london",
+          "place:paris"
+        ],
+        "truncated": true,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 1.7195,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 0,
+        "direct": false,
+        "partial_paths": 1,
+        "reasons": [
+          "composition_dependency_failed",
+          "composition_partial_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "dependency-failure-retains-partial-path",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [],
+        "complete_paths": 0,
+        "direct": false,
+        "graph_rows": 2,
+        "partial_claim_paths": [
+          [
+            "claim:owner"
+          ]
+        ],
+        "partial_paths": 1,
+        "reasons": [
+          "composition_dependency_failed",
+          "composition_partial_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 3.3894,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 0,
+        "direct": false,
+        "partial_paths": 1,
+        "reasons": [
+          "composition_cycle",
+          "composition_partial_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "cycle-retains-prefix-only",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [],
+        "complete_paths": 0,
+        "direct": false,
+        "graph_rows": 4,
+        "partial_claim_paths": [
+          [
+            "claim:owner"
+          ]
+        ],
+        "partial_paths": 1,
+        "reasons": [
+          "composition_cycle",
+          "composition_partial_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    },
+    {
+      "bounded": true,
+      "elapsed_ms": 3.4423,
+      "expected": {
+        "aggregate": "",
+        "complete_paths": 0,
+        "direct": false,
+        "partial_paths": 1,
+        "reasons": [
+          "composition_type_unavailable",
+          "composition_partial_path"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "id": "missing-terminal-type-retains-prefix",
+      "observed": {
+        "aggregate": "",
+        "complete_claim_paths": [],
+        "complete_paths": 0,
+        "direct": false,
+        "graph_rows": 4,
+        "partial_claim_paths": [
+          [
+            "claim:owner"
+          ]
+        ],
+        "partial_paths": 1,
+        "reasons": [
+          "composition_aggregate_unsafe",
+          "composition_partial_path",
+          "composition_type_unavailable"
+        ],
+        "terminal_ids": [],
+        "truncated": false,
+        "truth": false,
+        "truth_available": false
+      },
+      "passed": true,
+      "split": "held_out",
+      "useful_evidence": true
+    }
+  ],
+  "corpus": "section10-composition-v1",
+  "duration_ms": {
+    "maximum": 6.7076,
+    "median": 3.4448,
+    "p95": 6.1897,
+    "timing_gate": false
+  },
+  "generated_at": "2026-08-21T02:32:32.391000Z",
+  "held_out_accuracy": 1.0,
+  "passed": true,
+  "passed_count": 15,
+  "schema_version": 1,
+  "source": {
+    "base_commit": "9b007641199148fb5fb9bce652ba1fb44f05cd0c",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/artifacts/section4-benchmark-2026-08-19.json",
+      "documentation/artifacts/section4-conformance-2026-08-12.md",
+      "documentation/code-style.md",
+      "documentation/composition/",
+      "documentation/contextual/",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/evaluation/",
+      "documentation/evidence/benchmark-2026-08-19.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/evidence/core-handoff.md",
+      "documentation/evidence/section7-conformance-2026-08-16.md",
+      "documentation/feedback/benchmark-2026-08-19.json",
+      "documentation/feedback/contracts-v1.md",
+      "documentation/fusion/benchmark-2026-08-19.json",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/identity/benchmark-2026-08-19.json",
+      "documentation/indexes/benchmark-2026-08-19.json",
+      "documentation/operations/",
+      "documentation/python-api.md",
+      "documentation/temporal/",
+      "engram/composition.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/core.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "engram/temporal.py",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_conversation.py",
+      "eval/run_release_gate_foundation.py",
+      "eval/section10-composition-v1.json",
+      "eval/section8-relation-followup-v1.json",
+      "eval/section9-mcp-seed.json",
+      "eval/section9-temporal-conflict-v1.json",
+      "pyproject.toml",
+      "schema.cypher",
+      "scripts/benchmark_composition.py",
+      "scripts/benchmark_contextual_graph.py",
+      "scripts/benchmark_evidence.py",
+      "scripts/benchmark_feedback.py",
+      "scripts/benchmark_fusion.py",
+      "scripts/benchmark_identity.py",
+      "scripts/benchmark_indexes.py",
+      "scripts/benchmark_metadata.py",
+      "scripts/benchmark_resolution.py",
+      "scripts/benchmark_section0.py",
+      "scripts/benchmark_temporal_conflict.py",
+      "scripts/compare_mcp_memgraph.py",
+      "scripts/probe_composition_memgraph.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_baseline_gaps.py",
+      "tests/test_benchmark_metadata.py",
+      "tests/test_claim_eligibility.py",
+      "tests/test_code_style.py",
+      "tests/test_composition.py",
+      "tests/test_concrete_absence.py",
+      "tests/test_config.py",
+      "tests/test_contextual.py",
+      "tests/test_core.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_evidence.py",
+      "tests/test_feedback.py",
+      "tests/test_fusion.py",
+      "tests/test_graph.py",
+      "tests/test_identity.py",
+      "tests/test_import_hygiene.py",
+      "tests/test_indexes.py",
+      "tests/test_models.py",
+      "tests/test_nltk_data.py",
+      "tests/test_operations.py",
+      "tests/test_pattern.py",
+      "tests/test_pipeline.py",
+      "tests/test_relation.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_temporal.py",
+      "tests/test_temporal_conflict.py"
+    ],
+    "governed_source_sha256": "e66f42bca492ddbd3e531eda885b66229701af9e1e19f8bdd3d541185c231c3a",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "useful_evidence_on_abstention": true,
+  "zero_unbounded_execution": true
+}

@@ -345,6 +345,12 @@ def validate_mutation_receipt(value: object) -> MutationReceipt:
 def mutation_receipt_to_dict(value: object) -> dict[str, object]:
     """Return the exact persistent dictionary for one mutation receipt."""
     receipt = validate_mutation_receipt(value)
+    result = _trusted_mutation_receipt_to_dict(receipt)
+    return result
+
+
+def _trusted_mutation_receipt_to_dict(receipt: MutationReceipt) -> dict[str, object]:
+    """Serialize a ledger-owned receipt without redundant semantic validation."""
     affected = [artifact_generation_change_to_dict(change) for change in receipt["affected_generations"]]
     result_value = _thaw_json(receipt["result"])
     result = {
@@ -591,6 +597,18 @@ class MutationReceiptLedger:
         self._receipts = {receipt["request_id"]: receipt for receipt in validated_receipts}
         self._tombstones = {tombstone["request_id"]: tombstone for tombstone in validated_tombstones}
 
+    def _trusted_clone(self) -> "MutationReceiptLedger":
+        """Clone indexes while sharing immutable receipt values."""
+        with self._lock:
+            result = object.__new__(MutationReceiptLedger)
+            result.max_receipts = self.max_receipts
+            result.max_tombstones = self.max_tombstones
+            result._next_sequence = self._next_sequence
+            result._lock = threading.RLock()
+            result._receipts = dict(self._receipts)
+            result._tombstones = dict(self._tombstones)
+            return result
+
     @property
     def next_sequence(self) -> int:
         with self._lock:
@@ -685,7 +703,7 @@ class MutationReceiptLedger:
                 "max_tombstones": self.max_tombstones,
                 "next_sequence": self._next_sequence,
                 "receipts": [
-                    mutation_receipt_to_dict(receipt)
+                    _trusted_mutation_receipt_to_dict(receipt)
                     for receipt in sorted(self._receipts.values(), key=lambda item: item["sequence"])
                 ],
                 "tombstones": [
@@ -705,6 +723,34 @@ class MutationReceiptLedger:
             self._next_sequence = replacement._next_sequence
             self._receipts = dict(replacement._receipts)
             self._tombstones = dict(replacement._tombstones)
+
+
+def _mutation_receipt_ledger_from_validated(
+    max_receipts: int,
+    max_tombstones: int,
+    receipts: tuple[MutationReceipt, ...],
+    tombstones: tuple[ReceiptTombstone, ...],
+    next_sequence: int,
+) -> MutationReceiptLedger:
+    """Assemble a ledger from values parsed and validated by the snapshot decoder."""
+    if len(receipts) > max_receipts or len(tombstones) > max_tombstones:
+        raise InvalidRequestError("receipt ledger state exceeds its configured retention bounds")
+    sequences = [receipt["sequence"] for receipt in receipts] + [value["sequence"] for value in tombstones]
+    request_ids = [receipt["request_id"] for receipt in receipts] + [value["request_id"] for value in tombstones]
+    if len(set(sequences)) != len(sequences):
+        raise InvalidRequestError("receipt ledger sequences must be unique")
+    if len(set(request_ids)) != len(request_ids):
+        raise InvalidRequestError("receipt ledger request IDs must be unique")
+    if sequences and next_sequence <= max(sequences):
+        raise InvalidRequestError("next receipt sequence must exceed every retained sequence")
+    result = object.__new__(MutationReceiptLedger)
+    result.max_receipts = max_receipts
+    result.max_tombstones = max_tombstones
+    result._next_sequence = next_sequence
+    result._lock = threading.RLock()
+    result._receipts = {receipt["request_id"]: receipt for receipt in receipts}
+    result._tombstones = {value["request_id"]: value for value in tombstones}
+    return result
 
 
 def mutation_receipt_ledger_from_snapshot(value: Mapping[str, object]) -> MutationReceiptLedger:
@@ -729,11 +775,11 @@ def mutation_receipt_ledger_from_snapshot(value: Mapping[str, object]) -> Mutati
     tombstones = data["tombstones"]
     if not isinstance(receipts, list) or not isinstance(tombstones, list):
         raise InvalidRequestError("mutation ledger receipts and tombstones must be arrays")
-    result = MutationReceiptLedger(
-        max_receipts=_positive_int(data["max_receipts"], "max_receipts", MAX_RECEIPTS),
-        max_tombstones=_positive_int(data["max_tombstones"], "max_tombstones", MAX_TOMBSTONES),
-        receipts=tuple(mutation_receipt_from_dict(receipt) for receipt in receipts),
-        tombstones=tuple(receipt_tombstone_from_dict(tombstone) for tombstone in tombstones),
-        next_sequence=_positive_int(data["next_sequence"], "next receipt sequence"),
+    result = _mutation_receipt_ledger_from_validated(
+        _positive_int(data["max_receipts"], "max_receipts", MAX_RECEIPTS),
+        _positive_int(data["max_tombstones"], "max_tombstones", MAX_TOMBSTONES),
+        tuple(mutation_receipt_from_dict(receipt) for receipt in receipts),
+        tuple(receipt_tombstone_from_dict(tombstone) for tombstone in tombstones),
+        _positive_int(data["next_sequence"], "next receipt sequence"),
     )
     return result

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "query_frame_schema_version": 2,
+  "fixtures": [
+    {
+      "fixture_id": "question-then-place-reduction",
+      "original_text": "could you tell me in what place PostgreSQL was created?",
+      "identity_operator": "where",
+      "rewrite_chain": [
+        {
+          "rule_id": "question-could-you-tell-me@1",
+          "input_text": "could you tell me in what place PostgreSQL was created?",
+          "output_text": "in what place PostgreSQL was created?"
+        },
+        {
+          "rule_id": "paraphrase-in-what-place@1",
+          "input_text": "in what place PostgreSQL was created?",
+          "output_text": "where PostgreSQL was created?"
+        }
+      ],
+      "final_retrieval_representation": "where PostgreSQL was created?",
+      "pattern_input": "could you tell me in what place PostgreSQL was created?",
+      "identity_changed": false
+    },
+    {
+      "fixture_id": "repair-then-technical-normalization",
+      "original_text": "sorry i meant what does HTTP status code 429 mean?",
+      "identity_operator": "what",
+      "rewrite_chain": [
+        {
+          "rule_id": "repair-sorry-i-meant@1",
+          "input_text": "sorry i meant what does HTTP status code 429 mean?",
+          "output_text": "what does HTTP status code 429 mean?"
+        },
+        {
+          "rule_id": "technical-http-status-code@1",
+          "input_text": "what does HTTP status code 429 mean?",
+          "output_text": "what does http code 429 mean?"
+        }
+      ],
+      "final_retrieval_representation": "what does http code 429 mean?",
+      "pattern_input": "sorry i meant what does HTTP status code 429 mean?",
+      "identity_changed": false
+    },
+    {
+      "fixture_id": "contextual-pronoun",
+      "original_text": "and where is it?",
+      "identity_operator": "where",
+      "inherited_subject": "Lattice",
+      "rewrite_chain": [
+        {
+          "rule_id": "pronoun-and-where-is-it@1",
+          "input_text": "and where is it?",
+          "output_text": "where is Lattice"
+        }
+      ],
+      "final_retrieval_representation": "where is Lattice",
+      "pattern_input": "and where is it?",
+      "identity_changed": false
+    },
+    {
+      "fixture_id": "negative-boundary-control",
+      "original_text": "the help desktop is installed",
+      "identity_operator": "unknown",
+      "rewrite_chain": [],
+      "final_retrieval_representation": "the help desktop is installed",
+      "pattern_input": "the help desktop is installed",
+      "identity_changed": false
+    }
+  ]
+}

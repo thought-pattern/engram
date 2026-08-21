@@ -36,7 +36,6 @@ from engram.identity import (
     ScopeKey,
     retrieval_representation_bindings,
     scope_key,
-    scoped_retrieval_key_signature,
     validate_scope_key,
     validate_scoped_retrieval_key,
 )
@@ -693,7 +692,16 @@ def evaluate_artifact_eligibility(
         raise InvalidRequestError("context must be an EligibilityContext") from error
     if not isinstance(epoch_policy, EpochEligibilityPolicy):
         raise InvalidRequestError("epoch_policy must be an EpochEligibilityPolicy")
+    result = _trusted_evaluate_artifact_eligibility(artifact, context, epoch_policy)
+    return result
 
+
+def _trusted_evaluate_artifact_eligibility(
+    artifact: CachedResponseArtifact,
+    context: EligibilityContext,
+    epoch_policy: EpochEligibilityPolicy,
+) -> EligibilityDecision:
+    """Evaluate values already validated at the repository lookup boundary."""
     lifecycle = lifecycle_base_eligibility(artifact["lifecycle"])
     if not context["artifact_repository_available"]:
         result = _decision(
@@ -815,6 +823,15 @@ def index_projection_from_artifact(
         decision = validate_eligibility_decision(decision)
     except InvalidRequestError as error:
         raise InvalidRequestError("decision must be an EligibilityDecision") from error
+    result = _trusted_index_projection_from_artifact(artifact, decision)
+    return result
+
+
+def _trusted_index_projection_from_artifact(
+    artifact: CachedResponseArtifact,
+    decision: EligibilityDecision,
+) -> IndexProjection:
+    """Project an artifact and decision validated by one exact lookup."""
     if artifact["statement_id"] != decision["statement_id"] or artifact["generation"] != decision["generation"]:
         raise ConflictError("eligibility decision does not identify the artifact generation")
     if artifact["scope"]["namespace"] != decision["namespace"]:
@@ -877,6 +894,24 @@ def contextual_exact_lookup_result(
     return result
 
 
+def _trusted_contextual_exact_lookup_result(
+    lookup: ExactLookupResult,
+    decisions: tuple[EligibilityDecision, ...],
+    context_signature: str,
+    index_refreshed: bool,
+    index_state_generation: int,
+) -> ContextualExactLookupResult:
+    """Build from values produced and validated inside the exact-lookup boundary."""
+    result: ContextualExactLookupResult = {
+        "lookup": lookup,
+        "decisions": decisions,
+        "context_signature": context_signature,
+        "index_refreshed": index_refreshed,
+        "index_state_generation": index_state_generation,
+    }
+    return result
+
+
 def validate_contextual_exact_lookup_result(value: object) -> ContextualExactLookupResult:
     """Revalidate and copy one contextual exact lookup result."""
     data = _require_exact_mapping(value, "ContextualExactLookupResult", CONTEXTUAL_EXACT_LOOKUP_RESULT_FIELDS)
@@ -911,25 +946,31 @@ class ContextualExactLookup:
         artifacts: Mapping[str, CachedResponseArtifact],
         indexes: IndexOwner,
         max_refresh_retries: int = 4,
+        trusted_artifacts: bool = False,
     ) -> None:
         if not isinstance(artifacts, Mapping):
             raise InvalidRequestError("contextual exact artifacts must be an object")
-        validated = {}
-        for statement_id, artifact in artifacts.items():
-            if not isinstance(statement_id, str) or not statement_id:
-                raise InvalidRequestError("contextual exact artifact keys must be non-empty strings")
-            try:
-                validated_artifact = validate_cached_response_artifact(artifact)
-            except InvalidRequestError as error:
-                raise InvalidRequestError("contextual exact artifact values must be CachedResponseArtifact values") from error
-            if validated_artifact["statement_id"] != statement_id:
-                raise InvalidRequestError("contextual exact artifact key must match its statement_id")
-            validated[statement_id] = validated_artifact
         if not isinstance(indexes, IndexOwner):
             raise InvalidRequestError("contextual exact indexes must be an IndexOwner")
         if isinstance(max_refresh_retries, bool) or not isinstance(max_refresh_retries, int) or max_refresh_retries < 1:
             raise InvalidRequestError("max_refresh_retries must be a positive integer")
-        self._artifacts = MappingProxyType(validated)
+        if not isinstance(trusted_artifacts, bool):
+            raise InvalidRequestError("trusted_artifacts must be a boolean")
+        if trusted_artifacts:
+            self._artifacts = artifacts
+        else:
+            validated = {}
+            for statement_id, artifact in artifacts.items():
+                if not isinstance(statement_id, str) or not statement_id:
+                    raise InvalidRequestError("contextual exact artifact keys must be non-empty strings")
+                try:
+                    validated_artifact = validate_cached_response_artifact(artifact)
+                except InvalidRequestError as error:
+                    raise InvalidRequestError("contextual exact artifact values must be CachedResponseArtifact values") from error
+                if validated_artifact["statement_id"] != statement_id:
+                    raise InvalidRequestError("contextual exact artifact key must match its statement_id")
+                validated[statement_id] = validated_artifact
+            self._artifacts = MappingProxyType(validated)
         self._indexes = indexes
         self._max_refresh_retries = max_refresh_retries
 
@@ -950,9 +991,7 @@ class ContextualExactLookup:
         if not isinstance(epoch_policy, EpochEligibilityPolicy):
             raise InvalidRequestError("epoch_policy must be an EpochEligibilityPolicy")
         for _attempt in range(self._max_refresh_retries):
-            state = self._indexes.snapshot()
-            key_signature = scoped_retrieval_key_signature(key)
-            owner_ids = tuple(dict.fromkeys(owner["statement_id"] for owner in state["retrieval_to_owners"].get(key_signature, ())))
+            state_generation, owner_ids = self._indexes.trusted_exact_owner_snapshot(key)
             if len(owner_ids) > MAX_INDEX_LOOKUP_OWNERS:
                 raise LifecycleError(f"exact refresh owner bound exceeded: {len(owner_ids)}")
             decisions = []
@@ -961,14 +1000,14 @@ class ContextualExactLookup:
                 if statement_id not in self._artifacts:
                     raise LifecycleError(f"authoritative artifact missing for exact owner: {statement_id}")
                 artifact = self._artifacts[statement_id]
-                decision = evaluate_artifact_eligibility(artifact, context, epoch_policy)
+                decision = _trusted_evaluate_artifact_eligibility(artifact, context, epoch_policy)
                 decisions.append(decision)
-                projections.append(index_projection_from_artifact(artifact, decision))
+                projections.append(_trusted_index_projection_from_artifact(artifact, decision))
             try:
-                lookup, refreshed, state_generation = self._indexes.atomic_refresh_exact_lookup(
+                lookup, refreshed, state_generation = self._indexes.trusted_atomic_refresh_exact_lookup(
                     key,
                     tuple(projections),
-                    state["state_generation"],
+                    state_generation,
                 )
             except ConflictError:
                 continue
@@ -987,7 +1026,7 @@ class ContextualExactLookup:
                     }
                 )
             )
-            result = contextual_exact_lookup_result(
+            result = _trusted_contextual_exact_lookup_result(
                 lookup,
                 tuple(decisions),
                 signature,

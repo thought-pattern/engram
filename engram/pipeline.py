@@ -38,9 +38,9 @@ def pipeline_result(
 ) -> dict:
     """Build a pipeline response dict.
 
-    source is "pattern" (scripted match), "cache" (confident keyword
-    retrieval), "llm" (generated via llm_fn), or "none" (nothing confident and
-    no llm_fn). matches and keywords carry the keyword retrieval outcome so a
+    source is "pattern" (scripted match), "graph" (read-only graph recall),
+    "cache" (confident keyword retrieval), "llm" (generated via llm_fn), or
+    "none" (nothing confident and no llm_fn). matches and keywords carry the keyword retrieval outcome so a
     "none" caller can still inspect what was found; pattern and captured carry
     the pattern-match outcome for debugging ("" / [] off the pattern path).
     """
@@ -195,9 +195,10 @@ def respond(
                 deferred_shrug = response
                 _retract_response(engram, context_id, deferred_shrug)
             else:
+                source = "pattern" if stmt else "graph"
                 tier1 = pipeline_result(
                     response,
-                    "pattern",
+                    source,
                     score=1.0,
                     pattern=matched_pattern,
                     captured=matched_captured,

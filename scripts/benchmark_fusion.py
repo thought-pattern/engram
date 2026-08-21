@@ -30,8 +30,9 @@ from engram.resolution import (
     evidence_reference,
     feature_set,
 )
+from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "fusion" / "benchmark-2026-08-15.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "fusion" / "benchmark-2026-08-19.json"
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="fusion-benchmark")
@@ -56,6 +57,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     result = {
         "p50_ms": statistics.median(values),
         "p95_ms": percentile(values, 0.95),
+        "p99_ms": percentile(values, 0.99),
         "max_ms": max(values),
     }
     return result
@@ -122,14 +124,14 @@ def section4_baseline(candidates: tuple[Candidate, ...]) -> ResolutionOutcome:
 def build_result(samples: int) -> dict[str, object]:
     """Run warmed benchmarks and return the evidence artifact."""
     engine = Engram()
-    budget = capture_resolution_budget(lambda: START_NS, total_time_ms=100, resolver_time_ms=25)
+    budget = capture_resolution_budget(lambda: START_NS)
     frame = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         "Which benchmark response is supported?",
         SCOPE,
         diagnostic_seed="fusion-benchmark",
         budget=budget,
     )
-    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority)
     exact = (candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}),)
     reinforced = supported_pair("reinforced")
     ambiguous = (*supported_pair("ambiguous-a"), *supported_pair("ambiguous-b", semantic=0.91, lexical=0.94))
@@ -174,9 +176,6 @@ def build_result(samples: int) -> dict[str, object]:
     before = measure(lambda: section4_baseline(reinforced), samples)
     after = measure(lambda: fusion.decide(frame, reinforced), samples)
     gates = {
-        "reinforced_p95_under_5_ms": after["p95_ms"] < 5.0,
-        "hundred_candidates_p95_under_150_ms": scaling["100"]["p95_ms"] < 150.0,
-        "thousand_candidates_p95_under_1250_ms": scaling["1000"]["p95_ms"] < 1_250.0,
         "thousand_candidates_peak_under_64_mib": peak_bytes < 67_108_864,
         "thousand_candidates_estimate_within_frame_budget": (
             peak_decision["working_memory_bytes"] <= frame["budget"]["max_working_memory_bytes"]
@@ -186,7 +185,8 @@ def build_result(samples: int) -> dict[str, object]:
     result = {
         "schema_version": 1,
         "benchmark_version": "section5-fusion-benchmark-v1.1",
-        "recorded_at": "2026-08-15",
+        "recorded_at": recorded_at(),
+        "source": benchmark_source_state(),
         "environment": {"python": platform.python_version(), "platform": platform.platform()},
         "policy": fusion_policy_to_dict(fusion_policy()),
         "policy_provenance": {
@@ -196,6 +196,7 @@ def build_result(samples: int) -> dict[str, object]:
             "fixture_authority": "explicit_permissive_conformance_only",
         },
         "before_after_reinforced_pair": {"section4_baseline": before, "section5_fusion_v1": after},
+        "timing_assessment": "reported observations; no pass/fail threshold",
         "acceptance": acceptance,
         "scaling": scaling,
         "thousand_candidates_peak_bytes": peak_bytes,

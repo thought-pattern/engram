@@ -113,6 +113,7 @@ def engram_config(
     stopwords=DEFAULT_STOPWORDS,
     # Input processing
     expand_contractions: bool = True,
+    retrieval_rewrites_enabled: bool = False,
     learn_user_facts: bool = True,
     srai_depth_limit: int = 100,
     # Eviction settings
@@ -164,6 +165,8 @@ def engram_config(
         raise ValueError("min_hit_rate must be between 0 and 1")
     if protect_static is False:
         raise ValueError("static statements are always protected from eviction")
+    if not isinstance(retrieval_rewrites_enabled, bool):
+        raise ValueError("retrieval_rewrites_enabled must be a boolean")
 
     config = {
         "capacity": capacity,
@@ -176,6 +179,7 @@ def engram_config(
         "session_overflow": session_overflow,
         "stopwords": set(stopwords or DEFAULT_STOPWORDS),
         "expand_contractions": expand_contractions,
+        "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
         "learn_user_facts": learn_user_facts,
         "srai_depth_limit": srai_depth_limit,
         "eviction_policy": eviction_policy,

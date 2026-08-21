@@ -24,8 +24,9 @@ from engram import persistence
 from engram.config import engram_config, graph_config
 from engram.core import Engram
 from engram.service import EngramCore
+from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "baseline" / "benchmark-2026-08-11.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "baseline" / "benchmark-2026-08-19.json"
 PACKAGE_NAMES = (
     "grpcio",
     "grpcio-tools",
@@ -92,6 +93,7 @@ def _measure(operation: Callable[[], object], iterations: int) -> dict:
         "minimum_ms": round(min(samples), 6),
         "p50_ms": round(_percentile(samples, 0.50), 6),
         "p95_ms": round(_percentile(samples, 0.95), 6),
+        "p99_ms": round(_percentile(samples, 0.99), 6),
         "maximum_ms": round(max(samples), 6),
     }
     return result
@@ -282,24 +284,37 @@ def _package_versions() -> dict[str, str]:
     return versions
 
 
-def _git_output(*arguments: str) -> str:
-    completed = subprocess.run(["git", *arguments], cwd=REPOSITORY, check=True, capture_output=True, text=True)
-    result = completed.stdout.strip()
+def _reported[Result](label: str, operation: Callable[[], Result]) -> Result:
+    """Report long setup stages without including them in latency samples."""
+    print(f"[section0] starting {label}", file=sys.stderr, flush=True)
+    started = time.perf_counter()
+    result = operation()
+    elapsed = time.perf_counter() - started
+    print(f"[section0] completed {label} in {elapsed:.3f}s", file=sys.stderr, flush=True)
     return result
 
 
 def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict:
-    lexical = [_lexical_result(size, iterations) for size in sizes]
-    vector = [_vector_result(size, fanout, iterations) for size in sizes for fanout in fanouts if fanout <= size]
+    lexical = [
+        _reported(
+            f"lexical corpus_size={size}",
+            lambda size=size: _lexical_result(size, iterations),
+        )
+        for size in sizes
+    ]
+    vector = [
+        _reported(
+            f"support-vector corpus_size={size} fanout={fanout}",
+            lambda size=size, fanout=fanout: _vector_result(size, fanout, iterations),
+        )
+        for size in sizes
+        for fanout in fanouts
+        if fanout <= size
+    ]
     result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
-        "source": {
-            "repository": _git_output("remote", "get-url", "origin"),
-            "branch": _git_output("branch", "--show-current"),
-            "commit": _git_output("rev-parse", "HEAD"),
-            "working_tree_dirty": bool(_git_output("status", "--porcelain")),
-        },
+        "source": benchmark_source_state(),
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),

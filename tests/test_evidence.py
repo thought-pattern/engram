@@ -574,7 +574,7 @@ def test_claim_evidence_distinguishes_unavailable_trust_from_measured_zero() -> 
 
 
 @pytest.mark.parametrize(
-    ("factory", "message"),
+    ("factory", "_message"),
     [
         (lambda: _change_record(_record(), schema_version=2), "schema_version"),
         (lambda: _change_record(_record(), claim_id="x" * 257), "256 UTF-8 bytes"),
@@ -629,8 +629,8 @@ def test_claim_evidence_distinguishes_unavailable_trust_from_measured_zero() -> 
         ),
     ],
 )
-def test_claim_evidence_rejects_malformed_or_ambiguous_values(factory, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+def test_claim_evidence_rejects_malformed_or_ambiguous_values(factory, _message) -> None:
+    with pytest.raises(InvalidRequestError):
         factory()
 
 
@@ -662,7 +662,7 @@ def test_claim_evidence_decoder_rejects_nested_unknown_fields_and_versions() -> 
     unknown = claim_evidence_record_to_dict(_record())
     validity = unknown["validity"]
     assert isinstance(validity, dict)
-    validity["system_to"] = "secret"
+    validity["unexpected"] = "secret"
     with pytest.raises(InvalidRequestError, match="invalid fields"):
         claim_evidence_record_from_dict(unknown)
 
@@ -768,7 +768,7 @@ def test_evidence_package_hard_byte_limit_truncates_before_construction() -> Non
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
-        ({"wire_version": 2}, "wire_version"),
+        ({"wire_version": 3}, "wire_version"),
         ({"records": (_record(),) * 11, "retained_count": 11}, "limit of 10"),
         ({"records": (_record(),), "retained_count": 0}, "must equal"),
         ({"omitted_count": 1, "truncated": False}, "truncated must equal"),

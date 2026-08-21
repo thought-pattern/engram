@@ -256,6 +256,16 @@ def test_question_routing_question_without_answer_gets_deferred_shrug() -> None:
     assert result["response"] == "Tell me more."
 
 
+def test_graph_backed_pattern_tier_reports_graph_provenance(monkeypatch) -> None:
+    engram = Engram()
+    monkeypatch.setattr(engram, "pattern_query", lambda *_args, **_kwargs: ({}, [], "Sarah is married to Abraham."))
+
+    result = pipeline.respond(engram, "Who is Sarah married to?")
+
+    assert result["source"] == "graph"
+    assert result["response"] == "Sarah is married to Abraham."
+
+
 def test_question_routing_statement_hitting_catchall_answers_immediately() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)

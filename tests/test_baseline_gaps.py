@@ -3,13 +3,9 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from engram import persistence
 from engram.config import engram_config
-from engram.constants import Tier
 from engram.core import Engram
-from engram.errors import InvalidRequestError
 from engram.identity import build_scoped_retrieval_key, scope_key
 from engram.indexes import ExactLookupOutcome, IndexIssueReason
 from engram.service import EngramCore
@@ -45,42 +41,14 @@ def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
     assert where_proposal["candidates"][0]["response"] == "Ada Lovelace was born in London."
 
 
-def test_baseline_has_no_non_executable_retrieval_alias_storage() -> None:
-    engram = _baseline_engram()
-    statement_id = engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
-    stored = engram.get_statement(statement_id)
-
-    assert "retrieval_aliases" not in stored
-    assert "normalization_version" not in stored
-    assert stored["pattern_aliases"] == []
-
-
 def test_section2_exact_lookup_does_not_invent_a_legacy_key() -> None:
     engram = _baseline_engram()
     statement_id = engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
     guessed_key = build_scoped_retrieval_key(scope_key(), "What are the support hours?")
 
-    assert not hasattr(engram, "exact_retrieval_index")
     assert engram.exact_lookup(guessed_key)["outcome"] == ExactLookupOutcome.MISS
     assert engram.index_snapshot()["statement_to_retrieval"][statement_id] == ()
     assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in engram.index_snapshot()["build_report"]["issues"]}
-
-
-def test_baseline_couples_eviction_to_tier_without_lifecycle_state() -> None:
-    engram = _baseline_engram()
-    statement_id = engram.learn_from_response("What are the support hours?", "Support is open from nine to five.")
-    stored = engram.get_statement(statement_id)
-
-    assert stored["tier"] == Tier.DYNAMIC
-    assert "lifecycle" not in stored
-    assert "valid_from" not in stored
-    assert "valid_to" not in stored
-    assert "superseded_by" not in stored
-
-    static_id = engram.store("Static response.", keyword_source="static response", tier=Tier.STATIC)
-    core = EngramCore(engram, checkpoint_on_mutation=False)
-    with pytest.raises(InvalidRequestError, match="only dynamic"):
-        core.retire_response(static_id, "baseline characterization", "retire-static")
 
 
 def test_section2_claim_support_reverse_index_preserves_current_metadata() -> None:

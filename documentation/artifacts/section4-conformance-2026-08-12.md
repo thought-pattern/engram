@@ -1,5 +1,7 @@
 # Section 4 unified resolution conformance — 12 August 2026, independently remediated 13 August 2026
 
+**Historical timing note:** This report describes the v1 deadline-bearing contract. [Resolution contract v2](resolution-contract-v2.md) supersedes that timing policy; current execution reports elapsed time without a latency gate.
+
 ## Exit assessment
 
 Section 4 meets its exit condition. Every currently implemented response-retrieval path has a pure adapter and emits a bounded common record. The deterministic executor is fail-soft, cooperatively lease-bounded, and exact-short-circuiting. Accepted-response candidacy and optional success are finalized once, after the final output outcome is known, through one durable atomic receipt. The transport-neutral core returns the conservative version 1 `ANSWER`, `EVIDENCE`, and `MISS` outcomes.
@@ -65,7 +67,7 @@ The completion review found and remediated the following issues before closure:
 | `python -m bandit -q -lll <Section 4 production files>` | no high-severity findings |
 | `python -m compileall -q engram scripts eval tests` | passed |
 | `git diff --check` | passed |
-| `python scripts/benchmark_resolution.py` | all seven latency/resource gates passed |
+| `python scripts/benchmark_resolution.py` | historical v1 latency/resource assessment passed; the current runner reports timing and assesses memory only |
 | Section 4 invocation of `scripts/run_section3_mcp_conformance.py` | 1,000/1,000 turns and 1,003 protocol calls passed |
 
 ## Performance evidence

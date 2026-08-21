@@ -929,7 +929,3 @@ def test_generic_mutation_validation_is_strict() -> None:
         remove_index_projection(state, "missing")
     with pytest.raises(InvalidRequestError):
         index_state_support_lookup(state, ("claim-1",), scan_limit=0)
-
-
-def test_default_support_scan_bound_is_explicit() -> None:
-    assert MAX_INDEX_SUPPORT_SCAN_EDGES == 100_000

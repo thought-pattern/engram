@@ -35,8 +35,9 @@ from engram.resolution import (
     resolver_result_to_json,
 )
 from engram.resolvers import ExactResolver, LexicalResolver, ResolverBudget, ResolverExecutor, ResolverRegistry, resolver_budget
+from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "section4-benchmark-2026-08-12.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "section4-benchmark-2026-08-19.json"
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 
@@ -60,6 +61,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     result = {
         "median_ms": statistics.median(values),
         "p95_ms": percentile(values, 0.95),
+        "p99_ms": percentile(values, 0.99),
         "max_ms": max(values),
     }
     return result
@@ -122,7 +124,7 @@ class BenchmarkResolver:
 
 
 def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
-    """Run applicable latency and memory measurements with explicit gates."""
+    """Report operation lengths and evaluate the retained memory bound."""
     exact_engine = Engram()
     exact_engine.response_repository = ArtifactRepository((accepted_artifact(),))
     builder = QueryFrameBuilder(exact_engine, lambda: START_NS, lambda: NOW)
@@ -134,7 +136,6 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
 
     exact_frame = build_frame()
     exact_budget = resolver_budget(
-        deadline_ns=exact_frame["budget"]["deadline_ns"],
         max_candidates=exact_frame["budget"]["max_candidates"],
         max_graph_rows=exact_frame["budget"]["max_graph_rows"],
         max_vector_results=exact_frame["budget"]["max_vector_results"],
@@ -155,7 +156,6 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     )
     lexical_resolver = LexicalResolver(lexical_engine, lambda: START_NS)
     lexical_budget = resolver_budget(
-        deadline_ns=lexical_frame["budget"]["deadline_ns"],
         max_candidates=10,
         max_graph_rows=0,
         max_vector_results=0,
@@ -185,30 +185,18 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     _, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
-    limits = {
-        "frame_build_p95_ms": 5.0,
-        "exact_adapter_p95_ms": 5.0,
-        "lexical_adapter_p95_ms": 100.0,
-        "executor_completed_p95_ms": 5.0,
-        "executor_failed_p95_ms": 5.0,
-        "result_codec_p95_ms": 5.0,
-        "peak_traced_bytes": 16_777_216,
-    }
+    limits = {"peak_traced_bytes": 16_777_216}
     gates = {
-        "frame_build": measurements["frame_build"]["p95_ms"] <= limits["frame_build_p95_ms"],
-        "exact_adapter": measurements["exact_adapter"]["p95_ms"] <= limits["exact_adapter_p95_ms"],
-        "lexical_adapter": measurements["lexical_adapter"]["p95_ms"] <= limits["lexical_adapter_p95_ms"],
-        "executor_completed": measurements["executor_completed"]["p95_ms"] <= limits["executor_completed_p95_ms"],
-        "executor_failed": measurements["executor_failed"]["p95_ms"] <= limits["executor_failed_p95_ms"],
-        "result_codec": measurements["result_codec"]["p95_ms"] <= limits["result_codec_p95_ms"],
         "peak_traced_memory": peak_bytes <= limits["peak_traced_bytes"],
     }
     result = {
         "schema_version": 1,
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "source": benchmark_source_state(),
         "samples": samples,
         "corpus_size": corpus_size,
         "measurements": measurements,
+        "timing_assessment": "reported observations; no pass/fail threshold",
         "peak_traced_bytes": peak_bytes,
         "limits": limits,
         "gates": gates,

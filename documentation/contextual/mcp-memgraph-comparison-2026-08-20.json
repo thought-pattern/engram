@@ -1,0 +1,291 @@
+{
+  "comparison": {
+    "differences": [
+      {
+        "disabled": {
+          "latency_ms": 4354.8556,
+          "response": "",
+          "response_bytes": 0,
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "none",
+          "turn": 1
+        },
+        "enabled": {
+          "latency_ms": 3940.5248,
+          "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+          "response_bytes": 81,
+          "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+          "source": "graph",
+          "turn": 1
+        },
+        "prompt": "Tell me about Sarah.",
+        "response_changed": true,
+        "source_changed": true,
+        "turn": 1
+      },
+      {
+        "disabled": {
+          "latency_ms": 2.6692,
+          "response": "",
+          "response_bytes": 0,
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "none",
+          "turn": 2
+        },
+        "enabled": {
+          "latency_ms": 2960.6501,
+          "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+          "response_bytes": 81,
+          "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+          "source": "graph",
+          "turn": 2
+        },
+        "prompt": "Who is Sarah married to?",
+        "response_changed": true,
+        "source_changed": true,
+        "turn": 2
+      },
+      {
+        "disabled": {
+          "latency_ms": 6.4706,
+          "response": "",
+          "response_bytes": 0,
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "none",
+          "turn": 3
+        },
+        "enabled": {
+          "latency_ms": 2927.9275,
+          "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+          "response_bytes": 81,
+          "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+          "source": "graph",
+          "turn": 3
+        },
+        "prompt": "What work is Sarah present in?",
+        "response_changed": true,
+        "source_changed": true,
+        "turn": 3
+      },
+      {
+        "disabled": {
+          "latency_ms": 1.9354,
+          "response": "",
+          "response_bytes": 0,
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "none",
+          "turn": 4
+        },
+        "enabled": {
+          "latency_ms": 1537.8581,
+          "response": "Sarah is married to Abraham. Ishbak is a child of Abraham. Zimran is a child of Abraham. Jokshan is a child of Abraham. Midian is a child of Abraham.",
+          "response_bytes": 149,
+          "response_sha256": "8ecafd557c12280377dac40be557ba2ad90e2adb7b6fc0e8ccbbba550382004c",
+          "source": "graph",
+          "turn": 4
+        },
+        "prompt": "Tell me about Abraham.",
+        "response_changed": true,
+        "source_changed": true,
+        "turn": 4
+      },
+      {
+        "disabled": {
+          "latency_ms": 1.7008,
+          "response": "",
+          "response_bytes": 0,
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "none",
+          "turn": 5
+        },
+        "enabled": {
+          "latency_ms": 1393.5619,
+          "response": "Sarah is married to Abraham. Ishbak is a child of Abraham. Zimran is a child of Abraham. Jokshan is a child of Abraham. Midian is a child of Abraham.",
+          "response_bytes": 149,
+          "response_sha256": "8ecafd557c12280377dac40be557ba2ad90e2adb7b6fc0e8ccbbba550382004c",
+          "source": "graph",
+          "turn": 5
+        },
+        "prompt": "Who is Abraham married to?",
+        "response_changed": true,
+        "source_changed": true,
+        "turn": 5
+      }
+    ],
+    "response_changed_turns": 5,
+    "source_changed_turns": 5,
+    "turns": 5
+  },
+  "created_at": "2026-08-20T20:21:46.539397+00:00",
+  "disabled": {
+    "config_path_supplied": false,
+    "duration_seconds": 4.483476,
+    "graph_enabled": false,
+    "graph_ready": false,
+    "stop_summary": {
+      "catch_all_turns": 0,
+      "exchanges": 5,
+      "learned_statements": 0,
+      "learned_unique_texts": 0,
+      "sources": {
+        "none": 5
+      }
+    },
+    "turns": [
+      {
+        "latency_ms": 4354.8556,
+        "response": "",
+        "response_bytes": 0,
+        "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source": "none",
+        "turn": 1
+      },
+      {
+        "latency_ms": 2.6692,
+        "response": "",
+        "response_bytes": 0,
+        "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source": "none",
+        "turn": 2
+      },
+      {
+        "latency_ms": 6.4706,
+        "response": "",
+        "response_bytes": 0,
+        "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source": "none",
+        "turn": 3
+      },
+      {
+        "latency_ms": 1.9354,
+        "response": "",
+        "response_bytes": 0,
+        "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source": "none",
+        "turn": 4
+      },
+      {
+        "latency_ms": 1.7008,
+        "response": "",
+        "response_bytes": 0,
+        "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source": "none",
+        "turn": 5
+      }
+    ]
+  },
+  "enabled": {
+    "config_path_supplied": true,
+    "duration_seconds": 13.749396,
+    "graph_enabled": true,
+    "graph_ready": true,
+    "stop_summary": {
+      "catch_all_turns": 0,
+      "exchanges": 5,
+      "learned_statements": 0,
+      "learned_unique_texts": 0,
+      "sources": {
+        "graph": 5
+      }
+    },
+    "turns": [
+      {
+        "latency_ms": 3940.5248,
+        "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+        "response_bytes": 81,
+        "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+        "source": "graph",
+        "turn": 1
+      },
+      {
+        "latency_ms": 2960.6501,
+        "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+        "response_bytes": 81,
+        "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+        "source": "graph",
+        "turn": 2
+      },
+      {
+        "latency_ms": 2927.9275,
+        "response": "Sarah appears in Bible. Sarah is married to Abraham. Abraham is married to Sarah.",
+        "response_bytes": 81,
+        "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+        "source": "graph",
+        "turn": 3
+      },
+      {
+        "latency_ms": 1537.8581,
+        "response": "Sarah is married to Abraham. Ishbak is a child of Abraham. Zimran is a child of Abraham. Jokshan is a child of Abraham. Midian is a child of Abraham.",
+        "response_bytes": 149,
+        "response_sha256": "8ecafd557c12280377dac40be557ba2ad90e2adb7b6fc0e8ccbbba550382004c",
+        "source": "graph",
+        "turn": 4
+      },
+      {
+        "latency_ms": 1393.5619,
+        "response": "Sarah is married to Abraham. Ishbak is a child of Abraham. Zimran is a child of Abraham. Jokshan is a child of Abraham. Midian is a child of Abraham.",
+        "response_bytes": 149,
+        "response_sha256": "8ecafd557c12280377dac40be557ba2ad90e2adb7b6fc0e8ccbbba550382004c",
+        "source": "graph",
+        "turn": 5
+      }
+    ]
+  },
+  "engram_version": "1.1.11",
+  "schema_version": 1,
+  "section8_relation_probe": {
+    "canonical_entity": {
+      "latency_ms": 1740.8917,
+      "matches": [
+        {
+          "canonical_id": "8a882674-9b8c-5076-afeb-91c5a10786ed",
+          "entity_type": "PERSON",
+          "primary_label": "Sarah"
+        }
+      ]
+    },
+    "canonical_predicate": {
+      "latency_ms": 1482.5165,
+      "matches": [
+        {
+          "canonical_id": "married_to",
+          "object_type": "UNKNOWN",
+          "primary_label": "married to"
+        }
+      ]
+    },
+    "default_core_resolution": {
+      "claim_evidence": 1,
+      "latency_ms": 8071.111,
+      "outcome": "EVIDENCE",
+      "reason_codes": [
+        "answer_eligibility_prevented",
+        "evidence_threshold_met",
+        "accounting_finalized",
+        "claim_evidence_included"
+      ],
+      "response_candidates": [
+        "Sarah \u2014 married to: Abraham."
+      ],
+      "structured_graph": {
+        "elapsed_ns": 7937000000,
+        "exhausted_dimensions": [],
+        "reason_code": "relation_claim_candidate",
+        "state": "completed"
+      }
+    },
+    "one_hop": {
+      "latency_ms": 53.155,
+      "matches": [
+        {
+          "claim_id": "ab97e020-8f88-ef2d-0249-1a8586aa04cc",
+          "object_label": "Abraham",
+          "object_type": "PERSON"
+        }
+      ]
+    }
+  },
+  "seed_enabled": false,
+  "transport": "official MCP Client against repository MCPServer",
+  "user_id": "Sarah"
+}

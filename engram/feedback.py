@@ -8,8 +8,9 @@ import math
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from functools import lru_cache
-from types import NoneType
+from types import MappingProxyType, NoneType
 from typing import TypedDict, cast
 
 from engram.constants import (
@@ -195,7 +196,7 @@ def _feedback_payload_signature(observations: tuple[FeedbackObservation, ...]) -
     seen_observations: set[str] = set()
     total_bytes = 0
     for observation in observations:
-        complete = feedback_observation_to_dict(observation)
+        complete = _trusted_feedback_observation_to_dict(observation)
         complete_text = _json_text(complete)
         complete_fingerprint = hashlib.sha256(complete_text.encode("utf-8")).hexdigest()
         if complete_fingerprint in seen_observations:
@@ -603,8 +604,8 @@ def relationship_feedback_key_to_dict(value: object) -> dict[str, object]:
     current = validate_relationship_feedback_key(value)
     result = {
         "schema_version": current["schema_version"],
-        "query_identity": query_identity_to_dict(current["query_identity"]),
-        "scope": scope_key_to_dict(current["scope"]),
+        "query_identity": _feedback_wire_value(current["query_identity"]),
+        "scope": _feedback_wire_value(current["scope"]),
         "constraint_fingerprint": current["constraint_fingerprint"],
         "statement": statement_feedback_key_to_dict(current["statement"]),
     }
@@ -645,31 +646,33 @@ def relationship_feedback_key_from_dict(
     identity_fingerprint = canonical_fingerprint(data["query_identity"])
     scope_fingerprint = canonical_fingerprint(data["scope"])
     statement_fingerprint = canonical_fingerprint(data["statement"])
-    query_identity = identities.get(identity_fingerprint, {})
-    if query_identity:
-        query_identity = validate_query_identity(query_identity)
+    if identity_fingerprint in identities:
+        query_identity = identities[identity_fingerprint]
     else:
         query_identity = query_identity_from_dict(cast(Mapping[str, object], data["query_identity"]))
         identities[identity_fingerprint] = query_identity
-    scope = scopes.get(scope_fingerprint, {})
-    if scope:
-        scope = validate_scope_key(scope)
+    if scope_fingerprint in scopes:
+        scope = scopes[scope_fingerprint]
     else:
         scope = scope_key_from_dict(cast(Mapping[str, object], data["scope"]))
         scopes[scope_fingerprint] = scope
-    statement = statements.get(statement_fingerprint, {})
-    if statement:
-        statement = validate_statement_feedback_key(statement)
+    if statement_fingerprint in statements:
+        statement = statements[statement_fingerprint]
     else:
         statement = statement_feedback_key_from_dict(cast(Mapping[str, object], data["statement"]))
         statements[statement_fingerprint] = statement
-    result = relationship_feedback_key(
-        schema_version=_integer(data["schema_version"], "relationship feedback key schema_version", 0),
-        query_identity=query_identity,
-        scope=scope,
-        constraint_fingerprint=_fingerprint(data["constraint_fingerprint"], "relationship constraint_fingerprint"),
-        statement=statement,
-    )
+    version = _integer(data["schema_version"], "relationship feedback key schema_version", 0)
+    if version != FEEDBACK_KEY_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported relationship feedback key schema_version: {version}")
+    if query_identity["scope"] != scope:
+        raise InvalidRequestError("relationship scope must match query identity scope")
+    result: RelationshipFeedbackKey = {
+        "query_identity": query_identity,
+        "scope": scope,
+        "constraint_fingerprint": _fingerprint(data["constraint_fingerprint"], "relationship constraint_fingerprint"),
+        "statement": statement,
+        "schema_version": version,
+    }
     return result
 
 
@@ -771,6 +774,43 @@ def feedback_observation(
     return result
 
 
+def _trusted_feedback_observation(
+    reference_kind: FeedbackReferenceKind,
+    reference_id: str,
+    kind: FeedbackObservationKind,
+    outcome: FeedbackOutcome,
+    query_identity: QueryIdentity,
+    scope: ScopeKey,
+    constraint_fingerprint: str,
+    statement_id: str,
+    generation: int,
+    generation_available: bool,
+    policy_fingerprint: str,
+    observed_at: str,
+    reason: str = "",
+    contract_fingerprint: str = FEEDBACK_CONTRACT_FINGERPRINT,
+) -> FeedbackObservation:
+    """Build an observation from values established by the regulated service."""
+    result: FeedbackObservation = {
+        "reference_kind": reference_kind,
+        "reference_id": reference_id,
+        "kind": kind,
+        "outcome": outcome,
+        "query_identity": query_identity,
+        "scope": scope,
+        "constraint_fingerprint": constraint_fingerprint,
+        "statement_id": statement_id,
+        "generation": generation,
+        "generation_available": generation_available,
+        "policy_fingerprint": policy_fingerprint,
+        "observed_at": observed_at,
+        "reason": reason,
+        "contract_fingerprint": contract_fingerprint,
+        "schema_version": FEEDBACK_OBSERVATION_SCHEMA_VERSION,
+    }
+    return result
+
+
 def validate_feedback_observation(value: object) -> FeedbackObservation:
     data = _exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
     result = feedback_observation(
@@ -805,25 +845,53 @@ def feedback_observation_with_changes(value: object, changes: object) -> Feedbac
 
 def feedback_observation_statement_key(value: object) -> StatementFeedbackKey:
     current = validate_feedback_observation(value)
-    result = statement_feedback_key(
-        current["statement_id"],
-        current["generation"],
-        current["generation_available"],
-        current["policy_fingerprint"],
-        current["contract_fingerprint"],
-    )
+    result = _trusted_feedback_observation_statement_key(current)
+    return result
+
+
+def _trusted_feedback_observation_statement_key(current: FeedbackObservation) -> StatementFeedbackKey:
+    """Derive a statement key from an observation validated by the store boundary."""
+    result: StatementFeedbackKey = {
+        "statement_id": current["statement_id"],
+        "generation": current["generation"],
+        "generation_available": current["generation_available"],
+        "policy_fingerprint": current["policy_fingerprint"],
+        "contract_fingerprint": current["contract_fingerprint"],
+        "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
+    }
     return result
 
 
 def feedback_observation_relationship_key(value: object) -> RelationshipFeedbackKey:
     current = validate_feedback_observation(value)
-    statement = feedback_observation_statement_key(current)
-    result = relationship_feedback_key(current["query_identity"], current["scope"], current["constraint_fingerprint"], statement)
+    statement = _trusted_feedback_observation_statement_key(current)
+    result = _trusted_feedback_observation_relationship_key(current, statement)
+    return result
+
+
+def _trusted_feedback_observation_relationship_key(
+    current: FeedbackObservation,
+    statement: StatementFeedbackKey,
+) -> RelationshipFeedbackKey:
+    """Derive a relationship key from one store-owned observation and statement key."""
+    result: RelationshipFeedbackKey = {
+        "query_identity": current["query_identity"],
+        "scope": current["scope"],
+        "constraint_fingerprint": current["constraint_fingerprint"],
+        "statement": statement,
+        "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
+    }
     return result
 
 
 def feedback_observation_to_dict(value: object) -> dict[str, object]:
     current = validate_feedback_observation(value)
+    result = _trusted_feedback_observation_to_dict(current)
+    return result
+
+
+def _trusted_feedback_observation_to_dict(current: FeedbackObservation) -> dict[str, object]:
+    """Serialize an observation already validated by the feedback-store boundary."""
     result = {
         "schema_version": current["schema_version"],
         "reference_kind": current["reference_kind"].value,
@@ -1083,10 +1151,8 @@ def _apply_buckets(
     observed_at: str,
     policy: FeedbackPolicy,
 ) -> tuple[FeedbackBucket, ...]:
-    policy = validate_feedback_policy(policy)
-    validated_buckets = tuple(validate_feedback_bucket(bucket) for bucket in buckets)
     start = _bucket_start(observed_at, policy["bucket_seconds"])
-    values = {bucket["start_at"]: bucket for bucket in validated_buckets}
+    values = {bucket["start_at"]: bucket for bucket in buckets}
     current = values.get(start, feedback_bucket(start, feedback_statistics()))
     updated_statistics = feedback_statistics_increment(current["statistics"], outcome)
     values[start] = feedback_bucket(start, updated_statistics)
@@ -1166,7 +1232,17 @@ def statement_feedback_record_apply(value: object, observation: object, policy: 
     current = validate_statement_feedback_record(value)
     validated_observation = validate_feedback_observation(observation)
     validated_policy = validate_feedback_policy(policy)
-    observation_key = feedback_observation_statement_key(validated_observation)
+    result = _trusted_statement_feedback_record_apply(current, validated_observation, validated_policy)
+    return result
+
+
+def _trusted_statement_feedback_record_apply(
+    current: StatementFeedbackRecord,
+    validated_observation: FeedbackObservation,
+    validated_policy: FeedbackPolicy,
+) -> StatementFeedbackRecord:
+    """Apply one observation after the store boundary validated every input."""
+    observation_key = _trusted_feedback_observation_statement_key(validated_observation)
     if observation_key != current["key"]:
         raise ConflictError("feedback observation does not match statement aggregate key")
     last_observed_at, last_outcome = max(
@@ -1178,7 +1254,26 @@ def statement_feedback_record_apply(value: object, observation: object, policy: 
     buckets = _apply_buckets(
         current["buckets"], validated_observation["outcome"], validated_observation["observed_at"], validated_policy
     )
-    result = statement_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    result = _trusted_statement_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    return result
+
+
+def _trusted_statement_feedback_record(
+    key: StatementFeedbackKey,
+    raw: FeedbackStatistics,
+    buckets: tuple[FeedbackBucket, ...],
+    last_outcome: FeedbackOutcome,
+    last_observed_at: str,
+) -> StatementFeedbackRecord:
+    """Build a statement aggregate from store-owned validated components."""
+    result: StatementFeedbackRecord = {
+        "key": key,
+        "raw": raw,
+        "buckets": buckets,
+        "last_outcome": last_outcome,
+        "last_observed_at": last_observed_at,
+        "schema_version": FEEDBACK_RECORD_SCHEMA_VERSION,
+    }
     return result
 
 
@@ -1205,14 +1300,23 @@ def statement_feedback_record_from_dict(value: object) -> StatementFeedbackRecor
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("statement feedback contains an unsupported last_outcome") from error
-    result = statement_feedback_record(
-        schema_version=_integer(data["schema_version"], "statement feedback record schema_version", 0),
-        key=statement_feedback_key_from_dict(data["key"]),
-        raw=feedback_statistics_from_dict(data["raw"]),
-        buckets=tuple(feedback_bucket_from_dict(item) for item in data["buckets"]),
-        last_outcome=last_outcome,
-        last_observed_at=canonical_utc(_parse_timestamp(data["last_observed_at"], "statement feedback last_observed_at")),
-    )
+    version = _integer(data["schema_version"], "statement feedback record schema_version", 0)
+    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported statement feedback record schema_version: {version}")
+    buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
+    bucket_starts = tuple(bucket["start_at"] for bucket in buckets)
+    if len(buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_starts)) != bucket_starts:
+        raise InvalidRequestError("statement feedback buckets must be bounded and ordered")
+    if len(set(bucket_starts)) != len(bucket_starts):
+        raise InvalidRequestError("statement feedback bucket starts must be unique")
+    result: StatementFeedbackRecord = {
+        "key": statement_feedback_key_from_dict(data["key"]),
+        "raw": feedback_statistics_from_dict(data["raw"]),
+        "buckets": buckets,
+        "last_outcome": last_outcome,
+        "last_observed_at": canonical_utc(_parse_timestamp(data["last_observed_at"], "statement feedback last_observed_at")),
+        "schema_version": version,
+    }
     return result
 
 
@@ -1287,7 +1391,18 @@ def relationship_feedback_record_apply(value: object, observation: object, polic
     current = validate_relationship_feedback_record(value)
     validated_observation = validate_feedback_observation(observation)
     validated_policy = validate_feedback_policy(policy)
-    observation_key = feedback_observation_relationship_key(validated_observation)
+    result = _trusted_relationship_feedback_record_apply(current, validated_observation, validated_policy)
+    return result
+
+
+def _trusted_relationship_feedback_record_apply(
+    current: RelationshipFeedbackRecord,
+    validated_observation: FeedbackObservation,
+    validated_policy: FeedbackPolicy,
+) -> RelationshipFeedbackRecord:
+    """Apply one relationship observation after validating the store boundary."""
+    statement_key = _trusted_feedback_observation_statement_key(validated_observation)
+    observation_key = _trusted_feedback_observation_relationship_key(validated_observation, statement_key)
     if observation_key != current["key"]:
         raise ConflictError("feedback observation does not match relationship aggregate key")
     last_observed_at, last_outcome = max(
@@ -1299,7 +1414,26 @@ def relationship_feedback_record_apply(value: object, observation: object, polic
     buckets = _apply_buckets(
         current["buckets"], validated_observation["outcome"], validated_observation["observed_at"], validated_policy
     )
-    result = relationship_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    result = _trusted_relationship_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    return result
+
+
+def _trusted_relationship_feedback_record(
+    key: RelationshipFeedbackKey,
+    raw: FeedbackStatistics,
+    buckets: tuple[FeedbackBucket, ...],
+    last_outcome: FeedbackOutcome,
+    last_observed_at: str,
+) -> RelationshipFeedbackRecord:
+    """Build a relationship aggregate from store-owned validated components."""
+    result: RelationshipFeedbackRecord = {
+        "key": key,
+        "raw": raw,
+        "buckets": buckets,
+        "last_outcome": last_outcome,
+        "last_observed_at": last_observed_at,
+        "schema_version": FEEDBACK_RECORD_SCHEMA_VERSION,
+    }
     return result
 
 
@@ -1331,14 +1465,23 @@ def relationship_feedback_record_from_dict(
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("relationship feedback contains an unsupported last_outcome") from error
-    result = relationship_feedback_record(
-        schema_version=_integer(data["schema_version"], "relationship feedback record schema_version", 0),
-        key=relationship_feedback_key_from_dict(data["key"], identity_cache, scope_cache, statement_cache),
-        raw=feedback_statistics_from_dict(data["raw"]),
-        buckets=tuple(feedback_bucket_from_dict(item) for item in data["buckets"]),
-        last_outcome=last_outcome,
-        last_observed_at=canonical_utc(_parse_timestamp(data["last_observed_at"], "relationship feedback last_observed_at")),
-    )
+    version = _integer(data["schema_version"], "relationship feedback record schema_version", 0)
+    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported relationship feedback record schema_version: {version}")
+    buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
+    bucket_starts = tuple(bucket["start_at"] for bucket in buckets)
+    if len(buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_starts)) != bucket_starts:
+        raise InvalidRequestError("relationship feedback buckets must be bounded and ordered")
+    if len(set(bucket_starts)) != len(bucket_starts):
+        raise InvalidRequestError("relationship feedback bucket starts must be unique")
+    result: RelationshipFeedbackRecord = {
+        "key": relationship_feedback_key_from_dict(data["key"], identity_cache, scope_cache, statement_cache),
+        "raw": feedback_statistics_from_dict(data["raw"]),
+        "buckets": buckets,
+        "last_outcome": last_outcome,
+        "last_observed_at": canonical_utc(_parse_timestamp(data["last_observed_at"], "relationship feedback last_observed_at")),
+        "schema_version": version,
+    }
     return result
 
 
@@ -1557,6 +1700,166 @@ FeedbackState = TypedDict(
 )
 
 
+def _freeze_feedback_value(value: object) -> object:
+    """Recursively freeze one validated feedback contract for structural sharing."""
+    value_type = type(value)
+    if value_type in (dict, MappingProxyType):
+        mapping = cast(Mapping[object, object], value)
+        result: object = MappingProxyType({key: _freeze_feedback_value(nested) for key, nested in mapping.items()})
+    elif value_type is tuple:
+        result = tuple(_freeze_feedback_value(nested) for nested in cast(tuple[object, ...], value))
+    elif value_type is list:
+        result = tuple(_freeze_feedback_value(nested) for nested in cast(list[object], value))
+    else:
+        result = value
+    return result
+
+
+def _trusted_feedback_state(
+    policy: FeedbackPolicy,
+    statement_records: tuple[StatementFeedbackRecord, ...],
+    relationship_records: tuple[RelationshipFeedbackRecord, ...],
+    policy_suppressions: tuple[PolicySuppression, ...],
+    stale_exclusions: tuple[StaleExclusion, ...],
+    receipts: dict[str, object],
+    statement_evictions: int,
+    relationship_evictions: int,
+    policy_suppression_evictions: int,
+    stale_exclusion_evictions: int,
+) -> FeedbackState:
+    """Assemble state from values owned and maintained by FeedbackStore."""
+    result: FeedbackState = {
+        "policy": policy,
+        "statement_records": statement_records,
+        "relationship_records": relationship_records,
+        "policy_suppressions": policy_suppressions,
+        "stale_exclusions": stale_exclusions,
+        "receipts": receipts,
+        "statement_evictions": statement_evictions,
+        "relationship_evictions": relationship_evictions,
+        "policy_suppression_evictions": policy_suppression_evictions,
+        "stale_exclusion_evictions": stale_exclusion_evictions,
+        "schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
+    }
+    return result
+
+
+def _trusted_feedback_state_copy(value: FeedbackState) -> FeedbackState:
+    """Defensively copy state whose invariants are already established."""
+    receipts = json.loads(_json_text(value["receipts"]))
+    if not isinstance(receipts, dict):
+        raise InvalidRequestError("feedback receipts must decode to an object")
+    result = _trusted_feedback_state(
+        value["policy"],
+        value["statement_records"],
+        value["relationship_records"],
+        value["policy_suppressions"],
+        value["stale_exclusions"],
+        receipts,
+        value["statement_evictions"],
+        value["relationship_evictions"],
+        value["policy_suppression_evictions"],
+        value["stale_exclusion_evictions"],
+    )
+    return result
+
+
+def _feedback_wire_value(value: object) -> object:
+    """Project an already validated feedback value into deterministic JSON types."""
+    value_type = type(value)
+    if value_type in (dict, MappingProxyType):
+        mapping = cast(Mapping[object, object], value)
+        result: object = {key: _feedback_wire_value(nested) for key, nested in mapping.items()}
+    elif value_type is tuple:
+        result = [_feedback_wire_value(nested) for nested in cast(tuple[object, ...], value)]
+    elif value_type is list:
+        result = [_feedback_wire_value(nested) for nested in cast(list[object], value)]
+    elif isinstance(value, Enum):
+        result = value.value
+    else:
+        result = value
+    return result
+
+
+def _trusted_feedback_key_fingerprint(value: Mapping[str, object]) -> str:
+    """Fingerprint a key already validated by its record decoder or store."""
+    result = canonical_fingerprint(_feedback_wire_value(value))
+    return result
+
+
+def _feedback_state_from_validated_components(
+    policy: FeedbackPolicy,
+    statement_records: tuple[StatementFeedbackRecord, ...],
+    relationship_records: tuple[RelationshipFeedbackRecord, ...],
+    policy_suppressions: tuple[PolicySuppression, ...],
+    stale_exclusions: tuple[StaleExclusion, ...],
+    receipts: Mapping[str, object],
+    statement_evictions: object,
+    relationship_evictions: object,
+    policy_suppression_evictions: object,
+    stale_exclusion_evictions: object,
+    schema_version: int,
+) -> FeedbackState:
+    """Enforce state-wide invariants after every nested value was validated once."""
+    if schema_version != FEEDBACK_STATE_SCHEMA_VERSION:
+        raise InvalidRequestError(f"unsupported feedback state schema_version: {schema_version}")
+    if len(statement_records) > policy["max_statement_records"]:
+        raise InvalidRequestError("feedback statement records exceed policy capacity")
+    if len(relationship_records) > policy["max_relationship_records"]:
+        raise InvalidRequestError("feedback relationship records exceed policy capacity")
+    statement_fingerprints = tuple(_trusted_feedback_key_fingerprint(record["key"]) for record in statement_records)
+    relationship_fingerprints = tuple(_trusted_feedback_key_fingerprint(record["key"]) for record in relationship_records)
+    if len(set(statement_fingerprints)) != len(statement_fingerprints):
+        raise InvalidRequestError("feedback statement record keys must be unique")
+    if len(set(relationship_fingerprints)) != len(relationship_fingerprints):
+        raise InvalidRequestError("feedback relationship record keys must be unique")
+    if statement_fingerprints != tuple(sorted(statement_fingerprints)):
+        raise InvalidRequestError("feedback statement records must use canonical key order")
+    if relationship_fingerprints != tuple(sorted(relationship_fingerprints)):
+        raise InvalidRequestError("feedback relationship records must use canonical key order")
+    maximum_buckets = policy["max_buckets_per_record"]
+    if any(len(record["buckets"]) > maximum_buckets for record in statement_records):
+        raise InvalidRequestError("feedback statement record buckets exceed policy retention")
+    if any(len(record["buckets"]) > maximum_buckets for record in relationship_records):
+        raise InvalidRequestError("feedback relationship record buckets exceed policy retention")
+    if len(policy_suppressions) > policy["max_statement_records"]:
+        raise InvalidRequestError("feedback policy suppressions exceed policy capacity")
+    if len(stale_exclusions) > policy["max_statement_records"]:
+        raise InvalidRequestError("feedback stale exclusions exceed policy capacity")
+    suppression_keys = tuple(
+        (value["statement_id"], value["namespace"], value["policy_fingerprint"]) for value in policy_suppressions
+    )
+    exclusion_keys = tuple(
+        (value["statement_id"], value["generation"], value["generation_available"]) for value in stale_exclusions
+    )
+    if len(set(suppression_keys)) != len(suppression_keys):
+        raise InvalidRequestError("feedback policy suppressions must be unique")
+    if len(set(exclusion_keys)) != len(exclusion_keys):
+        raise InvalidRequestError("feedback stale exclusions must be unique")
+    if policy_suppressions != tuple(sorted(policy_suppressions, key=policy_suppression_signature)):
+        raise InvalidRequestError("feedback policy suppressions must use canonical order")
+    if stale_exclusions != tuple(sorted(stale_exclusions, key=stale_exclusion_signature)):
+        raise InvalidRequestError("feedback stale exclusions must use canonical order")
+    mutation_receipt_ledger_from_snapshot(receipts)
+    receipt_copy = json.loads(_json_text(receipts))
+    if not isinstance(receipt_copy, dict):
+        raise InvalidRequestError("feedback receipts must decode to an object")
+    result = _trusted_feedback_state(
+        policy,
+        statement_records,
+        relationship_records,
+        policy_suppressions,
+        stale_exclusions,
+        receipt_copy,
+        _integer(statement_evictions, "feedback statement_evictions", 0),
+        _integer(relationship_evictions, "feedback relationship_evictions", 0),
+        _integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
+        _integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
+    )
+    result["schema_version"] = schema_version
+    return result
+
+
 def feedback_state(
     policy: object = {},
     statement_records: object = (),
@@ -1587,63 +1890,22 @@ def feedback_state(
     validated_relationships = tuple(validate_relationship_feedback_record(record) for record in relationship_records)
     validated_suppressions = tuple(validate_policy_suppression(value) for value in policy_suppressions)
     validated_exclusions = tuple(validate_stale_exclusion(value) for value in stale_exclusions)
-    if len(validated_statements) > validated_policy["max_statement_records"]:
-        raise InvalidRequestError("feedback statement records exceed policy capacity")
-    if len(validated_relationships) > validated_policy["max_relationship_records"]:
-        raise InvalidRequestError("feedback relationship records exceed policy capacity")
-    statement_fingerprints = tuple(statement_feedback_key_fingerprint(record["key"]) for record in validated_statements)
-    relationship_fingerprints = tuple(relationship_feedback_key_fingerprint(record["key"]) for record in validated_relationships)
-    if len(set(statement_fingerprints)) != len(statement_fingerprints):
-        raise InvalidRequestError("feedback statement record keys must be unique")
-    if len(set(relationship_fingerprints)) != len(relationship_fingerprints):
-        raise InvalidRequestError("feedback relationship record keys must be unique")
-    if statement_fingerprints != tuple(sorted(statement_fingerprints)):
-        raise InvalidRequestError("feedback statement records must use canonical key order")
-    if relationship_fingerprints != tuple(sorted(relationship_fingerprints)):
-        raise InvalidRequestError("feedback relationship records must use canonical key order")
-    maximum_buckets = validated_policy["max_buckets_per_record"]
-    if any(len(record["buckets"]) > maximum_buckets for record in validated_statements):
-        raise InvalidRequestError("feedback statement record buckets exceed policy retention")
-    if any(len(record["buckets"]) > maximum_buckets for record in validated_relationships):
-        raise InvalidRequestError("feedback relationship record buckets exceed policy retention")
-    if len(validated_suppressions) > validated_policy["max_statement_records"]:
-        raise InvalidRequestError("feedback policy suppressions exceed policy capacity")
-    if len(validated_exclusions) > validated_policy["max_statement_records"]:
-        raise InvalidRequestError("feedback stale exclusions exceed policy capacity")
-    suppression_keys = tuple(
-        (value["statement_id"], value["namespace"], value["policy_fingerprint"]) for value in validated_suppressions
-    )
-    exclusion_keys = tuple(
-        (value["statement_id"], value["generation"], value["generation_available"]) for value in validated_exclusions
-    )
-    if len(set(suppression_keys)) != len(suppression_keys):
-        raise InvalidRequestError("feedback policy suppressions must be unique")
-    if len(set(exclusion_keys)) != len(exclusion_keys):
-        raise InvalidRequestError("feedback stale exclusions must be unique")
-    if validated_suppressions != tuple(sorted(validated_suppressions, key=policy_suppression_signature)):
-        raise InvalidRequestError("feedback policy suppressions must use canonical order")
-    if validated_exclusions != tuple(sorted(validated_exclusions, key=stale_exclusion_signature)):
-        raise InvalidRequestError("feedback stale exclusions must use canonical order")
     if not isinstance(receipts, Mapping):
         raise InvalidRequestError("feedback receipts must be an object")
     receipt_source = MutationReceiptLedger().snapshot() if receipts == {} else receipts
-    mutation_receipt_ledger_from_snapshot(receipt_source)
-    receipt_copy = json.loads(_json_text(receipt_source))
-    if not isinstance(receipt_copy, dict):
-        raise InvalidRequestError("feedback receipts must decode to an object")
-    result: FeedbackState = {
-        "policy": validated_policy,
-        "statement_records": validated_statements,
-        "relationship_records": validated_relationships,
-        "policy_suppressions": validated_suppressions,
-        "stale_exclusions": validated_exclusions,
-        "receipts": receipt_copy,
-        "statement_evictions": _integer(statement_evictions, "feedback statement_evictions", 0),
-        "relationship_evictions": _integer(relationship_evictions, "feedback relationship_evictions", 0),
-        "policy_suppression_evictions": _integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
-        "stale_exclusion_evictions": _integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
-        "schema_version": version,
-    }
+    result = _feedback_state_from_validated_components(
+        validated_policy,
+        validated_statements,
+        validated_relationships,
+        validated_suppressions,
+        validated_exclusions,
+        receipt_source,
+        statement_evictions,
+        relationship_evictions,
+        policy_suppression_evictions,
+        stale_exclusion_evictions,
+        version,
+    )
     return result
 
 
@@ -1667,19 +1929,7 @@ def validate_feedback_state(value: object) -> FeedbackState:
 
 def feedback_state_to_dict(value: object) -> dict[str, object]:
     current = validate_feedback_state(value)
-    result = {
-        "schema_version": current["schema_version"],
-        "policy": feedback_policy_to_dict(current["policy"]),
-        "statement_records": [statement_feedback_record_to_dict(record) for record in current["statement_records"]],
-        "relationship_records": [relationship_feedback_record_to_dict(record) for record in current["relationship_records"]],
-        "policy_suppressions": [policy_suppression_to_dict(value) for value in current["policy_suppressions"]],
-        "stale_exclusions": [stale_exclusion_to_dict(value) for value in current["stale_exclusions"]],
-        "receipts": json.loads(_json_text(current["receipts"])),
-        "statement_evictions": current["statement_evictions"],
-        "relationship_evictions": current["relationship_evictions"],
-        "policy_suppression_evictions": current["policy_suppression_evictions"],
-        "stale_exclusion_evictions": current["stale_exclusion_evictions"],
-    }
+    result = cast(dict[str, object], _feedback_wire_value(current))
     return result
 
 
@@ -1709,24 +1959,24 @@ def feedback_state_from_dict(value: object) -> FeedbackState:
     suppression_values = cast(list[Mapping[str, object]], data["policy_suppressions"])
     exclusion_values = cast(list[Mapping[str, object]], data["stale_exclusions"])
     parsed_statements = tuple(statement_feedback_record_from_dict(item) for item in statement_values)
-    statement_cache = {statement_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
+    statement_cache = {_trusted_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
     identity_cache: dict[str, QueryIdentity] = {}
     scope_cache: dict[str, ScopeKey] = {}
     parsed_relationships = tuple(
         relationship_feedback_record_from_dict(item, identity_cache, scope_cache, statement_cache) for item in relationship_values
     )
-    result = feedback_state(
-        schema_version=data["schema_version"],
-        policy=feedback_policy_from_dict(data["policy"]),
-        statement_records=parsed_statements,
-        relationship_records=parsed_relationships,
-        policy_suppressions=tuple(policy_suppression_from_dict(item) for item in suppression_values),
-        stale_exclusions=tuple(stale_exclusion_from_dict(item) for item in exclusion_values),
-        receipts=data["receipts"],
-        statement_evictions=data["statement_evictions"],
-        relationship_evictions=data["relationship_evictions"],
-        policy_suppression_evictions=data["policy_suppression_evictions"],
-        stale_exclusion_evictions=data["stale_exclusion_evictions"],
+    result = _feedback_state_from_validated_components(
+        feedback_policy_from_dict(data["policy"]),
+        parsed_statements,
+        parsed_relationships,
+        tuple(policy_suppression_from_dict(item) for item in suppression_values),
+        tuple(stale_exclusion_from_dict(item) for item in exclusion_values),
+        cast(Mapping[str, object], data["receipts"]),
+        data["statement_evictions"],
+        data["relationship_evictions"],
+        data["policy_suppression_evictions"],
+        data["stale_exclusion_evictions"],
+        _integer(data["schema_version"], "feedback state schema_version", 1),
     )
     return result
 
@@ -1743,12 +1993,39 @@ FeedbackMutationCandidate = TypedDict(
 )
 
 
+class _PreparedFeedbackState(dict[str, object]):
+    """Opaque link between a returned state projection and its off-live owner."""
+
+    def __init__(self, state: FeedbackState, target: object, candidate: object) -> None:
+        super().__init__(state)
+        self["receipts"] = json.loads(_json_text(state["receipts"]))
+        self.target = target
+        self.candidate = candidate
+        self.canonical = state
+
+
 def feedback_mutation_candidate(before: object, after: object, receipt: object, replayed: object) -> FeedbackMutationCandidate:
     result: FeedbackMutationCandidate = {
         "before": validate_feedback_state(before),
         "after": validate_feedback_state(after),
         "receipt": validate_mutation_receipt(receipt),
         "replayed": _boolean(replayed, "feedback mutation replayed"),
+    }
+    return result
+
+
+def _trusted_feedback_mutation_candidate(
+    before: FeedbackState,
+    after: FeedbackState,
+    receipt: MutationReceipt,
+    replayed: bool,
+) -> FeedbackMutationCandidate:
+    """Build a candidate from isolated store snapshots and a ledger-owned receipt."""
+    result: FeedbackMutationCandidate = {
+        "before": before,
+        "after": _trusted_feedback_state_copy(after) if after is before else after,
+        "receipt": validate_mutation_receipt(receipt),
+        "replayed": replayed,
     }
     return result
 
@@ -1762,8 +2039,8 @@ def validate_feedback_mutation_candidate(value: object) -> FeedbackMutationCandi
 def _new_statement_record(observation: FeedbackObservation, policy: FeedbackPolicy) -> StatementFeedbackRecord:
     statistics = feedback_statistics_increment(feedback_statistics(), observation["outcome"])
     bucket = feedback_bucket(_bucket_start(observation["observed_at"], policy["bucket_seconds"]), statistics)
-    result = statement_feedback_record(
-        feedback_observation_statement_key(observation),
+    result = _trusted_statement_feedback_record(
+        _trusted_feedback_observation_statement_key(observation),
         statistics,
         (bucket,),
         observation["outcome"],
@@ -1775,8 +2052,9 @@ def _new_statement_record(observation: FeedbackObservation, policy: FeedbackPoli
 def _new_relationship_record(observation: FeedbackObservation, policy: FeedbackPolicy) -> RelationshipFeedbackRecord:
     statistics = feedback_statistics_increment(feedback_statistics(), observation["outcome"])
     bucket = feedback_bucket(_bucket_start(observation["observed_at"], policy["bucket_seconds"]), statistics)
-    result = relationship_feedback_record(
-        feedback_observation_relationship_key(observation),
+    statement_key = _trusted_feedback_observation_statement_key(observation)
+    result = _trusted_relationship_feedback_record(
+        _trusted_feedback_observation_relationship_key(observation, statement_key),
         statistics,
         (bucket,),
         observation["outcome"],
@@ -1825,29 +2103,46 @@ class FeedbackStore:
         self._install(validated_state)
 
     def _install(self, state: FeedbackState) -> None:
-        validated_state = validate_feedback_state(state)
-        self._state = validated_state
+        policy = cast(FeedbackPolicy, _freeze_feedback_value(state["policy"]))
+        statement_records = tuple(
+            cast(StatementFeedbackRecord, _freeze_feedback_value(record)) for record in state["statement_records"]
+        )
+        relationship_records = tuple(
+            cast(RelationshipFeedbackRecord, _freeze_feedback_value(record)) for record in state["relationship_records"]
+        )
+        policy_suppressions = tuple(
+            cast(PolicySuppression, _freeze_feedback_value(value)) for value in state["policy_suppressions"]
+        )
+        stale_exclusions = tuple(cast(StaleExclusion, _freeze_feedback_value(value)) for value in state["stale_exclusions"])
         self._state_dirty = False
-        self._policy = validated_state["policy"]
-        self._statement_records = {
-            statement_feedback_key_fingerprint(record["key"]): record for record in validated_state["statement_records"]
-        }
+        self._policy = policy
+        self._statement_records = {statement_feedback_key_fingerprint(record["key"]): record for record in statement_records}
         self._relationship_records = {
-            relationship_feedback_key_fingerprint(record["key"]): record for record in validated_state["relationship_records"]
+            relationship_feedback_key_fingerprint(record["key"]): record for record in relationship_records
         }
         self._policy_suppressions = {
-            (value["statement_id"], value["namespace"], value["policy_fingerprint"]): value
-            for value in validated_state["policy_suppressions"]
+            (value["statement_id"], value["namespace"], value["policy_fingerprint"]): value for value in policy_suppressions
         }
         self._stale_exclusions = {
-            (value["statement_id"], value["generation"], value["generation_available"]): value
-            for value in validated_state["stale_exclusions"]
+            (value["statement_id"], value["generation"], value["generation_available"]): value for value in stale_exclusions
         }
-        self._receipts = mutation_receipt_ledger_from_snapshot(validated_state["receipts"])
-        self._statement_evictions = validated_state["statement_evictions"]
-        self._relationship_evictions = validated_state["relationship_evictions"]
-        self._policy_suppression_evictions = validated_state["policy_suppression_evictions"]
-        self._stale_exclusion_evictions = validated_state["stale_exclusion_evictions"]
+        self._receipts = mutation_receipt_ledger_from_snapshot(state["receipts"])
+        self._statement_evictions = state["statement_evictions"]
+        self._relationship_evictions = state["relationship_evictions"]
+        self._policy_suppression_evictions = state["policy_suppression_evictions"]
+        self._stale_exclusion_evictions = state["stale_exclusion_evictions"]
+        self._state = _trusted_feedback_state(
+            policy,
+            statement_records,
+            relationship_records,
+            policy_suppressions,
+            stale_exclusions,
+            self._receipts.snapshot(),
+            self._statement_evictions,
+            self._relationship_evictions,
+            self._policy_suppression_evictions,
+            self._stale_exclusion_evictions,
+        )
 
     @property
     def policy(self) -> FeedbackPolicy:
@@ -1857,39 +2152,30 @@ class FeedbackStore:
     def snapshot(self) -> FeedbackState:
         with self._lock:
             if not self._state_dirty:
-                result = validate_feedback_state(self._state)
+                result = _trusted_feedback_state_copy(self._state)
                 return result
-            state = feedback_state(
-                policy=self._policy,
-                statement_records=tuple(
-                    sorted(
-                        self._statement_records.values(),
-                        key=lambda record: statement_feedback_key_fingerprint(record["key"]),
-                    )
-                ),
-                relationship_records=tuple(
-                    sorted(
-                        self._relationship_records.values(),
-                        key=lambda record: relationship_feedback_key_fingerprint(record["key"]),
-                    )
-                ),
-                policy_suppressions=tuple(sorted(self._policy_suppressions.values(), key=policy_suppression_signature)),
-                stale_exclusions=tuple(sorted(self._stale_exclusions.values(), key=stale_exclusion_signature)),
-                receipts=self._receipts.snapshot(),
-                statement_evictions=self._statement_evictions,
-                relationship_evictions=self._relationship_evictions,
-                policy_suppression_evictions=self._policy_suppression_evictions,
-                stale_exclusion_evictions=self._stale_exclusion_evictions,
+            state = _trusted_feedback_state(
+                self._policy,
+                tuple(record for _, record in sorted(self._statement_records.items())),
+                tuple(record for _, record in sorted(self._relationship_records.items())),
+                tuple(sorted(self._policy_suppressions.values(), key=policy_suppression_signature)),
+                tuple(sorted(self._stale_exclusions.values(), key=stale_exclusion_signature)),
+                self._receipts.snapshot(),
+                self._statement_evictions,
+                self._relationship_evictions,
+                self._policy_suppression_evictions,
+                self._stale_exclusion_evictions,
             )
             self._state = state
             self._state_dirty = False
-            result = validate_feedback_state(state)
+            result = _trusted_feedback_state_copy(state)
             return result
 
     def _candidate_copy(self) -> FeedbackStore:
         """Create one shallow off-live owner while sharing immutable records."""
 
-        candidate = FeedbackStore()
+        candidate = object.__new__(FeedbackStore)
+        candidate._lock = threading.RLock()
         candidate._state = self._state
         candidate._state_dirty = False
         candidate._policy = self._policy
@@ -1897,7 +2183,7 @@ class FeedbackStore:
         candidate._relationship_records = dict(self._relationship_records)
         candidate._policy_suppressions = dict(self._policy_suppressions)
         candidate._stale_exclusions = dict(self._stale_exclusions)
-        candidate._receipts = mutation_receipt_ledger_from_snapshot(self._receipts.snapshot())
+        candidate._receipts = self._receipts._trusted_clone()
         candidate._statement_evictions = self._statement_evictions
         candidate._relationship_evictions = self._relationship_evictions
         candidate._policy_suppression_evictions = self._policy_suppression_evictions
@@ -1905,47 +2191,69 @@ class FeedbackStore:
         return candidate
 
     def replace_from_snapshot(self, state: FeedbackState) -> None:
+        if isinstance(state, _PreparedFeedbackState) and state.target is self and isinstance(state.candidate, FeedbackStore):
+            if dict(state) != state.canonical:
+                raise InvalidRequestError("prepared feedback state was modified before publication")
+            candidate = state.candidate
+            with self._lock, candidate._lock:
+                self._state = candidate._state
+                self._state_dirty = candidate._state_dirty
+                self._policy = candidate._policy
+                self._statement_records = dict(candidate._statement_records)
+                self._relationship_records = dict(candidate._relationship_records)
+                self._policy_suppressions = dict(candidate._policy_suppressions)
+                self._stale_exclusions = dict(candidate._stale_exclusions)
+                self._receipts = candidate._receipts._trusted_clone()
+                self._statement_evictions = candidate._statement_evictions
+                self._relationship_evictions = candidate._relationship_evictions
+                self._policy_suppression_evictions = candidate._policy_suppression_evictions
+                self._stale_exclusion_evictions = candidate._stale_exclusion_evictions
+            return
         validated_state = validate_feedback_state(state)
         with self._lock:
             self._install(validated_state)
 
     def _apply_observation(self, observation: FeedbackObservation) -> None:
-        validated_observation = validate_feedback_observation(observation)
         self._state_dirty = True
-        statement_key = feedback_observation_statement_key(validated_observation)
-        statement_fingerprint = statement_feedback_key_fingerprint(statement_key)
+        statement_key = _trusted_feedback_observation_statement_key(observation)
+        statement_fingerprint = _trusted_feedback_key_fingerprint(statement_key)
         statement = self._statement_records.get(statement_fingerprint)
         if statement:
-            updated_statement = statement_feedback_record_apply(statement, validated_observation, self._policy)
+            updated_statement = _trusted_statement_feedback_record_apply(statement, observation, self._policy)
         else:
-            updated_statement = _new_statement_record(validated_observation, self._policy)
-        self._statement_records[statement_fingerprint] = updated_statement
-        relationship_key = feedback_observation_relationship_key(validated_observation)
-        relationship_fingerprint = relationship_feedback_key_fingerprint(relationship_key)
+            updated_statement = _new_statement_record(observation, self._policy)
+        self._statement_records[statement_fingerprint] = cast(StatementFeedbackRecord, _freeze_feedback_value(updated_statement))
+        relationship_key = _trusted_feedback_observation_relationship_key(observation, statement_key)
+        relationship_fingerprint = _trusted_feedback_key_fingerprint(relationship_key)
         relationship = self._relationship_records.get(relationship_fingerprint)
         if relationship:
-            updated_relationship = relationship_feedback_record_apply(relationship, validated_observation, self._policy)
+            updated_relationship = _trusted_relationship_feedback_record_apply(relationship, observation, self._policy)
         else:
-            updated_relationship = _new_relationship_record(validated_observation, self._policy)
-        self._relationship_records[relationship_fingerprint] = updated_relationship
-        suppression_key = (
-            validated_observation["statement_id"],
-            validated_observation["scope"]["namespace"],
-            validated_observation["policy_fingerprint"],
+            updated_relationship = _new_relationship_record(observation, self._policy)
+        self._relationship_records[relationship_fingerprint] = cast(
+            RelationshipFeedbackRecord, _freeze_feedback_value(updated_relationship)
         )
-        if validated_observation["outcome"] == FeedbackOutcome.REJECTED_POLICY:
-            self._policy_suppressions[suppression_key] = policy_suppression(*suppression_key, validated_observation["observed_at"])
-        elif validated_observation["outcome"] == FeedbackOutcome.ACCEPTED:
+        suppression_key = (
+            observation["statement_id"],
+            observation["scope"]["namespace"],
+            observation["policy_fingerprint"],
+        )
+        if observation["outcome"] == FeedbackOutcome.REJECTED_POLICY:
+            self._policy_suppressions[suppression_key] = cast(
+                PolicySuppression,
+                _freeze_feedback_value(policy_suppression(*suppression_key, observation["observed_at"])),
+            )
+        elif observation["outcome"] == FeedbackOutcome.ACCEPTED:
             self._policy_suppressions.pop(suppression_key, {})
-        if validated_observation["outcome"] == FeedbackOutcome.REJECTED_STALE:
+        if observation["outcome"] == FeedbackOutcome.REJECTED_STALE:
             exclusion = stale_exclusion(
-                validated_observation["statement_id"],
-                validated_observation["generation"],
-                validated_observation["generation_available"],
-                validated_observation["observed_at"],
+                observation["statement_id"],
+                observation["generation"],
+                observation["generation_available"],
+                observation["observed_at"],
             )
             exclusion_key = (exclusion["statement_id"], exclusion["generation"], exclusion["generation_available"])
-            self._stale_exclusions[exclusion_key] = exclusion
+            self._stale_exclusions[exclusion_key] = cast(StaleExclusion, _freeze_feedback_value(exclusion))
 
     def _enforce_capacity(self) -> None:
         while len(self._statement_records) > self._policy["max_statement_records"]:
@@ -1989,6 +2297,19 @@ class FeedbackStore:
         if len(observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError(f"feedback observations exceed the limit of {MAX_FEEDBACK_OBSERVATIONS}")
         validated_observations = tuple(validate_feedback_observation(observation) for observation in observations)
+        result = self._prepare_validated(request_id, validated_observations, lifecycle_status)
+        return result
+
+    def _prepare_validated(
+        self,
+        request_id: str,
+        validated_observations: tuple[FeedbackObservation, ...],
+        lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
+    ) -> FeedbackMutationCandidate:
+        """Prepare observations already validated by an internal service boundary."""
+        _text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
+        if not validated_observations or len(validated_observations) > MAX_FEEDBACK_OBSERVATIONS:
+            raise InvalidRequestError("validated feedback observations must be a non-empty bounded tuple")
         if not isinstance(lifecycle_status, LifecycleHandoffStatus):
             raise InvalidRequestError("feedback lifecycle_status must be LifecycleHandoffStatus")
         signature = _feedback_payload_signature(validated_observations)
@@ -1996,7 +2317,7 @@ class FeedbackStore:
             before = self.snapshot()
             lookup = self._receipts.lookup(request_id, MutationOperation.RECORD_FEEDBACK, signature)
             if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
-                result = feedback_mutation_candidate(before, before, receipt_lookup_receipt(lookup), True)
+                result = _trusted_feedback_mutation_candidate(before, before, receipt_lookup_receipt(lookup), True)
                 return result
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"feedback request_id is associated with a different observation: {request_id}")
@@ -2027,8 +2348,8 @@ class FeedbackStore:
                 created_at=max(observation["observed_at"] for observation in validated_observations),
             )
             candidate._receipts.record(receipt)
-            after = candidate.snapshot()
-            result = feedback_mutation_candidate(before, after, receipt, False)
+            after = cast(FeedbackState, _PreparedFeedbackState(candidate.snapshot(), self, candidate))
+            result = _trusted_feedback_mutation_candidate(before, after, receipt, False)
             return result
 
     def history(
@@ -2126,6 +2447,16 @@ class FeedbackStore:
         _text(statement_id, "stale exclusion statement_id", MAX_STATEMENT_ID_BYTES)
         _integer(current_generation, "stale exclusion current_generation", 0)
         _boolean(generation_available, "stale exclusion generation_available")
+        result = self._trusted_stale_excluded(statement_id, current_generation, generation_available)
+        return result
+
+    def _trusted_stale_excluded(
+        self,
+        statement_id: str,
+        current_generation: int,
+        generation_available: bool = True,
+    ) -> bool:
+        """Check a validated in-process eligibility tuple."""
         result = False
         with self._lock:
             for exclusion in self._stale_exclusions.values():
@@ -2143,8 +2474,13 @@ class FeedbackStore:
         _text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
         _text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
         policy_value = _fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
+        result = self._trusted_policy_suppressed(statement_id, namespace, policy_value)
+        return result
+
+    def _trusted_policy_suppressed(self, statement_id: str, namespace: str, policy_fingerprint: str) -> bool:
+        """Check a validated in-process policy-suppression tuple."""
         with self._lock:
-            result = (statement_id, namespace, policy_value) in self._policy_suppressions
+            result = (statement_id, namespace, policy_fingerprint) in self._policy_suppressions
         return result
 
     def inspect(self, limit: int = MAX_INSPECTION_RECORDS) -> dict[str, object]:

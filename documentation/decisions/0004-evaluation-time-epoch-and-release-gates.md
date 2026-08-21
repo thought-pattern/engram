@@ -1,5 +1,7 @@
 # ADR 0004: Evaluation time, knowledge epoch, and first release gates
 
+**Timing-policy update (2026-08-20):** Numerical latency gates in this decision are superseded. Benchmarks report p50, p95, p99, and maximum turn lengths without making timing a pass/fail condition.
+
 - Status: Accepted
 - Date: 2026-08-11
 - Applies from: All increments
@@ -29,7 +31,7 @@ The first release gates are measured with the Section 0 harness and its declared
 | Persistence at 5,000 artifacts | Atomic save p95 at most 600 ms; load p95 at most 350 ms; neither more than 25% above baseline |
 | Peak measured build memory at 5,000 artifacts | At most 11 MiB and no more than 25% above the matching Section 0 path |
 
-Latency gates use at least 30 samples after warm-up and report p50 and p95. Accuracy tuning, release-gate evaluation, and final testing use disjoint datasets. A direct-answer correctness regression blocks promotion even if recall or latency improves.
+Timing measurements use at least 30 samples after warm-up and report p50 and p95 without a timing verdict. Accuracy tuning, release-gate evaluation, and final testing use disjoint datasets. A direct-answer correctness regression blocks promotion even if recall improves.
 
 ## Consequences
 
@@ -37,4 +39,3 @@ Latency gates use at least 30 samples after warm-up and report p50 and p95. Accu
 - Negative results cannot survive a relevant knowledge change unnoticed.
 - The gates are strict enough to detect regressions yet allow the measured eager startup and current scan baseline while indexes are built.
 - New machine classes require a recorded baseline and explicit gate translation; they do not silently replace this artifact.
-

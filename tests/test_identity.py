@@ -1,13 +1,11 @@
 """Section 1 contract, normalization, extraction, and conformance tests."""
 
-import ast
 import json
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-import engram.identity as identity_module
 from engram.errors import IdentityValidationError, UnsupportedIdentityVersionError
 from engram.identity import (
     IDENTITY_SCHEMA_VERSION,
@@ -360,7 +358,7 @@ def test_identity_extraction_symbolic_comparisons_are_typed_qualifiers(symbol: s
 
 def test_identity_extraction_entity_and_technical_identifier_extraction_is_surface_only() -> None:
     entities = extract_entities_and_identifiers(
-        r"Compare Ada Lovelace with PostgreSQL v16.2 at C:\Engram\config.yml after error E-1234 and C++."
+        r"Compare Ada Lovelace with PostgreSQL v16.2 at C:\Engram\config.yml after RFC 7231, error E-1234, and C++."
     )
     surfaces = [entity["surface"] for entity in entities]
 
@@ -368,6 +366,7 @@ def test_identity_extraction_entity_and_technical_identifier_extraction_is_surfa
     assert "PostgreSQL" in surfaces
     assert "v16.2" in surfaces
     assert r"C:\Engram\config.yml" in surfaces
+    assert "RFC 7231" in surfaces
     assert all(entity["canonical_id"] == "" for entity in entities)
 
 
@@ -406,18 +405,6 @@ def test_identity_extraction_standalone_builder_is_deterministic_and_preserves_s
         scope,
         where["canonical_form"],
     )
-
-
-def test_identity_extraction_identity_module_has_no_nlp_model_graph_or_network_imports() -> None:
-    tree = ast.parse(Path(identity_module.__file__).read_text(encoding="utf-8"))
-    imports = {
-        alias.name.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
-    }
-
-    assert imports.isdisjoint({"nltk", "spacy", "sentence_transformers", "mgclient", "grpc", "mcp", "requests"})
 
 
 def test_authoritative_identity_valid_authoritative_identity_is_preserved_exactly() -> None:

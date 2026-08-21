@@ -12,7 +12,7 @@ import json
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +24,7 @@ from engram.config import engram_config
 from engram.constants import (
     DEFAULT_SEED_PATH,
     EMPTY_CONFIG,
+    EMPTY_MAPPING,
     EMPTY_METADATA,
     MAX_TRANSIENT_RECORDS,
     PROPOSAL_TTL_SECONDS,
@@ -32,6 +33,7 @@ from engram.constants import (
     DurabilityState,
     Tier,
 )
+from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
 from engram.conversation import ConversationRuntime, statement_view
 from engram.coordination import (
     AtomicMutationCoordinator,
@@ -48,6 +50,7 @@ from engram.errors import (
     InvalidRequestError,
     LifecycleError,
     PersistenceError,
+    ResolutionCancelledError,
     ResourceNotFoundError,
 )
 from engram.feedback import (
@@ -58,6 +61,7 @@ from engram.feedback import (
     LifecycleHandoffStatus,
     NegativeResolutionKey,
     NegativeResolutionStore,
+    _trusted_feedback_observation,
     canonical_fingerprint,
     canonical_utc,
     constraint_fingerprint,
@@ -104,6 +108,7 @@ from engram.resolvers import (
     resolver_contract,
 )
 from engram.responses import AcceptedResponseService, LifecycleMutationReason
+from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_rewrite_corpus
 from engram.text import normalize
 
 
@@ -200,6 +205,11 @@ def normalize_service_user_id(user_id: str) -> str:
         raise InvalidRequestError(str(error)) from error
 
 
+def _no_cancellation_check() -> None:
+    """Provide the concrete no-op cancellation operation."""
+    return
+
+
 def negative_resolution_admissible(value: ResolutionResult, plan) -> bool:
     """Return whether a complete knowledge miss is safe to cache negatively."""
     try:
@@ -254,8 +264,6 @@ def negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
     current_ns = time.monotonic_ns()
     elapsed_ns = max(0, current_ns - started_ns)
     exhausted = set()
-    if frame["budget"]["deadline_ns"] and current_ns >= frame["budget"]["deadline_ns"]:
-        exhausted.add("total_time")
     diagnostics = {
         "diagnostic_id": frame["diagnostic_id"],
         "negative_resolution": {
@@ -360,6 +368,9 @@ class EngramCore:
             ),
         )
         self._query_frame_builder = QueryFrameBuilder(self.engram, time.monotonic_ns, self._clock)
+        self._rewrite_engine: object = (
+            RewriteEngine(load_default_rewrite_corpus()) if self.engram.config["retrieval_rewrites_enabled"] else ()
+        )
         self._resolver_registry = ResolverRegistry(
             (
                 ExactResolver(self.engram, time.monotonic_ns),
@@ -387,7 +398,6 @@ class EngramCore:
                     self.engram.feedback_store,
                     fusion_policy_value,
                 ),
-                clock_ns=time.monotonic_ns,
             ),
         )
 
@@ -463,7 +473,7 @@ class EngramCore:
         for statement_id in statement_ids:
             generation, generation_available = self._candidate_generation(statement_id, resolution)
             observations.append(
-                feedback_observation(
+                _trusted_feedback_observation(
                     reference_kind=reference_kind,
                     reference_id=reference_id,
                     kind=kind,
@@ -488,7 +498,7 @@ class EngramCore:
         observations: tuple[FeedbackObservation, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict[str, object]:
-        candidate = self.engram.feedback_store.prepare(request_id, observations, lifecycle_status)
+        candidate = self.engram.feedback_store._prepare_validated(request_id, observations, lifecycle_status)
         durable = False
         if not candidate["replayed"]:
             if self.store_path and self.checkpoint_on_mutation:
@@ -571,7 +581,7 @@ class EngramCore:
         for statement_id in statement_ids:
             artifact = repository.get(statement_id)
             values.append(
-                feedback_observation(
+                _trusted_feedback_observation(
                     reference_kind=FeedbackReferenceKind.REGULATED_PROPOSAL,
                     reference_id=proposal_id,
                     kind=FeedbackObservationKind.CANDIDACY,
@@ -654,30 +664,37 @@ class EngramCore:
         request: str,
         request_id: str,
         *,
+        user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        identity=(),
+        identity: Mapping[str, object] = EMPTY_MAPPING,
         required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
-        budget=(),
+        budget: Mapping[str, object] = EMPTY_MAPPING,
         configured_resolvers: tuple[str, ...] = (),
         accept_exact: bool = False,
+        cancellation_check: object = (),
     ) -> ResolutionResult:
         """Run one transport-neutral bounded resolution pipeline."""
         with self.lock:
             self._require_running()
             require_service_text(request, "request")
             require_service_text(request_id, "request_id")
+            normalized_user_id = normalize_service_user_id(user_id)
             require_service_string(namespace, "namespace")
             require_service_string(context_fingerprint, "context_fingerprint")
             require_service_string(required_source_label, "required_source_label")
+            if not isinstance(identity, Mapping):
+                raise InvalidRequestError("identity must be an object")
+            if not isinstance(budget, Mapping):
+                raise InvalidRequestError("budget must be an object")
             selected_identity = {}
             if identity:
                 try:
                     selected_identity = validate_query_identity(identity)
                 except IdentityValidationError as error:
                     raise InvalidRequestError("identity must be a QueryIdentity") from error
-            selected_budget: object = ()
+            selected_budget: object = EMPTY_MAPPING
             if budget:
                 try:
                     selected_budget = validate_resolution_budget(budget)
@@ -691,11 +708,21 @@ class EngramCore:
                 raise InvalidRequestError("configured_resolvers must be a tuple of non-empty strings")
             if not isinstance(accept_exact, bool):
                 raise InvalidRequestError("accept_exact must be a boolean")
+            if cancellation_check != () and not callable(cancellation_check):
+                raise InvalidRequestError("cancellation_check must be callable")
+            selected_cancellation_check = (
+                cast(Callable[[], object], cancellation_check) if callable(cancellation_check) else _no_cancellation_check
+            )
+
+            def check_cancellation() -> None:
+                selected_cancellation_check()
+
+            check_cancellation()
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
             signature_budget.pop("started_ns")
-            signature_budget.pop("deadline_ns")
             signature = service_request_signature(
                 request=request,
+                user_id=normalized_user_id,
                 namespace=namespace,
                 context_fingerprint=context_fingerprint,
                 identity=query_identity_to_dict(selected_identity) if selected_identity else {},
@@ -706,6 +733,7 @@ class EngramCore:
                 accept_exact=accept_exact,
             )
             if request_id in self._resolution_requests:
+                check_cancellation()
                 prior = self._resolution_requests[request_id]
                 prior_signature = prior["signature"]
                 if prior_signature != signature:
@@ -727,11 +755,45 @@ class EngramCore:
                 diagnostic_seed=request_id,
                 budget=selected_budget,
             )
+            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
+            with self.engram.session_lock:
+                prior_turn = session.get("query_frame_turn", 0)
+                if isinstance(prior_turn, bool) or not isinstance(prior_turn, int) or not 0 <= prior_turn <= 1_000_000:
+                    raise LifecycleError("user contextual query-frame turn is malformed")
+                if prior_turn == 1_000_000:
+                    prior_turn = 0
+                    session["previous_query_frame"] = {}
+                current_turn = prior_turn + 1
+                previous_query_frame = session.get("previous_query_frame", {})
+                if not isinstance(previous_query_frame, Mapping):
+                    raise LifecycleError("user previous query frame is malformed")
+                topic = session.get("active_topic", "") or session.get("predicates", {}).get("topic", "")
+                if not isinstance(topic, str):
+                    raise LifecycleError("user contextual topic is malformed")
+            frame = enrich_query_frame(
+                frame,
+                previous=previous_query_frame,
+                current_turn=current_turn,
+                topic=topic,
+            )
+            if isinstance(self._rewrite_engine, RewriteEngine):
+                frame = apply_rewrites_to_frame(frame, self._rewrite_engine, check_cancellation)
+
+            def remember_contextual_frame() -> None:
+                compact = compact_query_frame_from_frame(frame, source_turn=current_turn, topic=topic)
+                with self.engram.session_lock:
+                    session["previous_query_frame"] = compact
+                    session["query_frame_turn"] = current_turn
+                    session["last_active"] = self._clock()
+                self._dirty = True
+                self._checkpoint()
+
             negative_started_ns = time.monotonic_ns()
             plan = self._resolver_registry.plan(frame, configured_resolvers)
             negative_key = empty_negative_resolution()["key"]
             negative_key_available = False
             try:
+                check_cancellation()
                 negative_key, negative_key_available = self._negative_key(frame, plan)
                 if negative_key_available:
                     negative_lookup = self._negative_resolutions.lookup(
@@ -753,8 +815,11 @@ class EngramCore:
                             evicted_request_id = next(iter(self._resolution_requests))
                             self._resolution_requests.pop(evicted_request_id)
                             self._resolution_accounting.discard(evicted_request_id)
+                        remember_contextual_frame()
                         public_result = validate_resolution_result(cached_result)
                         return public_result
+            except ResolutionCancelledError:
+                raise
             except Exception:
                 # Negative resolution is an optimization and always fails open.
                 negative_key_available = False
@@ -763,6 +828,7 @@ class EngramCore:
                 request_id,
                 configured_names=configured_resolvers,
                 accept_exact=accept_exact,
+                cooperative_check=selected_cancellation_check,
             )
             if negative_key_available and negative_resolution_admissible(result, plan):
                 with contextlib.suppress(Exception):
@@ -796,6 +862,7 @@ class EngramCore:
                 evicted_request_id = next(iter(self._resolution_requests))
                 self._resolution_requests.pop(evicted_request_id)
                 self._resolution_accounting.discard(evicted_request_id)
+            remember_contextual_frame()
             public_result = validate_resolution_result(cached_result)
             return public_result
 
@@ -1143,10 +1210,10 @@ class EngramCore:
                     return result
                 artifact = feedback_artifacts.get(statement["id"])
                 generation = artifact["generation"] if artifact else 0
-                if self.engram.feedback_store.stale_excluded(statement["id"], generation, bool(artifact)):
+                if self.engram.feedback_store._trusted_stale_excluded(statement["id"], generation, bool(artifact)):
                     result = False
                     return result
-                if self.engram.feedback_store.policy_suppressed(statement["id"], namespace, feedback_policy_value):
+                if self.engram.feedback_store._trusted_policy_suppressed(statement["id"], namespace, feedback_policy_value):
                     result = False
                     return result
                 template = statement.get("template", {})

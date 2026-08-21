@@ -3,6 +3,7 @@
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -14,9 +15,9 @@ from engram.artifacts import (
     artifact_statistics,
     cached_response_artifact,
 )
-from engram.constants import Tier
+from engram.constants import EMPTY_MAPPING, Tier
 from engram.core import Engram
-from engram.errors import ConflictError, InvalidRequestError
+from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, FusionPolicyReason, permissive_candidate_authority
 from engram.graph import (
     CLAIM_PROJECTION_FIELDS,
@@ -38,6 +39,7 @@ from engram.resolution import (
     EvidenceReference,
     QueryFrame,
     QueryFrameBuilder,
+    ResolutionBudget,
     ResolutionOutcome,
     ResolverResult,
     ResolverState,
@@ -147,13 +149,9 @@ def frame(
     namespace: str = "tenant-a",
     required_metadata=(),
     required_source_label: str = "",
-    budget=(),
+    budget: object = EMPTY_MAPPING,
 ):
-    selected_budget = budget or capture_resolution_budget(
-        lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
-    )
+    selected_budget = cast(ResolutionBudget, budget) if budget is not EMPTY_MAPPING else capture_resolution_budget(lambda: START_NS)
     result = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         request,
         scope_key(namespace=namespace),
@@ -168,7 +166,6 @@ def frame(
 def resolver_budget(query_frame) -> ResolverBudget:
     budget = query_frame["budget"]
     result = build_resolver_budget(
-        deadline_ns=budget["deadline_ns"],
         max_candidates=budget["max_candidates"],
         max_graph_rows=budget["max_graph_rows"],
         max_vector_results=budget["max_vector_results"],
@@ -703,10 +700,15 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
         "graph_vector_claim_projections",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("deadline")),
     )
-    exhausted = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, lease)
+    failed = ResolverExecutor(lambda: START_NS).execute(
+        query_frame,
+        ResolverRegistry((SupportSemanticResolver(engine, lambda: START_NS),)).plan(query_frame),
+    )["results"][0]
 
-    assert exhausted["state"] == ResolverState.EXHAUSTED
-    assert exhausted["reason_code"] == "resolver_time_budget"
+    assert failed["state"] == ResolverState.FAILED
+    assert failed["reason_code"] == "resolver_exception"
+    assert failed["diagnostics"]["exception_type"] == "TimeoutError"
+    assert failed["consumption"]["exhausted_dimensions"] == ()
 
 
 def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
@@ -771,8 +773,6 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
         namespace="",
         budget=capture_resolution_budget(
             lambda: START_NS,
-            total_time_ms=100,
-            resolver_time_ms=25,
             max_candidates=1,
         ),
     )
@@ -1007,7 +1007,7 @@ def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded
         ResolverRegistry((lexical, SupportSemanticResolver(engine, lambda: START_NS))),
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
-        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-candidate-plus-excluded-claim")
@@ -1068,8 +1068,6 @@ def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch)
     monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_output_bytes=4_096,
     )
     query_frame = frame(engine, "Ada", namespace="", budget=selected_budget)
@@ -1124,8 +1122,6 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_evidence_bytes=single_package_bytes,
     )
     query_frame = frame(engine, "Ada", namespace="", budget=selected_budget)
@@ -1159,8 +1155,6 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
     monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_diagnostic_bytes=0,
     )
     query_frame = frame(engine, "Ada", namespace="", budget=selected_budget)
@@ -1196,7 +1190,7 @@ def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted
     registry = ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),))
     executor = ResolverExecutor(lambda: START_NS)
     probe_execution = executor.execute(base_frame, registry.plan(base_frame))
-    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority)
     fusion_required = fusion.decide(
         base_frame,
         (),
@@ -1226,43 +1220,6 @@ def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted
     assert "claim_evidence_memory_exhausted" in result["reason_codes"]
     assert "working_memory_bytes" in result["budget"]["exhausted_dimensions"]
     assert result["budget"]["working_memory_bytes"] == memory_limit
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
-    assert finalization["candidate_statement_ids"] == ()
-
-
-def test_orchestrator_deadline_stops_claim_policy_and_package_publication(monkeypatch) -> None:
-    engine = Engram()
-    discovered = _structured_claim_projection("claim-deadline")
-    current = _current_claim_projection(discovered)
-    monkeypatch.setattr(
-        engine,
-        "structured_claim_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
-    )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
-    query_frame = frame(engine, "Ada", namespace="")
-    raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
-    calls = 0
-
-    def deadline_clock() -> int:
-        nonlocal calls
-        calls += 1
-        result = START_NS if calls <= 6 else query_frame["budget"]["deadline_ns"]
-        return result
-
-    orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((FakeResolver("structured_graph", raw),)),
-        ResolverExecutor(deadline_clock),
-        ResolutionAccountingFinalizer(engine),
-    )
-
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-deadline")
-
-    assert result["outcome"] == ResolutionOutcome.MISS
-    assert result["evidence_package_available"] is False
-    assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_deadline_exhausted" in result["reason_codes"]
-    assert "total_time" in result["budget"]["exhausted_dimensions"]
     assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
@@ -1467,8 +1424,6 @@ def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
         namespace="",
         budget=capture_resolution_budget(
             lambda: START_NS,
-            total_time_ms=100,
-            resolver_time_ms=25,
             allowed_cost_classes=(CostClass.EXACT, CostClass.CHEAP),
         ),
     )
@@ -1507,6 +1462,61 @@ def test_registry_translates_availability_failures_without_aborting_plan() -> No
     assert [result["state"] for result in execution["results"]] == [ResolverState.UNAVAILABLE, ResolverState.COMPLETED]
 
 
+def test_executor_propagates_cancellation_without_publishing_partial_results() -> None:
+    engine = Engram()
+    query_frame = frame(engine, namespace="")
+
+    class CancellableResolver(FakeResolver):
+        def resolve_with_cancellation(self, current_frame, current_budget, cooperative_check=()) -> ResolverResult:
+            cooperative_check()
+            result = self.resolve(current_frame, current_budget)
+            return result
+
+    resolver = CancellableResolver("structured_graph", resolver_result("structured_graph", ResolverState.COMPLETED))
+
+    def cancel() -> None:
+        raise ResolutionCancelledError("transport cancelled")
+
+    with pytest.raises(ResolutionCancelledError, match="transport cancelled"):
+        ResolverExecutor(lambda: START_NS).execute(
+            query_frame,
+            ResolverRegistry((resolver,)).plan(query_frame),
+            cancel,
+        )
+
+    assert resolver.calls == 0
+
+
+def test_orchestrator_cancellation_after_execution_prevents_accounting_publication() -> None:
+    engine = Engram()
+    query_frame = frame(engine, namespace="")
+    resolver = FakeResolver("structured_graph", resolver_result("structured_graph", ResolverState.COMPLETED))
+    finalizer = ResolutionAccountingFinalizer(engine)
+    orchestrator = ResolutionOrchestrator(
+        ResolverRegistry((resolver,)),
+        ResolverExecutor(lambda: START_NS),
+        finalizer,
+    )
+    checks = 0
+
+    def cancel_after_execution() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 4:
+            raise ResolutionCancelledError("cancel after resolver execution")
+
+    with pytest.raises(ResolutionCancelledError, match="after resolver execution"):
+        orchestrator.resolve(
+            query_frame,
+            "cancel-after-execution",
+            cooperative_check=cancel_after_execution,
+        )
+
+    assert resolver.calls == 1
+    assert finalizer._requests == {}
+    assert engine.query_count == 0
+
+
 def test_resolver_lease_and_reservation_codecs_are_deterministic() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
@@ -1516,7 +1526,7 @@ def test_resolver_lease_and_reservation_codecs_are_deterministic() -> None:
     assert resolver_budget_from_json(resolver_budget_to_json(lease)) == lease
     assert resolver_reservation_from_json(resolver_reservation_to_json(reservation)) == reservation
     with pytest.raises(InvalidRequestError, match="unsupported resolver budget"):
-        resolver_budget_with_changes(lease, {"schema_version": 2})
+        resolver_budget_with_changes(lease, {"schema_version": 3})
     with pytest.raises(InvalidRequestError, match="unsupported resolver reservation"):
         resolver_reservation_with_changes(reservation, {"schema_version": 2})
 
@@ -1583,8 +1593,6 @@ def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bound
     resolver = FakeResolver("oversized", raw)
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_graph_rows=1,
         max_vector_results=1,
         max_evidence=1,
@@ -1634,25 +1642,6 @@ def test_executor_preserves_unavailable_consumption_measurements() -> None:
     assert result["consumption"]["measurement_available"] is False
 
 
-def test_concrete_lexical_resolver_cooperates_with_lease_deadline(monkeypatch) -> None:
-    engine = Engram()
-    calls = iter((START_NS, START_NS + 2))
-
-    def discover(_text, **options):
-        options["cooperative_check"]()
-        raise AssertionError("deadline check must stop discovery")
-
-    monkeypatch.setattr(engine, "query_candidates", discover)
-    query_frame = frame(engine, namespace="")
-    lease = resolver_budget_with_changes(resolver_budget(query_frame), {"deadline_ns": START_NS + 1})
-
-    result = LexicalResolver(engine, lambda: next(calls)).resolve(query_frame, lease)
-
-    assert result["state"] == ResolverState.EXHAUSTED
-    assert result["reason_code"] == "resolver_time_budget"
-    assert result["consumption"]["exhausted_dimensions"] == ("resolver_time",)
-
-
 def test_concrete_lexical_resolver_abstains_before_exceeding_memory_estimate() -> None:
     engine = Engram()
     engine.store("alpha beta gamma")
@@ -1667,62 +1656,39 @@ def test_concrete_lexical_resolver_abstains_before_exceeding_memory_estimate() -
     assert result["consumption"]["exhausted_dimensions"] == ("working_memory_bytes",)
 
 
-def test_executor_reports_total_deadline_and_resolver_count_exhaustion() -> None:
+def test_executor_reports_resolver_count_exhaustion() -> None:
     engine = Engram()
-    resolver = FakeResolver("one", resolver_result("one", ResolverState.COMPLETED))
-    deadline_frame = frame(engine, namespace="")
-    deadline = ResolverExecutor(lambda: deadline_frame["budget"]["deadline_ns"]).execute(
-        deadline_frame,
-        ResolverRegistry((resolver,)).plan(deadline_frame),
-    )
+    selected_frame = frame(engine, namespace="")
     first = FakeResolver("first", resolver_result("first", ResolverState.COMPLETED))
     second = FakeResolver("second", resolver_result("second", ResolverState.COMPLETED))
-    count_budget = resolution_budget_with_changes(deadline_frame["budget"], {"max_resolvers": 1})
-    count_frame = query_frame_with_changes(deadline_frame, {"budget": count_budget})
+    count_budget = resolution_budget_with_changes(selected_frame["budget"], {"max_resolvers": 1})
+    count_frame = query_frame_with_changes(selected_frame, {"budget": count_budget})
     count = ResolverExecutor(lambda: START_NS).execute(count_frame, ResolverRegistry((first, second)).plan(count_frame))
 
-    assert deadline["results"][0]["state"] == ResolverState.EXHAUSTED
-    assert deadline["results"][0]["reason_code"] == "total_deadline"
     assert count["results"][-1]["state"] == ResolverState.EXHAUSTED
     assert count["results"][-1]["reason_code"] == "resolver_budget"
 
 
-def test_executor_rejects_result_returned_after_aggregate_deadline() -> None:
-    engine = Engram()
-    query_frame = frame(engine, namespace="")
-    near_deadline = START_NS + 90_000_000
-    at_deadline = query_frame["budget"]["deadline_ns"]
-    moments = iter((near_deadline, near_deadline, near_deadline, at_deadline, at_deadline))
-    resolver = FakeResolver("late", resolver_result("late", ResolverState.COMPLETED))
-
-    execution = ResolverExecutor(lambda: next(moments, at_deadline)).execute(
-        query_frame,
-        ResolverRegistry((resolver,)).plan(query_frame),
-    )
-    result = execution["results"][0]
-
-    assert result["state"] == ResolverState.EXHAUSTED
-    assert result["reason_code"] == "total_deadline"
-    assert result["consumption"]["exhausted_dimensions"] == ("total_time",)
-
-
-def test_executor_uses_its_clock_instead_of_untrusted_reported_elapsed_time() -> None:
+def test_executor_reports_elapsed_time_without_changing_a_completed_result() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     raw = resolver_result(
         "elapsed",
         ResolverState.COMPLETED,
-        consumption=budget_consumption(elapsed_ns=query_frame["budget"]["resolver_time_ms"] * 2_000_000, resolvers=1),
+        consumption=budget_consumption(elapsed_ns=1, resolvers=1),
     )
+    observed_elapsed_ns = 8_000_000_000
+    moments = iter((START_NS, START_NS + observed_elapsed_ns))
 
-    execution = ResolverExecutor(lambda: START_NS).execute(
+    execution = ResolverExecutor(lambda: next(moments)).execute(
         query_frame,
         ResolverRegistry((FakeResolver("elapsed", raw),)).plan(query_frame),
     )
     result = execution["results"][0]
 
     assert result["state"] == ResolverState.COMPLETED
-    assert result["consumption"]["elapsed_ns"] == 0
+    assert result["consumption"]["elapsed_ns"] == observed_elapsed_ns
+    assert result["consumption"]["exhausted_dimensions"] == ()
 
 
 def test_accounting_deduplicates_candidates_and_applies_success_once() -> None:
@@ -1883,7 +1849,7 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
         ResolverRegistry((lexical,)),
         ResolverExecutor(lambda: START_NS),
         evidence_accounting,
-        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority),
     )
     evidence_result, _ = evidence_orchestrator.resolve(query_frame, "request-evidence")
     empty = FakeResolver("empty", resolver_result("empty", ResolverState.COMPLETED))
@@ -1965,38 +1931,6 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     assert engine.get_statement(statement_id)["hit_count"] == 0
 
 
-def test_fusion_deadline_exhaustion_is_typed_in_complete_resolution_budget() -> None:
-    engine = Engram()
-    query_frame = frame(engine, namespace="")
-    value = candidate(features={"lexical_score": 0.9})
-    resolver = FakeResolver(
-        "lexical",
-        resolver_result(
-            "lexical",
-            ResolverState.COMPLETED,
-            candidates=(value,),
-            accounting=(accounting_observation(value["statement_id"]),),
-        ),
-    )
-    orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((resolver,)),
-        ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
-        CandidateFusionEngine(
-            authority=permissive_candidate_authority,
-            clock_ns=lambda: query_frame["budget"]["deadline_ns"],
-        ),
-    )
-
-    result, finalization = orchestrator.resolve(query_frame, "request-fusion-deadline")
-
-    assert result["outcome"] == ResolutionOutcome.MISS
-    assert FusionPolicyReason.FUSION_DEADLINE_EXHAUSTED.value in result["reason_codes"]
-    assert "fusion_deadline" in result["budget"]["exhausted_dimensions"]
-    assert finalization["candidate_statement_ids"] == (value["statement_id"],)
-    assert finalization["success_applied"] is False
-
-
 def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
@@ -2010,7 +1944,7 @@ def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption()
     executor = ResolverExecutor(lambda: START_NS)
     probe_resolver = FakeResolver("lexical", raw)
     probe_execution = executor.execute(query_frame, ResolverRegistry((probe_resolver,)).plan(query_frame))
-    fusion = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=permissive_candidate_authority)
     fusion_required = fusion.decide(query_frame, (value,))["working_memory_bytes"]
     total_limit = probe_execution["consumption"]["working_memory_bytes"] + fusion_required - 1
     constrained_frame = query_frame_with_changes(
@@ -2037,8 +1971,6 @@ def test_complete_result_serialization_obeys_and_reports_output_budget() -> None
     engine = Engram()
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_output_bytes=4_096,
     )
     query_frame = frame(engine, namespace="", budget=selected_budget)
@@ -2060,8 +1992,6 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     engine = Engram()
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
-        total_time_ms=100,
-        resolver_time_ms=25,
         max_output_bytes=4_096,
     )
     query_frame = frame(engine, namespace="", budget=selected_budget)
@@ -2079,7 +2009,7 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
         ResolutionAccountingFinalizer(engine),
-        CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=lambda: START_NS),
+        CandidateFusionEngine(authority=permissive_candidate_authority),
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-payload")

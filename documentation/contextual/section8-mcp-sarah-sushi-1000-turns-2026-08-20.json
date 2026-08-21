@@ -1,0 +1,110 @@
+{
+  "completed_turns": 1000,
+  "conversation_profile": "sarah-sushi",
+  "duration_seconds": 10.000914,
+  "engram_version": "1.1.11",
+  "evaluated_turns": 1000,
+  "finished_at": "2026-08-20T18:58:13.380319+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-810 Section 8 Sarah sushi MCP conformance",
+  "inspect": {
+    "history_size": 10,
+    "turn_count": 1000,
+    "user_id": "Sarah"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "sources": {
+    "cache": 100,
+    "pattern": 900
+  },
+  "started_at": "2026-08-20T18:58:03.379849+00:00",
+  "stop_summary": {
+    "catch_all_turns": 400,
+    "exchanges": 1000,
+    "learned_statements": 1,
+    "learned_unique_texts": 1,
+    "sources": {
+      "cache": 100,
+      "pattern": 900
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_evaluation": {
+    "check_names": [
+      "active_topic_string",
+      "captured_list",
+      "context_changes_object",
+      "dialogue_act_string",
+      "elapsed_nonnegative",
+      "entities_list",
+      "exact_fields",
+      "fact_admissions_list",
+      "input_continuity",
+      "learned_statements_list",
+      "pattern_string",
+      "response_nonempty",
+      "score_finite",
+      "source_nonempty",
+      "sushi_recall_when_asked",
+      "turn_sequence",
+      "user_continuity"
+    ],
+    "checks_per_turn": 17,
+    "detailed_evaluation_sha256": "28c46fb2d88febeee9978464c56a37517ada3c75ba26619012a36d0b996f4c6b",
+    "failed_turns": [],
+    "failure_counts": {},
+    "first_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 448.2917,
+      "passed": true,
+      "profile_check": "sushi_recall_when_asked",
+      "profile_passed": true,
+      "response_bytes": 6,
+      "response_sha256": "420c703b11610f7b7a8e910dc406505b7bda360bb628955d4625a5a8d7c3005c",
+      "source": "pattern",
+      "turn": 1
+    },
+    "last_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 3.5446,
+      "passed": true,
+      "profile_check": "sushi_recall_when_asked",
+      "profile_passed": true,
+      "response_bytes": 47,
+      "response_sha256": "293003987331ee190be3bbd0d1ba67a65aeb87968566bbfb584c69a349b77964",
+      "source": "pattern",
+      "turn": 1000
+    },
+    "pass_runs": [
+      {
+        "bit": "1",
+        "turns": 1000
+      }
+    ],
+    "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
+    "passed_turns": 1000
+  },
+  "turn_latency_ms": {
+    "maximum": 448.2917,
+    "minimum": 1.7449,
+    "p50": 3.9773,
+    "p95": 10.3146
+  }
+}

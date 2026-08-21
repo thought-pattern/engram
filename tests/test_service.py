@@ -8,10 +8,32 @@ import pytest
 
 from engram import service as service_module
 from engram.config import engram_config
-from engram.constants import Tier
+from engram.constants import RESOLUTION_RESULT_FIELDS, Tier
 from engram.core import Engram
-from engram.errors import ConflictError, InvalidRequestError, LifecycleError, PersistenceError, ResourceNotFoundError
+from engram.errors import (
+    ConflictError,
+    InvalidRequestError,
+    LifecycleError,
+    PersistenceError,
+    ResolutionCancelledError,
+    ResourceNotFoundError,
+)
+from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore, open_engram_core
+
+
+def test_unified_resolution_cancellation_is_transient_and_not_cached() -> None:
+    core = EngramCore()
+
+    def cancel() -> None:
+        raise ResolutionCancelledError("caller cancelled resolution")
+
+    with pytest.raises(ResolutionCancelledError, match="caller cancelled"):
+        core.resolve_request("What is Engram?", "resolution-cancelled", cancellation_check=cancel)
+
+    assert "resolution-cancelled" not in core._resolution_requests
+    retry = core.resolve_request("What is Engram?", "resolution-cancelled", configured_resolvers=("exact",))
+    assert retry["outcome"].value == "MISS"
 
 
 def test_core_shares_knowledge_while_isolating_user_context() -> None:
@@ -88,6 +110,67 @@ def test_regulated_mapping_arguments_copy_concrete_empty_objects() -> None:
 
     assert learned["action"] == "created"
     assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
+
+
+@pytest.mark.parametrize("field", ["identity", "budget"])
+@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+def test_unified_python_api_rejects_falsey_non_mapping_absence(field, invalid) -> None:
+    core = EngramCore()
+    arguments = {field: invalid}
+
+    with pytest.raises(InvalidRequestError, match=f"{field} must be an object"):
+        core.resolve_request("What is Engram?", f"invalid-{field}-{type(invalid).__name__}", **arguments)
+
+
+def test_unified_python_api_accepts_mapping_absence_and_authoritative_identity() -> None:
+    core = EngramCore()
+    scope = scope_key("support", "python-api-v1")
+    identity = build_standalone_identity("When did Engram launch?", scope)
+
+    result = core.resolve_request(
+        "When did Engram launch?",
+        "python-api-authoritative",
+        namespace="support",
+        context_fingerprint="python-api-v1",
+        identity=identity,
+        budget={},
+        configured_resolvers=("exact",),
+    )
+
+    assert type(result) is dict
+    assert set(result) == set(RESOLUTION_RESULT_FIELDS)
+    assert result["schema_version"] == 1
+    assert result["selected_candidate_available"] is False
+    assert result["evidence_package_available"] is False
+    assert result["evidence_package"]["records"] == ()
+
+
+def test_unified_python_api_candidate_feedback_uses_keyed_records() -> None:
+    core = EngramCore(checkpoint_on_mutation=False)
+    learned = core.learn_response(
+        "What is Engram?",
+        "Engram is a bounded retrieval system.",
+        "python-api-learn",
+        namespace="support",
+    )
+    result = core.resolve_request(
+        "What is Engram?",
+        "python-api-resolve",
+        namespace="support",
+        configured_resolvers=("exact",),
+    )
+
+    candidate = result["response_candidates"][0]
+    feedback = core.record_resolution_feedback(
+        "python-api-resolve",
+        "python-api-feedback",
+        "accepted",
+        candidate["statement_id"],
+    )
+
+    assert candidate["statement_id"] == learned["statement_id"]
+    assert feedback["outcome"] == "accepted"
+    assert feedback["statement_id"] == learned["statement_id"]
 
 
 def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -> None:

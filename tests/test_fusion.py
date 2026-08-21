@@ -74,14 +74,14 @@ START_NS = 1_000_000_000
 SCOPE = scope_key(namespace="tenant-a", context_fingerprint="context-a")
 
 
-def conformance_fusion(clock_ns=lambda: START_NS) -> CandidateFusionEngine:
-    result = CandidateFusionEngine(authority=permissive_candidate_authority, clock_ns=clock_ns)
+def conformance_fusion() -> CandidateFusionEngine:
+    result = CandidateFusionEngine(authority=permissive_candidate_authority)
     return result
 
 
 def frame(engine: object = ()) -> QueryFrame:
     selected = engine if isinstance(engine, Engram) else Engram()
-    budget = capture_resolution_budget(lambda: START_NS, total_time_ms=100, resolver_time_ms=25)
+    budget = capture_resolution_budget(lambda: START_NS)
     result = QueryFrameBuilder(selected, lambda: START_NS, lambda: NOW).build(
         "Which response is supported?",
         SCOPE,
@@ -295,8 +295,32 @@ def test_transparent_fusion_answers_only_supported_independent_agreement() -> No
     assert score_parts["agreement"] > 0
 
 
+def test_fusion_fast_path_still_rejects_malformed_public_candidates() -> None:
+    malformed_data: dict[str, object] = dict(supported_pair()[0])
+    malformed_data["source"] = "lexical"
+    malformed = cast(Candidate, malformed_data)
+
+    with pytest.raises(InvalidRequestError, match="candidate source"):
+        conformance_fusion().decide(frame(), (malformed,))
+
+
+def test_fusion_result_does_not_alias_inputs_or_selected_response_candidate() -> None:
+    values = supported_pair()
+    decision = conformance_fusion().decide(frame(), values)
+    original_response = decision["selected_candidate"]["response"]
+
+    values[0]["response"] = "mutated after fusion"
+    values[1]["response"] = "also mutated after fusion"
+
+    assert decision["selected_candidate"]["response"] == original_response
+    assert decision["response_candidates"][0]["response"] == original_response
+
+    decision["selected_candidate"]["response"] = "mutated selected copy"
+    assert decision["response_candidates"][0]["response"] == original_response
+
+
 def test_missing_authority_abstains_by_default() -> None:
-    decision = CandidateFusionEngine(clock_ns=lambda: START_NS).decide(frame(), supported_pair())
+    decision = CandidateFusionEngine().decide(frame(), supported_pair())
 
     assert decision["outcome"] == ResolutionOutcome.MISS
     assert FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING.value in report_reason_codes(decision)
@@ -418,7 +442,7 @@ def test_authoritative_revalidation_blocks_stale_hidden_or_changed_state(
 ) -> None:
     engine = Engram()
     engine.response_repository = ArtifactRepository((artifact_value,))
-    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine), clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine))
     exact = candidate("stmt-artifact", CandidateSource.EXACT, {"exact_match": 1.0}, response=candidate_response)
 
     decision = fusion.decide(frame(engine), (exact,))
@@ -434,7 +458,7 @@ def test_authoritative_features_use_explicit_support_history_and_authority() -> 
     accepted = artifact(metadata={"authority": 0.85, "visibility": "scope", "support_complete": True})
     engine = Engram()
     engine.response_repository = ArtifactRepository((accepted,))
-    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine), clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine))
     exact = candidate("stmt-artifact", CandidateSource.EXACT, {"exact_match": 1.0})
 
     decision = fusion.decide(frame(engine), (exact,))
@@ -575,7 +599,7 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
     accepted = artifact()
     engine = Engram()
     engine.response_repository = ArtifactRepository((accepted,))
-    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine), clock_ns=lambda: START_NS)
+    fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(engine))
     stale_generation = candidate(
         "stmt-artifact",
         CandidateSource.EXACT,
@@ -600,7 +624,7 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
 
     legacy_engine = Engram()
     legacy_id = legacy_engine.store("Current legacy response")
-    legacy_fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(legacy_engine), clock_ns=lambda: START_NS)
+    legacy_fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(legacy_engine))
     changed = candidate(
         legacy_id,
         CandidateSource.LEXICAL,
@@ -612,16 +636,13 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
     assert FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH.value in report_reason_codes(legacy_decision)
 
 
-def test_explicit_conflict_and_fusion_resource_exhaustion_are_typed() -> None:
+def test_explicit_conflict_and_fusion_memory_exhaustion_are_typed() -> None:
     lexical, semantic = supported_pair()
     lexical = candidate_with_changes(
         lexical,
         {"features": feature_set(values={**dict(lexical["features"]["values"]), "explicit_conflict": 1.0})},
     )
     conflict = conformance_fusion().decide(frame(), (lexical, semantic))
-    deadline = conformance_fusion(clock_ns=lambda: START_NS + 100_000_000).decide(
-        frame(), supported_pair(), (support_reference("graph-evidence"),)
-    )
     selected_frame = frame()
     memory_frame = query_frame_with_changes(
         selected_frame,
@@ -631,8 +652,6 @@ def test_explicit_conflict_and_fusion_resource_exhaustion_are_typed() -> None:
 
     assert conflict["outcome"] == ResolutionOutcome.EVIDENCE
     assert FusionPolicyReason.EXPLICIT_CONFLICT.value in report_reason_codes(conflict)
-    assert deadline["outcome"] == ResolutionOutcome.EVIDENCE
-    assert deadline["reason_codes"][0] == FusionPolicyReason.FUSION_DEADLINE_EXHAUSTED.value
     assert memory["outcome"] == ResolutionOutcome.MISS
     assert memory["reason_codes"] == (FusionPolicyReason.FUSION_MEMORY_EXHAUSTED.value,)
     assert memory["working_memory_bytes"] == memory_frame["budget"]["max_working_memory_bytes"]

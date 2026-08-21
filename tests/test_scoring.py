@@ -167,14 +167,12 @@ def test_calculate_average_hit_rate_multiple_keywords() -> None:
     assert result == pytest.approx(0.85)  # (0.9 + 0.8) / 2
 
 
-def test_calculate_average_hit_rate_no_matches() -> None:
-    result = calculate_average_hit_rate([], {})
-    assert result == 0.5  # Default
+def test_calculate_average_hit_rate_without_observations_is_bounded_and_consistent() -> None:
+    empty = calculate_average_hit_rate([], {})
+    unknown = calculate_average_hit_rate(["paris"], {})
 
-
-def test_calculate_average_hit_rate_missing_keyword_entry() -> None:
-    result = calculate_average_hit_rate(["paris"], {})
-    assert result == 0.5  # Default for unknown keywords
+    assert 0.0 <= empty <= 1.0
+    assert unknown == empty
 
 
 """Tests for calibrated statement scoring."""

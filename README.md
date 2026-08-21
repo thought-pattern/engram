@@ -173,6 +173,7 @@ config = engram_config(
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
     eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
+    retrieval_rewrites_enabled=False,  # Opt-in retrieval-only symbolic reductions
     learn_user_facts=True,       # Learn shared facts with user attribution
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
@@ -183,6 +184,11 @@ config = engram_config(
 
 engram = Engram(config=config)
 ```
+
+Symbolic rewrites apply only to the unified `EngramCore.resolve_request`
+retrieval frame. They retain the original request and a complete bounded rule
+trace, do not change query identity, and never execute AIML response templates.
+See [the version-1 rewrite contract](documentation/rewrite/contracts-v1.md).
 
 ## Persistence
 
@@ -298,7 +304,8 @@ owns exactly one core instance.
 The core has explicit `running`, `closing`, and `closed` lifecycle states.
 `close()` is concurrency-safe and idempotent. Stable adapter-facing exceptions
 live in `engram.errors`: `InvalidRequestError`, `ResourceNotFoundError`,
-`ConflictError`, `LifecycleError`, and `PersistenceError`. A checkpoint failure
+`ConflictError`, `LifecycleError`, `ResolutionCancelledError`, and
+`PersistenceError`. A checkpoint failure
 does not undo an in-memory mutation; `PersistenceError.state_changed` reports
 that condition, `status()` reports degraded durability, and a later `flush()`
 or exact idempotent regulated-cache retry can restore durability.
@@ -595,19 +602,40 @@ typed external-feedback boundary:
 result = core.resolve_request(
     "What is Engram?",
     "resolution-42",
+    user_id="sarah",
     namespace="support",
     configured_resolvers=("exact", "pattern", "lexical"),
 )
-if result.response_candidates:
+if result["response_candidates"]:
+    candidate = result["response_candidates"][0]
     core.record_resolution_feedback(
         "resolution-42",
         "regulator-verdict-42",
         "accepted",  # or a typed rejected_* outcome
-        result.response_candidates[0].statement_id,
+        candidate["statement_id"],
     )
 
 snapshot = core.inspect_feedback_learning(limit=32)
 ```
+
+Unified Python results are validated dictionaries, not attribute-bearing
+objects. `result["outcome"]`, `result["evidence_package_available"]`, and
+`result["evidence_package"]` expose the stable version-1 result and bounded
+Section 7 Claim package. Callers may supply an authoritative identity and
+budget as mappings; `{}` selects standalone identity construction or the
+default bounded budget. See the [Python API v1 contract](documentation/python-api.md).
+
+The additive `user_id` selects isolated, TTL-bound previous-frame context for
+bounded elliptical follow-ups; it does not alter the result schema. Canonical
+relation lookup and its fixed one-hop evidence path are documented in the
+[Section 8 contextual contract](documentation/contextual/contracts-v2.md).
+
+`resolve_request` also accepts a transient zero-argument `cancellation_check`.
+The callback raises `ResolutionCancelledError`; cancellation is not cached and an
+identical request ID can be retried. This cooperative hook cannot interrupt a graph
+driver call already in progress, so graph deployments must also follow the hard
+backend query-bound requirement in the
+[deployment runbook](documentation/operations/deployment-and-rollback-v1.md).
 
 Candidate observations and external verdicts use durable replayable receipts,
 bounded aged aggregates, exact scope/generation/policy partitions, and no
@@ -872,6 +900,10 @@ graph:
 
 Use a database account that is restricted to reads. The password is supplied by
 external runtime configuration and is never written into persisted cache state.
+Start Memgraph with an approved positive `--query-execution-timeout-sec` value.
+Pymgclient has no per-execution timeout argument, so this server setting is the
+hard bound for an in-flight graph query. If it cannot be verified, keep graph
+access disabled. This operational timeout does not alter Engram answer policy.
 
 The two supported template graph operations are read-only:
 

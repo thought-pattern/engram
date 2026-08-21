@@ -23,6 +23,8 @@ from engram.constants import (
     VISIBILITY_GRANT_FIELDS,
     ClaimEligibilityReason,
     EvidenceUsefulnessReason,
+    TemporalAxis,
+    TemporalQueryOperator,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.graph import ClaimProjection, ClaimProjectionQuery, validate_claim_projection
@@ -561,21 +563,143 @@ def claim_validity_inputs_from_eligibility(
     if not decision["eligible"] or not decision["revalidated"] or not decision["disclosure_available"]:
         raise InvalidRequestError("Claim validity inputs require an eligible revalidated decision")
     projection = decision["projection"]
+    temporal = frame["temporal_query"]
+    evaluation_time = _timestamp(frame["eligibility_context"]["evaluation_time"])
+    effective_system_to = projection["system_to"]
+    effective_system_to_available = projection["system_to_available"]
+    if projection["invalidated_at_available"] and (
+        not effective_system_to_available or _timestamp(projection["invalidated_at"]) < _timestamp(effective_system_to)
+    ):
+        effective_system_to = projection["invalidated_at"]
+        effective_system_to_available = True
     result = claim_validity_inputs(
         frame["eligibility_context"]["evaluation_time"],
-        True,
-        True,
-        True,
-        projection["valid_from"],
-        projection["valid_from_available"],
-        projection["valid_to"],
-        projection["valid_to_available"],
+        not projection["invalidated_at_available"],
+        _interval_contains(
+            evaluation_time,
+            projection["system_from"],
+            projection["system_from_available"],
+            effective_system_to,
+            effective_system_to_available,
+        ),
+        _interval_contains(
+            evaluation_time,
+            projection["valid_from"],
+            projection["valid_from_available"],
+            projection["valid_to"],
+            projection["valid_to_available"],
+        ),
+        valid_from=projection["valid_from"],
+        valid_from_available=projection["valid_from_available"],
+        valid_to=projection["valid_to"],
+        valid_to_available=projection["valid_to_available"],
+        temporal_operator=temporal["operator"],
+        temporal_axis=temporal["axis"],
+        requested_start=temporal["start"],
+        requested_start_available=temporal["start_available"],
+        requested_end=temporal["end"],
+        requested_end_available=temporal["end_available"],
+        system_from=projection["system_from"],
+        system_from_available=projection["system_from_available"],
+        system_to=projection["system_to"],
+        system_to_available=projection["system_to_available"],
+        invalidated_at=projection["invalidated_at"],
+        invalidated_at_available=projection["invalidated_at_available"],
+        eligible_for_request=True,
+        system_time_match=True,
+        valid_time_match=temporal["axis"] == TemporalAxis.VALID_TIME,
+        valid_time_match_available=temporal["axis"] == TemporalAxis.VALID_TIME,
     )
     return result
 
 
+def _interval_contains(
+    point: datetime,
+    lower: str,
+    lower_available: bool,
+    upper: str,
+    upper_available: bool,
+) -> bool:
+    """Return half-open point containment for an interval with concrete open bounds."""
+    after_lower = not lower_available or point >= _timestamp(lower)
+    before_upper = not upper_available or point < _timestamp(upper)
+    result = after_lower and before_upper
+    return result
+
+
+def _interval_overlaps(
+    requested_start: str,
+    requested_start_available: bool,
+    requested_end: str,
+    requested_end_available: bool,
+    lower: str,
+    lower_available: bool,
+    upper: str,
+    upper_available: bool,
+) -> bool:
+    """Return half-open overlap without inventing values for open bounds."""
+    starts_before_request_end = not requested_end_available or not lower_available or _timestamp(lower) < _timestamp(requested_end)
+    ends_after_request_start = (
+        not requested_start_available or not upper_available or _timestamp(upper) > _timestamp(requested_start)
+    )
+    result = starts_before_request_end and ends_after_request_start
+    return result
+
+
+def _requested_interval_match(
+    operator: TemporalQueryOperator,
+    requested_start: str,
+    requested_start_available: bool,
+    requested_end: str,
+    requested_end_available: bool,
+    lower: str,
+    lower_available: bool,
+    upper: str,
+    upper_available: bool,
+) -> bool:
+    if operator == TemporalQueryOperator.AS_OF:
+        result = _interval_contains(_timestamp(requested_start), lower, lower_available, upper, upper_available)
+        return result
+    result = _interval_overlaps(
+        requested_start,
+        requested_start_available,
+        requested_end,
+        requested_end_available,
+        lower,
+        lower_available,
+        upper,
+        upper_available,
+    )
+    return result
+
+
+def _outside_interval_reason(
+    requested_start: str,
+    requested_start_available: bool,
+    requested_end: str,
+    requested_end_available: bool,
+    lower: str,
+    lower_available: bool,
+    not_yet_reason: ClaimEligibilityReason,
+    no_longer_reason: ClaimEligibilityReason,
+) -> ClaimEligibilityReason:
+    if requested_end_available and lower_available and _timestamp(lower) >= _timestamp(requested_end):
+        result = not_yet_reason
+        return result
+    if (
+        requested_start_available
+        and not requested_end_available
+        and lower_available
+        and _timestamp(lower) > _timestamp(requested_start)
+    ):
+        result = not_yet_reason
+        return result
+    result = no_longer_reason
+    return result
+
+
 class ClaimEligibilityEvaluator:
-    """Current-only disclosure policy over strict Claim projections."""
+    """Shared temporal and disclosure policy over strict Claim projections."""
 
     def __init__(self, visibility_authority: object = ()) -> None:
         if type(visibility_authority) is tuple and not visibility_authority:
@@ -594,24 +718,109 @@ class ClaimEligibilityEvaluator:
             result = claim_exclusion_decision(projection, ClaimEligibilityReason.EVALUATION_TIME_UNAVAILABLE)
             return result
         evaluation_time = _timestamp(context["evaluation_time"])
-        if projection["invalidated_at_available"]:
-            result = claim_exclusion_decision(projection, ClaimEligibilityReason.CLAIM_INACTIVE)
+        temporal = frame["temporal_query"]
+        if not temporal["resolved"]:
+            result = claim_exclusion_decision(projection, ClaimEligibilityReason.TEMPORAL_QUERY_UNRESOLVED)
             return result
         if not projection["system_from_available"]:
             result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_TIME_UNAVAILABLE)
             return result
-        if evaluation_time < _timestamp(projection["system_from"]):
-            result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NOT_YET_CURRENT)
-            return result
-        if projection["system_to_available"] and evaluation_time >= _timestamp(projection["system_to"]):
-            result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NO_LONGER_CURRENT)
-            return result
-        if projection["valid_from_available"] and evaluation_time < _timestamp(projection["valid_from"]):
-            result = claim_exclusion_decision(projection, ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT)
-            return result
-        if projection["valid_to_available"] and evaluation_time >= _timestamp(projection["valid_to"]):
-            result = claim_exclusion_decision(projection, ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT)
-            return result
+        current_operator = temporal["operator"] in {
+            TemporalQueryOperator.UNSPECIFIED,
+            TemporalQueryOperator.CURRENT,
+            TemporalQueryOperator.NOW,
+        }
+        if current_operator:
+            if projection["invalidated_at_available"]:
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.CLAIM_INACTIVE)
+                return result
+            if evaluation_time < _timestamp(projection["system_from"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NOT_YET_CURRENT)
+                return result
+            if projection["system_to_available"] and evaluation_time >= _timestamp(projection["system_to"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NO_LONGER_CURRENT)
+                return result
+            if projection["valid_from_available"] and evaluation_time < _timestamp(projection["valid_from"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT)
+                return result
+            if projection["valid_to_available"] and evaluation_time >= _timestamp(projection["valid_to"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT)
+                return result
+        elif temporal["axis"] == TemporalAxis.VALID_TIME:
+            if projection["invalidated_at_available"]:
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.CLAIM_INACTIVE)
+                return result
+            if evaluation_time < _timestamp(projection["system_from"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NOT_YET_CURRENT)
+                return result
+            if projection["system_to_available"] and evaluation_time >= _timestamp(projection["system_to"]):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NO_LONGER_CURRENT)
+                return result
+            if (
+                temporal["operator"] == TemporalQueryOperator.LATEST
+                and projection["valid_from_available"]
+                and evaluation_time < _timestamp(projection["valid_from"])
+            ):
+                result = claim_exclusion_decision(projection, ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT)
+                return result
+            if temporal["operator"] != TemporalQueryOperator.LATEST and not _requested_interval_match(
+                temporal["operator"],
+                temporal["start"],
+                temporal["start_available"],
+                temporal["end"],
+                temporal["end_available"],
+                projection["valid_from"],
+                projection["valid_from_available"],
+                projection["valid_to"],
+                projection["valid_to_available"],
+            ):
+                reason = _outside_interval_reason(
+                    temporal["start"],
+                    temporal["start_available"],
+                    temporal["end"],
+                    temporal["end_available"],
+                    projection["valid_from"],
+                    projection["valid_from_available"],
+                    ClaimEligibilityReason.VALID_TIME_NOT_YET_CURRENT,
+                    ClaimEligibilityReason.VALID_TIME_NO_LONGER_CURRENT,
+                )
+                result = claim_exclusion_decision(projection, reason)
+                return result
+        else:
+            effective_system_to = projection["system_to"]
+            effective_system_to_available = projection["system_to_available"]
+            if projection["invalidated_at_available"] and (
+                not effective_system_to_available or _timestamp(projection["invalidated_at"]) < _timestamp(effective_system_to)
+            ):
+                effective_system_to = projection["invalidated_at"]
+                effective_system_to_available = True
+            if temporal["operator"] == TemporalQueryOperator.LATEST:
+                if _timestamp(projection["system_from"]) > evaluation_time:
+                    result = claim_exclusion_decision(projection, ClaimEligibilityReason.SYSTEM_NOT_YET_CURRENT)
+                    return result
+            elif not _requested_interval_match(
+                temporal["operator"],
+                temporal["start"],
+                temporal["start_available"],
+                temporal["end"],
+                temporal["end_available"],
+                projection["system_from"],
+                projection["system_from_available"],
+                effective_system_to,
+                effective_system_to_available,
+            ):
+                reason = _outside_interval_reason(
+                    temporal["start"],
+                    temporal["start_available"],
+                    temporal["end"],
+                    temporal["end_available"],
+                    projection["system_from"],
+                    projection["system_from_available"],
+                    ClaimEligibilityReason.SYSTEM_NOT_YET_CURRENT,
+                    ClaimEligibilityReason.SYSTEM_NO_LONGER_CURRENT,
+                )
+                result = claim_exclusion_decision(projection, reason)
+                return result
         if not projection["predicate_canonical"] or projection["predicate_id"] == "generic_relation":
             result = claim_exclusion_decision(projection, ClaimEligibilityReason.RETRIEVAL_ONLY)
             return result
@@ -758,6 +967,7 @@ def claim_evidence_record(
     if source == "structured_graph" and discovered["projection_id"] not in {
         ClaimProjectionQuery.STRUCTURED_ENTITY_V1,
         ClaimProjectionQuery.STRUCTURED_KEYWORD_V1,
+        ClaimProjectionQuery.RELATION_ONE_HOP_V1,
     }:
         raise InvalidRequestError("structured Claim evidence requires a structured discovery projection")
     if source == "support_semantic" and discovered["projection_id"] != ClaimProjectionQuery.VECTOR_V1:

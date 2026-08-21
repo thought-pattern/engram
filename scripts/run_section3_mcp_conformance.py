@@ -7,11 +7,14 @@ import json
 import math
 import platform
 import sys
+import tempfile
 import time
 from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+
+import yaml
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -27,8 +30,45 @@ from engram.constants import (
     VERSION,
 )
 from engram.mcp_server import create_mcp_server
+from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "mcp-conversation-1000-turns-2026-08-12.json"
+SARAH_SUSHI_MESSAGES = (
+    "Sushi is good.",
+    "What's good?",
+    "Tell me more.",
+    "Why?",
+    "What's good?",
+    "Where are we?",
+    "Continue.",
+    "What did I say?",
+    "What's good?",
+    "How are you?",
+)
+SARAH_PREFERENCE_MESSAGES = (
+    "I like sushi.",
+    "I like cats.",
+    "I dislike dogs.",
+    "What food do I like?",
+    "What animals do I like?",
+    "What animals do I dislike?",
+    "Please remind me what food I like.",
+    "Tell me which animals I like.",
+    "Tell me which animals I dislike.",
+    "What preferences did I share?",
+)
+SARAH_PREFERENCE_EXPECTATIONS = {
+    "I like sushi.": (),
+    "I like cats.": (),
+    "I dislike dogs.": (),
+    "What food do I like?": ("sushi",),
+    "What animals do I like?": ("cat",),
+    "What animals do I dislike?": ("dog", "dislike"),
+    "Please remind me what food I like.": ("sushi",),
+    "Tell me which animals I like.": ("cat",),
+    "Tell me which animals I dislike.": ("dog", "dislike"),
+    "What preferences did I share?": ("sushi", "cat", "dog"),
+}
 
 
 def _tool_json(result) -> dict:
@@ -57,7 +97,7 @@ def _evaluate_turn(result: dict, expected_turn: int, expected_input: str, expect
     response = result.get("response")
     source = result.get("source")
     checks = {
-        "exact_fields": frozenset(result) == MCP_TURN_EVENT_FIELDS,
+        "exact_fields": set(result) == MCP_TURN_EVENT_FIELDS,
         "turn_sequence": result.get("turn") == expected_turn,
         "input_continuity": result.get("input") == expected_input,
         "user_continuity": result.get("user_id") == expected_user_id,
@@ -79,7 +119,7 @@ def _evaluate_turn(result: dict, expected_turn: int, expected_input: str, expect
         "context_changes_object": isinstance(result.get("context_changes"), dict),
         "learned_statements_list": isinstance(result.get("learned_statements"), list),
     }
-    if frozenset(checks) != MCP_TURN_EVALUATION_CHECKS:
+    if set(checks) != MCP_TURN_EVALUATION_CHECKS:
         raise RuntimeError("MCP turn evaluation checks do not match the declared contract")
     failed_checks = [name for name, passed in checks.items() if not passed]
     response_text = response if isinstance(response, str) else ""
@@ -113,6 +153,11 @@ async def _run(
     turns: int,
     gate: str = "EGR-315 MCP long-conversation conformance",
     user_id: str = "Section 3 MCP Conformance",
+    profile: str = "standard",
+    config_path: str = "",
+    seed_path: str = "",
+    memgraph_probe_every: int = 0,
+    retrieval_rewrites_enabled: bool = False,
 ) -> dict:
     server = create_mcp_server()
     latencies_ms = []
@@ -133,7 +178,8 @@ async def _run(
                 {
                     "user_id": user_id,
                     "initial_bot_text": ".",
-                    "seed_path": str(REPOSITORY / "data" / "seed.json"),
+                    "seed_path": seed_path or str(REPOSITORY / "data" / "seed.json"),
+                    "config_path": config_path,
                     "random_seed": 315,
                     "random_seed_present": True,
                 },
@@ -144,14 +190,50 @@ async def _run(
 
         first_turn = {}
         last_turn = {}
+        messages = (
+            SARAH_SUSHI_MESSAGES
+            if profile == "sarah-sushi"
+            else SARAH_PREFERENCE_MESSAGES if profile == "sarah-preferences" else MCP_CONFORMANCE_MESSAGES
+        )
         for index in range(turns):
             call_started = time.perf_counter_ns()
-            message = MCP_CONFORMANCE_MESSAGES[index % len(MCP_CONFORMANCE_MESSAGES)]
+            expected_turn = index + 1
+            graph_probe = bool(memgraph_probe_every and expected_turn % memgraph_probe_every == 0)
+            message = "Who is Sarah married to?" if graph_probe else messages[index % len(messages)]
             result = _tool_json(await client.call_tool("engram_send", {"text": message}))
             latency_ms = (time.perf_counter_ns() - call_started) / 1_000_000
             latencies_ms.append(latency_ms)
-            expected_turn = index + 1
             evaluation = _evaluate_turn(result, expected_turn, message, user_id, latency_ms)
+            if profile == "sarah-sushi":
+                response = result.get("response", "")
+                if graph_probe:
+                    profile_check = "memgraph_source_when_asked"
+                    profile_passed = result.get("source") == "graph"
+                else:
+                    profile_check = "sushi_recall_when_asked"
+                    profile_passed = (
+                        isinstance(response, str) and "sushi" in response.casefold() if message == "What's good?" else True
+                    )
+                evaluation["profile_check"] = profile_check
+                evaluation["profile_passed"] = profile_passed
+                if not profile_passed:
+                    evaluation["passed"] = False
+                    evaluation["failed_checks"].append(profile_check)
+            elif profile == "sarah-preferences":
+                response = result.get("response", "")
+                if graph_probe:
+                    profile_check = "memgraph_source_when_asked"
+                    profile_passed = result.get("source") == "graph"
+                else:
+                    expected_terms = SARAH_PREFERENCE_EXPECTATIONS[message]
+                    response_text = response.casefold() if isinstance(response, str) else ""
+                    profile_check = "sarah_preference_continuity"
+                    profile_passed = result.get("user_id") == "Sarah" and all(term in response_text for term in expected_terms)
+                evaluation["profile_check"] = profile_check
+                evaluation["profile_passed"] = profile_passed
+                if not profile_passed:
+                    evaluation["passed"] = False
+                    evaluation["failed_checks"].append(profile_check)
             evaluations.append(evaluation)
             if evaluation["passed"]:
                 response_count += 1
@@ -179,6 +261,21 @@ async def _run(
     failure_counts: Counter[str] = Counter(failure for evaluation in evaluations for failure in evaluation["failed_checks"])
     failed_turns = [evaluation["turn"] for evaluation in evaluations if not evaluation["passed"]]
     evaluation_bytes = json.dumps(evaluations, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    response_sequence = [evaluation["response_sha256"] for evaluation in evaluations]
+    observation_sequence = [
+        {
+            "turn": evaluation["turn"],
+            "source": evaluation["source"],
+            "response_bytes": evaluation["response_bytes"],
+            "response_sha256": evaluation["response_sha256"],
+            "profile_passed": evaluation.get("profile_passed", True),
+        }
+        for evaluation in evaluations
+    ]
+    response_sequence_bytes = json.dumps(response_sequence, separators=(",", ":")).encode("utf-8")
+    observation_sequence_bytes = json.dumps(observation_sequence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    components = inspected.get("core_status", {}).get("components", {})
+    graph_status = components.get("graph", {}) if isinstance(components, dict) else {}
     run_result = {
         "gate": gate,
         "passed": response_count == turns and not failed_turns,
@@ -188,9 +285,19 @@ async def _run(
         "evaluated_turns": len(evaluations),
         "mcp_tool_calls": turns + 3,
         "transport": "official MCP Client against repository MCPServer",
+        "conversation_profile": profile,
+        "configuration": {
+            "config_path_supplied": bool(config_path),
+            "seed_path": seed_path or str(REPOSITORY / "data" / "seed.json"),
+            "graph_enabled": graph_status.get("enabled", False),
+            "graph_ready": graph_status.get("ready", False),
+            "memgraph_probe_every": memgraph_probe_every,
+            "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
+        },
         "server": {"name": server_name, "version": server_version},
         "engram_version": VERSION,
         "python": platform.python_version(),
+        "source_state": benchmark_source_state(),
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "duration_seconds": round(duration_seconds, 6),
@@ -204,14 +311,23 @@ async def _run(
         "first_turn": first_turn,
         "last_turn": last_turn,
         "turn_evaluation": {
-            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS),
-            "check_names": sorted(MCP_TURN_EVALUATION_CHECKS),
+            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS) + int(profile in {"sarah-sushi", "sarah-preferences"}),
+            "check_names": sorted(
+                {
+                    *MCP_TURN_EVALUATION_CHECKS,
+                    *({"sushi_recall_when_asked"} if profile == "sarah-sushi" else set()),
+                    *({"sarah_preference_continuity"} if profile == "sarah-preferences" else set()),
+                    *({"memgraph_source_when_asked"} if memgraph_probe_every else set()),
+                }
+            ),
             "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
             "pass_runs": _run_length_encode_passes(evaluations),
             "passed_turns": response_count,
             "failed_turns": failed_turns,
             "failure_counts": dict(sorted(failure_counts.items())),
             "detailed_evaluation_sha256": hashlib.sha256(evaluation_bytes).hexdigest(),
+            "response_sequence_sha256": hashlib.sha256(response_sequence_bytes).hexdigest(),
+            "observation_sequence_sha256": hashlib.sha256(observation_sequence_bytes).hexdigest(),
             "first_evaluation": evaluations[0] if evaluations else {},
             "last_evaluation": evaluations[-1] if evaluations else {},
         },
@@ -220,6 +336,9 @@ async def _run(
             "turn_count": inspected.get("turn_count"),
             "history_size": inspected.get("session", {}).get("history_size"),
         },
+        "profile_definition": (
+            {"user_id": "Sarah", "likes": ["sushi", "cats"], "dislikes": ["dogs"]} if profile == "sarah-preferences" else {}
+        ),
         "stop_summary": stopped.get("summary", {}),
     }
     return run_result
@@ -231,6 +350,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--gate", default="EGR-315 MCP long-conversation conformance")
     parser.add_argument("--user-id", default="Section 3 MCP Conformance")
+    parser.add_argument("--profile", choices=("standard", "sarah-sushi", "sarah-preferences"), default="standard")
+    parser.add_argument("--config", default="", help="Configuration path passed to the MCP engram_start tool")
+    parser.add_argument("--seed", default="", help="Seed path passed to the MCP engram_start tool")
+    parser.add_argument(
+        "--enable-rewrites",
+        action="store_true",
+        help="Create an ephemeral runtime config with retrieval_rewrites_enabled=true",
+    )
+    parser.add_argument(
+        "--memgraph-probe-every",
+        type=int,
+        default=0,
+        help="Replace every Nth profile message with a graph query and require a graph-sourced response",
+    )
     parser.add_argument("--stdout", action="store_true")
     parser_value = parser
     return parser_value
@@ -240,7 +373,34 @@ def main(argv: Sequence[str] = ()) -> int:
     args = _parser().parse_args(argv)
     if args.turns < MCP_CONFORMANCE_MINIMUM_TURNS:
         raise ValueError(f"MCP conformance requires at least {MCP_CONFORMANCE_MINIMUM_TURNS} turns")
-    result = asyncio.run(_run(args.turns, args.gate, args.user_id))
+    if args.memgraph_probe_every < 0:
+        raise ValueError("--memgraph-probe-every must be nonnegative")
+    selected_config = args.config
+    with tempfile.TemporaryDirectory(prefix="engram-section11-") as temporary_directory:
+        if args.enable_rewrites:
+            raw_config = {}
+            if args.config:
+                loaded = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+                if loaded:
+                    if not isinstance(loaded, dict):
+                        raise ValueError("--config must contain a YAML object")
+                    raw_config = loaded
+            raw_config["retrieval_rewrites_enabled"] = True
+            selected_path = Path(temporary_directory) / "config.yml"
+            selected_path.write_text(yaml.safe_dump(raw_config, sort_keys=True), encoding="utf-8")
+            selected_config = str(selected_path)
+        result = asyncio.run(
+            _run(
+                args.turns,
+                args.gate,
+                args.user_id,
+                args.profile,
+                selected_config,
+                args.seed,
+                args.memgraph_probe_every,
+                args.enable_rewrites,
+            )
+        )
     result_text = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.stdout:
         print(result_text, end="")

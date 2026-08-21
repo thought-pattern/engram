@@ -1,6 +1,6 @@
 # Unified resolution contract v1
 
-**Status:** Implemented and verified on 12 August 2026; independently remediated on 13 August 2026  
+**Status:** Historical contract, superseded by [resolution contract v2](resolution-contract-v2.md); its deadline fields are not current behavior
 **Owners:** `engram/resolution.py`, `engram/resolvers.py`, and the transport-neutral `EngramCore.resolve_request` boundary
 
 ## Purpose and ownership

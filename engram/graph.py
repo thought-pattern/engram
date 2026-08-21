@@ -23,6 +23,10 @@ from uuid import UUID
 import mgclient
 
 from engram.constants import (
+    CANONICAL_ENTITY_MATCH_FIELDS,
+    CANONICAL_ENTITY_MATCH_QUERY,
+    CANONICAL_PREDICATE_MATCH_FIELDS,
+    CANONICAL_PREDICATE_MATCH_QUERY,
     CLAIM_PROJECTION_BY_ID_QUERY,
     CLAIM_PROJECTION_FIELDS,
     CLAIM_PROJECTION_RECORD_FIELDS,
@@ -32,13 +36,21 @@ from engram.constants import (
     MAX_CLAIM_PROJECTION_ROWS,
     MAX_CLAIM_PROJECTION_TERM_BYTES,
     MAX_CLAIM_PROJECTION_TIMESTAMP_BYTES,
+    MAX_RELATION_CANDIDATES,
+    MAX_RELATION_LABEL_BYTES,
+    MAX_RELATION_PLAN_ROWS,
+    MAX_RELATION_SURFACES,
     RECONNECT_COOLDOWN_SECONDS,
+    RELATION_ONE_HOP_CLAIM_PROJECTION_QUERY,
+    RELATION_ONE_HOP_RESULT_FIELDS,
     STRUCTURED_ENTITY_CLAIM_PROJECTION_QUERY,
     STRUCTURED_KEYWORD_CLAIM_PROJECTION_QUERY,
     VECTOR_CLAIM_PROJECTION_QUERY,
     VECTOR_INDEX_NAME,
     WRITE_CLAUSE,
     ClaimProjectionQuery,
+    ExpectedObjectType,
+    PredicateCardinality,
 )
 from engram.errors import InvalidRequestError
 
@@ -176,6 +188,98 @@ ClaimProjection = TypedDict(
         "vector_index_id_available": bool,
     },
 )
+
+
+CanonicalEntityMatch = TypedDict(
+    "CanonicalEntityMatch",
+    {
+        "canonical_id": str,
+        "primary_label": str,
+        "aliases": tuple[str, ...],
+        "edge_surfaces": tuple[str, ...],
+        "entity_type": ExpectedObjectType,
+    },
+)
+
+
+CanonicalPredicateMatch = TypedDict(
+    "CanonicalPredicateMatch",
+    {
+        "canonical_id": str,
+        "primary_label": str,
+        "synonyms": tuple[str, ...],
+        "object_type": ExpectedObjectType,
+    },
+)
+
+
+RelationClaimProjection = TypedDict(
+    "RelationClaimProjection",
+    {
+        "projection": ClaimProjection,
+        "object_label": str,
+        "object_type": ExpectedObjectType,
+        "predicate_cardinality": PredicateCardinality,
+    },
+)
+
+
+def _projection_text_collection(value: object, name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
+        raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")
+    normalized = tuple(_projection_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
+    if normalized != tuple(dict.fromkeys(normalized)):
+        raise InvalidRequestError(f"{name} must contain unique values")
+    return normalized
+
+
+def _projection_object_type(value: object, name: str) -> ExpectedObjectType:
+    raw = _projection_text(value, name, 32, allow_empty=False).upper()
+    try:
+        result = ExpectedObjectType(raw)
+    except ValueError as error:
+        raise InvalidRequestError(f"{name} is unsupported") from error
+    return result
+
+
+def _projection_cardinality(value: object, name: str) -> PredicateCardinality:
+    raw = _projection_text(value, name, 32, allow_empty=False).upper()
+    try:
+        result = PredicateCardinality(raw)
+    except ValueError as error:
+        raise InvalidRequestError(f"{name} is unsupported") from error
+    return result
+
+
+def canonical_entity_match_from_graph_row(value: object) -> CanonicalEntityMatch:
+    """Decode one exact canonical entity match row without arbitrary graph properties."""
+    if not isinstance(value, Mapping) or frozenset(value) != CANONICAL_ENTITY_MATCH_FIELDS:
+        raise InvalidRequestError("canonical entity match row has invalid fields")
+    result: CanonicalEntityMatch = {
+        "canonical_id": _projection_identifier(value["canonical_id"], "canonical entity ID"),
+        "primary_label": _projection_text(
+            value["primary_label"], "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
+        "aliases": _projection_text_collection(value["aliases"], "canonical entity aliases"),
+        "edge_surfaces": _projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
+        "entity_type": _projection_object_type(value["entity_type"], "canonical entity type"),
+    }
+    return result
+
+
+def canonical_predicate_match_from_graph_row(value: object) -> CanonicalPredicateMatch:
+    """Decode one exact canonical Predicate match row."""
+    if not isinstance(value, Mapping) or frozenset(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
+        raise InvalidRequestError("canonical Predicate match row has invalid fields")
+    result: CanonicalPredicateMatch = {
+        "canonical_id": _projection_identifier(value["canonical_id"], "canonical Predicate ID"),
+        "primary_label": _projection_text(
+            value["primary_label"], "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
+        "synonyms": _projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
+        "object_type": _projection_object_type(value["object_type"], "canonical Predicate object type"),
+    }
+    return result
 
 
 def claim_projection(
@@ -434,6 +538,66 @@ def _decode_projection_rows(
         decoded[claim_id] = projection
     result = [decoded[claim_id] for claim_id in sorted(decoded)]
     return result
+
+
+def relation_claim_projection_from_graph_row(value: object) -> RelationClaimProjection:
+    """Decode a one-hop row while reusing the Section 7 Claim projection codec."""
+    if not isinstance(value, Mapping) or set(value) != RELATION_ONE_HOP_RESULT_FIELDS:
+        raise InvalidRequestError("relation one-hop row has invalid fields")
+    projection_row = {field: value[field] for field in CLAIM_PROJECTION_FIELDS}
+    result: RelationClaimProjection = {
+        "projection": claim_projection_from_graph_row(projection_row, ClaimProjectionQuery.RELATION_ONE_HOP_V1),
+        "object_label": _projection_text(
+            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
+        "object_type": _projection_object_type(value["object_type"], "relation object type"),
+        "predicate_cardinality": _projection_cardinality(
+            value["predicate_cardinality"],
+            "relation Predicate cardinality",
+        ),
+    }
+    return result
+
+
+def validate_relation_claim_projection(value: object) -> RelationClaimProjection:
+    """Validate and copy one in-memory relation result."""
+    if not isinstance(value, Mapping) or set(value) != {
+        "projection",
+        "object_label",
+        "object_type",
+        "predicate_cardinality",
+    }:
+        raise InvalidRequestError("RelationClaimProjection has invalid fields")
+    object_type = value["object_type"]
+    if not isinstance(object_type, ExpectedObjectType):
+        raise InvalidRequestError("relation result object_type must be an ExpectedObjectType")
+    cardinality = value["predicate_cardinality"]
+    if not isinstance(cardinality, PredicateCardinality):
+        raise InvalidRequestError("relation result predicate_cardinality must be a PredicateCardinality")
+    result: RelationClaimProjection = {
+        "projection": validate_claim_projection(value["projection"]),
+        "object_label": _projection_text(
+            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
+        "object_type": object_type,
+        "predicate_cardinality": cardinality,
+    }
+    if result["projection"]["projection_id"] != ClaimProjectionQuery.RELATION_ONE_HOP_V1:
+        raise InvalidRequestError("relation result requires a relation one-hop projection")
+    return result
+
+
+def _decode_relation_projection_rows(rows: object, limit: int) -> list[RelationClaimProjection]:
+    if not isinstance(rows, list) or len(rows) > limit:
+        raise InvalidRequestError("relation one-hop query returned an invalid collection")
+    decoded: dict[str, RelationClaimProjection] = {}
+    for row in rows:
+        item = relation_claim_projection_from_graph_row(row)
+        claim_id = item["projection"]["claim_id"]
+        if claim_id in decoded and decoded[claim_id] != item:
+            raise InvalidRequestError(f"conflicting relation projections for Claim ID: {claim_id}")
+        decoded[claim_id] = item
+    return [decoded[claim_id] for claim_id in sorted(decoded)]
 
 
 def is_write_cypher(cypher: str) -> bool:
@@ -722,6 +886,55 @@ class MemGraphConnection:
         rows = self._execute_read_query(query, {"value": term, "limit": row_limit})
         result = _decode_projection_rows(rows, projection_id, "", row_limit)
         return result
+
+    def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[CanonicalEntityMatch]:
+        """Resolve an entity surface through one fixed, read-only query."""
+        term = _projection_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        row_limit = _projection_int(limit, "canonical entity match limit", 1, MAX_RELATION_CANDIDATES)
+        rows = self._execute_read_query(CANONICAL_ENTITY_MATCH_QUERY, {"surface": term, "limit": row_limit})
+        if not isinstance(rows, list) or len(rows) > row_limit:
+            raise InvalidRequestError("canonical entity query returned an invalid collection")
+        decoded = [canonical_entity_match_from_graph_row(row) for row in rows]
+        if len({row["canonical_id"] for row in decoded}) != len(decoded):
+            raise InvalidRequestError("canonical entity query returned duplicate identities")
+        return sorted(decoded, key=lambda row: row["canonical_id"])
+
+    def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[CanonicalPredicateMatch]:
+        """Resolve a Predicate surface through one fixed, read-only query."""
+        term = _projection_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        row_limit = _projection_int(limit, "canonical Predicate match limit", 1, MAX_RELATION_CANDIDATES)
+        rows = self._execute_read_query(CANONICAL_PREDICATE_MATCH_QUERY, {"surface": term, "limit": row_limit})
+        if not isinstance(rows, list) or len(rows) > row_limit:
+            raise InvalidRequestError("canonical Predicate query returned an invalid collection")
+        decoded = [canonical_predicate_match_from_graph_row(row) for row in rows]
+        if len({row["canonical_id"] for row in decoded}) != len(decoded):
+            raise InvalidRequestError("canonical Predicate query returned duplicate identities")
+        return sorted(decoded, key=lambda row: row["canonical_id"])
+
+    def relation_one_hop_claim_projections(
+        self,
+        subject_entity_id: str,
+        predicate_id: str,
+        *,
+        limit: int = MAX_RELATION_PLAN_ROWS,
+        include_historical: bool = False,
+    ) -> list[RelationClaimProjection]:
+        """Execute only the allow-listed parameterized one-hop Claim template."""
+        subject = _projection_identifier(subject_entity_id, "relation subject_entity_id")
+        predicate = _projection_identifier(predicate_id, "relation predicate_id")
+        if not isinstance(include_historical, bool):
+            raise InvalidRequestError("relation include_historical must be a boolean")
+        row_limit = _projection_int(limit, "relation one-hop limit", 1, MAX_RELATION_PLAN_ROWS)
+        rows = self._execute_read_query(
+            RELATION_ONE_HOP_CLAIM_PROJECTION_QUERY,
+            {
+                "subject_entity_id": subject,
+                "predicate_id": predicate,
+                "include_historical": include_historical,
+                "limit": row_limit,
+            },
+        )
+        return _decode_relation_projection_rows(rows, row_limit)
 
     def vector_search_claim_projections(
         self,

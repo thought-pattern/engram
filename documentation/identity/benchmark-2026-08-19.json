@@ -1,0 +1,94 @@
+{
+  "artifact_schema_version": 1,
+  "captured_at": "2026-08-20T07:25:37.051619+00:00",
+  "environment": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "python": "3.12.2"
+  },
+  "identity_memory": {
+    "current_bytes": 1406388,
+    "peak_bytes": 1415786
+  },
+  "method": {
+    "clock": "time.perf_counter_ns",
+    "external_services": "none",
+    "iterations": 10000,
+    "latency_unit": "milliseconds",
+    "memory_objects": 1000,
+    "percentiles": "nearest observed rank over per-call samples",
+    "request_count": 8
+  },
+  "normalization": {
+    "iterations": 10000,
+    "maximum_ms": 5.3711,
+    "minimum_ms": 0.0179,
+    "p50_ms": 0.0225,
+    "p95_ms": 0.0471,
+    "p99_ms": 0.1332
+  },
+  "scoped_key": {
+    "iterations": 10000,
+    "maximum_ms": 3.6455,
+    "minimum_ms": 0.0408,
+    "p50_ms": 0.0498,
+    "p95_ms": 0.0963,
+    "p99_ms": 0.2682
+  },
+  "source": {
+    "base_commit": "9b007641199148fb5fb9bce652ba1fb44f05cd0c",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "README.md",
+      "documentation/artifacts/section4-benchmark-2026-08-19.json",
+      "documentation/code-style.md",
+      "documentation/evaluation/",
+      "documentation/evidence/benchmark-2026-08-19.json",
+      "documentation/evidence/core-handoff.md",
+      "documentation/feedback/benchmark-2026-08-19.json",
+      "documentation/fusion/benchmark-2026-08-19.json",
+      "documentation/identity/benchmark-2026-08-19.json",
+      "documentation/indexes/benchmark-2026-08-19.json",
+      "documentation/python-api-v1.md",
+      "engram/core.py",
+      "engram/eligibility.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mutations.py",
+      "engram/repository.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_release_gate_foundation.py",
+      "pyproject.toml",
+      "scripts/benchmark_evidence.py",
+      "scripts/benchmark_feedback.py",
+      "scripts/benchmark_fusion.py",
+      "scripts/benchmark_identity.py",
+      "scripts/benchmark_indexes.py",
+      "scripts/benchmark_metadata.py",
+      "scripts/benchmark_resolution.py",
+      "scripts/benchmark_section0.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_feedback.py",
+      "tests/test_fusion.py",
+      "tests/test_resolvers.py",
+      "tests/test_service.py"
+    ],
+    "governed_source_sha256": "22b725de5286a5f7788dac59e3329b561c2a48f196b1eb0abb45275141174b92",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "standalone_identity": {
+    "iterations": 10000,
+    "maximum_ms": 23.5692,
+    "minimum_ms": 0.3132,
+    "p50_ms": 0.4354,
+    "p95_ms": 1.2902,
+    "p99_ms": 3.0147
+  }
+}

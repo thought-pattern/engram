@@ -1,0 +1,120 @@
+{
+  "completed_turns": 1000,
+  "configuration": {
+    "config_path_supplied": true,
+    "graph_enabled": true,
+    "graph_ready": true,
+    "memgraph_probe_every": 200,
+    "seed_path": ".\\eval\\section9-mcp-seed.json"
+  },
+  "conversation_profile": "sarah-sushi",
+  "duration_seconds": 23.872429,
+  "engram_version": "1.1.11",
+  "evaluated_turns": 1000,
+  "finished_at": "2026-08-20T23:12:52.032707+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-909 MCP conversation evaluation",
+  "inspect": {
+    "history_size": 10,
+    "turn_count": 1000,
+    "user_id": "Sarah"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "graph",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "sources": {
+    "graph": 5,
+    "pattern": 995
+  },
+  "started_at": "2026-08-20T23:12:28.159393+00:00",
+  "stop_summary": {
+    "catch_all_turns": 0,
+    "exchanges": 1000,
+    "learned_statements": 1,
+    "learned_unique_texts": 1,
+    "sources": {
+      "graph": 5,
+      "pattern": 995
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_evaluation": {
+    "check_names": [
+      "active_topic_string",
+      "captured_list",
+      "context_changes_object",
+      "dialogue_act_string",
+      "elapsed_nonnegative",
+      "entities_list",
+      "exact_fields",
+      "fact_admissions_list",
+      "input_continuity",
+      "learned_statements_list",
+      "memgraph_source_when_asked",
+      "pattern_string",
+      "response_nonempty",
+      "score_finite",
+      "source_nonempty",
+      "sushi_recall_when_asked",
+      "turn_sequence",
+      "user_continuity"
+    ],
+    "checks_per_turn": 17,
+    "detailed_evaluation_sha256": "9f57def16261fe0d769f8b48c9da0d8fc53dfb212e3f82270d7646f200f6bc30",
+    "failed_turns": [],
+    "failure_counts": {},
+    "first_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 427.311,
+      "passed": true,
+      "profile_check": "sushi_recall_when_asked",
+      "profile_passed": true,
+      "response_bytes": 23,
+      "response_sha256": "2c3390b7c61b40bd929fc768c27880c664b54f00246161ff1dc8f0bf1dffcde3",
+      "source": "pattern",
+      "turn": 1
+    },
+    "last_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 2955.9098,
+      "passed": true,
+      "profile_check": "memgraph_source_when_asked",
+      "profile_passed": true,
+      "response_bytes": 81,
+      "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+      "source": "graph",
+      "turn": 1000
+    },
+    "observation_sequence_sha256": "6cb3b7481732888f9566e658b683f06e888c459fb17db093719667c8f22427a3",
+    "pass_runs": [
+      {
+        "bit": "1",
+        "turns": 1000
+      }
+    ],
+    "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
+    "passed_turns": 1000,
+    "response_sequence_sha256": "a768928253fe4727981d88705db16e297a565658fd08c2697d900cb9646883bc"
+  },
+  "turn_latency_ms": {
+    "maximum": 3799.6718,
+    "minimum": 1.5152,
+    "p50": 2.3665,
+    "p95": 4.8499
+  }
+}

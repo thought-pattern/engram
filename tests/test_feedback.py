@@ -221,6 +221,34 @@ def test_feedback_accepts_the_declared_thousand_observation_batch() -> None:
     assert candidate["after"]["relationship_records"][0]["raw"]["accept_count"] == 1_000
 
 
+def test_feedback_store_snapshots_share_only_immutable_aggregate_records() -> None:
+    store = FeedbackStore()
+    apply(store, "feedback-immutable", observation("feedback-immutable", FeedbackOutcome.ACCEPTED))
+    snapshot = store.snapshot()
+    record = snapshot["statement_records"][0]
+
+    with pytest.raises(TypeError):
+        cast(Any, record)["last_observed_at"] = "2026-08-15T13:00:00Z"
+    with pytest.raises(TypeError):
+        cast(Any, record["raw"])["accept_count"] = 99
+
+    assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 1
+
+
+def test_modified_prepared_feedback_state_cannot_use_the_fast_publication_path() -> None:
+    store = FeedbackStore()
+    candidate = store.prepare(
+        "feedback-modified",
+        (observation("feedback-modified", FeedbackOutcome.ACCEPTED),),
+    )
+    candidate["after"]["statement_evictions"] = 1
+
+    with pytest.raises(InvalidRequestError, match="modified before publication"):
+        store.replace_from_snapshot(candidate["after"])
+
+    assert store.snapshot()["statement_records"] == ()
+
+
 def test_lifecycle_execution_status_does_not_change_feedback_retry_identity() -> None:
     store = FeedbackStore()
     value = observation("feedback-stale", FeedbackOutcome.REJECTED_STALE)
@@ -392,7 +420,7 @@ def test_non_exact_plans_do_not_cache_misses_that_can_hide_new_knowledge() -> No
     engine.namespace_epochs.initialize("tenant-a", 1)
     engine.store("Unrelated answer", keyword_source="orchid tulip")
     core = EngramCore(engine, clock=lambda: NOW)
-    budget = resolution_budget(total_time_ms=10_000, resolver_time_ms=10_000)
+    budget = resolution_budget()
 
     first = core.resolve_request(
         "quasar nebula",

@@ -144,6 +144,8 @@ CREATE INDEX ON :Predicate(label);
 //     synonyms: List[String] (surface forms that map to this canonical_id —
 //                             e.g. 'establish', 'set up', 'start' all map to
 //                             'founded'),
+//     cardinality: String (nullable; 'SINGLE' or 'MULTI'; missing is UNKNOWN
+//                          and Engram suppresses arbitrary single-object answers),
 //     created_at: DateTime
 // }
 

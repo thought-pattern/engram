@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "corpus_id": "section11-rewrite-held-out-engineering",
+  "frozen_at": "2026-08-20T18:00:00Z",
+  "provenance": {
+    "authoring": "Authored independently from historical ALICE/AIML source and response corpora.",
+    "license": "Apache-2.0",
+    "partition": "Repository-visible engineering holdout; excluded from rule authoring inputs and not Section 16 protected release data."
+  },
+  "gates": {
+    "minimum_recall_gain": 0.25,
+    "maximum_semantic_collision_rate": 0.0,
+    "maximum_false_direct_answer_rate": 0.005
+  },
+  "cases": [
+    {"case_id": "h01", "category": "contractions", "input": "what's the atlas retention period?", "expected_final": "what is the atlas retention period?", "operator": "what", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h02", "category": "contractions", "input": "why can't the client connect?", "expected_final": "why cannot the client connect?", "operator": "why", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h03", "category": "contractions", "input": "why don't replicas agree?", "expected_final": "why do not replicas agree?", "operator": "why", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h04", "category": "question_normalization", "input": "could you tell me where atlas runs?", "expected_final": "where atlas runs?", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h05", "category": "question_normalization", "input": "can you tell me who owns beacon?", "expected_final": "who owns beacon?", "operator": "who", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h06", "category": "question_normalization", "input": "i would like to know when cedar expires", "expected_final": "when cedar expires", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h07", "category": "paraphrase_reduction", "input": "at what time does delta refresh?", "expected_final": "when does delta refresh?", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h08", "category": "paraphrase_reduction", "input": "in what place is ember deployed?", "expected_final": "where is ember deployed?", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h09", "category": "paraphrase_reduction", "input": "which person created flux?", "expected_final": "who created flux?", "operator": "which", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h10", "category": "synonym_classes", "input": "where is customer assistance located?", "expected_final": "where is customer support located?", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h11", "category": "synonym_classes", "input": "when does the help desk open?", "expected_final": "when does the support center open?", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h12", "category": "synonym_classes", "input": "how do i sign in to glacier?", "expected_final": "how do i login to glacier?", "operator": "how", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h13", "category": "conversational_repair", "input": "sorry i meant where is harbor?", "expected_final": "where is harbor?", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h14", "category": "conversational_repair", "input": "no wait i meant who owns ion?", "expected_final": "who owns ion?", "operator": "who", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h15", "category": "conversational_repair", "input": "let me rephrase when does juniper start?", "expected_final": "when does juniper start?", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h16", "category": "pronoun_transformations", "input": "what about it?", "expected_final": "what about Kestrel", "operator": "what", "subject": "Kestrel", "inherited_subject": true, "should_rewrite": true},
+    {"case_id": "h17", "category": "pronoun_transformations", "input": "and where is it?", "expected_final": "where is Lattice", "operator": "where", "subject": "Lattice", "inherited_subject": true, "should_rewrite": true},
+    {"case_id": "h18", "category": "pronoun_transformations", "input": "who created it?", "expected_final": "who created Meridian", "operator": "who", "subject": "Meridian", "inherited_subject": true, "should_rewrite": true},
+    {"case_id": "h19", "category": "context_dependent_reductions", "input": "and its status?", "expected_final": "what is Nimbus status", "operator": "what", "subject": "Nimbus", "inherited_subject": true, "should_rewrite": true},
+    {"case_id": "h20", "category": "context_dependent_reductions", "input": "what about that?", "expected_final": "what about Orbit", "operator": "what", "subject": "Orbit", "inherited_subject": true, "should_rewrite": true},
+    {"case_id": "h21", "category": "technical_phrasing", "input": "what does http status code 429 mean?", "expected_final": "what does http code 429 mean?", "operator": "what", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h22", "category": "technical_phrasing", "input": "where is the exception message recorded?", "expected_final": "where is the error message recorded?", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "h23", "category": "technical_phrasing", "input": "what software version number is active?", "expected_final": "what software version is active?", "operator": "what", "subject": "", "inherited_subject": false, "should_rewrite": true},
+    {"case_id": "n01", "category": "negative_control", "input": "could you notify me when quartz changes?", "expected_final": "could you notify me when quartz changes?", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n02", "category": "negative_control", "input": "the sign indicates north", "expected_final": "the sign indicates north", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n03", "category": "negative_control", "input": "the customer assistant replied", "expected_final": "the customer assistant replied", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n04", "category": "negative_control", "input": "what about it?", "expected_final": "what about it?", "operator": "what", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n05", "category": "negative_control", "input": "http status codes are documented", "expected_final": "http status codes are documented", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n06", "category": "negative_control", "input": "the help desktop is installed", "expected_final": "the help desktop is installed", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n07", "category": "negative_control", "input": "which personal account changed?", "expected_final": "which personal account changed?", "operator": "which", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n08", "category": "negative_control", "input": "at whatever time works", "expected_final": "at whatever time works", "operator": "when", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n09", "category": "negative_control", "input": "the software versions numbered ten", "expected_final": "the software versions numbered ten", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n10", "category": "negative_control", "input": "sorry i mentioned where harbor is", "expected_final": "sorry i mentioned where harbor is", "operator": "where", "subject": "", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n11", "category": "negative_control", "input": "and where is it?", "expected_final": "and where is it?", "operator": "where", "subject": "Lattice", "inherited_subject": false, "should_rewrite": false},
+    {"case_id": "n12", "category": "negative_control", "input": "do not change this request", "expected_final": "do not change this request", "operator": "unknown", "subject": "", "inherited_subject": false, "should_rewrite": false}
+  ]
+}

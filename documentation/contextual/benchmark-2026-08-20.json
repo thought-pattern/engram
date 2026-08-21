@@ -1,0 +1,367 @@
+{
+  "benchmark_id": "section8-relation-followup-v1",
+  "engram_version": "1.1.11",
+  "executed_at": "2026-08-21T02:31:55.571142Z",
+  "failures": [],
+  "latency_ms": {
+    "maximum": 64.8432,
+    "median": 59.8781,
+    "p95": 64.3658,
+    "samples": 15
+  },
+  "manifest_authored_at": "2026-08-20T16:00:00Z",
+  "partitions": {
+    "development": {
+      "cases": 6,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_relation",
+          "id": "dev-direct-place",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 64.8432,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "paraphrase",
+          "id": "dev-paraphrase-preposition",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 63.1471,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "entity_ambiguity",
+          "id": "dev-entity-ambiguity",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 32.9169,
+              "one_hop_calls": 0,
+              "outcome": "MISS",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "predicate_ambiguity",
+          "id": "dev-predicate-ambiguity",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 35.0374,
+              "one_hop_calls": 0,
+              "outcome": "MISS",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "technical_relation",
+          "id": "dev-technical-relation",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 60.5368,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "elliptical_followup",
+          "id": "dev-elliptical-operator",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 59.4465,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            },
+            {
+              "failed_checks": [],
+              "inheritance_fields": [
+                "relation",
+                "subjects"
+              ],
+              "latency_ms": 56.9122,
+              "one_hop_calls": 2,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 2
+            }
+          ]
+        }
+      ]
+    },
+    "held_out": {
+      "cases": 6,
+      "passed": 6,
+      "results": [
+        {
+          "category": "alias",
+          "id": "held-alias-place",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 64.3658,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "paraphrase",
+          "id": "held-verb-lemma",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 61.8439,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "explicit_reference",
+          "id": "held-explicit-technical-reference",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 59.8781,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        },
+        {
+          "category": "elliptical_replacement",
+          "id": "held-elliptical-replacement",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 60.6132,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            },
+            {
+              "failed_checks": [],
+              "inheritance_fields": [
+                "qualifiers",
+                "relation"
+              ],
+              "latency_ms": 35.1776,
+              "one_hop_calls": 1,
+              "outcome": "MISS",
+              "passed": true,
+              "turn": 2
+            }
+          ]
+        },
+        {
+          "category": "context_reset",
+          "id": "held-self-contained-reset",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 60.8683,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            },
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 31.0399,
+              "one_hop_calls": 1,
+              "outcome": "MISS",
+              "passed": true,
+              "turn": 2
+            }
+          ]
+        },
+        {
+          "category": "unknown_type",
+          "id": "held-unknown-object-type",
+          "passed": true,
+          "turns": [
+            {
+              "failed_checks": [],
+              "inheritance_fields": [],
+              "latency_ms": 56.8997,
+              "one_hop_calls": 1,
+              "outcome": "EVIDENCE",
+              "passed": true,
+              "turn": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "passed": true,
+  "python_version": "3.12.2",
+  "schema_version": 1,
+  "source": {
+    "base_commit": "9b007641199148fb5fb9bce652ba1fb44f05cd0c",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/artifacts/section4-benchmark-2026-08-19.json",
+      "documentation/artifacts/section4-conformance-2026-08-12.md",
+      "documentation/code-style.md",
+      "documentation/composition/",
+      "documentation/contextual/",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/evaluation/",
+      "documentation/evidence/benchmark-2026-08-19.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/evidence/core-handoff.md",
+      "documentation/evidence/section7-conformance-2026-08-16.md",
+      "documentation/feedback/benchmark-2026-08-19.json",
+      "documentation/feedback/contracts-v1.md",
+      "documentation/fusion/benchmark-2026-08-19.json",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/identity/benchmark-2026-08-19.json",
+      "documentation/indexes/benchmark-2026-08-19.json",
+      "documentation/operations/",
+      "documentation/python-api.md",
+      "documentation/temporal/",
+      "engram/composition.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/core.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "engram/temporal.py",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_conversation.py",
+      "eval/run_release_gate_foundation.py",
+      "eval/section10-composition-v1.json",
+      "eval/section8-relation-followup-v1.json",
+      "eval/section9-mcp-seed.json",
+      "eval/section9-temporal-conflict-v1.json",
+      "pyproject.toml",
+      "schema.cypher",
+      "scripts/benchmark_composition.py",
+      "scripts/benchmark_contextual_graph.py",
+      "scripts/benchmark_evidence.py",
+      "scripts/benchmark_feedback.py",
+      "scripts/benchmark_fusion.py",
+      "scripts/benchmark_identity.py",
+      "scripts/benchmark_indexes.py",
+      "scripts/benchmark_metadata.py",
+      "scripts/benchmark_resolution.py",
+      "scripts/benchmark_section0.py",
+      "scripts/benchmark_temporal_conflict.py",
+      "scripts/compare_mcp_memgraph.py",
+      "scripts/probe_composition_memgraph.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_baseline_gaps.py",
+      "tests/test_benchmark_metadata.py",
+      "tests/test_claim_eligibility.py",
+      "tests/test_code_style.py",
+      "tests/test_composition.py",
+      "tests/test_concrete_absence.py",
+      "tests/test_config.py",
+      "tests/test_contextual.py",
+      "tests/test_core.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_evidence.py",
+      "tests/test_feedback.py",
+      "tests/test_fusion.py",
+      "tests/test_graph.py",
+      "tests/test_identity.py",
+      "tests/test_import_hygiene.py",
+      "tests/test_indexes.py",
+      "tests/test_models.py",
+      "tests/test_nltk_data.py",
+      "tests/test_operations.py",
+      "tests/test_pattern.py",
+      "tests/test_pipeline.py",
+      "tests/test_relation.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_temporal.py",
+      "tests/test_temporal_conflict.py"
+    ],
+    "governed_source_sha256": "e66f42bca492ddbd3e531eda885b66229701af9e1e19f8bdd3d541185c231c3a",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  }
+}

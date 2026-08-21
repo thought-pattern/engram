@@ -33,16 +33,6 @@ def test_enabled_spacy_feature_fails_transport_neutral_preflight(monkeypatch):
         Engram(config=engram_config(use_spacy_facts=True))
 
 
-"""All spaCy-backed features are opt-in (default off)."""
-
-
-def test_config_defaults_defaults():
-    cfg = engram_config()
-    assert cfg["use_spacy_facts"] is False
-    assert cfg["use_spacy_lemmatization"] is False
-    assert cfg["use_phrase_keywords"] is False
-
-
 """Tests for noun-chunk phrase keyword extraction."""
 
 

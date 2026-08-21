@@ -31,6 +31,8 @@ from engram.constants import (
     KIND_STATEMENT,
     KNOWN_FACT_RESPONSES,
     LEARNED_ACKNOWLEDGMENTS,
+    MAX_RELATION_CANDIDATES,
+    MAX_RELATION_PLAN_ROWS,
     MAX_STRUCTURED_CLAIM_PROJECTION_TERMS,
     REPETITION_ESCAPE_RESPONSE,
     REPETITION_FEEDBACK_MARKERS,
@@ -59,12 +61,18 @@ from engram.errors import InvalidRequestError
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
 from engram.graph import (
+    CanonicalEntityMatch,
+    CanonicalPredicateMatch,
     ClaimProjection,
     ClaimProjectionQuery,
+    RelationClaimProjection,
+    canonical_entity_match_from_graph_row,
+    canonical_predicate_match_from_graph_row,
     claim_projection_to_dict,
     create_graph_client,
     is_write_cypher,
     validate_claim_projection,
+    validate_relation_claim_projection,
 )
 from engram.identity import ScopedRetrievalKey
 from engram.indexes import (
@@ -119,7 +127,7 @@ logger = logging.getLogger(__name__)
 
 
 def _run_cooperative_check(check=()) -> None:
-    """Run an optional resolver-owned deadline check without owning its clock."""
+    """Run an optional resolver-owned cooperative callback."""
     if check:
         if not callable(check):
             raise ValueError("cooperative_check must be callable")
@@ -308,7 +316,9 @@ class Engram:
 
         # Enabled graph components are initialized during construction. Request
         # paths only use already-created clients and already-loaded models.
-        self._graph_client = ()
+        # Graph access is capability-based: production uses MemGraphConnection,
+        # while deterministic benchmarks may provide the same narrow methods.
+        self._graph_client: object = ()
         self._graph_embedding_model = ()
         graph_config = self.config.get("graph") or {}
         if graph_config.get("enabled"):
@@ -353,8 +363,8 @@ class Engram:
             self.warm_vector_recall()
         if spacy_full_enabled and not get_nlp():
             raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
-        if spacy_phrasing_enabled and not get_nlp(disable=("parser", "ner")):
-            raise RuntimeError("enabled graph phrasing requires the pre-provisioned spaCy English model")
+        if spacy_phrasing_enabled and not get_nlp():
+            raise RuntimeError("enabled relation-aware graph resolution requires the pre-provisioned English model")
 
         result = {
             "nltk": {"enabled": True, "ready": True},
@@ -386,8 +396,13 @@ class Engram:
         if not client:
             result = []
             return result
+        execute_read = getattr(client, "execute_read", ())
+        if not callable(execute_read):
+            return []
         try:
-            records = client.execute_read(cypher, params)
+            records = execute_read(cypher, params)
+            if not isinstance(records, list):
+                raise RuntimeError("graph read capability returned an invalid collection")
             return records
         except RuntimeError as err:
             logger.debug("Graph query failed: %s", err)
@@ -729,7 +744,7 @@ class Engram:
         graph_settings = self.config.get("graph") or {}
         vector_weight = float(graph_settings["vector_weight"])
         scan_limit = int(graph_settings.get("vector_support_scan_limit", MAX_INDEX_SUPPORT_SCAN_EDGES))
-        state = self.index_snapshot()
+        state = self._index_owner._trusted_snapshot()
         scan_plan = index_state_support_scan_plan(state, tuple(support_scores), scan_limit)
         if not scan_plan["complete"]:
             logger.warning(
@@ -748,7 +763,7 @@ class Engram:
         retained_bytes = source_working_bytes + _estimate_working_bytes(support_scores)
         with self.statement_lock:
             for claim_id in scan_plan["queried_claim_ids"]:
-                for statement_id in state["claim_to_statements"].get(claim_id, ()):
+                for statement_id in reversed(state["claim_to_statements"].get(claim_id, ())):
                     _run_cooperative_check(cooperative_check)
                     if statement_id in seen_statement_ids:
                         continue
@@ -771,6 +786,8 @@ class Engram:
                     semantic_similarity = max(similarities)
                     priority = float(statement_value.get("priority", 0))
                     score = semantic_similarity * vector_weight + priority
+                    if len(scored) >= limit and (score, index) <= (scored[0][0], scored[0][1]):
+                        continue
                     components = {
                         "statement": statement_value,
                         "retrieval_score": score,
@@ -783,7 +800,7 @@ class Engram:
                         ranked_bytes = _estimate_working_bytes(ranked)
                         heapq.heappush(scored, ranked)
                         scored_bytes += ranked_bytes
-                    elif (score, index) > (scored[0][0], scored[0][1]):
+                    else:
                         ranked_bytes = _estimate_working_bytes(ranked)
                         removed = heapq.heapreplace(scored, ranked)
                         scored_bytes += ranked_bytes - _estimate_working_bytes(removed)
@@ -1365,6 +1382,97 @@ class Engram:
                 max_working_memory_bytes,
             )
         result = [retained[claim_id] for claim_id in sorted(retained)]
+        return result
+
+    def canonical_entity_matches(
+        self,
+        surface: str,
+        *,
+        limit: int = MAX_RELATION_CANDIDATES,
+        cooperative_check=(),
+    ) -> list[CanonicalEntityMatch]:
+        """Resolve an entity surface through the fixed graph capability."""
+        client = self.graph_client
+        search = getattr(client, "canonical_entity_matches", ())
+        if not client or not callable(search):
+            return []
+        _run_cooperative_check(cooperative_check)
+        rows = search(surface, limit=limit)
+        if not isinstance(rows, list) or len(rows) > limit:
+            raise ValueError("canonical entity boundary returned an invalid collection")
+        result = [canonical_entity_match_from_graph_row(row) for row in rows]
+        _run_cooperative_check(cooperative_check)
+        return result
+
+    def canonical_predicate_matches(
+        self,
+        surface: str,
+        *,
+        limit: int = MAX_RELATION_CANDIDATES,
+        cooperative_check=(),
+    ) -> list[CanonicalPredicateMatch]:
+        """Resolve a Predicate surface through the fixed graph capability."""
+        client = self.graph_client
+        search = getattr(client, "canonical_predicate_matches", ())
+        if not client or not callable(search):
+            return []
+        _run_cooperative_check(cooperative_check)
+        rows = search(surface, limit=limit)
+        if not isinstance(rows, list) or len(rows) > limit:
+            raise ValueError("canonical Predicate boundary returned an invalid collection")
+        result = [canonical_predicate_match_from_graph_row(row) for row in rows]
+        _run_cooperative_check(cooperative_check)
+        return result
+
+    def relation_one_hop_claim_projections(
+        self,
+        subject_entity_id: str,
+        predicate_id: str,
+        *,
+        row_limit: int = MAX_RELATION_PLAN_ROWS,
+        include_historical: bool = False,
+        cooperative_check=(),
+        max_working_memory_bytes: int = 0,
+    ) -> list[RelationClaimProjection]:
+        """Run the fixed one-hop Claim template and enforce its output boundary."""
+        if isinstance(row_limit, bool) or not isinstance(row_limit, int) or not 0 <= row_limit <= MAX_RELATION_PLAN_ROWS:
+            raise ValueError(f"relation row_limit must be an integer from 0 through {MAX_RELATION_PLAN_ROWS}")
+        if not isinstance(include_historical, bool):
+            raise ValueError("relation include_historical must be a boolean")
+        client = self.graph_client
+        search = getattr(client, "relation_one_hop_claim_projections", ())
+        if not row_limit or not client or not callable(search):
+            return []
+        _run_cooperative_check(cooperative_check)
+        rows = search(
+            subject_entity_id,
+            predicate_id,
+            limit=row_limit,
+            include_historical=include_historical,
+        )
+        if not isinstance(rows, list) or len(rows) > row_limit:
+            raise ValueError("relation one-hop boundary returned an invalid collection")
+        result = [validate_relation_claim_projection(row) for row in rows]
+        if any(
+            row["projection"]["subject_entity_id"] != subject_entity_id or row["projection"]["predicate_id"] != predicate_id
+            for row in result
+        ):
+            raise ValueError("relation one-hop boundary returned a Claim outside the requested canonical binding")
+        _require_working_memory(
+            _estimate_working_bytes(
+                [
+                    {
+                        "projection": claim_projection_to_dict(row["projection"]),
+                        "object_label": row["object_label"],
+                        "object_type": row["object_type"].value,
+                        "predicate_cardinality": row["predicate_cardinality"].value,
+                    }
+                    for row in result
+                ]
+            ),
+            max_working_memory_bytes,
+        )
+        _run_cooperative_check(cooperative_check)
         return result
 
     def query(

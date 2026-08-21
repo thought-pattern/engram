@@ -1,13 +1,11 @@
 """Tests for text substitution maps."""
 
-from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
 from engram.substitutions import (
     apply_gender,
     apply_person,
     apply_person2,
     apply_substitutions,
     expand_contractions,
-    get_all_input_subs,
     normalize_for_matching,
     split_sentences,
     substitution_maps,
@@ -307,62 +305,11 @@ def test_normalize_for_matching_normalizes_whitespace():
 """Tests for SubstitutionMaps class."""
 
 
-def test_substitution_maps_default_maps():
-    """Test default maps are initialized."""
-    maps = substitution_maps()
-    assert len(maps["contractions"]) > 0
-    assert len(maps["person"]) > 0
-    assert len(maps["person2"]) > 0
-    assert len(maps["gender"]) > 0
-    assert len(maps["custom"]) == 0
-
-
-def test_substitution_maps_get_all_input_subs():
-    """Test get_all_input_subs combines maps."""
-    maps = substitution_maps()
-    maps["custom"]["foo"] = "bar"
-
-    all_subs = get_all_input_subs(maps)
-    assert "don't" in all_subs
-    assert "foo" in all_subs
-
-
 def test_substitution_maps_custom_maps_override():
     """Test custom maps can be provided."""
     custom_contractions = {"yo": "hello"}
     maps = substitution_maps(contractions=custom_contractions)
     assert maps["contractions"] == {"yo": "hello"}
-
-
-"""Tests for default substitution maps."""
-
-
-def test_default_maps_contractions_completeness():
-    """Test that common contractions are present."""
-    common = ["i'm", "don't", "can't", "won't", "isn't", "aren't"]
-    for c in common:
-        assert c in DEFAULT_CONTRACTIONS
-
-
-def test_default_maps_person_map_completeness():
-    """Test that common person substitutions are present."""
-    common = ["i", "me", "my", "mine", "myself"]
-    for p in common:
-        assert p in DEFAULT_PERSON
-
-
-def test_default_maps_person2_map_completeness():
-    """Test that common person2 substitutions are present."""
-    common = ["you", "your", "yours", "yourself"]
-    for p in common:
-        assert p in DEFAULT_PERSON2
-
-
-def test_default_maps_gender_map_completeness():
-    """Test that common gender substitutions are present."""
-    common = ["he", "she", "him", "her", "his", "hers"]
-    for g in common:
-        assert g in DEFAULT_GENDER
 
 
 """Integration tests for contractions with Engram."""

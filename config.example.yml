@@ -20,6 +20,7 @@ session_overflow: lru # reject | expire_oldest | lru
 
 # --- Input processing ---
 expand_contractions: true
+retrieval_rewrites_enabled: false # Retrieval-only Section 11 rules; does not execute AIML templates
 learn_user_facts: true # Learn shared facts with per-user attribution
 srai_depth_limit: 100
 
@@ -48,6 +49,8 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 # interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
+# Deployment requirement when enabled: start MemGraph with an approved positive
+# --query-execution-timeout-sec value; pymgclient cannot set it per query.
 graph:
   host: localhost
   port: 7687

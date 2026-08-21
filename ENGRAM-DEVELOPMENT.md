@@ -1,6 +1,6 @@
 # Engram Development Plan
 
-**Audience: Internal | Status: Sections 0-7 implemented | Baseline: 10 August 2026 | Updated: 16 August 2026**
+**Audience: Internal | Status: Sections 0-10 component-implemented; Sections 15-16 active; release not approved | Baseline: 10 August 2026 | Updated: 20 August 2026**
 
 Implementation status for this plan is maintained in [ENGRAM-PROJECT-TRACKING.md](ENGRAM-PROJECT-TRACKING.md). This document defines the intended architecture, sequencing, contracts, and acceptance gates. It does not mark proposed work as implemented.
 
@@ -25,7 +25,9 @@ Current implementation context comes from the active [README](README.md), [MCP](
 
 Section 0 reconciled those claims against the active source and recorded the audited revision, discrepancies, tests, and measurements in [the source audit](documentation/baseline/source-audit-2026-08-11.md). Current-state statements below remain baseline descriptions; implementation completion is governed by the tracker and its linked evidence.
 
-Sections 0 through 7 have since been completed under that authority. The executable Section 4 substrate and its reviewed boundaries are published in the [unified resolution contract v1](documentation/artifacts/resolution-contract-v1.md), with requirement, compatibility, benchmark, static-analysis, and 1,000-turn MCP evidence in the [Section 4 conformance report](documentation/artifacts/section4-conformance-2026-08-12.md). Section 5 feature semantics, authoritative revalidation, fusion, ambiguity, and policy boundaries are published in the [candidate-fusion contract v1](documentation/fusion/contracts-v1.md), with verification and benchmark evidence in the [Section 5 conformance report](documentation/fusion/section5-conformance-2026-08-15.md). Section 6 targeting, receipt, aggregation, aging, feedback-history, lifecycle-handoff, persistence, recovery, and negative-resolution boundaries are published in the [feedback and negative-resolution contract v1](documentation/feedback/contracts-v1.md), with verification and scale evidence in the [Section 6 conformance report](documentation/feedback/section6-conformance-2026-08-16.md). Section 7's in-place core evidence evolution, unchanged CLI/MCP/current-gRPC boundaries, strict contracts, disclosure gate, response-less producers, bounded orchestration, conformance results, and engineering benchmark are published in the [accepted decision](documentation/decisions/0005-section7-evidence-compatibility.md), [core handoff](documentation/evidence/core-handoff.md), and [Section 7 conformance report](documentation/evidence/section7-conformance-2026-08-16.md). A future gRPC evidence RPC/message is versioned only when Section 15 changes that actual external interface. The target architecture remains prospective for Sections 8 onward.
+Sections 0 through 10 have since been component-completed under that authority. The executable Section 4 substrate and its current resource/timing boundary are published in the [unified resolution contract v2](documentation/artifacts/resolution-contract-v2.md); v2 removes latency limits from answer policy while retaining elapsed reporting and non-time resource bounds. Section 5 feature semantics, authoritative revalidation, fusion, ambiguity, and policy boundaries are published in the [candidate-fusion contract v1](documentation/fusion/contracts-v1.md), with verification and benchmark evidence in the [Section 5 conformance report](documentation/fusion/section5-conformance-2026-08-15.md). Section 6 targeting, receipt, aggregation, aging, feedback-history, lifecycle-handoff, persistence, recovery, and negative-resolution boundaries are published in the [feedback and negative-resolution contract v1](documentation/feedback/contracts-v1.md), with verification and scale evidence in the [Section 6 conformance report](documentation/feedback/section6-conformance-2026-08-16.md). Section 7's in-place core evidence evolution, unchanged CLI/MCP/current-gRPC boundaries, strict contracts, disclosure gate, response-less producers, bounded orchestration, conformance results, and engineering benchmark are published in the [accepted decision](documentation/decisions/0005-section7-evidence-compatibility.md), [core handoff](documentation/evidence/core-handoff.md), and [Section 7 conformance report](documentation/evidence/section7-conformance-2026-08-16.md). A future gRPC evidence RPC/message is versioned only when Section 15 changes that actual external interface. Component completion does not imply that Section 16's protected evaluation or release gate has passed.
+
+The 20 August 2026 execution update completes EGR-1502's stable [Python API v1](documentation/python-api.md), including authoritative identity input, the Section 7 evidence package, keyed feedback examples, strict mapping boundaries, concrete falsy absence, and a transient cooperative-cancellation hook. EGR-1510 adds the [deployment and rollback runbook](documentation/operations/deployment-and-rollback-v1.md) and its isolated rollback exercise. The [Section 16 evaluation foundation](documentation/evaluation/foundation-v1.md) now contains only public tuning cases and contrasts. Release-gate and final-test custody slots are unprovisioned and unauthorized; their previously visible examples were compromised for release use and removed. Proposed numerical sample floors are unmet, and no release approval is claimed. Engineering benchmark artifacts bind to governed source state and report turn-length distributions without a latency pass/fail threshold.
 
 The EGR-702 through EGR-712 [full Claim evidence and package contracts v1](documentation/evidence/contracts-v1.md) supply the strict canonical-reference, validity, trust, disclosure-provenance, singleton-path, excluded-content, canonical-deduplication, exact-omission, 10-record/64-KiB, fixed canonical-only graph-projection, current disclosure, exact-scope authority, publication-revalidation, structured and semantic full-record production, legacy semantic-candidate preservation, order-independent fail-closed cross-producer merging, the frozen unfitted usefulness policy, raw-record containment, bounded Claim-only EVIDENCE/MISS orchestration, the [actual core/adapter handoff](documentation/evidence/core-handoff.md), and the completed conformance gate.
 
@@ -111,7 +113,7 @@ The following invariants apply across all phases.
 5. **Aliases are data, not programs.** Retrieval aliases must never become executable AIML patterns unless an author deliberately creates a separate pattern.
 6. **Secondary indexes are disposable.** Persisted response artifacts are authoritative. Exact, alias, support, sparse, and vector indexes must be rebuildable and consistency-checkable.
 7. **Graph access is read-only.** Engram does not create or mutate canonical Claims, Entities, Predicates, trust, ownership, or temporal bounds at runtime.
-8. **Every expensive path is bounded.** Resolver count, candidate count, graph hops, graph rows, vector results, evidence, serialized output and diagnostics, bounded working-memory estimates, branches, and wall time have explicit limits.
+8. **Every expensive path is bounded.** Resolver count, candidate count, graph hops, graph rows, vector results, evidence, serialized output and diagnostics, bounded working-memory estimates, and branches have explicit resource limits. Callers can cancel cooperatively, and enabled external backends require hard operational timeouts. Elapsed time is observed but never used as a knowledge-quality or fusion threshold.
 9. **Dependencies and enabled components are ready at startup.** Runtime packages are hard installation requirements and use normal eager imports. Required NLTK, spaCy, and embedding-model artifacts are provisioned before startup. Configuration may disable a feature, but an enabled graph or semantic component must initialize and pass readiness before serving; runtime downloads, deferred dependency imports, and first-request model loading are not allowed.
 10. **Conflicts lower authority.** Contradictory or near-tied evidence normally produces EVIDENCE or MISS, not an arbitrary ANSWER.
 11. **Retries are safe.** Durable regulated mutations retain logical request identity and cannot double-credit, duplicate, or silently replace different content.
@@ -232,7 +234,7 @@ On commit, Engram normalizes each representation into a retrieval key, removes d
 
 ### 7.4 ResolutionBudget and BudgetConsumption
 
-One resolution captures a versioned immutable `ResolutionBudget` before resolver planning. It specifies total and per-resolver time, configured cost-class allowances, candidate count, graph rows, vector results, evidence count and bytes, serialized output and diagnostics, bounded working-memory estimates, and every other resource dimension consumed by an enabled resolver. Time uses one injected monotonic clock and a captured deadline; core tests do not read ambient wall time. Concrete availability fields distinguish an unavailable measurement from a measured zero. Section 4 resolvers check their executor-owned deadline before and after expensive calls and within local loops. An in-flight external database or model call is not preempted by the Python executor; enabled dependencies therefore also require their own bounded backend operations and the cross-adapter cancellation/readiness work assigned to Section 15.
+One resolution captures a versioned `ResolutionBudget` before resolver planning. It specifies configured cost-class allowances, candidate count, graph rows, vector results, evidence count and bytes, serialized output and diagnostics, and bounded working-memory estimates. Version 2 contains no elapsed-time answer limits or knowledge deadlines. The injected monotonic clock records resolver and complete-turn duration in `BudgetConsumption.elapsed_ns`; elapsed time never changes candidacy, evidence, outcome, or exhaustion. Section 15 supplies transient caller cancellation and requires backend-enforced operational query limits. Those controls stop work or classify dependency failure; they do not reinterpret a slow valid result as a knowledge miss.
 
 The executor owns the mutable consumption ledger rather than placing mutable counters in `QueryFrame`. It reserves and consumes allowances deterministically, issues each resolver a read-only bounded lease, and records completed, truncated, exhausted, skipped, unavailable, or failed consumption without allowing a resolver to increase its own limits. Reservations, releases, remaining allowance, and final `BudgetConsumption` are bounded versioned records suitable for deterministic fixtures. Section-specific resolvers may define tighter limits, but they cannot weaken the shared envelope.
 
@@ -630,7 +632,7 @@ The default order is:
 
 Deployments may reorder resolvers by measured latency and value, but exact and bounded hard-eligibility checks remain first. The registry records configuration, availability, skips, order, and cost-class decisions in one inspectable bounded plan. Section 4 permits a unique eligible exact result to short-circuit; until Section 5 is implemented, no non-exact response candidate is promoted directly to ANSWER.
 
-The executor owns the mutable budget ledger and uses the request's injected monotonic clock. It assigns each resolver the earlier of the aggregate and per-resolver deadlines and enforces candidates, graph rows, vector results, evidence and output sizes, diagnostics, bounded working-memory estimates, and cost-class allowances before and during cooperative execution. Concrete adapters check deadlines at local work boundaries, bound retained local working sets, and abstain without partial ranking on exhaustion. Calls already executing inside an external backend remain governed by that backend's timeout and cancellation contract. Deterministic truncation is explicit. An unavailable, skipped, exhausted, or failed resolver produces typed diagnostics and cannot erase earlier completed results or prevent permitted later work while budget remains.
+The executor owns the mutable budget ledger and enforces candidates, graph rows, vector results, evidence and output sizes, diagnostics, bounded working-memory estimates, and cost-class allowances. The injected monotonic clock measures each resolver and the complete resolution but does not stop execution or reject a returned result. Deterministic truncation is explicit. An unavailable, skipped, resource-exhausted, or failed resolver produces typed diagnostics and cannot erase earlier completed results or prevent permitted later work while non-time resource allowance remains.
 
 ## 12. Candidate fusion and answer policy
 
@@ -746,7 +748,7 @@ Evidence records should include:
 - one singleton Claim path, with multi-hop population deferred to Section 10; and
 - reason the evidence was selected.
 
-The package follows ADR 0003's fixed first-generation envelope: at most ten evidence records, at most 64 KiB complete serialized size, 256-byte identifiers, at most sixteen selection reasons per record, canonical ordering, Claim-ID deduplication, and explicit retained, omitted, and truncation fields. New discovery also consumes Section 4's graph-row, vector-result, output, diagnostic, working-memory, and deadline budgets rather than redefining them as Section 7 limits. Similarity and supplied trust participate only through one versioned conservative hand-authored evidence policy; Section 7 may apply a trust inclusion floor but does not rank Claims by trust or grant direct-answer authority. Relative trust policy arrives in Section 9 and empirical calibration remains Section 16 work.
+The package follows ADR 0003's fixed first-generation envelope: at most ten evidence records, at most 64 KiB complete serialized size, 256-byte identifiers, at most sixteen selection reasons per record, canonical ordering, Claim-ID deduplication, and explicit retained, omitted, and truncation fields. New discovery also consumes Section 4's graph-row, vector-result, output, diagnostic, and working-memory budgets rather than redefining them as Section 7 limits. Similarity and supplied trust participate only through one versioned conservative hand-authored evidence policy; Section 7 may apply a trust inclusion floor but does not rank Claims by trust or grant direct-answer authority. Relative trust policy arrives in Section 9 and empirical calibration remains Section 16 work.
 
 Current disclosure eligibility uses the frame's injected evaluation time and requires active/system-current state, inclusion in the current valid-time interval, proof-canonical identity, and retrieval-only exclusion. Explicitly public Claims follow the documented public rule. Company/customer Claims require a configured trusted visibility authority that maps the caller's exact `ScopeKey`; namespace or context text alone never establishes authorization. Missing trust remains unavailable rather than being silently defaulted. Section 9 later adds requested historical-time selection, trust ranking, multi-value relations, and conflict policy without weakening this disclosure boundary.
 
@@ -754,7 +756,7 @@ The existing CLI, MCP, and gRPC contracts do not transport the unified Claim pac
 
 ## 15. Contextual query-frame enrichment and multi-turn completion
 
-User context should retain a compact previous query frame containing operator, subject entities, relation, expected object type, and qualifiers. Follow-up completion may inherit only missing fields.
+User context retains a compact previous query frame containing operator, subject entities, relation, expected object type, and qualifiers. Follow-up completion inherits only missing fields.
 
 Examples:
 
@@ -774,9 +776,11 @@ The second frame inherits the relation or topic and replaces the subject.
 
 Inheritance must be bounded by turn distance, topic continuity, and confidence. A self-contained request does not inherit. Ambiguous completion lowers confidence or returns MISS. User-isolated frames remain part of conversation state and follow existing TTL and persistence rules.
 
+The current boundary is documented in [Contextual relation contracts v2](documentation/contextual/contracts-v2.md). The retained frame is an exact, compact session codec rather than learned knowledge; it uses a two-turn maximum distance and existing session isolation, persistence, and expiry. `EngramCore.resolve_request` accepts an additive keyword-only `user_id`, while Section 15 continues to own any stable external evidence/context adapter.
+
 ## 16. Relation-aware graph resolution
 
-Structured graph resolution should progress through the following stages:
+Structured graph resolution progresses through the following stages:
 
 1. Classify the operator.
 2. Resolve subject and named entities through canonical labels, aliases, and edge surface forms.
@@ -788,6 +792,10 @@ Structured graph resolution should progress through the following stages:
 8. Otherwise return bounded Claim evidence.
 
 No caller-supplied Cypher participates in this resolver. Query templates and allowed predicates are internal and parameterized. Graph account permissions remain read-only.
+
+Version 1 exposes three fixed graph capabilities: canonical entity surface lookup, canonical Predicate surface lookup, and `one_hop_claim_v1`. Entity and Predicate resolution return explicit selected, ambiguous, or miss states. The one-hop result reuses the Section 7 `ClaimProjection`, current disclosure evaluator, by-ID revalidation, `ClaimEvidenceRecord`, and package. A unique compatible result may add a deterministic response candidate, but the Section 5 support and independent-source policy still prevents a lone graph result from authorizing `ANSWER`.
+
+The versioned [relation and follow-up corpus](eval/section8-relation-followup-v1.json) separates development and engineering-regression cases. Its legacy `held_out` key does not imply independent custody: all content is visible in this repository and is ineligible as Section 16 release evidence. Its reproducible [benchmark runner](scripts/benchmark_contextual_graph.py) measures every turn and binds the generated report to governed source state while recording direct relations, ambiguity, paraphrases, technical references, bounded elliptical inheritance, context reset, unknown types, plan bounds, and end-to-end duration.
 
 ## 17. Temporal, trust, and conflict semantics
 
@@ -804,9 +812,13 @@ The first temporal parser should cover:
 
 The query frame should distinguish requested valid time from system observation time. Graph filtering must use the schema's half-open valid-time and system-time semantics. If the query cannot be mapped safely, Engram returns evidence or a miss.
 
+Implemented by the [Temporal, Trust, and Conflict Contracts v1](documentation/temporal/contracts-v1.md): exact supported grammar reports deterministic recognition confidence `1.0`, unresolved text reports `0.0`, and both the source expression and normalized bounds remain inspectable. Current, historical, bounded, and latest requests reuse the same canonical proof, visibility, and by-ID revalidation path.
+
 ### 17.2 Trust and ownership
 
 Engram may consume trust and ownership fields supplied by canonical Claims. It does not assign or upgrade them. Visibility is an eligibility filter. Trust is a ranking and direct-answer policy input. Missing trust is explicit and follows configured conservative behavior.
+
+The initial policy has no invented trust threshold. It compares only values supplied with the same available source trust-score version. Missing or version-incomparable trust suppresses a direct relation phrase while retaining bounded Claim evidence.
 
 ### 17.3 Conflict handling
 
@@ -820,9 +832,13 @@ Engram should:
 4. return EVIDENCE with a conflict reason when useful; and
 5. expose trust, temporal, and provenance features without declaring which Claim is true.
 
+The optional canonical Predicate `cardinality` property supplies `SINGLE` or `MULTI`; missing metadata is `UNKNOWN` and fails conservatively. Overlapping incompatible `SINGLE` objects preserve all conflict Claim IDs and suppress phrasing. `MULTI` is retained as valid multi-value evidence, while successive non-overlapping historical objects are not mislabeled as a simultaneous contradiction. Stable reasons and the full policy are documented in the [Section 9 conformance report](documentation/temporal/section9-conformance-2026-08-20.md).
+
+The final MCP evaluation uses a no-catch-all test seed so five prompts in Sarah's 1,000-turn sushi conversation demonstrably reach the configured MemGraph. All turns pass; turn lengths are reported as observations only.
+
 ## 18. Bounded graph composition
 
-Composition begins only after one-hop relation resolution meets its accuracy and latency gate. The initial algebra is:
+Composition begins only after one-hop relation resolution meets its accuracy requirements and its observed turn lengths have been reported. The initial algebra is:
 
 ```text
 LOOKUP  EXISTS  COUNT  AND  OR  NOT  MIN  MAX  ORDER
@@ -834,12 +850,13 @@ Every query plan must declare:
 - `max_rows`;
 - `max_branches`;
 - `max_candidates_per_step`;
-- `query_timeout`; and
 - maximum evidence-path size.
 
-The first release should favor one and two hops. It should reject cycles, unconstrained predicates, cartesian expansion, unsupported aggregation, and result truncation that could change the answer. Each result carries the Claim path used to derive it.
+There is no composition latency answer budget. Cooperative cancellation remains required, complete-turn durations are reported as observations, and graph deployments require a backend-enforced query-execution timeout because a blocked database driver call cannot be interrupted by an Engram traversal check. The first release favors one and two hops. It rejects cycles, unconstrained predicates, cartesian expansion, unsupported aggregation, and result truncation that could change the answer. Each result carries the Claim path used to derive it.
 
 `Where was Microsoft's founder born?` is a valid target only when Engram can resolve both `founded_by` and `born_in`, enforce scope and temporal validity at each hop, and return the two-Claim path. Otherwise it returns the partial path as evidence or abstains.
+
+The version-1 implementation is documented in [the composition contract](documentation/composition/contracts-v1.md). It emits only fixed canonical one-hop capabilities, supports repeated Predicate identities at distinct query positions, revalidates every Claim before publication, and advances composed evidence to Claim record schema 2/package wire 2. The [frozen evaluation](documentation/composition/benchmark-2026-08-20.json) reports 15/15 passing cases and observed turn lengths without a timing gate. The [configured live MemGraph probe](documentation/composition/live-memgraph-2026-08-20.json) retains Sarah → Abraham → Keturah as an ordered two-Claim evidence path while rejecting the competing Sarah cycle.
 
 ## 19. Retrieval expansion after the foundation
 
@@ -850,6 +867,8 @@ Retrieval rewrites reduce surface variation before any resolver without selectin
 Rules should be independently authored, versioned, deterministic, depth-limited, cycle-checked, and traced. Initial classes include contraction normalization, question normalization, paraphrase reduction, pronoun transformations, synonym classes, conversational repair, context-dependent reductions, and technical phrasing normalization.
 
 Historical AIML and ALICE behavior may provide a taxonomy of transformations, but historical implementation source or response corpora must not be copied into Engram.
+
+The version-1 implementation is documented in [the symbolic rewrite contract](documentation/rewrite/contracts-v1.md). It is disabled by default, eagerly validates a 23-rule packaged corpus when enabled, runs after contextual enrichment, accepts only a fixed point into resolver planning, retains the complete `QueryFrame` chain, and keeps AIML matching on the pre-rewrite representation. The [repository-visible engineering comparison](documentation/rewrite/benchmark-2026-08-20.json) improves exact recall from 3/23 to 23/23 with zero semantic collisions and zero false direct answers; the data is component conformance evidence, not protected Section 16 release evidence. The final official-MCP run evaluates and passes all 1,000 Sarah preference turns with five live MemGraph replies.
 
 ### 19.2 Sparse retrieval
 
@@ -877,7 +896,7 @@ The transport-neutral core should receive new contracts first. Adapters translat
 
 ### 20.1 Python API
 
-Add typed `query_identity`, `commit_response`, `resolve_request`, lifecycle, index-rebuild, and index-check operations with concrete falsy absence values and no optional union annotations. Preserve `store`, `query`, `pattern_query`, `learn_from_response`, and existing `EngramCore` methods through compatible wrappers during migration.
+Add typed `query_identity`, `commit_response`, `resolve_request`, lifecycle, index-rebuild, and index-check operations with concrete falsy absence values and no optional union annotations. `resolve_request` accepts a transient callable cancellation check that raises `ResolutionCancelledError`; cancellation is not serialized, included in retry identity, cached as a knowledge miss, or published as partial resolver success. Preserve `store`, `query`, `pattern_query`, `learn_from_response`, and existing `EngramCore` methods through compatible wrappers during migration.
 
 ### 20.2 MCP
 
@@ -925,7 +944,7 @@ Migration orchestration must be idempotent, surface quarantine without making th
 | Migration | Every supported persisted schema, repeated migration, corrupted derived indexes, rollback/output behavior, and legacy collision quarantine. |
 | Core integration | Progressive resolver order, budgets, optional dependency failure, accounting, fusion, ANSWER/EVIDENCE/MISS, checkpoint degradation, and recovery. |
 | Graph contract | Canonical entity/predicate lookup, active Claim filtering, temporal bounds, ownership visibility, trust, conflicts, vector support intersection, and composed paths. |
-| Adapter contract | Python, MCP, and gRPC parity; additive field behavior; typed failures; deadline ambiguity; health; TLS; graceful shutdown; and stub reproducibility. |
+| Adapter contract | Python, MCP, and gRPC parity; additive field behavior; typed failures; cancellation and backend-timeout mapping; health; TLS; graceful shutdown; and stub reproducibility. |
 | End to end | Tapestry proposal, support validation, regulation, exact response serving, learn-back, supersession, stale handling, evidence handoff, and Actor fallback. |
 | Performance | Exact, lexical, semantic, graph, persistence, startup rebuild, and memory benchmarks at representative corpus sizes. |
 
@@ -1020,7 +1039,7 @@ No fixed production threshold is asserted in this plan. The baseline work packag
 4. Evaluate lightweight reranking.
 5. Add bounded utility resolvers.
 
-**Exit:** Each promoted addition improves inference avoidance or useful evidence on a held-out set without violating latency, memory, offline operation, or false-direct-answer gates.
+**Exit:** Each promoted addition improves inference avoidance or useful evidence on a held-out set without violating memory, offline operation, or false-direct-answer gates. Turn lengths are reported separately.
 
 ### Increment E: Continuous evaluation and operations
 
@@ -1051,8 +1070,8 @@ Any direct-answer change also requires a false-direct-answer comparison against 
 | Secondary indexes diverge from JSON state | Authoritative artifacts, transactional live updates, deterministic rebuild, startup checks, and repair tooling. |
 | Lifecycle is confused with tier or eviction | Separate fields and APIs, explicit transition table, and lifecycle-specific tests. |
 | Feedback overfits one user or context | Separate statement and relationship statistics, scope every observation, age counts, and require sample floors. |
-| Graph composition becomes open-ended | Internal parameterized plans with hard hop, row, branch, candidate, output, and time limits. |
-| Semantic retrieval adds startup or deployment cost | Configuration-gated local models, pre-provisioned artifacts, eager startup initialization and readiness checks, quantization benchmarks, and resolver timeouts. |
+| Graph composition becomes open-ended | Internal parameterized plans with hard hop, row, branch, candidate, path, and output limits plus cooperative cancellation. |
+| Semantic retrieval adds startup or deployment cost | Configuration-gated local models, pre-provisioned artifacts, eager startup initialization and readiness checks, quantization benchmarks, cooperative cancellation, and backend operational timeouts. |
 | Evidence payload exposes too much graph data | Minimal fields, visibility filters, size limits, transport review, and Tapestry revalidation. |
 | Protocol evolution breaks existing clients | Core-first contracts, additive fields, versioned protobuf when needed, compatibility tests, and staged migration. |
 | Improved cache availability is mistaken for authority | Preserve current support validation and Regulator acceptance in the Tapestry path. |
@@ -1069,16 +1088,20 @@ Section 0 recorded the Increment A decisions in [ADR 0001](documentation/decisio
 6. The first exact and support `IndexState` is memory-only, deterministically rebuilt, consistency-checked, and atomically swapped; snapshots require later benchmark justification.
 7. Evidence-only output uses a bounded versioned wire record with explicit truncation and no unrestricted graph content.
 8. Each request captures one injected UTC evaluation time and a nonnegative namespace knowledge epoch plus availability under the documented standalone and trusted-integration rules; exact retrieval revalidates time- and epoch-dependent eligibility.
-9. Initial numerical latency, memory, evidence-usefulness, and false-direct-answer gates are fixed before feature tuning and evaluated through Section 16.
+9. Initial numerical memory, evidence-usefulness, and false-direct-answer gates are fixed before feature tuning and evaluated through Section 16; turn-length distributions are reported without a timing gate.
 
 These accepted decisions constrain Sections 2 and 3. A change requires a superseding ADR rather than an implementation-local reinterpretation.
 
 ## 27. Immediate next work
 
-The baseline, identity, exact/alias/support index, accepted-response lifecycle, unified resolution substrate, candidate-fusion policy, and feedback/negative-resolution substrate are complete. Section 4 supplies deterministic transport-neutral frames and result contracts, pure adapters for every existing retrieval path, a cost-aware resolver plan, cooperative deadline and bounded-working-set enforcement, output-budget fitting before success accounting, and bounded retry-safe centralized accounting. Section 5 adds source-specific normalization, authoritative revalidation, deduplication, independent agreement, transparent scoring, ambiguity abstention, and a conservative unfitted policy. Section 6 adds strictly targeted external observations, durable exact-once receipts, bounded aged aggregates, feedback-derived history, authorized stale handoff, and conservative exact-only negative reuse. Its findings gate proves the declared 1,000-observation batch, complete negative-hit budget enforcement, accurate checkpoint/replay durability, lexical knowledge safety, and representative 5,000-record preparation and recovery bounds.
+The baseline, identity, exact/alias/support index, accepted-response lifecycle, unified resolution substrate, candidate-fusion policy, and feedback/negative-resolution substrate are complete. Section 4 supplies deterministic transport-neutral frames and result contracts, pure adapters for every existing retrieval path, a cost-aware resolver plan, bounded-working-set enforcement, elapsed-time reporting, output-budget fitting before success accounting, and bounded retry-safe centralized accounting. Section 5 adds source-specific normalization, authoritative revalidation, deduplication, independent agreement, transparent scoring, ambiguity abstention, and a conservative unfitted policy. Section 6 adds strictly targeted external observations, durable exact-once receipts, bounded aged aggregates, feedback-derived history, authorized stale handoff, and conservative exact-only negative reuse. Its findings gate proves the declared 1,000-observation batch, complete negative-hit resource accounting, accurate checkpoint/replay durability, lexical knowledge safety, and representative 5,000-record preparation and recovery bounds.
 
 Section 7, response-less Claim evidence and Tapestry packaging, is complete. ADR 0005 establishes that the strict pre-exposure core result evolves in place as one current mechanism. Full-Claim and package records establish concrete absence, allow-listed content, canonical order, explicit truncation, ten-record and 64-KiB limits, and singleton paths. The fixed graph projection and current disclosure gate require Claims to be active, system-current, currently valid, proof-canonical, non-retrieval-only, and either explicitly public or authorized through a trusted exact-`ScopeKey` decision. Structured and semantic response-less discovery, deterministic merge, the unfitted usefulness policy, complete budget fitting, transport-neutral orchestration, and the conformance gate are implemented. Noise remains MISS and Engram never promotes response-less Claim content to an unregulated answer. The [Section 7 conformance report](documentation/evidence/section7-conformance-2026-08-16.md) records 232 focused and 1,422 full passing tests, clean static/security gates, bounded inspection review, the reproducible engineering benchmark, and a fresh 1,000-turn MCP conversation with all 16 checks passing on every turn.
 
-Section 7 closes with an explicit core handoff and conformance gate, not an adapter or release claim. Section 8 consumes the package for relation-aware fallback; Section 9 adds requested historical-time, trust-ranking, multi-value, and conflict semantics; Section 10 populates multi-hop paths. Section 15 stabilizes any Python adapter and owns the future versioned gRPC evidence interface, authorization, redaction, cancellation, and deployment; CLI and MCP remain unchanged. Section 16 calibrates numerical policy and independently measures evidence usefulness, avoided Knowledge Engine calls or tokens, failure behavior, and release value.
+Section 7 closes with an explicit core handoff and conformance gate, not an adapter or release claim. Section 8 consumes the package for relation-aware fallback; Section 9 adds requested historical-time, trust-ranking, multi-value, and conflict semantics; Section 10 populates multi-hop paths. Section 15 now supplies the stable Python mapping, transient cooperative cancellation, offline preflight, and the deployment/rollback runbook; it still owns the future versioned gRPC evidence interface, authorization, redaction, cross-adapter cancellation, and telemetry. CLI and MCP remain unchanged. Section 16 calibrates numerical policy and independently measures evidence usefulness, avoided Knowledge Engine calls or tokens, failure behavior, and release value.
 
-Section 3 retains ownership of artifact generations, lifecycle, epoch mutation, accepted-response and mutation-receipt persistence, migration, and startup derivation. Section 4 retains unique candidacy and accepted-success finalization. Section 5 owns the common feature vocabulary, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 6 owns feedback targets and receipts, scoped aggregates, their feature-owned codecs and migration contract, aging, the history producer, negative resolution, and bounded core inspection. Section 7 owns full response-less Claim contracts, fixed projections, current disclosure eligibility, initial unfitted usefulness, packaging, and the transport-neutral core handoff; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; Section 9 owns requested historical-time, trust-ranking, multi-value, and conflict semantics; and Section 10 owns multi-hop evidence paths. Section 15 owns cross-feature schema/startup orchestration, adapter exposure and authorization, migration and backup operator experience, downgrade and rollback, operational telemetry, and deployment; its runtime-acquisition slice is complete and serving paths are offline. Section 16 owns independently partitioned calibration, usefulness and avoided-work measurement, chaos, and release-scale held-out gates.
+Section 8's deterministic contracts, engineering fixtures, and configured live MemGraph path are implemented. The configured graph resolves Sarah and `married_to`, the fixed one-hop query returns Abraham, and the complete core request retains the graph evidence in about eight seconds. Elapsed time is reported rather than used as answer authority. The [live comparison](documentation/contextual/memgraph-conversation-comparison-2026-08-20.md) is the controlling evidence for the current turn lengths. Graph release deployment additionally requires the server-side query bound in the Section 15 runbook.
+
+Section 10's closed algebra, strict bounded plans, fixed-capability one/two-hop traversal, safe Boolean and aggregate behavior, and schema-2 Claim paths are implemented. The [composition conformance report](documentation/composition/section10-conformance-2026-08-20.md) records the focused and complete-suite results available at its capture time, 15/15 engineering regression cases, the configured Sarah → Abraham → Keturah MemGraph evidence path, and a passing 1,000-turn Sarah/sushi MCP conversation. All durations are observations; no composition latency answer gate exists. The repository-visible regression splits are component evidence, not independent release evidence.
+
+Section 3 retains ownership of artifact generations, lifecycle, epoch mutation, accepted-response and mutation-receipt persistence, migration, and startup derivation. Section 4 retains unique candidacy and accepted-success finalization. Section 5 owns the common feature vocabulary, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 6 owns feedback targets and receipts, scoped aggregates, their feature-owned codecs and migration contract, aging, the history producer, negative resolution, and bounded core inspection. Section 7 owns full response-less Claim contracts, fixed projections, current disclosure eligibility, initial unfitted usefulness, packaging, and the transport-neutral core handoff; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; Section 9 owns requested historical-time, trust-ranking, multi-value, and conflict semantics; and Section 10 owns multi-hop evidence paths. Section 15 owns cross-feature schema/startup orchestration, adapter exposure and authorization, migration and backup operator experience, downgrade and rollback, operational telemetry, and deployment; stable Python mapping, offline serving preflight, and deployment/rollback documentation are complete. Section 16 owns independent custodianship, calibration, usefulness and avoided-work measurement, chaos, release-scale sample floors, and release approval. Its public tuning foundation passes integrity checks, while release-gate and final-test content remains unprovisioned and unauthorized.

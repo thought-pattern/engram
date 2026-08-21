@@ -61,6 +61,7 @@ from engram.identity import (
     scoped_retrieval_key_signature,
     scoped_retrieval_key_to_dict,
     scoped_retrieval_key_to_json,
+    trusted_scoped_retrieval_key_signature,
     validate_retrieval_key_binding,
     validate_scoped_retrieval_key,
 )
@@ -221,13 +222,24 @@ def index_projection_with_changes(value: object, changes: object) -> IndexProjec
 def index_projection_to_dict(value: object) -> dict[str, object]:
     """Serialize one index projection."""
     projection = validate_index_projection(value)
+    result = _trusted_index_projection_to_dict(projection)
+    return result
+
+
+def _trusted_index_projection_to_dict(projection: IndexProjection) -> dict[str, object]:
+    """Serialize a projection already validated at the index-build boundary."""
     result = {
         "schema_version": projection["schema_version"],
         "statement_id": projection["statement_id"],
         "generation": projection["generation"],
         "retrieval_keys": [
             {
-                "key": scoped_retrieval_key_to_dict(binding["key"]),
+                "key": {
+                    "schema_version": binding["key"]["schema_version"],
+                    "normalization_version": binding["key"]["normalization_version"],
+                    "scope": dict(binding["key"]["scope"]),
+                    "normalized_key": binding["key"]["normalized_key"],
+                },
                 "provenance": binding["origin"].value,
                 "representation": binding["representation"],
             }
@@ -244,6 +256,13 @@ def index_projection_to_dict(value: object) -> dict[str, object]:
 def index_projection_to_json(value: object) -> str:
     """Encode one index projection as canonical JSON."""
     data = index_projection_to_dict(value)
+    result = _json_text(data)
+    return result
+
+
+def _trusted_index_projection_to_json(value: IndexProjection) -> str:
+    """Encode a projection already validated at the index-build boundary."""
+    data = _trusted_index_projection_to_dict(value)
     result = _json_text(data)
     return result
 
@@ -382,6 +401,12 @@ def validate_retrieval_owner(value: object) -> RetrievalOwner:
 def retrieval_owner_signature(value: object) -> RetrievalOwnerSignature:
     """Return the explicit immutable ordering signature for one owner."""
     owner = validate_retrieval_owner(value)
+    result = _trusted_retrieval_owner_signature(owner)
+    return result
+
+
+def _trusted_retrieval_owner_signature(owner: RetrievalOwner) -> RetrievalOwnerSignature:
+    """Return an ordering signature for an index-builder-owned retrieval owner."""
     result = (
         owner["statement_id"],
         owner["generation"],
@@ -1381,7 +1406,14 @@ def index_state_exact_lookup(state: IndexState, key: ScopedRetrievalKey) -> Exac
         validated_key = validate_scoped_retrieval_key(key)
     except IdentityValidationError as error:
         raise InvalidRequestError("exact lookup key must be a ScopedRetrievalKey") from error
-    key_signature = scoped_retrieval_key_signature(validated_key)
+    result = trusted_index_state_exact_lookup(state, validated_key)
+    return result
+
+
+def trusted_index_state_exact_lookup(state: IndexState, key: ScopedRetrievalKey) -> ExactLookupResult:
+    """Look up a key already validated inside an IndexOwner lock."""
+    validated_key = key
+    key_signature = trusted_scoped_retrieval_key_signature(validated_key)
     owners = state["retrieval_to_owners"].get(key_signature, ())
     owner_ids = tuple(dict.fromkeys(owner["statement_id"] for owner in owners))
     bounded_ids = owner_ids[:MAX_INDEX_LOOKUP_OWNERS]
@@ -1618,7 +1650,7 @@ def _deduplicate_bindings(
     by_key: dict[ScopedRetrievalKeySignature, RetrievalKeyBinding] = {}
     duplicates: set[ScopedRetrievalKeySignature] = set()
     for binding in projection["retrieval_keys"]:
-        key_signature = scoped_retrieval_key_signature(binding["key"])
+        key_signature = trusted_scoped_retrieval_key_signature(binding["key"])
         current = by_key.get(key_signature)
         if current:
             duplicates.add(key_signature)
@@ -1665,7 +1697,7 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
     accepted: list[tuple[int, IndexProjection]] = []
     for statement_id in sorted(grouped):
         entries = grouped[statement_id]
-        unique = {index_projection_to_json(projection): projection for _, projection in entries}
+        unique = {_trusted_index_projection_to_json(projection): projection for _, projection in entries}
         if len(unique) > 1:
             for position, _ in entries:
                 issues.append(
@@ -1726,7 +1758,7 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
                     )
                 )
         for binding in bindings:
-            key_signature = scoped_retrieval_key_signature(binding["key"])
+            key_signature = trusted_scoped_retrieval_key_signature(binding["key"])
             retrieval_keys[key_signature] = binding["key"]
             retrieval_work.setdefault(key_signature, []).append(
                 retrieval_owner(
@@ -1743,7 +1775,7 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
     collisions = []
     for key_signature in sorted(retrieval_work):
         key = retrieval_keys[key_signature]
-        owners = tuple(sorted(retrieval_work[key_signature], key=retrieval_owner_signature))
+        owners = tuple(sorted(retrieval_work[key_signature], key=_trusted_retrieval_owner_signature))
         retrieval_to_owners[key_signature] = owners
         eligible_owners = tuple(owner for owner in owners if owner["direct_answer_eligible"])
         eligible_statement_ids = tuple(dict.fromkeys(owner["statement_id"] for owner in eligible_owners))
@@ -2376,6 +2408,12 @@ class IndexOwner:
             result = _copy_index_state(self._state)
             return result
 
+    def _trusted_snapshot(self) -> IndexState:
+        """Return the owner-held state for a bounded internal read-only operation."""
+        with self._lock:
+            result = self._state
+            return result
+
     def check(self) -> IndexCheckReport:
         snapshot = self.snapshot()
         result = check_index_state(snapshot)
@@ -2396,6 +2434,25 @@ class IndexOwner:
         )
         with self._lock:
             result = validated_id in self._state["projections"]
+            return result
+
+    def exact_owner_snapshot(self, key: ScopedRetrievalKey) -> tuple[int, tuple[str, ...]]:
+        """Return one exact key's generation and owners without copying the full index."""
+        try:
+            validated_key = validate_scoped_retrieval_key(key)
+        except IdentityValidationError as error:
+            raise InvalidRequestError("exact owner key must be a ScopedRetrievalKey") from error
+        result = self.trusted_exact_owner_snapshot(validated_key)
+        return result
+
+    def trusted_exact_owner_snapshot(self, key: ScopedRetrievalKey) -> tuple[int, tuple[str, ...]]:
+        """Return owners for a key already validated by ContextualExactLookup."""
+        key_signature = trusted_scoped_retrieval_key_signature(key)
+        with self._lock:
+            owner_ids = tuple(
+                dict.fromkeys(owner["statement_id"] for owner in self._state["retrieval_to_owners"].get(key_signature, ()))
+            )
+            result = self._state["state_generation"], owner_ids
             return result
 
     def atomic_swap(self, candidate: IndexState, expected_state_generation: int) -> IndexState:
@@ -2500,12 +2557,22 @@ class IndexOwner:
             raise InvalidRequestError("refreshed_projections must be a tuple of IndexProjection values") from error
         if isinstance(expected_state_generation, bool) or not isinstance(expected_state_generation, int):
             raise InvalidRequestError("expected_state_generation must be an integer")
+        result = self.trusted_atomic_refresh_exact_lookup(key, refreshed_projections, expected_state_generation)
+        return result
+
+    def trusted_atomic_refresh_exact_lookup(
+        self,
+        key: ScopedRetrievalKey,
+        refreshed_projections: tuple[IndexProjection, ...],
+        expected_state_generation: int,
+    ) -> tuple[ExactLookupResult, bool, int]:
+        """Refresh values produced by ContextualExactLookup after one validation pass."""
         with self._lock:
             if self._state["state_generation"] != expected_state_generation:
                 raise ConflictError(
                     f"stale index state generation: expected {expected_state_generation}, found {self._state['state_generation']}"
                 )
-            key_signature = scoped_retrieval_key_signature(key)
+            key_signature = trusted_scoped_retrieval_key_signature(key)
             owner_ids = tuple(
                 dict.fromkeys(owner["statement_id"] for owner in self._state["retrieval_to_owners"].get(key_signature, ()))
             )
@@ -2535,7 +2602,7 @@ class IndexOwner:
                 if not check_index_state(candidate)["consistent"]:
                     raise ConflictError("candidate exact refresh state failed consistency checking")
                 self._state = candidate
-            lookup = index_state_exact_lookup(self._state, key)
+            lookup = trusted_index_state_exact_lookup(self._state, key)
             result = (lookup, changed, self._state["state_generation"])
             return result
 

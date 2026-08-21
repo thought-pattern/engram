@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from engram.constants import Tier
+from engram.contextual import compact_query_frame_from_dict, compact_query_frame_to_dict
 from engram.substitutions import split_sentences
 
 # =============================================================================
@@ -210,6 +211,8 @@ def session(
         "entities": [],
         "dialogue_act_history": [],
         "last_fact_admissions": [],
+        "previous_query_frame": {},
+        "query_frame_turn": 0,
         "input_history": [],
         "response_history": [],
         "that_history": [],
@@ -316,6 +319,15 @@ def session_clear_predicates(session: dict) -> None:
 
 def session_to_dict(session: dict) -> dict:
     """Serialize a session to a JSON-ready dictionary."""
+    previous_query_frame = session.get("previous_query_frame", {})
+    if not isinstance(previous_query_frame, dict):
+        raise ValueError("session previous_query_frame must be an object")
+    query_frame_turn = session.get("query_frame_turn", 0)
+    if isinstance(query_frame_turn, bool) or not isinstance(query_frame_turn, int) or not 0 <= query_frame_turn <= 1_000_000:
+        raise ValueError("session query_frame_turn must be an integer from 0 through 1000000")
+    serialized_query_frame = compact_query_frame_to_dict(previous_query_frame) if previous_query_frame else {}
+    if previous_query_frame and previous_query_frame["source_turn"] != query_frame_turn:
+        raise ValueError("session query frame source_turn must match query_frame_turn")
     data = {
         "session_id": session["session_id"],
         "previous_response": session["previous_response"],
@@ -327,6 +339,8 @@ def session_to_dict(session: dict) -> dict:
         "entities": session.get("entities", []),
         "dialogue_act_history": session.get("dialogue_act_history", []),
         "last_fact_admissions": session.get("last_fact_admissions", []),
+        "previous_query_frame": serialized_query_frame,
+        "query_frame_turn": query_frame_turn,
         "input_history": session["input_history"],
         "response_history": session["response_history"],
         "that_history": session["that_history"],
@@ -337,6 +351,15 @@ def session_to_dict(session: dict) -> dict:
 
 def session_from_dict(data: dict) -> dict:
     """Deserialize a session from a dictionary."""
+    previous_query_frame = data.get("previous_query_frame", {})
+    query_frame_turn = data.get("query_frame_turn", 0)
+    if not isinstance(previous_query_frame, dict):
+        raise ValueError("session previous_query_frame must be an object")
+    if isinstance(query_frame_turn, bool) or not isinstance(query_frame_turn, int) or not 0 <= query_frame_turn <= 1_000_000:
+        raise ValueError("session query_frame_turn must be an integer from 0 through 1000000")
+    decoded_query_frame = compact_query_frame_from_dict(previous_query_frame) if previous_query_frame else {}
+    if decoded_query_frame and decoded_query_frame["source_turn"] != query_frame_turn:
+        raise ValueError("session query frame source_turn must match query_frame_turn")
     sess = {
         "session_id": data["session_id"],
         "previous_response": data.get("previous_response") or "",
@@ -348,6 +371,8 @@ def session_from_dict(data: dict) -> dict:
         "entities": list(data.get("entities") or ()),
         "dialogue_act_history": list(data.get("dialogue_act_history") or ()),
         "last_fact_admissions": list(data.get("last_fact_admissions") or ()),
+        "previous_query_frame": decoded_query_frame,
+        "query_frame_turn": query_frame_turn,
         "input_history": list(data.get("input_history") or ()),
         "response_history": list(data.get("response_history") or ()),
         "that_history": list(data.get("that_history") or ()),

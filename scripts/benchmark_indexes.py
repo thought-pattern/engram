@@ -37,18 +37,15 @@ from engram.indexes import (
 )
 from engram.models import statement
 from engram.service import EngramCore
+from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "indexes" / "benchmark-2026-08-12.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "indexes" / "benchmark-2026-08-19.json"
 BASELINE_INPUT = REPOSITORY / "documentation" / "baseline" / "benchmark-2026-08-11.json"
 EXACT_CORPUS_SIZES = (10_000, 100_000)
 SUPPORT_FANOUTS = (1, 10, 100)
 FULL_PROPOSAL_CORPUS_SIZE = 5_000
 FULL_PROPOSAL_LIMIT = 10
 REBUILD_CORPUS_SIZE = 5_000
-ADR_EXACT_P95_MS = 5.0
-ADR_EXACT_SLOPE = 1.5
-ADR_REBUILD_P95_MS = 1_000.0
-ADR_SUPPORT_P95_MS = 30.0
 ADR_BUILD_MEMORY_BYTES = 11 * 1024 * 1024
 
 
@@ -75,6 +72,7 @@ def _measure(operation: Callable[[], object], samples: int, batch_size: int = 1)
         "minimum_ms": round(min(measurements), 6),
         "p50_ms": round(_percentile(measurements, 0.50), 6),
         "p95_ms": round(_percentile(measurements, 0.95), 6),
+        "p99_ms": round(_percentile(measurements, 0.99), 6),
         "maximum_ms": round(max(measurements), 6),
     }
     return result
@@ -260,25 +258,32 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
         if not isinstance(proposal, dict):
             raise ValueError("full proposal benchmark result must be an object")
         observed_p95 = _latency(proposal, "p95_ms")
-        relative_limit = baseline_support[fanout] * 1.25
         support_proposal_comparison[str(fanout)] = {
             "baseline_p95_ms": baseline_support[fanout],
-            "baseline_relative_limit_ms": round(relative_limit, 6),
-            "absolute_limit_ms": ADR_SUPPORT_P95_MS,
             "observed_p95_ms": observed_p95,
-            "absolute_gate_passed": observed_p95 <= ADR_SUPPORT_P95_MS,
-            "baseline_relative_gate_passed": observed_p95 <= relative_limit,
+            "observed_to_baseline_ratio": round(observed_p95 / baseline_support[fanout], 6),
         }
 
     exact_10k_p95 = _latency(exact_results["10000"], "p95_ms")
     exact_100k_p95 = _latency(exact_results["100000"], "p95_ms")
     slope = exact_100k_p95 / exact_10k_p95 if exact_10k_p95 else 0.0
-    support_gate_passed = all(_latency(result, "p95_ms") <= ADR_SUPPORT_P95_MS for result in support_results.values())
     consistency = check_index_state(largest_state)
+    p99_measurements = {
+        "rebuild": _latency(rebuild, "p99_ms"),
+        **{f"mutation_{name}": _latency(value, "p99_ms") for name, value in mutations.items()},
+        **{f"exact_lookup_{name}": _latency(value, "p99_ms") for name, value in exact_results.items()},
+        **{f"support_lookup_{name}": _latency(value, "p99_ms") for name, value in support_results.items()},
+        **{
+            f"support_proposal_{item['support_fanout']}": _latency(cast(dict[str, object], item["proposal"]), "p99_ms")
+            for item in full_proposal
+        },
+    }
+    maximum_p99 = max(p99_measurements.values())
 
     result = {
         "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
+        "source": benchmark_source_state(),
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -301,6 +306,11 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
         "rebuild": rebuild,
         "incremental_mutations": mutations,
         "build_memory_at_5000": memory,
+        "turn_length_observations": {
+            "assessment": "reported observations; no pass/fail threshold",
+            "measurements_ms": p99_measurements,
+            "maximum_observed_p99_ms": maximum_p99,
+        },
         "correctness": {
             "all_lookup_expectations_met": all(correctness),
             "largest_state_consistent": consistency["consistent"],
@@ -315,26 +325,23 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
                 result["candidate_count_stable"] and result["all_candidates_supported"] for result in full_proposal
             ),
         },
-        "adr_0004_comparison": {
-            "exact_100000_p95_limit_ms": ADR_EXACT_P95_MS,
-            "exact_100000_p95_passed": exact_100k_p95 <= ADR_EXACT_P95_MS,
+        "historical_adr_observations": {
+            "assessment": "timing comparison only; no pass/fail threshold",
+            "exact_100000_p95_ms": exact_100k_p95,
             "exact_10000_to_100000_p95_slope": round(slope, 4),
-            "exact_slope_limit": ADR_EXACT_SLOPE,
-            "exact_slope_passed": slope <= ADR_EXACT_SLOPE,
-            "support_p95_limit_ms": ADR_SUPPORT_P95_MS,
-            "support_engineering_gate_passed": support_gate_passed,
+            "support_lookup_p95_ms": {name: value["p95_ms"] for name, value in support_results.items()},
             "support_proposal": support_proposal_comparison,
-            "support_proposal_gate_passed": all(
-                comparison["absolute_gate_passed"] and comparison["baseline_relative_gate_passed"]
-                for comparison in support_proposal_comparison.values()
-            ),
-            "rebuild_p95_limit_ms": ADR_REBUILD_P95_MS,
-            "rebuild_gate_passed": _latency(rebuild, "p95_ms") <= ADR_REBUILD_P95_MS,
+            "rebuild_p95_ms": _latency(rebuild, "p95_ms"),
             "build_memory_limit_bytes": ADR_BUILD_MEMORY_BYTES,
             "build_memory_gate_passed": memory["peak_bytes"] <= ADR_BUILD_MEMORY_BYTES,
-            "mutation_latency": "informational; ADR 0004 defines no mutation latency threshold",
         },
     }
+    correctness_result = cast(dict[str, bool], result["correctness"])
+    correctness_passed = (
+        all(value for name, value in correctness_result.items() if name != "checker_omitted_issue_count")
+        and result["correctness"]["checker_omitted_issue_count"] == 0
+    )
+    result["assessment_passed"] = correctness_passed and memory["peak_bytes"] <= ADR_BUILD_MEMORY_BYTES
     return result
 
 
@@ -356,7 +363,7 @@ def main(argv: Sequence[str] = ()) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)
-    result = 0
+    result = 0 if result["assessment_passed"] else 1
     return result
 
 

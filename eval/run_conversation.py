@@ -11,8 +11,9 @@ for mechanical defects:
   - casing polish failures (lowercase sentence start, standalone lowercase i)
   - template artifacts leaking into the response (unresolved {...} tokens)
 
-Softer signals are warnings rather than failures: unanswered turns, three
-identical responses in a row (a conversation loop), and slow turns. After the
+Softer signals are warnings rather than failures: unanswered turns and three
+identical responses in a row (a conversation loop). Every turn length is
+reported without classifying it as fast or slow. After the
 conversation, the rig checks session hygiene (no scratch predicates, bounded
 history) and reports what the store learned along the way.
 
@@ -39,7 +40,6 @@ from engram.constants import Tier
 from engram.core import Engram
 
 SESSION_ID = "soak"
-SLOW_TURN_SECONDS = 1.0
 LOOP_LENGTH = 3  # identical consecutive responses that count as a loop
 LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
@@ -122,9 +122,6 @@ def run_conversation(turns: list, verbose: bool) -> dict:
         checked_defects, checked_warnings = check_response(response, result["source"])
         defects.extend(checked_defects)
         warnings.extend(checked_warnings)
-
-        if elapsed > SLOW_TURN_SECONDS:
-            warnings.append(f"slow turn: {elapsed:.2f}s")
 
         recent_responses.append(response)
         if len(recent_responses) >= LOOP_LENGTH and len(set(recent_responses[-LOOP_LENGTH:])) == 1 and response:

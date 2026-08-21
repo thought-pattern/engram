@@ -34,7 +34,7 @@ Unit tests, regression cases, and deterministic acceptance fixtures were used on
 | `python -m bandit -q -lll <Section 5 production files>` | no high-severity findings |
 | `python -m compileall -q engram scripts eval tests` | passed |
 | `git diff --check` | passed |
-| `python scripts/benchmark_fusion.py --samples 200` | all six latency, measured-memory, estimated-memory, and deterministic-acceptance gates passed |
+| `python scripts/benchmark_fusion.py --samples 200` | timing distribution reported; measured-memory, estimated-memory, and deterministic-acceptance checks passed |
 | Section 5 invocation of `scripts/run_section3_mcp_conformance.py` | 1,000/1,000 turns and 1,003 protocol calls passed |
 
 ## Performance evidence

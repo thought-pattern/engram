@@ -50,7 +50,11 @@ Local variables whose values are derived during one operation are not constants.
 
 ## Return statements
 
-Collect and validate a function's result before returning it. A return statement must return a previously assigned name or be a bare `return` for a side-effect-only procedure. Do not place calls, conditionals, comprehensions, container construction, arithmetic, Boolean expressions, or other logic in a return statement.
+Use the clearest form for the operation. Directly return a simple expression when no
+intermediate validation or explanation is needed. Assign a named result first when it
+improves type narrowing, permits validation, makes a multi-step transformation easier
+to inspect, or avoids repeating work. Side-effect-only procedures use a bare `return`
+only when an early exit is needed.
 
 Preferred:
 
@@ -63,8 +67,11 @@ return result
 Avoid:
 
 ```python
-return {"value": normalize(value), "available": bool(value)}
+return {"value": normalize(value), "available": "yes"}
 ```
+
+The avoided example is invalid because `available` is not a Boolean, not because the
+dictionary is returned directly.
 
 ## Concrete absence values
 
@@ -83,6 +90,8 @@ Do not use union types, including `Optional`, `X | Y`, or `Union[X, Y]`, in prod
 Use dictionaries instead of `@dataclass` records. Data contracts, decoded records, intermediate values, and return payloads must be dictionaries with explicit validation and concrete fields. Do not introduce new dataclasses; replace an existing dataclass with a validated dictionary representation when changing that contract within the scope of the work.
 
 When a dictionary needs a precise static type, declare its `TypedDict` with functional syntax and construct runtime values through a validating function. Class-syntax `TypedDict` declarations are stateless type namespaces and therefore conflict with the class rule below. Ruff rule `UP013` is disabled for this reason.
+
+Use `set` instead of `frozenset`. Follow ordinary Python naming conventions to distinguish constants from variables: an uppercase module-level name denotes a constant and must not be mutated, while a lowercase local name may be updated during its operation. Do not use `frozenset` merely to signal that a value is constant. Use it only when hashability is required, such as when a set must be a dictionary key, a member of another set, or an input to an API that explicitly requires `frozenset`.
 
 ## Classes and functions
 
@@ -106,5 +115,7 @@ Before submitting a change, run:
 black --check -l 132 -t py311 .
 isort --check-only .
 ruff check --line-length 132 .
+pyright
 pytest
+pytest tests/test_source_contracts.py
 ```

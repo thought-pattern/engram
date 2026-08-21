@@ -78,7 +78,7 @@ Admission is limited to `insufficient_knowledge` when:
 - every configured resolver is available and completed with its source's explicit knowledge-miss reason;
 - no resolver returned a candidate, evidence, or accounting observation;
 - exact lookup had zero owners and was not truncated;
-- no budget dimension, timeout, truncation, failure, collision, dependency, or indeterminate state occurred; and
+- no resource dimension, truncation, failure, collision, dependency, or indeterminate state occurred; and
 - trusted time, authoritative repository availability, and knowledge epoch are available.
 
 Policy-filtered candidates, required-filter exclusions, collisions, unavailable dependencies, failures, and exhausted execution are not admitted. This is intentionally stricter than treating every MISS as absent knowledge.
@@ -87,7 +87,7 @@ The v1 owner is memory-only, defaults to a fixed non-sliding five-minute TTL and
 
 The current namespace epoch is authoritative only for accepted-response repository mutations. Consequently, v1 negative admission and reuse are restricted to an exact-only configured resolver plan. A plan containing pattern, lexical, structured-graph, or semantic sources performs ordinary resolution and invalidates a related exact negative record instead of risking a stale miss after those independently mutable knowledge sources change. Extending negative reuse to those sources requires a common authoritative knowledge-version contract.
 
-A hit returns a bounded typed MISS with `negative_resolution_hit` and `insufficient_knowledge`, zero resolver accounting, and measured elapsed/output/diagnostic consumption. Diagnostic content is omitted, with diagnostic exhaustion recorded, when it cannot fit the request's diagnostic-byte limit; an elapsed deadline is likewise recorded as exhausted, while output or working-memory overflow fails open to ordinary resolution. Same-request retries use the transient resolution-result cache before negative lookup. Concurrent first misses may perform duplicate ordinary work, but insertion converges to one exact record; this preserves fail-open behavior and avoids making the optimization a request gate. Any negative-owner exception falls through to ordinary resolution.
+A hit returns a bounded typed MISS with `negative_resolution_hit` and `insufficient_knowledge`, zero resolver accounting, and measured elapsed/output/diagnostic consumption. Diagnostic content is omitted, with diagnostic exhaustion recorded, when it cannot fit the request's diagnostic-byte limit; output or working-memory overflow fails open to ordinary resolution. Elapsed time is reported and does not affect the hit. Same-request retries use the transient resolution-result cache before negative lookup. Concurrent first misses may perform duplicate ordinary work, but insertion converges to one exact record; this preserves fail-open behavior and avoids making the optimization a request gate. Any negative-owner exception falls through to ordinary resolution.
 
 ## Inspection and operational boundary
 

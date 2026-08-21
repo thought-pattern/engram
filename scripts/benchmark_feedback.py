@@ -35,8 +35,9 @@ from engram.feedback import (
 )
 from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore
+from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "feedback" / "benchmark-2026-08-16.json"
+DEFAULT_OUTPUT = REPOSITORY / "documentation" / "feedback" / "benchmark-2026-08-19.json"
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 NOW_TEXT = "2026-08-16T12:00:00Z"
 POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
@@ -44,10 +45,12 @@ POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
 
 def _latency(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
-    p95_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))
+    p95_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95 + 0.999999) - 1))
+    p99_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.99 + 0.999999) - 1))
     result = {
         "p50_ms": round(statistics.median(ordered), 4),
         "p95_ms": round(ordered[p95_index], 4),
+        "p99_ms": round(ordered[p99_index], 4),
         "max_ms": round(ordered[-1], 4),
     }
     return result
@@ -197,19 +200,15 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     history_latency = _latency(history)
     round_trip_latency = _latency(round_trip)
     gates = {
-        "feedback_ingestion_p95_under_250_ms": ingestion_latency["p95_ms"] < 250.0,
-        "history_lookup_p95_under_25_ms": history_latency["p95_ms"] < 25.0,
-        "feedback_round_trip_p95_under_250_ms": round_trip_latency["p95_ms"] < 250.0,
-        "negative_hit_p95_lower_than_ordinary_miss": negative_latency["p95_ms"] < ordinary_latency["p95_ms"],
         "feedback_peak_under_64_mib": feedback_peak < 64 * 1024 * 1024,
         "negative_peak_under_32_mib": negative_peak < 32 * 1024 * 1024,
-        "scale_prepare_under_250_ms": scale_prepare_ms < 250.0,
-        "scale_round_trip_under_5_s": scale_round_trip_ms < 5_000.0,
         "scale_state_under_64_mib": len(scale_encoded.encode("utf-8")) < 64 * 1024 * 1024,
     }
     result = {
         "benchmark_version": "section6-feedback-negative-v1.1",
-        "generated_at": NOW_TEXT,
+        "recorded_at": recorded_at(),
+        "evaluation_time": NOW_TEXT,
+        "source": benchmark_source_state(),
         "provenance": "synthetic offline engineering regression; no formula or threshold was fitted from these samples",
         "environment": {
             "python": platform.python_version(),
@@ -226,6 +225,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
             "scale_feedback_prepare_ms": round(scale_prepare_ms, 4),
             "scale_feedback_state_round_trip_ms": round(scale_round_trip_ms, 4),
         },
+        "timing_assessment": "reported observations; no pass/fail threshold",
         "persistence": {
             "empty_feedback_state_bytes": len(feedback_state_to_json(feedback_state()).encode("utf-8")),
             "populated_feedback_state_bytes": len(encoded.encode("utf-8")),

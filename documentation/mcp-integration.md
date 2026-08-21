@@ -273,6 +273,13 @@ chatbot response and performs normal chatbot state changes. The four tools in
 this section provide the separate speculative proposal and explicit Regulator
 decision boundary.
 
+Section 11 retrieval rewrites do not add an MCP tool or change these payloads.
+They operate inside the transport-neutral unified resolution boundary; exposing
+that newer boundary through MCP remains Section 15 adapter work. The MCP
+long-conversation conformance run therefore verifies startup and legacy adapter
+non-regression with rewrites enabled, while focused transport-neutral tests
+verify rewritten exact retrieval and AIML separation.
+
 ### `engram_propose`
 
 Retrieves candidates without recording success or updating the displayed

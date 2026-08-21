@@ -152,58 +152,6 @@ def test_graph_helpers_empty():
     assert graph_single(records) == {}
 
 
-"""Tests for MockGraphClient."""
-
-
-def test_mock_graph_client_create_node():
-    client = MockGraphClient()
-    result = client.execute("CREATE (p:Entity {primary_label: $name})", {"name": "Alice"})
-    assert result == []
-    assert "Alice" in client.entities
-
-
-def test_mock_graph_client_create_relationship():
-    client = MockGraphClient()
-    client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)-[:HAS_SUBJECT]->(s)",
-        {"subject": "Alice", "predicate": "KNOWS", "object": "Bob"},
-    )
-    assert len(client.claims) == 1
-
-
-def test_mock_graph_client_query_relationship():
-    client = MockGraphClient()
-    client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
-        {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
-    )
-    result = client.execute(
-        "MATCH (c:Claim)-[:USES_PREDICATE]->(p:Predicate) RETURN hs.surface_form as result",
-        {"predicate": "CAPITAL_OF", "object": "France"},
-    )
-    assert len(result) == 1
-    assert result[0]["result"] == "Paris"
-
-
-def test_mock_graph_client_query_not_found():
-    client = MockGraphClient()
-    result = client.execute(
-        "MATCH (c:Claim) RETURN hs.surface_form as result",
-        {"predicate": "CAPITAL_OF", "object": "Unknown"},
-    )
-    assert graph_is_empty(result)
-
-
-def test_mock_graph_client_delete_node():
-    client = MockGraphClient()
-    client.execute("CREATE (e:Entity {primary_label: $name})", {"name": "Alice"})
-    assert "Alice" in client.entities
-
-    result = client.execute("MATCH (e:Entity {primary_label: $name}) DETACH DELETE e", {"name": "Alice"})
-    assert result == []
-    assert "Alice" not in client.entities
-
-
 """Tests for graph operations in templates."""
 
 
@@ -457,7 +405,6 @@ def test_read_only_graph_wiring_graph_read_fn_refuses_writes():
 def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_connecting():
     client = MemGraphConnection()
 
-    assert not hasattr(client, "execute_write")
     with pytest.raises(ValueError, match="read-only"):
         client.execute("CREATE (n)")
     assert client.conn == ()

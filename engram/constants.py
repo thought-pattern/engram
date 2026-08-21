@@ -78,8 +78,9 @@ FRAME_OVERRIDES = MappingProxyType(
 GRAPH_ENTITY_FACTS_QUERY = (
     "MATCH (c:Claim)-[:HAS_SUBJECT]->(proof_subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
-    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
     "MATCH (c)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
+    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
+    "WITH c, proof_subject, proof_predicate, proof_object, rel, e "
     "WHERE (toLower(e.primary_label) = toLower($name) "
     "OR toLower($name) IN [a IN e.aliases | toLower(a)] "
     "OR toLower(rel.surface_form) = toLower($name)) "
@@ -94,6 +95,7 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
     "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
+    "WITH c, e, proof_predicate, proof_object "
     "WHERE toLower(e.primary_label) CONTAINS toLower($keyword) "
     "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
     "AND proof_predicate.canonical_id <> 'generic_relation' "
@@ -387,12 +389,10 @@ class CostClass(StrEnum):
     EXPENSIVE = "expensive"
 
 
-RESOLUTION_BUDGET_SCHEMA_VERSION = 1
-RESOLUTION_BUDGET_FIELDS = frozenset(
+RESOLUTION_BUDGET_SCHEMA_VERSION = 2
+RESOLUTION_BUDGET_FIELDS = set(
     {
         "schema_version",
-        "total_time_ms",
-        "resolver_time_ms",
         "max_resolvers",
         "max_candidates",
         "max_graph_rows",
@@ -404,11 +404,8 @@ RESOLUTION_BUDGET_FIELDS = frozenset(
         "max_working_memory_bytes",
         "allowed_cost_classes",
         "started_ns",
-        "deadline_ns",
     }
 )
-DEFAULT_RESOLUTION_TOTAL_TIME_MS = 2_000
-DEFAULT_RESOLUTION_RESOLVER_TIME_MS = 500
 DEFAULT_RESOLUTION_MAX_RESOLVERS = 8
 DEFAULT_RESOLUTION_MAX_CANDIDATES = 10
 DEFAULT_RESOLUTION_MAX_GRAPH_ROWS = 100
@@ -419,8 +416,6 @@ DEFAULT_RESOLUTION_MAX_OUTPUT_BYTES = 65_536
 DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES = 16_384
 DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES = 16_777_216
 DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES = tuple(CostClass)
-MIN_RESOLUTION_TIME_MS = 1
-MAX_RESOLUTION_TIME_MS = 60_000
 MIN_RESOLUTION_RESOLVERS = 1
 MAX_RESOLUTION_RESOLVERS = 64
 MIN_RESOLUTION_CANDIDATES = 1
@@ -454,14 +449,15 @@ BUDGET_CONSUMPTION_FIELDS = frozenset(
 )
 MAX_EXHAUSTED_DIMENSIONS = 64
 MAX_EXHAUSTED_DIMENSION_BYTES = 64
-QUERY_FRAME_SCHEMA_VERSION = 1
-QUERY_FRAME_FIELDS = frozenset(
+QUERY_FRAME_SCHEMA_VERSION = 2
+QUERY_FRAME_FIELDS = set(
     {
         "schema_version",
         "original_text",
         "resolved_text",
         "identity",
         "expected_object_type",
+        "temporal_query",
         "inheritance",
         "rewrite_chain",
         "scope",
@@ -475,20 +471,139 @@ QUERY_FRAME_FIELDS = frozenset(
 MAX_REQUIRED_SOURCE_LABEL_BYTES = 256
 INHERITANCE_PROVENANCE_FIELDS = frozenset({"field_name", "source_turn"})
 REWRITE_TRACE_STEP_FIELDS = frozenset({"rule_id", "input_text", "output_text"})
+COMPACT_QUERY_FRAME_SCHEMA_VERSION = 2
+COMPACT_QUERY_FRAME_FIELDS = set(
+    {
+        "schema_version",
+        "operator",
+        "subjects",
+        "relation",
+        "expected_object_type",
+        "temporal_query",
+        "qualifiers",
+        "source_turn",
+        "confidence",
+        "topic",
+    }
+)
+MAX_CONTEXTUAL_SUBJECTS = 4
+MAX_CONTEXTUAL_TURN_DISTANCE = 2
+MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE = 0.55
+MAX_CONTEXTUAL_TOPIC_BYTES = 256
+TEMPORAL_QUERY_SCHEMA_VERSION = 1
+TEMPORAL_QUERY_FIELDS = set(
+    {
+        "schema_version",
+        "operator",
+        "axis",
+        "source_text",
+        "start",
+        "start_available",
+        "end",
+        "end_available",
+        "confidence",
+        "resolved",
+    }
+)
+MAX_TEMPORAL_SOURCE_BYTES = 512
+RELATION_CONTRACT_SCHEMA_VERSION = 2
+MAX_RELATION_SURFACES = 12
+MAX_RELATION_CANDIDATES = 8
+MAX_RELATION_PLAN_ROWS = 10
+MAX_RELATION_LABEL_BYTES = 256
+CANONICAL_ENTITY_MATCH_FIELDS = frozenset({"canonical_id", "primary_label", "aliases", "edge_surfaces", "entity_type"})
+CANONICAL_PREDICATE_MATCH_FIELDS = frozenset({"canonical_id", "primary_label", "synonyms", "object_type"})
+CANONICAL_RESOLUTION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "canonical_id",
+        "primary_label",
+        "object_type",
+        "score",
+        "candidate_ids",
+        "evidence",
+    }
+)
+ONE_HOP_QUERY_PLAN_FIELDS = set(
+    {
+        "schema_version",
+        "template_id",
+        "subject_entity_id",
+        "predicate_id",
+        "expected_object_type",
+        "max_rows",
+    }
+)
+COMPOSITION_CONTRACT_SCHEMA_VERSION = 1
+COMPOSITION_STEP_FIELDS = set(
+    {
+        "schema_version",
+        "branch",
+        "hop",
+        "subject_binding",
+        "subject_entity_id",
+        "predicate_id",
+        "predicate_label",
+        "object_binding",
+        "expected_object_type",
+        "max_candidates",
+    }
+)
+COMPOSITION_PLAN_FIELDS = set(
+    {
+        "schema_version",
+        "operator",
+        "root_entity_id",
+        "root_label",
+        "steps",
+        "terminal_binding",
+        "aggregation_inputs",
+        "descending",
+        "max_hops",
+        "max_rows",
+        "max_branches",
+        "max_candidates_per_step",
+        "max_path_claims",
+    }
+)
+MAX_COMPOSITION_HOPS = 2
+MAX_COMPOSITION_ROWS = 64
+MAX_COMPOSITION_BRANCHES = 4
+MAX_COMPOSITION_CANDIDATES_PER_STEP = 8
+MAX_COMPOSITION_PATH_CLAIMS = 2
+MAX_COMPOSITION_BINDING_BYTES = 64
+MAX_COMPOSITION_PREDICATE_SURFACES = 12
 FEATURE_SET_SCHEMA_VERSION = 1
 FEATURE_SET_FIELDS = frozenset({"schema_version", "values", "unavailable"})
 CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION = 1
-CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION = 1
+CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION = 2
 CLAIM_TRUST_INPUTS_SCHEMA_VERSION = 1
 DISCLOSURE_DECISION_SCHEMA_VERSION = 1
 CANONICAL_CLAIM_REFERENCES_FIELDS = frozenset({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"})
-CLAIM_VALIDITY_INPUTS_FIELDS = frozenset(
+CLAIM_VALIDITY_INPUTS_FIELDS = set(
     {
         "schema_version",
         "evaluation_time",
         "active",
         "system_current",
         "valid_time_current",
+        "eligible_for_request",
+        "system_time_match",
+        "valid_time_match",
+        "valid_time_match_available",
+        "temporal_operator",
+        "temporal_axis",
+        "requested_start",
+        "requested_start_available",
+        "requested_end",
+        "requested_end_available",
+        "system_from",
+        "system_from_available",
+        "system_to",
+        "system_to_available",
+        "invalidated_at",
+        "invalidated_at_available",
         "valid_from",
         "valid_from_available",
         "valid_to",
@@ -509,7 +624,23 @@ CLAIM_TRUST_INPUTS_FIELDS = frozenset(
 DISCLOSURE_DECISION_FIELDS = frozenset(
     {"schema_version", "ownership", "basis", "scope", "policy_version", "authority", "authority_available"}
 )
-CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION = 1
+CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION = 2
+CLAIM_EVIDENCE_PATH_SCHEMA_VERSION = 1
+CLAIM_EVIDENCE_PATH_STEP_FIELDS = set(
+    {
+        "schema_version",
+        "position",
+        "claim_id",
+        "subject_entity_id",
+        "predicate_id",
+        "object_entity_id",
+        "operator",
+        "input_binding",
+        "output_binding",
+        "filters",
+        "aggregation_inputs",
+    }
+)
 CLAIM_EVIDENCE_RECORD_FIELDS = frozenset(
     {
         "schema_version",
@@ -525,7 +656,7 @@ CLAIM_EVIDENCE_RECORD_FIELDS = frozenset(
         "selection_reasons",
     }
 )
-EVIDENCE_PACKAGE_WIRE_VERSION = 1
+EVIDENCE_PACKAGE_WIRE_VERSION = 2
 EVIDENCE_PACKAGE_FIELDS = frozenset(
     {"wire_version", "records", "retained_count", "omitted_count", "truncated", "truncation_reasons"}
 )
@@ -873,11 +1004,10 @@ ACCOUNTING_FINALIZATION_FIELDS = frozenset(
     }
 )
 MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS = 64
-RESOLVER_BUDGET_SCHEMA_VERSION = 1
-RESOLVER_BUDGET_FIELDS = frozenset(
+RESOLVER_BUDGET_SCHEMA_VERSION = 2
+RESOLVER_BUDGET_FIELDS = set(
     {
         "schema_version",
-        "deadline_ns",
         "max_candidates",
         "max_graph_rows",
         "max_vector_results",
@@ -955,6 +1085,34 @@ CLAIM_PROJECTION_RECORD_FIELDS = CLAIM_PROJECTION_FIELDS | frozenset(
         "vector_index_id_available",
     }
 )
+RELATION_ONE_HOP_RESULT_FIELDS = CLAIM_PROJECTION_FIELDS | {
+    "object_label",
+    "object_type",
+    "predicate_cardinality",
+}
+CANONICAL_ENTITY_MATCH_QUERY = (
+    "MATCH (entity:Entity) "
+    "OPTIONAL MATCH (:Claim)-[edge:HAS_SUBJECT|HAS_OBJECT]->(entity) "
+    "WITH entity, coalesce(entity.aliases, [])[0..12] AS aliases, "
+    "[surface IN collect(DISTINCT edge.surface_form) WHERE surface IS NOT NULL][0..12] AS edge_surfaces "
+    "WHERE toLower(entity.primary_label) = toLower($surface) "
+    "OR toLower($surface) IN [alias IN aliases | toLower(alias)] "
+    "OR toLower($surface) IN [value IN edge_surfaces | toLower(value)] "
+    "RETURN entity.canonical_id AS canonical_id, entity.primary_label AS primary_label, "
+    "aliases, edge_surfaces, coalesce(entity.entity_type, 'UNKNOWN') AS entity_type "
+    "ORDER BY entity.canonical_id LIMIT $limit"
+)
+CANONICAL_PREDICATE_MATCH_QUERY = (
+    "MATCH (predicate:Predicate) "
+    "WITH predicate, coalesce(predicate.synonyms, [])[0..12] AS synonyms "
+    "WHERE toLower(predicate.canonical_id) = toLower($surface) "
+    "OR toLower(coalesce(predicate.primary_label, predicate.label, predicate.canonical_id)) = toLower($surface) "
+    "OR toLower($surface) IN [synonym IN synonyms | toLower(synonym)] "
+    "RETURN predicate.canonical_id AS canonical_id, "
+    "coalesce(predicate.primary_label, predicate.label, predicate.canonical_id) AS primary_label, "
+    "synonyms, coalesce(predicate.object_type, 'UNKNOWN') AS object_type "
+    "ORDER BY predicate.canonical_id LIMIT $limit"
+)
 CLAIM_PROJECTION_RETURN = (
     "RETURN DISTINCT c.id AS claim_id, "
     "subject.canonical_id AS subject_entity_id, "
@@ -1027,6 +1185,20 @@ CLAIM_PROJECTION_BY_ID_QUERY = (
     "WHERE c.id = $claim_id " + CLAIM_PROJECTION_RETURN + "0.0 AS structured_match, false AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT 2"
+)
+RELATION_ONE_HOP_CLAIM_PROJECTION_QUERY = (
+    "MATCH (c:Claim)-[:HAS_SUBJECT]->(subject:Entity) "
+    "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
+    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
+    "WHERE subject.canonical_id = $subject_entity_id AND predicate.canonical_id = $predicate_id "
+    "AND ($include_historical = true OR (c.invalidated_at IS NULL AND c.system_to IS NULL)) "
+    "AND c.predicate_canonical = true AND predicate.canonical_id <> 'generic_relation' "
+    + CLAIM_PROJECTION_RETURN
+    + "1.0 AS structured_match, true AS structured_match_available, "
+    "0.0 AS semantic_similarity, false AS semantic_similarity_available, "
+    "object.primary_label AS object_label, coalesce(object.entity_type, 'UNKNOWN') AS object_type, "
+    "coalesce(predicate.cardinality, 'UNKNOWN') AS predicate_cardinality "
+    "ORDER BY c.id LIMIT $limit"
 )
 MAX_STRUCTURED_CLAIM_PROJECTION_TERMS = 3
 CLAIM_EVIDENCE_PRODUCERS = frozenset({"structured_graph", "support_semantic"})
@@ -1167,7 +1339,7 @@ MCP_CONFORMANCE_MESSAGES = (
     "What did I say?",
     "Continue.",
 )
-MCP_TURN_EVENT_FIELDS = frozenset(
+MCP_TURN_EVENT_FIELDS = set(
     {
         "turn",
         "input",
@@ -1186,7 +1358,7 @@ MCP_TURN_EVENT_FIELDS = frozenset(
         "learned_statements",
     }
 )
-MCP_TURN_EVALUATION_CHECKS = frozenset(
+MCP_TURN_EVALUATION_CHECKS = set(
     {
         "exact_fields",
         "turn_sequence",
@@ -1220,11 +1392,12 @@ class CheckpointFailureKind(StrEnum):
 
 
 class ClaimEligibilityReason(StrEnum):
-    """Closed current-time Claim evidence eligibility outcomes."""
+    """Closed temporal Claim evidence eligibility outcomes."""
 
     ELIGIBLE_PUBLIC = "eligible_public"
     ELIGIBLE_TRUSTED_SCOPE = "eligible_trusted_scope"
     EVALUATION_TIME_UNAVAILABLE = "evaluation_time_unavailable"
+    TEMPORAL_QUERY_UNRESOLVED = "temporal_query_unresolved"
     CLAIM_INACTIVE = "claim_inactive"
     SYSTEM_TIME_UNAVAILABLE = "system_time_unavailable"
     SYSTEM_NOT_YET_CURRENT = "system_not_yet_current"
@@ -1448,8 +1621,91 @@ class ClaimProjectionQuery(StrEnum):
 
     STRUCTURED_ENTITY_V1 = "structured_entity_claim_projection_v1"
     STRUCTURED_KEYWORD_V1 = "structured_keyword_claim_projection_v1"
+    RELATION_ONE_HOP_V1 = "relation_one_hop_claim_projection_v1"
     VECTOR_V1 = "vector_claim_projection_v1"
     BY_ID_V1 = "claim_projection_by_id_v1"
+
+
+class CanonicalResolutionStatus(StrEnum):
+    """Complete outcomes for canonical entity or predicate resolution."""
+
+    SELECTED = "selected"
+    AMBIGUOUS = "ambiguous"
+    MISS = "miss"
+
+
+class RelationPlanTemplate(StrEnum):
+    """Allow-listed internal Section 8 query-plan templates."""
+
+    ONE_HOP_CLAIM_V1 = "one_hop_claim_v1"
+
+
+class GraphCompositionOperator(StrEnum):
+    """Closed Section 10 graph-algebra operations."""
+
+    LOOKUP = "LOOKUP"
+    EXISTS = "EXISTS"
+    COUNT = "COUNT"
+    AND = "AND"
+    OR = "OR"
+    NOT = "NOT"
+    MIN = "MIN"
+    MAX = "MAX"
+    ORDER = "ORDER"
+
+
+class CompositionReason(StrEnum):
+    """Stable compiler and execution outcomes for bounded composition."""
+
+    COMPLETE_UNIQUE = "composition_complete_unique"
+    COMPLETE_MULTIPLE = "composition_complete_multiple"
+    PARTIAL_PATH = "composition_partial_path"
+    NO_PATH = "composition_no_path"
+    IDENTITY_MISS = "composition_identity_miss"
+    IDENTITY_AMBIGUOUS = "composition_identity_ambiguous"
+    UNSUPPORTED_QUERY = "composition_unsupported_query"
+    UNDERCONSTRAINED = "composition_underconstrained"
+    CYCLE = "composition_cycle"
+    ROW_LIMIT = "composition_row_limit"
+    BRANCH_LIMIT = "composition_branch_limit"
+    PATH_LIMIT = "composition_path_limit"
+    CANDIDATE_LIMIT = "composition_candidate_limit"
+    CANCELLED = "composition_cancelled"
+    DEPENDENCY_FAILED = "composition_dependency_failed"
+    COMPLETENESS_UNKNOWN = "composition_completeness_unknown"
+    CARDINALITY_UNKNOWN = "composition_cardinality_unknown"
+    CARDINALITY_CONFLICT = "composition_cardinality_conflict"
+    TRUST_UNAVAILABLE = "composition_trust_unavailable"
+    TEMPORAL_BOUNDS_OPEN = "composition_temporal_bounds_open"
+    TYPE_UNAVAILABLE = "composition_type_unavailable"
+    TYPE_MISMATCH = "composition_type_mismatch"
+    AGGREGATE_UNSAFE = "composition_aggregate_unsafe"
+
+
+class PredicateCardinality(StrEnum):
+    """Canonical Predicate object-cardinality policy supplied by the graph."""
+
+    UNKNOWN = "UNKNOWN"
+    SINGLE = "SINGLE"
+    MULTI = "MULTI"
+
+
+class RelationSelectionReason(StrEnum):
+    """Stable one-hop temporal, trust, and conflict selection outcomes."""
+
+    NO_ELIGIBLE_CLAIM = "relation_no_eligible_claim"
+    SELECTED_UNIQUE = "relation_selected_unique"
+    SELECTED_LATEST = "relation_selected_latest"
+    SELECTED_TRUST_RANKED = "relation_selected_trust_ranked"
+    TEMPORAL_BOUNDS_OPEN = "relation_temporal_bounds_open"
+    LATEST_BOUND_UNAVAILABLE = "relation_latest_bound_unavailable"
+    LATEST_TIE = "relation_latest_tie"
+    TRUST_UNAVAILABLE = "relation_trust_unavailable"
+    TRUST_VERSION_INCOMPARABLE = "relation_trust_version_incomparable"
+    CARDINALITY_UNKNOWN = "relation_cardinality_unknown"
+    CONFLICT_SINGLE_VALUE = "relation_conflict_single_value"
+    VALID_MULTI_VALUE = "relation_valid_multi_value"
+    BOUNDED_MULTIPLE_PERIODS = "relation_bounded_multiple_periods"
 
 
 class EpochSource(StrEnum):
@@ -1570,7 +1826,6 @@ class FusionPolicyReason(StrEnum):
     IDENTITY_FEATURE_MISMATCH = "identity_feature_mismatch"
     OBJECT_TYPE_FEATURE_MISMATCH = "object_type_feature_mismatch"
     EXPLICIT_CONFLICT = "explicit_conflict"
-    FUSION_DEADLINE_EXHAUSTED = "fusion_deadline_exhausted"
     FUSION_MEMORY_EXHAUSTED = "fusion_memory_exhausted"
     FEEDBACK_STALE_EXCLUDED = "feedback_stale_excluded"
     FEEDBACK_POLICY_SUPPRESSED = "feedback_policy_suppressed"
@@ -1909,6 +2164,27 @@ class QualifierKind(StrEnum):
     LOCATION = "location"
     CURRENT = "current"
     HISTORICAL = "historical"
+
+
+class TemporalQueryOperator(StrEnum):
+    """Closed temporal interpretations supported by Section 9."""
+
+    UNSPECIFIED = "unspecified"
+    CURRENT = "current"
+    NOW = "now"
+    AS_OF = "as_of"
+    IN_YEAR = "in_year"
+    BEFORE = "before"
+    AFTER = "after"
+    BETWEEN = "between"
+    LATEST = "latest"
+
+
+class TemporalAxis(StrEnum):
+    """Whether a temporal request addresses world-validity or observation time."""
+
+    VALID_TIME = "valid_time"
+    SYSTEM_TIME = "system_time"
 
 
 class RetrievalOrigin(StrEnum):
@@ -2600,6 +2876,10 @@ IDENTITY_ENTITY_EXCLUDED_WORDS = frozenset(
         "lookup",
         "show",
         "tell",
+        "and",
+        "also",
+        "then",
+        "instead",
         "current",
         "latest",
         "historical",
@@ -2610,6 +2890,7 @@ IDENTITY_QUOTED_SPAN_RE = re.compile(r"[\"“]([^\"”]{1,512})[\"”]")
 IDENTITY_TECHNICAL_PATTERNS = (
     re.compile(r"(?<!\w)[A-Za-z]:\\[^\s?*\"<>|]+"),
     re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%+-]+/)*[A-Za-z0-9._~!$&'()*+,;=:@%+-]+"),
+    re.compile(r"(?<!\w)(?:RFC|ISO|IEC|IEEE|ECMA|PEP)\s*[-:]?\s*\d+(?:[.-]\d+)*(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)v?\d+(?:\.\d+){1,}(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)[A-Z][A-Z0-9]+(?:[-_][A-Z0-9]+)+(?!\w)"),
     re.compile(r"(?<!\w)[A-Za-z][A-Za-z0-9]*(?:\+\+|#)(?!\w)"),
