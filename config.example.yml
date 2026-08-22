@@ -38,6 +38,16 @@ use_spacy_facts: false # spaCy dependency-parse fact extraction (needs en_core_w
 use_spacy_lemmatization: false # spaCy context-aware lemmas in the matcher
 use_phrase_keywords: false # spaCy noun-chunk phrase keywords for retrieval
 
+# --- Sparse retrieval (optional, local, rebuildable) ---
+# Derived entirely from authoritative accepted-response artifacts. No index data
+# is persisted. Response prose is excluded unless explicitly opted in.
+sparse:
+  enabled: false
+  include_response_text: false
+  max_query_terms: 64
+  max_posting_visits: 100000
+  max_prefix_expansions: 64
+
 # --- Output processing ---
 polish_responses: true # Repair casing in pattern-path responses
 
@@ -49,8 +59,8 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 # interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
-# Deployment requirement when enabled: start MemGraph with an approved positive
-# --query-execution-timeout-sec value; pymgclient cannot set it per query.
+# MemGraph remains optional when enabled. An unavailable graph reports not ready
+# and is skipped while Engram's local retrieval and conversation paths continue.
 graph:
   host: localhost
   port: 7687

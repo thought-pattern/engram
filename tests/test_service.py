@@ -22,6 +22,127 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore, open_engram_core
 
 
+def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
+    engine = Engram()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingGraph:
+        available = True
+
+        def structured_claim_projections(self, _value, *, projection_id, limit):
+            entered.set()
+            assert release.wait(timeout=5)
+            return []
+
+    engine._graph_client = BlockingGraph()
+    core = EngramCore(engine)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        graph_future = executor.submit(
+            core.resolve_request,
+            "Ada",
+            "blocking-graph",
+            user_id="graph-user",
+            configured_resolvers=("structured_graph",),
+        )
+        assert entered.wait(timeout=5)
+
+        status_future = executor.submit(core.status)
+        local_future = executor.submit(
+            core.resolve_request,
+            "ordinary local request",
+            "local-during-graph",
+            user_id="local-user",
+            configured_resolvers=("exact",),
+        )
+        same_user_future = executor.submit(
+            core.resolve_request,
+            "same user local request",
+            "same-user-during-graph",
+            user_id="graph-user",
+            configured_resolvers=("exact",),
+        )
+        conflicting_retry_future = executor.submit(
+            core.resolve_request,
+            "different input for the same request ID",
+            "blocking-graph",
+            user_id="other-user",
+            configured_resolvers=("exact",),
+        )
+        try:
+            status = status_future.result(timeout=1)
+            local = local_future.result(timeout=1)
+            assert same_user_future.done() is False
+            assert conflicting_retry_future.done() is False
+        finally:
+            release.set()
+
+        graph = graph_future.result(timeout=5)
+        same_user = same_user_future.result(timeout=5)
+        with pytest.raises(ConflictError, match="different input"):
+            conflicting_retry_future.result(timeout=5)
+
+    assert status["ready"] is True
+    assert local["outcome"].value == "MISS"
+    assert graph["outcome"].value == "MISS"
+    assert same_user["outcome"].value == "MISS"
+    assert graph_future.done() is True
+
+
+def test_legacy_chat_graph_execution_does_not_hold_the_core_lock() -> None:
+    engine = Engram()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingGraph:
+        available = True
+
+        def execute_read(self, _query, _parameters=()):
+            entered.set()
+            assert release.wait(timeout=5)
+            return []
+
+    engine._graph_client = BlockingGraph()
+    engine.pattern_matcher.clear()
+    core = EngramCore(engine)
+    core.start_conversation(user_id="graph-user")
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        graph_future = executor.submit(core.chat, "graph-user", "What do you know about Ada Lovelace?")
+        assert entered.wait(timeout=20)
+
+        status_future = executor.submit(core.status)
+        local_future = executor.submit(
+            core.resolve_request,
+            "ordinary local request",
+            "local-during-legacy-graph",
+            user_id="local-user",
+            configured_resolvers=("exact",),
+        )
+        same_user_future = executor.submit(
+            core.resolve_request,
+            "same user local request",
+            "same-user-during-legacy-graph",
+            user_id="graph-user",
+            configured_resolvers=("exact",),
+        )
+        try:
+            status = status_future.result(timeout=1)
+            local = local_future.result(timeout=1)
+            assert same_user_future.done() is False
+        finally:
+            release.set()
+
+        graph = graph_future.result(timeout=5)
+        same_user = same_user_future.result(timeout=5)
+
+    assert status["ready"] is True
+    assert local["outcome"].value == "MISS"
+    assert graph["input"] == "What do you know about Ada Lovelace?"
+    assert same_user["outcome"].value == "MISS"
+
+
 def test_unified_resolution_cancellation_is_transient_and_not_cached() -> None:
     core = EngramCore()
 

@@ -26,7 +26,7 @@
 
 ## Tool review
 
-The repository Bandit scan reports no medium- or high-severity findings and 17
+The repository Bandit scan reports no medium- or high-severity findings and 18
 low-severity findings. The low findings include empty password defaults,
 non-cryptographic response selection, false-positive password-like strings,
 fail-soft exception handling, and fixed-argument benchmark subprocess use; they are
@@ -40,7 +40,8 @@ additional correctness boundaries but are not penetration tests.
 | Risk | Current position | Required closure |
 | --- | --- | --- |
 | Authentication and per-operation authorization | Deployment-owned; scope is not authorization | Define identities and separate read, mutation, inspection, and administrative authority for every exposed adapter |
-| In-flight graph query duration | Cooperative checks cannot interrupt blocked pymgclient execution | Record and enforce Memgraph `--query-execution-timeout-sec`; disable graph if it cannot be verified |
+| Optional graph availability | Graph and graph-vector readiness are independent from core readiness | Report unavailable capabilities, skip their resolvers, and continue local serving without admitting a false negative cache entry |
+| Optional graph execution isolation | Graph driver calls cannot be interrupted by cooperative cancellation once executing | Keep graph I/O outside the core-wide state lock in unified resolution and legacy chat, serialize same-user context and retry identity, and exercise supervisor termination during deployment chaos tests |
 | Lower-level supplied read Cypher | Conservative blocklist exists but textual filtering is not a database permission boundary | Retain read-only DB credentials and prefer fixed capabilities for exposed resolution paths |
 | Sensitive operational output | Low-cardinality/redaction policy is documented; full production telemetry is incomplete | Complete EGR-1509 cardinality review and exercise log/trace redaction |
 | Adapter request limits and cancellation parity | Core bounds exist; future evidence gRPC and cross-adapter cancellation are incomplete | Complete EGR-1503, EGR-1504, and EGR-1506 contract tests |

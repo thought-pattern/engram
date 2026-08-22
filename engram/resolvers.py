@@ -40,6 +40,8 @@ from engram.constants import (
     RESOLVER_BUDGET_SCHEMA_VERSION,
     RESOLVER_RESERVATION_FIELDS,
     RESOLVER_RESERVATION_SCHEMA_VERSION,
+    SPARSE_RESOLVER_COST_CLASS,
+    SPARSE_RESOLVER_NAME,
     STRUCTURED_GRAPH_RESOLVER_COST_CLASS,
     STRUCTURED_GRAPH_RESOLVER_NAME,
     SUPPORT_SEMANTIC_RESOLVER_COST_CLASS,
@@ -905,6 +907,144 @@ class LexicalResolver:
         return result
 
 
+class SparseResolver:
+    """Pure adapter over the rebuildable fielded sparse secondary index."""
+
+    def __init__(self, engram, clock_ns: Callable[[], int]) -> None:
+        self.name = SPARSE_RESOLVER_NAME
+        self.cost_class = SPARSE_RESOLVER_COST_CLASS
+        self._engram = engram
+        self._clock_ns = clock_ns
+
+    def available(self, frame: QueryFrame) -> bool:
+        settings = self._engram.config.get("sparse") or {}
+        result = bool(settings.get("enabled") and self._engram._sparse_index_owner.available)
+        return result
+
+    def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
+        if not budget["max_candidates"] or not budget["max_working_memory_bytes"]:
+            dimension = "candidates" if not budget["max_candidates"] else "working_memory_bytes"
+            result = _exhausted_result(self.name, (dimension,))
+            return result
+        started = self._clock_ns()
+        discovery = self._engram.sparse_candidates(
+            frame["resolved_text"],
+            frame["scope"],
+            limit=budget["max_candidates"],
+            max_working_memory_bytes=budget["max_working_memory_bytes"],
+        )
+        if not discovery["complete"]:
+            reason = discovery["reason"]
+            if reason == "sparse_unavailable":
+                result = resolver_result(
+                    resolver=self.name,
+                    state=ResolverState.UNAVAILABLE,
+                    reason_code=reason,
+                )
+                return result
+            exhausted_dimension = {
+                "query_term_budget": "query_terms",
+                "posting_visit_budget": "posting_visits",
+                "working_memory_budget": "working_memory_bytes",
+            }.get(reason, "sparse_resources")
+            result = resolver_result(
+                resolver=self.name,
+                state=ResolverState.EXHAUSTED,
+                reason_code=reason,
+                diagnostics={"posting_visits": discovery["posting_visits"]},
+                consumption=budget_consumption(
+                    elapsed_ns=max(0, self._clock_ns() - started),
+                    resolvers=1,
+                    working_memory_bytes=discovery["working_memory_bytes"],
+                    exhausted_dimensions=(exhausted_dimension,),
+                ),
+            )
+            return result
+
+        candidates = []
+        accounting = []
+        retained_bytes = discovery["working_memory_bytes"]
+        for match in discovery["matches"]:
+            try:
+                artifact = self._engram.response_repository._trusted_get_artifact(match["statement_id"])
+            except ResourceNotFoundError:
+                continue
+            if not _artifact_matches_frame(artifact, frame):
+                continue
+            features = {
+                "sparse_score": match["score"],
+                "sparse_phrase_match": float(bool(match["phrase_fields"])),
+                "sparse_proximity_match": float(bool(match["proximity_fields"])),
+                "sparse_prefix_match": float(bool(match["prefix_match_count"])),
+                "sparse_character_ngram_similarity": match["character_ngram_similarity"],
+                "sparse_technical_exact_match": float(match["technical_exact_match"]),
+                "sparse_technical_exact_ratio": match["technical_exact_ratio"],
+            }
+            features.update({f"sparse_field_{name}": contribution for name, contribution in match["field_contributions"].items()})
+            candidate = resolution_candidate(
+                candidate_id=_candidate_id(CandidateSource.SPARSE, artifact["statement_id"], frame["diagnostic_id"]),
+                statement_id=artifact["statement_id"],
+                response=artifact["response"],
+                source=CandidateSource.SPARSE,
+                features=feature_set(values=features, unavailable=()),
+                evidence=(),
+                scope=artifact["scope"],
+                lifecycle=artifact["lifecycle"],
+                provenance={
+                    "generation": artifact["generation"],
+                    "source_label": artifact["provenance"]["source_label"],
+                    "sparse_index_version": self._engram.sparse_index_snapshot()["index_version"],
+                },
+                diagnostics={
+                    "field_contributions": dict(match["field_contributions"]),
+                    "phrase_fields": list(match["phrase_fields"]),
+                    "proximity_fields": list(match["proximity_fields"]),
+                    "minimum_proximity": match["minimum_proximity"],
+                    "prefix_match_count": match["prefix_match_count"],
+                    "matched_term_count": match["matched_term_count"],
+                },
+            )
+            candidate_bytes = _json_size(candidate_to_dict(candidate))
+            if retained_bytes + candidate_bytes > budget["max_working_memory_bytes"]:
+                result = resolver_result(
+                    resolver=self.name,
+                    state=ResolverState.EXHAUSTED,
+                    reason_code="sparse_candidate_memory_budget",
+                    diagnostics={
+                        "query_term_count": discovery["query_term_count"],
+                        "posting_visits": discovery["posting_visits"],
+                    },
+                    consumption=budget_consumption(
+                        elapsed_ns=max(0, self._clock_ns() - started),
+                        resolvers=1,
+                        working_memory_bytes=min(retained_bytes, budget["max_working_memory_bytes"]),
+                        exhausted_dimensions=("working_memory_bytes",),
+                    ),
+                )
+                return result
+            retained_bytes += candidate_bytes
+            candidates.append(candidate)
+            accounting.append(accounting_observation(artifact["statement_id"], frame["identity"]["lexical_terms"]))
+        result = resolver_result(
+            resolver=self.name,
+            state=ResolverState.COMPLETED,
+            reason_code="sparse_candidates" if candidates else "sparse_miss",
+            candidates=tuple(candidates),
+            accounting=tuple(accounting),
+            diagnostics={
+                "query_term_count": discovery["query_term_count"],
+                "posting_visits": discovery["posting_visits"],
+            },
+            consumption=budget_consumption(
+                elapsed_ns=max(0, self._clock_ns() - started),
+                resolvers=1,
+                candidates=len(candidates),
+                working_memory_bytes=retained_bytes,
+            ),
+        )
+        return result
+
+
 class StructuredGraphResolver:
     """Pure full-Claim evidence adapter over fixed structured graph projections."""
 
@@ -922,7 +1062,8 @@ class StructuredGraphResolver:
         self._eligibility_evaluator: ClaimEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: QueryFrame) -> bool:
-        result = bool(self._engram.graph_client)
+        client = self._engram.graph_client
+        result = bool(client and getattr(client, "available", True))
         return result
 
     def _composition_result(
@@ -1656,7 +1797,14 @@ class SupportSemanticResolver:
 
     def available(self, frame: QueryFrame) -> bool:
         graph = self._engram.config.get("graph") or {}
-        result = bool(graph.get("enabled") and graph.get("vector_enabled"))
+        client = self._engram.graph_client
+        result = bool(
+            graph.get("enabled")
+            and graph.get("vector_enabled")
+            and client
+            and getattr(client, "available", True)
+            and self._engram._graph_embedding_model
+        )
         return result
 
     def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:

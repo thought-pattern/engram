@@ -43,8 +43,10 @@ cooperative structured, semantic, and composition boundaries. It is not serializ
 or included in the `request_id` signature. A cancelled attempt publishes no partial
 resolver result, is not cached as a knowledge miss, and can be retried with the same
 request ID. The callback cannot interrupt a thread already blocked in an external
-driver call; graph deployments therefore require the backend timeout documented in
-the [deployment runbook](operations/deployment-and-rollback-v1.md).
+driver call. Engram does not require a MemGraph timeout: the graph-bound request may
+remain outstanding, while optional graph I/O isolation keeps unrelated local requests
+and status available. The [deployment runbook](operations/deployment-and-rollback-v1.md)
+defines graph disablement and supervisor-stop handling.
 
 ## Result access
 

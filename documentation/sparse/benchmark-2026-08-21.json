@@ -1,0 +1,1578 @@
+{
+  "build_latency_ms": {
+    "existing_idf_overlap": 300.7643,
+    "fielded_bm25_v1": 14.2498,
+    "sqlite_fts5": 24.1008,
+    "unfielded_bm25": 1.109
+  },
+  "corpus": {
+    "documents": 28,
+    "evaluation_role": "repository-visible engineering holdout; not a Section 16 release partition",
+    "path": "eval/section12-sparse-v1.json",
+    "provenance": "Synthetic technical and long-tail retrieval contrasts authored for EGR-1202 on 2026-08-21.",
+    "queries": 28
+  },
+  "created_at": "2026-08-22T01:27:00Z",
+  "decision": {
+    "rationale": "deterministic local CPU operation, explicit field/technical signals, immutable atomic state, and no persisted secondary authority",
+    "selected": "fielded_bm25_v1"
+  },
+  "engines": {
+    "existing_idf_overlap": {
+      "license": "Engram project code",
+      "portability": "Python runtime"
+    },
+    "fielded_bm25_v1": {
+      "license": "Engram project code",
+      "persisted_index_bytes": 0,
+      "portability": "Python runtime; no service or extension dependency"
+    },
+    "sqlite_fts5": {
+      "in_memory_page_bytes": 32768,
+      "license": "SQLite public domain; Python sqlite3 standard library binding",
+      "portability": "requires a Python SQLite build with FTS5 enabled"
+    },
+    "unfielded_bm25": {
+      "license": "benchmark implementation in Engram project",
+      "portability": "Python runtime"
+    }
+  },
+  "gates": {
+    "maximum_incremental_add_ms": 250.0,
+    "maximum_incremental_posting_replacement_rate": 0.1,
+    "maximum_negative_candidate_rate": 0.0,
+    "maximum_scale_build_ms": 15000.0,
+    "maximum_scale_peak_memory_bytes": 536870912,
+    "maximum_scale_query_p95_ms": 25.0,
+    "maximum_statistics_only_posting_replacements": 0,
+    "minimum_positive_recall_at_5": 1.0,
+    "minimum_positive_top1_recall": 0.9,
+    "minimum_top1_gain_over_existing_idf": 0.08
+  },
+  "latency": {
+    "existing_idf_overlap": {
+      "maximum_ms": 2.3521,
+      "p50_ms": 0.2883,
+      "p95_ms": 0.538,
+      "p99_ms": 0.5917,
+      "samples": 1400
+    },
+    "fielded_bm25_v1": {
+      "maximum_ms": 3.8431,
+      "p50_ms": 0.28485,
+      "p95_ms": 0.5347,
+      "p99_ms": 0.6439,
+      "samples": 1400
+    },
+    "sqlite_fts5": {
+      "maximum_ms": 0.2851,
+      "p50_ms": 0.1074,
+      "p95_ms": 0.1488,
+      "p99_ms": 0.1697,
+      "samples": 1400
+    },
+    "unfielded_bm25": {
+      "maximum_ms": 0.3811,
+      "p50_ms": 0.0556,
+      "p95_ms": 0.0807,
+      "p99_ms": 0.0891,
+      "samples": 1400
+    }
+  },
+  "passed": true,
+  "release_authority": "Section 12 engineering promotion only; Section 16 release authority remains separate",
+  "relevance": {
+    "existing_idf_overlap": {
+      "cases": [
+        {
+          "case_id": "phrase-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "phrase",
+          "rank": 2,
+          "top_statement_ids": [
+            "oauth-scattered",
+            "oauth-phrase"
+          ]
+        },
+        {
+          "case_id": "proximity-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "proximity",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered",
+            "etimedout"
+          ]
+        },
+        {
+          "case_id": "prefix-1",
+          "expected_statement_id": "proxy-handshake",
+          "family": "prefix",
+          "rank": 1,
+          "top_statement_ids": [
+            "proxy-handshake",
+            "proxy-general"
+          ]
+        },
+        {
+          "case_id": "ngram-1",
+          "expected_statement_id": "conn-reset",
+          "family": "character_ngram",
+          "rank": 3,
+          "top_statement_ids": [
+            "libfoo-242",
+            "libfoo-241",
+            "conn-reset",
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "error-code-1",
+          "expected_statement_id": "conn-refused",
+          "family": "error_code",
+          "rank": 2,
+          "top_statement_ids": [
+            "conn-reset",
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "symbol-1",
+          "expected_statement_id": "vector-cpp",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "vector-cpp",
+            "vector-math"
+          ]
+        },
+        {
+          "case_id": "symbol-2",
+          "expected_statement_id": "cpp20-concepts",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "cpp20-concepts"
+          ]
+        },
+        {
+          "case_id": "version-1",
+          "expected_statement_id": "libfoo-241",
+          "family": "version",
+          "rank": 2,
+          "top_statement_ids": [
+            "libfoo-242",
+            "libfoo-241",
+            "conn-reset",
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "version-2",
+          "expected_statement_id": "libfoo-242",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-242",
+            "libfoo-241",
+            "conn-reset",
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "path-1",
+          "expected_statement_id": "windows-client-path",
+          "family": "path",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "path-2",
+          "expected_statement_id": "unix-client-path",
+          "family": "path",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "error-code-2",
+          "expected_statement_id": "eaddrinuse",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "eaddrinuse",
+            "etimedout"
+          ]
+        },
+        {
+          "case_id": "error-code-3",
+          "expected_statement_id": "etimedout",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "etimedout",
+            "eaddrinuse",
+            "oauth-scattered",
+            "oauth-phrase"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-1",
+          "expected_statement_id": "user-id",
+          "family": "identifier_boundary",
+          "rank": 2,
+          "top_statement_ids": [
+            "userid",
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-2",
+          "expected_statement_id": "userid",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "userid",
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "dotted-id-1",
+          "expected_statement_id": "java-widget",
+          "family": "identifier_boundary",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "endpoint-1",
+          "expected_statement_id": "http-404",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-404",
+            "http-401"
+          ]
+        },
+        {
+          "case_id": "endpoint-2",
+          "expected_statement_id": "http-401",
+          "family": "path",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "standard-1",
+          "expected_statement_id": "pep440",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "pep440"
+          ]
+        },
+        {
+          "case_id": "standard-2",
+          "expected_statement_id": "semver",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "semver"
+          ]
+        },
+        {
+          "case_id": "identifier-1",
+          "expected_statement_id": "crashloop",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "crashloop"
+          ]
+        },
+        {
+          "case_id": "identifier-2",
+          "expected_statement_id": "imagepull",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "imagepull"
+          ]
+        },
+        {
+          "case_id": "symbol-3",
+          "expected_statement_id": "openssl-cert",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "openssl-cert",
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "identifier-3",
+          "expected_statement_id": "ssh-key",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "negative-1",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-2",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-3",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-4",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        }
+      ],
+      "engine": "existing_idf_overlap",
+      "families": {
+        "character_ngram": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 0
+        },
+        "error_code": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 2
+        },
+        "identifier_boundary": {
+          "positive": 3,
+          "top_five": 2,
+          "top_one": 1
+        },
+        "negative": {
+          "negative": 4,
+          "negative_candidate": 0
+        },
+        "path": {
+          "positive": 4,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "phrase": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 0
+        },
+        "prefix": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "proximity": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "symbol": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "technical_identifier": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "version": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 3
+        }
+      },
+      "mean_reciprocal_rank": 0.7222222222222223,
+      "negative_candidate_rate": 0.0,
+      "negative_cases": 4,
+      "positive_cases": 24,
+      "recall_at_5": 0.8333333333333334,
+      "top1_recall": 0.625
+    },
+    "fielded_bm25_v1": {
+      "cases": [
+        {
+          "case_id": "phrase-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "phrase",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered"
+          ]
+        },
+        {
+          "case_id": "proximity-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "proximity",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "windows-client-path",
+            "oauth-scattered",
+            "crashloop",
+            "imagepull"
+          ]
+        },
+        {
+          "case_id": "prefix-1",
+          "expected_statement_id": "proxy-handshake",
+          "family": "prefix",
+          "rank": 1,
+          "top_statement_ids": [
+            "proxy-handshake",
+            "proxy-general"
+          ]
+        },
+        {
+          "case_id": "ngram-1",
+          "expected_statement_id": "conn-reset",
+          "family": "character_ngram",
+          "rank": 1,
+          "top_statement_ids": [
+            "conn-reset",
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "error-code-1",
+          "expected_statement_id": "conn-refused",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "conn-refused"
+          ]
+        },
+        {
+          "case_id": "symbol-1",
+          "expected_statement_id": "vector-cpp",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "vector-cpp"
+          ]
+        },
+        {
+          "case_id": "symbol-2",
+          "expected_statement_id": "cpp20-concepts",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "cpp20-concepts"
+          ]
+        },
+        {
+          "case_id": "version-1",
+          "expected_statement_id": "libfoo-241",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-241"
+          ]
+        },
+        {
+          "case_id": "version-2",
+          "expected_statement_id": "libfoo-242",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-242"
+          ]
+        },
+        {
+          "case_id": "path-1",
+          "expected_statement_id": "windows-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "path-2",
+          "expected_statement_id": "unix-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "unix-client-path"
+          ]
+        },
+        {
+          "case_id": "error-code-2",
+          "expected_statement_id": "eaddrinuse",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "error-code-3",
+          "expected_statement_id": "etimedout",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "etimedout"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-1",
+          "expected_statement_id": "user-id",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-2",
+          "expected_statement_id": "userid",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "userid",
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "dotted-id-1",
+          "expected_statement_id": "java-widget",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "java-widget"
+          ]
+        },
+        {
+          "case_id": "endpoint-1",
+          "expected_statement_id": "http-404",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-404"
+          ]
+        },
+        {
+          "case_id": "endpoint-2",
+          "expected_statement_id": "http-401",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-401"
+          ]
+        },
+        {
+          "case_id": "standard-1",
+          "expected_statement_id": "pep440",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "pep440"
+          ]
+        },
+        {
+          "case_id": "standard-2",
+          "expected_statement_id": "semver",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "semver"
+          ]
+        },
+        {
+          "case_id": "identifier-1",
+          "expected_statement_id": "crashloop",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "crashloop"
+          ]
+        },
+        {
+          "case_id": "identifier-2",
+          "expected_statement_id": "imagepull",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "imagepull"
+          ]
+        },
+        {
+          "case_id": "symbol-3",
+          "expected_statement_id": "openssl-cert",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "openssl-cert"
+          ]
+        },
+        {
+          "case_id": "identifier-3",
+          "expected_statement_id": "ssh-key",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "negative-1",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-2",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-3",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-4",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        }
+      ],
+      "engine": "fielded_bm25_v1",
+      "families": {
+        "character_ngram": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "error_code": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "identifier_boundary": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "negative": {
+          "negative": 4,
+          "negative_candidate": 0
+        },
+        "path": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        },
+        "phrase": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "prefix": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "proximity": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "symbol": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "technical_identifier": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "version": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        }
+      },
+      "mean_reciprocal_rank": 1.0,
+      "negative_candidate_rate": 0.0,
+      "negative_cases": 4,
+      "positive_cases": 24,
+      "recall_at_5": 1.0,
+      "top1_recall": 1.0
+    },
+    "sqlite_fts5": {
+      "cases": [
+        {
+          "case_id": "phrase-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "phrase",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered"
+          ]
+        },
+        {
+          "case_id": "proximity-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "proximity",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered",
+            "unix-client-path",
+            "windows-client-path",
+            "crashloop"
+          ]
+        },
+        {
+          "case_id": "prefix-1",
+          "expected_statement_id": "proxy-handshake",
+          "family": "prefix",
+          "rank": 1,
+          "top_statement_ids": [
+            "proxy-handshake",
+            "proxy-general"
+          ]
+        },
+        {
+          "case_id": "ngram-1",
+          "expected_statement_id": "conn-reset",
+          "family": "character_ngram",
+          "rank": 2,
+          "top_statement_ids": [
+            "conn-refused",
+            "conn-reset",
+            "libfoo-241",
+            "libfoo-242"
+          ]
+        },
+        {
+          "case_id": "error-code-1",
+          "expected_statement_id": "conn-refused",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "conn-refused",
+            "conn-reset"
+          ]
+        },
+        {
+          "case_id": "symbol-1",
+          "expected_statement_id": "vector-cpp",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "vector-cpp",
+            "vector-math",
+            "cpp20-concepts",
+            "cpp17-build",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "symbol-2",
+          "expected_statement_id": "cpp20-concepts",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "cpp20-concepts",
+            "cpp17-build",
+            "vector-cpp",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "version-1",
+          "expected_statement_id": "libfoo-241",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-241",
+            "libfoo-242",
+            "conn-refused",
+            "conn-reset"
+          ]
+        },
+        {
+          "case_id": "version-2",
+          "expected_statement_id": "libfoo-242",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-242",
+            "libfoo-241",
+            "semver",
+            "conn-refused",
+            "conn-reset"
+          ]
+        },
+        {
+          "case_id": "path-1",
+          "expected_statement_id": "windows-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "windows-client-path",
+            "unix-client-path",
+            "oauth-phrase",
+            "conn-reset",
+            "cpp20-concepts"
+          ]
+        },
+        {
+          "case_id": "path-2",
+          "expected_statement_id": "unix-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "unix-client-path",
+            "windows-client-path",
+            "oauth-phrase",
+            "conn-reset",
+            "crashloop"
+          ]
+        },
+        {
+          "case_id": "error-code-2",
+          "expected_statement_id": "eaddrinuse",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "eaddrinuse",
+            "etimedout",
+            "http-401",
+            "http-404"
+          ]
+        },
+        {
+          "case_id": "error-code-3",
+          "expected_statement_id": "etimedout",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "etimedout",
+            "eaddrinuse",
+            "http-401",
+            "http-404",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-1",
+          "expected_statement_id": "user-id",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "user-id",
+            "userid",
+            "http-401",
+            "http-404"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-2",
+          "expected_statement_id": "userid",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "userid",
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "dotted-id-1",
+          "expected_statement_id": "java-widget",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "java-widget",
+            "generic-widget"
+          ]
+        },
+        {
+          "case_id": "endpoint-1",
+          "expected_statement_id": "http-404",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-404",
+            "http-401",
+            "user-id",
+            "etimedout",
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "endpoint-2",
+          "expected_statement_id": "http-401",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-401",
+            "http-404",
+            "etimedout",
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "standard-1",
+          "expected_statement_id": "pep440",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "pep440",
+            "semver"
+          ]
+        },
+        {
+          "case_id": "standard-2",
+          "expected_statement_id": "semver",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "semver",
+            "libfoo-242",
+            "libfoo-241"
+          ]
+        },
+        {
+          "case_id": "identifier-1",
+          "expected_statement_id": "crashloop",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "crashloop",
+            "imagepull",
+            "oauth-phrase",
+            "unix-client-path",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "identifier-2",
+          "expected_statement_id": "imagepull",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "imagepull",
+            "crashloop",
+            "oauth-phrase",
+            "unix-client-path",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "symbol-3",
+          "expected_statement_id": "openssl-cert",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "openssl-cert",
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "identifier-3",
+          "expected_statement_id": "ssh-key",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "negative-1",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-2",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-3",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-4",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        }
+      ],
+      "engine": "sqlite_fts5",
+      "families": {
+        "character_ngram": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 0
+        },
+        "error_code": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "identifier_boundary": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "negative": {
+          "negative": 4,
+          "negative_candidate": 0
+        },
+        "path": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        },
+        "phrase": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "prefix": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "proximity": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "symbol": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "technical_identifier": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "version": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        }
+      },
+      "mean_reciprocal_rank": 0.9791666666666666,
+      "negative_candidate_rate": 0.0,
+      "negative_cases": 4,
+      "positive_cases": 24,
+      "recall_at_5": 1.0,
+      "top1_recall": 0.9583333333333334
+    },
+    "unfielded_bm25": {
+      "cases": [
+        {
+          "case_id": "phrase-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "phrase",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered"
+          ]
+        },
+        {
+          "case_id": "proximity-1",
+          "expected_statement_id": "oauth-phrase",
+          "family": "proximity",
+          "rank": 1,
+          "top_statement_ids": [
+            "oauth-phrase",
+            "oauth-scattered",
+            "unix-client-path",
+            "windows-client-path",
+            "etimedout"
+          ]
+        },
+        {
+          "case_id": "prefix-1",
+          "expected_statement_id": "proxy-handshake",
+          "family": "prefix",
+          "rank": 1,
+          "top_statement_ids": [
+            "proxy-handshake",
+            "proxy-general"
+          ]
+        },
+        {
+          "case_id": "ngram-1",
+          "expected_statement_id": "conn-reset",
+          "family": "character_ngram",
+          "rank": 2,
+          "top_statement_ids": [
+            "conn-refused",
+            "conn-reset",
+            "libfoo-241",
+            "libfoo-242"
+          ]
+        },
+        {
+          "case_id": "error-code-1",
+          "expected_statement_id": "conn-refused",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "conn-refused",
+            "conn-reset"
+          ]
+        },
+        {
+          "case_id": "symbol-1",
+          "expected_statement_id": "vector-cpp",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "vector-cpp",
+            "vector-math",
+            "cpp20-concepts",
+            "cpp17-build",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "symbol-2",
+          "expected_statement_id": "cpp20-concepts",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "cpp20-concepts",
+            "cpp17-build",
+            "vector-cpp",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "version-1",
+          "expected_statement_id": "libfoo-241",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-241",
+            "libfoo-242",
+            "conn-refused",
+            "conn-reset"
+          ]
+        },
+        {
+          "case_id": "version-2",
+          "expected_statement_id": "libfoo-242",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "libfoo-242",
+            "libfoo-241",
+            "conn-refused",
+            "conn-reset",
+            "semver"
+          ]
+        },
+        {
+          "case_id": "path-1",
+          "expected_statement_id": "windows-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "windows-client-path",
+            "unix-client-path",
+            "oauth-phrase",
+            "conn-reset",
+            "cpp20-concepts"
+          ]
+        },
+        {
+          "case_id": "path-2",
+          "expected_statement_id": "unix-client-path",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "unix-client-path",
+            "windows-client-path",
+            "oauth-phrase",
+            "conn-reset",
+            "etimedout"
+          ]
+        },
+        {
+          "case_id": "error-code-2",
+          "expected_statement_id": "eaddrinuse",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "eaddrinuse",
+            "etimedout",
+            "http-401",
+            "http-404"
+          ]
+        },
+        {
+          "case_id": "error-code-3",
+          "expected_statement_id": "etimedout",
+          "family": "error_code",
+          "rank": 1,
+          "top_statement_ids": [
+            "etimedout",
+            "oauth-phrase",
+            "unix-client-path",
+            "windows-client-path",
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-1",
+          "expected_statement_id": "user-id",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "user-id",
+            "userid",
+            "http-401",
+            "http-404"
+          ]
+        },
+        {
+          "case_id": "identifier-boundary-2",
+          "expected_statement_id": "userid",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "userid",
+            "user-id"
+          ]
+        },
+        {
+          "case_id": "dotted-id-1",
+          "expected_statement_id": "java-widget",
+          "family": "identifier_boundary",
+          "rank": 1,
+          "top_statement_ids": [
+            "java-widget",
+            "generic-widget"
+          ]
+        },
+        {
+          "case_id": "endpoint-1",
+          "expected_statement_id": "http-404",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-404",
+            "http-401",
+            "user-id",
+            "etimedout",
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "endpoint-2",
+          "expected_statement_id": "http-401",
+          "family": "path",
+          "rank": 1,
+          "top_statement_ids": [
+            "http-401",
+            "http-404",
+            "etimedout",
+            "eaddrinuse"
+          ]
+        },
+        {
+          "case_id": "standard-1",
+          "expected_statement_id": "pep440",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "pep440",
+            "semver"
+          ]
+        },
+        {
+          "case_id": "standard-2",
+          "expected_statement_id": "semver",
+          "family": "version",
+          "rank": 1,
+          "top_statement_ids": [
+            "semver",
+            "libfoo-242",
+            "libfoo-241"
+          ]
+        },
+        {
+          "case_id": "identifier-1",
+          "expected_statement_id": "crashloop",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "crashloop",
+            "imagepull",
+            "oauth-phrase",
+            "unix-client-path",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "identifier-2",
+          "expected_statement_id": "imagepull",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "imagepull",
+            "crashloop",
+            "oauth-phrase",
+            "unix-client-path",
+            "windows-client-path"
+          ]
+        },
+        {
+          "case_id": "symbol-3",
+          "expected_statement_id": "openssl-cert",
+          "family": "symbol",
+          "rank": 1,
+          "top_statement_ids": [
+            "openssl-cert",
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "identifier-3",
+          "expected_statement_id": "ssh-key",
+          "family": "technical_identifier",
+          "rank": 1,
+          "top_statement_ids": [
+            "ssh-key"
+          ]
+        },
+        {
+          "case_id": "negative-1",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-2",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-3",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        },
+        {
+          "case_id": "negative-4",
+          "expected_statement_id": "",
+          "family": "negative",
+          "rank": 0,
+          "top_statement_ids": []
+        }
+      ],
+      "engine": "unfielded_bm25",
+      "families": {
+        "character_ngram": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 0
+        },
+        "error_code": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "identifier_boundary": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "negative": {
+          "negative": 4,
+          "negative_candidate": 0
+        },
+        "path": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        },
+        "phrase": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "prefix": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "proximity": {
+          "positive": 1,
+          "top_five": 1,
+          "top_one": 1
+        },
+        "symbol": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "technical_identifier": {
+          "positive": 3,
+          "top_five": 3,
+          "top_one": 3
+        },
+        "version": {
+          "positive": 4,
+          "top_five": 4,
+          "top_one": 4
+        }
+      },
+      "mean_reciprocal_rank": 0.9791666666666666,
+      "negative_candidate_rate": 0.0,
+      "negative_cases": 4,
+      "positive_cases": 24,
+      "recall_at_5": 1.0,
+      "top1_recall": 0.9583333333333334
+    }
+  },
+  "scale": {
+    "build": {
+      "maximum_ms": 8788.0011,
+      "minimum_ms": 8363.8279,
+      "p50_ms": 8484.0692,
+      "p95_ms": 8788.0011,
+      "p99_ms": 8788.0011,
+      "samples": 5
+    },
+    "disk_bytes_persisted": 0,
+    "documents": 10000,
+    "incremental_add": {
+      "clean_rebuild_equivalent": true,
+      "latency_ms": 53.8185,
+      "posting_replacement_rate": 0.0024103831891223735,
+      "replaced_posting_terms": 78
+    },
+    "index_terms": 32338,
+    "memory": {
+      "current_bytes": 201388344,
+      "peak_bytes": 366632633
+    },
+    "query": {
+      "maximum_ms": 0.5574,
+      "minimum_ms": 0.312,
+      "p50_ms": 0.3242,
+      "p95_ms": 0.4005,
+      "p99_ms": 0.4938,
+      "samples": 200
+    },
+    "statistics_only_update": {
+      "latency": {
+        "maximum_ms": 0.3254,
+        "minimum_ms": 0.23,
+        "p50_ms": 0.23504999999999998,
+        "p95_ms": 0.2719,
+        "p99_ms": 0.3254,
+        "samples": 30
+      },
+      "posting_replacements": 0
+    }
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "ce01596646f5c5ae85bd30c63bc7ae8ad38ecb36",
+    "branch": "graph",
+    "changed_paths": [
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/composition/contracts-v1.md",
+      "documentation/composition/section10-conformance-2026-08-20.md",
+      "documentation/contextual/contracts-v2.md",
+      "documentation/decisions/0006-section12-fielded-bm25.md",
+      "documentation/evaluation/foundation-2026-08-19.json",
+      "documentation/evaluation/foundation-v1.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/operations/security-privacy-review-2026-08-20.md",
+      "documentation/python-api.md",
+      "documentation/sparse/",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/core.py",
+      "engram/fusion.py",
+      "engram/persistence.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "engram/sparse.py",
+      "eval/section12-sparse-v1.json",
+      "scripts/benchmark_sparse.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_resolvers.py",
+      "tests/test_service.py",
+      "tests/test_sparse.py"
+    ],
+    "governed_source_sha256": "b5a5f892896757b671ac95a79fcd13838fd27abe4d5cf6872451eec71081fc81",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "verdicts": {
+    "incremental_add_latency": true,
+    "incremental_rebuild_equivalence": true,
+    "incremental_write_amplification": true,
+    "negative_candidate_rate": true,
+    "positive_recall_at_5": true,
+    "positive_top1_recall": true,
+    "scale_build": true,
+    "scale_peak_memory": true,
+    "scale_query_p95": true,
+    "statistics_write_amplification": true,
+    "top1_gain_over_existing_idf": true
+  }
+}

@@ -158,6 +158,7 @@ async def _run(
     seed_path: str = "",
     memgraph_probe_every: int = 0,
     retrieval_rewrites_enabled: bool = False,
+    sparse_enabled: bool = False,
 ) -> dict:
     server = create_mcp_server()
     latencies_ms = []
@@ -293,6 +294,7 @@ async def _run(
             "graph_ready": graph_status.get("ready", False),
             "memgraph_probe_every": memgraph_probe_every,
             "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
+            "sparse_enabled": sparse_enabled,
         },
         "server": {"name": server_name, "version": server_version},
         "engram_version": VERSION,
@@ -359,6 +361,11 @@ def _parser() -> argparse.ArgumentParser:
         help="Create an ephemeral runtime config with retrieval_rewrites_enabled=true",
     )
     parser.add_argument(
+        "--enable-sparse",
+        action="store_true",
+        help="Create an ephemeral runtime config with sparse.enabled=true",
+    )
+    parser.add_argument(
         "--memgraph-probe-every",
         type=int,
         default=0,
@@ -376,8 +383,8 @@ def main(argv: Sequence[str] = ()) -> int:
     if args.memgraph_probe_every < 0:
         raise ValueError("--memgraph-probe-every must be nonnegative")
     selected_config = args.config
-    with tempfile.TemporaryDirectory(prefix="engram-section11-") as temporary_directory:
-        if args.enable_rewrites:
+    with tempfile.TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
+        if args.enable_rewrites or args.enable_sparse:
             raw_config = {}
             if args.config:
                 loaded = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
@@ -385,7 +392,10 @@ def main(argv: Sequence[str] = ()) -> int:
                     if not isinstance(loaded, dict):
                         raise ValueError("--config must contain a YAML object")
                     raw_config = loaded
-            raw_config["retrieval_rewrites_enabled"] = True
+            if args.enable_rewrites:
+                raw_config["retrieval_rewrites_enabled"] = True
+            if args.enable_sparse:
+                raw_config["sparse"] = {"enabled": True}
             selected_path = Path(temporary_directory) / "config.yml"
             selected_path.write_text(yaml.safe_dump(raw_config, sort_keys=True), encoding="utf-8")
             selected_config = str(selected_path)
@@ -399,6 +409,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 args.seed,
                 args.memgraph_probe_every,
                 args.enable_rewrites,
+                args.enable_sparse,
             )
         )
     result_text = json.dumps(result, indent=2, sort_keys=True) + "\n"

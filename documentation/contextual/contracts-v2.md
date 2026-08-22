@@ -9,10 +9,11 @@ Section 8 retains the compact previous-frame, bounded inheritance, canonical ent
 Canonical lookup, fixed one-hop execution, current-Claim revalidation, phrasing, and evidence packaging consume graph-row, evidence, output, diagnostic, and working-memory allowances. They do not consume an elapsed-time allowance. Resolver and complete-turn duration are reported in `BudgetConsumption.elapsed_ns` and in reproducible conversation artifacts; duration never decides whether a valid relation result is retained.
 
 Callers may cancel at cooperative boundaries through the transient Python callback.
-That check cannot interrupt a driver call already blocked in `Cursor.execute`, so an
-enabled Memgraph deployment also requires its approved server-side query-execution
-timeout. Cancellation and the backend timeout are operational bounds; neither is a
-field of `OneHopQueryPlan` nor an answer-quality threshold. See the
-[deployment runbook](../operations/deployment-and-rollback-v1.md).
+That check cannot interrupt a driver call already blocked in `Cursor.execute`.
+Engram does not require a MemGraph timeout: the current graph-bound request may remain
+outstanding while graph I/O isolation preserves unrelated local service. Cancellation
+is not a field of `OneHopQueryPlan` or an answer-quality threshold. See the
+[deployment runbook](../operations/deployment-and-rollback-v1.md) for graph disablement,
+graceful drain, and supervisor-stop handling.
 
 The configured live MemGraph path resolves Sarah and `married_to`, returns the Abraham Claim through the allow-listed query, revalidates it, and completes as `EVIDENCE`. Ambiguous identity, multiple eligible results, object-type mismatch, or current ineligibility still prevents a phrase because those are semantic or disclosure conditions, not latency policy.

@@ -744,6 +744,8 @@ PATTERN_RESOLVER_NAME = "pattern"
 PATTERN_RESOLVER_COST_CLASS = CostClass.CHEAP
 LEXICAL_RESOLVER_NAME = "lexical"
 LEXICAL_RESOLVER_COST_CLASS = CostClass.CHEAP
+SPARSE_RESOLVER_NAME = "sparse"
+SPARSE_RESOLVER_COST_CLASS = CostClass.CHEAP
 STRUCTURED_GRAPH_RESOLVER_NAME = "structured_graph"
 STRUCTURED_GRAPH_RESOLVER_COST_CLASS = CostClass.STANDARD
 SUPPORT_SEMANTIC_RESOLVER_NAME = "support_semantic"
@@ -1559,6 +1561,7 @@ class CandidateSource(StrEnum):
     EXACT = "exact"
     PATTERN = "pattern"
     LEXICAL = "lexical"
+    SPARSE = "sparse"
     SUPPORT_SEMANTIC = "support_semantic"
     STANDALONE_SEMANTIC = "standalone_semantic"
     UTILITY = "utility"
@@ -1942,8 +1945,9 @@ FUSION_SOURCE_ORDER = MappingProxyType(
         CandidateSource.SUPPORT_SEMANTIC: 1,
         CandidateSource.PATTERN: 2,
         CandidateSource.LEXICAL: 3,
-        CandidateSource.STANDALONE_SEMANTIC: 4,
-        CandidateSource.UTILITY: 5,
+        CandidateSource.SPARSE: 4,
+        CandidateSource.STANDALONE_SEMANTIC: 5,
+        CandidateSource.UTILITY: 6,
     }
 )
 FUSION_SOURCE_FAMILY = MappingProxyType(
@@ -1952,6 +1956,10 @@ FUSION_SOURCE_FAMILY = MappingProxyType(
         CandidateSource.SUPPORT_SEMANTIC: "support_semantic",
         CandidateSource.PATTERN: "pattern",
         CandidateSource.LEXICAL: "lexical",
+        # Both resolvers derive lexical evidence from the same authoritative
+        # request representations.  They must not manufacture independent
+        # agreement merely by using different scoring functions.
+        CandidateSource.SPARSE: "lexical",
         CandidateSource.STANDALONE_SEMANTIC: "standalone_semantic",
         CandidateSource.UTILITY: "utility",
     }
@@ -2013,9 +2021,9 @@ FUSION_FEATURE_DEFINITION_SPECS: Mapping[FusionFeature, FusionFeatureDefinitionS
             True,
             "calibrated lexical relevance",
             "no lexical contribution",
-            "LexicalResolver.lexical_score or lexical_overlap",
-            "§§4-5",
-            "lexical source only",
+            "LexicalResolver lexical score or SparseResolver sparse score",
+            "§§4-5, 12",
+            "lexical or sparse source only",
             "finite lexical score in the resolver's documented scale",
             "maximum compatible lexical observation",
             FusionFeatureRole.SCORING,

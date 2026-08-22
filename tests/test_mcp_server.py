@@ -14,7 +14,7 @@ from engram.config import engram_config
 from engram.constants import VERSION
 from engram.conversation import ConversationRuntime
 from engram.core import Engram
-from engram.errors import ConflictError, InvalidRequestError, LifecycleError
+from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import MCPConversationService, create_mcp_server
 from engram.service import EngramCore
 from scripts.run_section3_mcp_conformance import _evaluate_turn, _run_length_encode_passes
@@ -173,14 +173,21 @@ def test_service_requires_an_explicit_lifecycle(tmp_path) -> None:
         service.start(seed_path=str(_seed_file(tmp_path)))
 
 
-def test_mcp_start_propagates_transport_neutral_component_preflight(tmp_path, monkeypatch) -> None:
+def test_mcp_start_keeps_serving_when_optional_graph_is_unavailable(tmp_path, monkeypatch) -> None:
     config = tmp_path / "graph.yml"
     config.write_text("graph:\n  enabled: true\n", encoding="utf-8")
     unavailable_client = type("UnavailableGraph", (), {"available": False})()
     monkeypatch.setattr("engram.core.create_graph_client", lambda **kwargs: unavailable_client)
 
-    with pytest.raises(InvalidRequestError, match="MemGraph service is unavailable"):
-        MCPConversationService().start(seed_path="", config_path=str(config))
+    service = MCPConversationService()
+    started = service.start(seed_path="", config_path=str(config))
+    core = cast(EngramCore, service.core)
+
+    assert started["user_id"] == "0"
+    assert core.status()["ready"] is True
+    assert core.status()["components"]["graph"] == {"enabled": True, "ready": False}
+    assert service.send("ordinary local request")["response"] == ""
+    service.stop()
 
 
 def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:

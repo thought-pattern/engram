@@ -1,8 +1,8 @@
 # Section 16 evaluation foundation v1
 
-**Status:** In Progress  
+**Status:** In Progress; protected custody and numerical approval blocked externally
 **Owners:** EGR-1601, EGR-1602, EGR-1603, and EGR-1609  
-**Release authority:** Pending independent label and numerical-gate approval
+**Release authority:** Unassigned; pending independent label custody and numerical-gate approval
 
 ## Implemented foundation
 
@@ -52,9 +52,14 @@ contains the changes.
 
 ## Remaining completion work
 
-These EGR items remain In Progress because the foundation does not yet provide
-independent custodians and labels, protected end-to-end inputs, approved numerical
-gates, required sample sizes, repeated nondeterministic trials, or authorization to
-run the release-gate and final-test partitions. Existing Section 8 through 10
+This work remains incomplete because the foundation does not yet provide independent
+custodians and labels, protected end-to-end inputs, approved numerical gates,
+required sample sizes, repeated nondeterministic trials, or authorization to run the
+release-gate and final-test partitions. Existing Section 8 through 10
 corpora are engineering regression fixtures only and must not be promoted as
 independent release evidence.
+
+EGR-1601 is blocked until an independent evaluation custodian is assigned. EGR-1609
+is blocked until an independent release owner is assigned. EGR-1602 and EGR-1603
+remain active foundation work; none of these statuses changes `release_ready: false`
+or authorizes protected execution.

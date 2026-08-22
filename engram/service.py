@@ -12,7 +12,7 @@ import json
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -102,6 +102,7 @@ from engram.resolvers import (
     ResolutionOrchestrator,
     ResolverExecutor,
     ResolverRegistry,
+    SparseResolver,
     StructuredGraphResolver,
     SupportSemanticResolver,
     resolution_plan_to_dict,
@@ -170,6 +171,36 @@ def accounting_request_id(kind: str, external_id: str) -> str:
     digest = hashlib.sha256(external_id.encode("utf-8")).hexdigest()
     result = f"internal:{kind}:sha256:{digest}"
     return result
+
+
+class _IsolatedGraphClient:
+    """Run optional graph calls through a core-owned isolation context."""
+
+    def __init__(self, client: object, operation_context: Callable[[], contextlib.AbstractContextManager[None]]) -> None:
+        object.__setattr__(self, "_client", client)
+        object.__setattr__(self, "_operation_context", operation_context)
+
+    def __bool__(self) -> bool:
+        return bool(object.__getattribute__(self, "_client"))
+
+    def __getattr__(self, name: str):
+        client = object.__getattribute__(self, "_client")
+        value = getattr(client, name)
+        if not callable(value) or name == "disconnect":
+            return value
+        operation_context = object.__getattribute__(self, "_operation_context")
+
+        def isolated(*args, **kwargs):
+            with operation_context():
+                return value(*args, **kwargs)
+
+        return isolated
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in {"_client", "_operation_context"}:
+            object.__setattr__(self, name, value)
+            return
+        setattr(object.__getattribute__(self, "_client"), name, value)
 
 
 def service_candidate_result(statement: dict, score: float) -> dict:
@@ -342,7 +373,14 @@ class EngramCore:
         self._resolution_requests: dict[str, dict[str, object]] = {}
         self._clock: Callable[[], datetime] = cast(Callable[[], datetime], clock) if callable(clock) else lambda: datetime.now(UTC)
         self.lock = threading.RLock()
+        self._resolution_condition = threading.Condition(self.lock)
+        self._active_resolution_request_ids: set[str] = set()
+        self._active_resolution_user_ids: set[str] = set()
+        self._active_graph_operations = 0
         self._state = CoreState.RUNNING
+        graph_client = self.engram.graph_client
+        if graph_client:
+            self.engram._graph_client = _IsolatedGraphClient(graph_client, self._graph_operation)
         self._durability = DurabilityState.HEALTHY if self.store_path else DurabilityState.DISABLED
         self._dirty = False
         self._last_checkpoint_at = ""
@@ -357,7 +395,7 @@ class EngramCore:
             checkpoint_configured=bool(self.store_path and self.checkpoint_on_mutation),
             checkpoint=self._checkpoint_response_state,
             recovery_loader=self._recover_response_state,
-            publication_hook=self._invalidate_negative_for_response_state,
+            publication_hook=self._publish_response_state,
         )
         self._response_mutations = AcceptedResponseService(
             self._response_coordinator,
@@ -376,6 +414,7 @@ class EngramCore:
                 ExactResolver(self.engram, time.monotonic_ns),
                 PatternResolver(self.engram, time.monotonic_ns),
                 LexicalResolver(self.engram, time.monotonic_ns),
+                SparseResolver(self.engram, time.monotonic_ns),
                 StructuredGraphResolver(self.engram, time.monotonic_ns),
                 SupportSemanticResolver(self.engram, time.monotonic_ns),
             )
@@ -401,8 +440,68 @@ class EngramCore:
             ),
         )
 
+    @contextlib.contextmanager
+    def _resolution_slot(self, request_id: str, user_id: str) -> Iterator[None]:
+        """Serialize retry identity and per-user context while permitting unrelated work."""
+        with self._resolution_condition:
+            while request_id in self._active_resolution_request_ids or user_id in self._active_resolution_user_ids:
+                self._require_running()
+                self._resolution_condition.wait()
+            self._require_running()
+            self._active_resolution_request_ids.add(request_id)
+            self._active_resolution_user_ids.add(user_id)
+        try:
+            yield
+        finally:
+            with self._resolution_condition:
+                self._active_resolution_request_ids.discard(request_id)
+                self._active_resolution_user_ids.discard(user_id)
+                self._resolution_condition.notify_all()
+
+    @contextlib.contextmanager
+    def _graph_operation(self) -> Iterator[None]:
+        """Track optional graph I/O and release an owned core-wide lock."""
+        with self._resolution_condition:
+            self._require_running()
+            self._active_graph_operations += 1
+        released = False
+        try:
+            try:
+                self.lock.release()
+                released = True
+            except RuntimeError:
+                pass
+            yield
+        finally:
+            if released:
+                self.lock.acquire()
+            with self._resolution_condition:
+                self._active_graph_operations -= 1
+                self._resolution_condition.notify_all()
+
     def _invalidate_negative_for_response_state(self, state: CoordinatedResponseState) -> None:
         self._negative_resolutions.invalidate_epoch_snapshot(state["namespace_epochs"])
+
+    def _publish_response_state(self, state: CoordinatedResponseState) -> None:
+        """Refresh fail-soft derived state after authoritative publication."""
+        receipt_values = state["mutation_receipts"]["receipts"]
+        changed_statement_ids: tuple[str, ...] = ()
+        if isinstance(receipt_values, tuple) and receipt_values:
+            latest = receipt_values[-1]
+            if isinstance(latest, Mapping):
+                changes = latest.get("affected_generations", ())
+                if isinstance(changes, tuple):
+                    changed_statement_ids = tuple(
+                        sorted(
+                            {
+                                str(change["statement_id"])
+                                for change in changes
+                                if isinstance(change, Mapping) and isinstance(change.get("statement_id"), str)
+                            }
+                        )
+                    )
+        self.engram.synchronize_sparse_index(state["repository"], changed_statement_ids)
+        self._invalidate_negative_for_response_state(state)
 
     def __enter__(self) -> "EngramCore":
         """Return this core as a single owned application runtime."""
@@ -419,6 +518,7 @@ class EngramCore:
         with self.lock:
             accepting_requests = self._state == CoreState.RUNNING
             durability_healthy = self._durability != DurabilityState.DEGRADED
+            self._component_status = self.engram.component_status_snapshot()
             result = {
                 "state": self._state.value,
                 "ready": accepting_requests,
@@ -676,11 +776,11 @@ class EngramCore:
         cancellation_check: object = (),
     ) -> ResolutionResult:
         """Run one transport-neutral bounded resolution pipeline."""
-        with self.lock:
+        require_service_text(request, "request")
+        require_service_text(request_id, "request_id")
+        normalized_user_id = normalize_service_user_id(user_id)
+        with self._resolution_slot(request_id, normalized_user_id), self.lock:
             self._require_running()
-            require_service_text(request, "request")
-            require_service_text(request_id, "request_id")
-            normalized_user_id = normalize_service_user_id(user_id)
             require_service_string(namespace, "namespace")
             require_service_string(context_fingerprint, "context_fingerprint")
             require_service_string(required_source_label, "required_source_label")
@@ -1023,9 +1123,11 @@ class EngramCore:
 
     def chat(self, user_id: str, text: str) -> dict:
         """Submit one chatbot turn to an active user conversation."""
-        with self.lock:
+        normalized_user_id = normalize_service_user_id(user_id)
+        operation_id = f"chat:{uuid4().hex}"
+        with self._resolution_slot(operation_id, normalized_user_id), self.lock:
             self._require_running()
-            runtime = self.get_conversation(user_id)
+            runtime = self.get_conversation(normalized_user_id)
             try:
                 result = runtime.send(text)
             except ValueError as error:
@@ -1128,22 +1230,31 @@ class EngramCore:
 
     def close(self, *, flush: bool = True) -> bool:
         """Flush and release all transport-independent runtime state."""
-        with self.lock:
+        with self._resolution_condition:
             if self._state == CoreState.CLOSED:
                 result = False
                 return result
             if self._state != CoreState.RUNNING:
                 raise LifecycleError(f"core cannot close while {self._state.value}")
             self._state = CoreState.CLOSING
+            self._resolution_condition.notify_all()
+            while self._active_resolution_request_ids or self._active_graph_operations:
+                self._resolution_condition.wait()
             try:
                 if flush:
                     self._flush_store()
             except PersistenceError:
                 self._state = CoreState.RUNNING
+                self._resolution_condition.notify_all()
                 raise
             self.conversations.clear()
             self._reset_regulated_state()
+            disconnect = getattr(self.engram.graph_client, "disconnect", ())
+            if callable(disconnect):
+                with contextlib.suppress(Exception):
+                    disconnect()
             self._state = CoreState.CLOSED
+            self._resolution_condition.notify_all()
             result = True
             return result
 

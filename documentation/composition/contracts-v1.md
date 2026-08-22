@@ -20,7 +20,7 @@ The v1 maxima are:
 | Binding UTF-8 bytes | 64 |
 | Predicate lookup surfaces | 12 |
 
-There is no latency answer budget, knowledge deadline, p95 gate, or timeout field in the plan. Cooperative cancellation is checked before lookup and during traversal. An enabled Memgraph deployment separately requires the server-side query-execution timeout in the [deployment runbook](../operations/deployment-and-rollback-v1.md), because a cooperative Python check cannot interrupt a driver call already in progress. Durations are reported as observations and never determine answer eligibility.
+There is no latency answer budget, knowledge deadline, p95 gate, or timeout field in the plan. Cooperative cancellation is checked before lookup and during traversal. Engram does not require a MemGraph timeout: a cooperative Python check cannot interrupt a driver call already in progress, so only the current request remains outstanding while optional graph I/O is isolated from unrelated local work. The [deployment runbook](../operations/deployment-and-rollback-v1.md) defines graph disablement and supervisor-stop handling. Durations are reported as observations and never determine answer eligibility.
 
 ## Compiler boundary
 

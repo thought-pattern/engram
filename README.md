@@ -9,6 +9,7 @@ ENGRAM sits between user queries and expensive computation (LLM inference, datab
 Key features:
 
 - **Keyword matching** - Fast, predictable retrieval using keyword overlap
+- **Optional sparse retrieval** - Fielded BM25 with phrase and technical-identifier signals
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
@@ -158,7 +159,7 @@ undiluted.
 ## Configuration
 
 ```python
-from engram.config import engram_config
+from engram.config import engram_config, sparse_config
 from engram.constants import EvictionPolicy, SessionOverflow
 from engram.core import Engram
 
@@ -174,6 +175,7 @@ config = engram_config(
     eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
     retrieval_rewrites_enabled=False,  # Opt-in retrieval-only symbolic reductions
+    sparse=sparse_config(enabled=False),  # Opt-in local fielded BM25
     learn_user_facts=True,       # Learn shared facts with user attribution
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
@@ -189,6 +191,15 @@ Symbolic rewrites apply only to the unified `EngramCore.resolve_request`
 retrieval frame. They retain the original request and a complete bounded rule
 trace, do not change query identity, and never execute AIML response templates.
 See [the version-1 rewrite contract](documentation/rewrite/contracts-v1.md).
+
+Sparse retrieval is also disabled by default. When enabled, it builds an in-memory
+fielded BM25 projection from authoritative accepted-response artifacts, adds
+phrase/proximity/prefix/technical-identifier features to the common resolver model,
+and persists no index data. Response text remains excluded unless
+`include_response_text=True` is explicitly selected. `core.status()` reports its
+optional enablement and readiness independently without changing overall service
+readiness. See the
+[version-1 sparse contract](documentation/sparse/contracts-v1.md).
 
 ## Persistence
 
@@ -633,9 +644,11 @@ relation lookup and its fixed one-hop evidence path are documented in the
 `resolve_request` also accepts a transient zero-argument `cancellation_check`.
 The callback raises `ResolutionCancelledError`; cancellation is not cached and an
 identical request ID can be retried. This cooperative hook cannot interrupt a graph
-driver call already in progress, so graph deployments must also follow the hard
-backend query-bound requirement in the
-[deployment runbook](documentation/operations/deployment-and-rollback-v1.md).
+driver call already in progress. Optional graph I/O therefore runs outside
+the core-wide state lock: another user's local-only request and status inspection
+continue while the graph-bound request remains outstanding, while same-user context
+and retry identity stay serialized. Shutdown and supervisor behavior are documented
+in the [deployment runbook](documentation/operations/deployment-and-rollback-v1.md).
 
 Candidate observations and external verdicts use durable replayable receipts,
 bounded aged aggregates, exact scope/generation/policy partitions, and no
@@ -844,8 +857,8 @@ read-only: `execute`, `execute_read`, `Engram.graph_query`, and template
 queries all reject mutating Cypher before opening a connection. There is no
 runtime writer method or authoring template. Reads degrade gracefully when the
 host becomes unreachable after startup and use a reconnect cooldown. When graph
-access is enabled, the initial connection must pass transport-neutral preflight
-before Python, CLI, MCP, or gRPC serving begins.
+access is enabled, transport-neutral preflight reports its readiness independently;
+an unavailable graph does not prevent Python, CLI, MCP, or gRPC local serving.
 
 Facts use a canonical-first model: a `Claim` node links by edge to canonical
 `Entity` and `Predicate` nodes (`HAS_SUBJECT` /
@@ -900,10 +913,11 @@ graph:
 
 Use a database account that is restricted to reads. The password is supplied by
 external runtime configuration and is never written into persisted cache state.
-Start Memgraph with an approved positive `--query-execution-timeout-sec` value.
-Pymgclient has no per-execution timeout argument, so this server setting is the
-hard bound for an in-flight graph query. If it cannot be verified, keep graph
-access disabled. This operational timeout does not alter Engram answer policy.
+MemGraph remains optional when configured. If it is unavailable, component status
+reports `enabled: true, ready: false`; graph resolvers are skipped while local
+retrieval, conversation, and regulated-response paths continue normally.
+An already-running graph call is isolated from the core-wide state lock, so it does
+not serialize unrelated users' local-only work.
 
 The two supported template graph operations are read-only:
 

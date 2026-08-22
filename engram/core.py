@@ -110,6 +110,7 @@ from engram.polish import polish_response
 from engram.repository import ArtifactRepository
 from engram.scoring import score_statement_components
 from engram.spacy_setup import get_nlp
+from engram.sparse import SparseIndexCheckReport, SparseIndexOwner, SparseIndexState, SparseSearchResult
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
@@ -304,6 +305,10 @@ class Engram:
         self.count_lock = threading.Lock()
         self._index_owner = IndexOwner()
         self.response_repository = ArtifactRepository()
+        self._sparse_index_owner = SparseIndexOwner(
+            self.config.get("sparse") or {},
+            self.response_repository.snapshot()["state_generation"],
+        )
         self.namespace_epochs = NamespaceEpochState()
         self.mutation_receipts = MutationReceiptLedger()
         self.feedback_store = FeedbackStore()
@@ -314,8 +319,9 @@ class Engram:
         self.hit_count = 0
         self.eviction_count = 0
 
-        # Enabled graph components are initialized during construction. Request
-        # paths only use already-created clients and already-loaded models.
+        # Graph tooling is optional even when configured. Construction records
+        # its readiness, but an unavailable graph must not prevent the local
+        # cache, matcher, conversation, or regulated-response paths from serving.
         # Graph access is capability-based: production uses MemGraphConnection,
         # while deterministic benchmarks may provide the same narrow methods.
         self._graph_client: object = ()
@@ -329,7 +335,11 @@ class Engram:
                 password=graph_config.get("password", ""),
             )
         if graph_config.get("vector_enabled"):
-            self._load_graph_embedding_model()
+            try:
+                self._load_graph_embedding_model()
+            except Exception as error:
+                self._graph_embedding_model = ()
+                logger.warning("Optional graph vector model is unavailable: %s", type(error).__name__)
         try:
             self.component_status = self.preflight_components()
         except RuntimeError as error:
@@ -342,14 +352,13 @@ class Engram:
         return result
 
     def preflight_components(self) -> dict:
-        """Verify every enabled external or model-backed component before serving."""
+        """Verify required components and report optional component readiness."""
         graph_settings = self.config.get("graph") or {}
         graph_enabled = bool(graph_settings.get("enabled"))
         vector_enabled = bool(graph_settings.get("vector_enabled"))
         spacy_full_enabled = any(
             self.config.get(name, False) for name in ("use_spacy_facts", "use_spacy_lemmatization", "use_phrase_keywords")
         )
-        spacy_phrasing_enabled = graph_enabled
         missing_nltk = ensure_nltk_data(download=False)
 
         if missing_nltk:
@@ -357,24 +366,42 @@ class Engram:
             raise RuntimeError(f"required NLTK resources are unavailable: {missing_names}")
         if vector_enabled and not graph_enabled:
             raise RuntimeError("vector recall requires graph access to be enabled")
-        if graph_enabled and (not self._graph_client or getattr(self._graph_client, "available", True) is False):
-            raise RuntimeError("configured MemGraph service is unavailable")
-        if vector_enabled:
-            self.warm_vector_recall()
+        graph_ready = bool(graph_enabled and self._graph_client and getattr(self._graph_client, "available", True))
+        spacy_phrasing_enabled = graph_ready
+        vector_ready = False
+        if vector_enabled and graph_ready and self._graph_embedding_model:
+            try:
+                vector_ready = self.warm_vector_recall()
+            except Exception as error:
+                logger.warning("Optional graph vector recall is unavailable: %s", type(error).__name__)
         if spacy_full_enabled and not get_nlp():
             raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
-        if spacy_phrasing_enabled and not get_nlp():
-            raise RuntimeError("enabled relation-aware graph resolution requires the pre-provisioned English model")
+        spacy_ready = bool(get_nlp()) if spacy_full_enabled or spacy_phrasing_enabled else False
 
         result = {
             "nltk": {"enabled": True, "ready": True},
-            "graph": {"enabled": graph_enabled, "ready": graph_enabled},
-            "vector": {"enabled": vector_enabled, "ready": vector_enabled},
+            "graph": {"enabled": graph_enabled, "ready": graph_ready},
+            "vector": {"enabled": vector_enabled, "ready": vector_ready},
+            "sparse": {
+                "enabled": self._sparse_index_owner.enabled,
+                "ready": self._sparse_index_owner.available,
+            },
             "spacy": {
-                "enabled": spacy_full_enabled or spacy_phrasing_enabled,
-                "ready": spacy_full_enabled or spacy_phrasing_enabled,
+                "enabled": spacy_full_enabled or graph_enabled,
+                "ready": spacy_ready,
             },
         }
+        return result
+
+    def component_status_snapshot(self) -> dict:
+        """Return current readiness without contacting optional dependencies."""
+        result = {name: dict(value) for name, value in self.component_status.items()}
+        graph = result["graph"]
+        graph["ready"] = bool(graph["enabled"] and self._graph_client and getattr(self._graph_client, "available", True))
+        vector = result["vector"]
+        vector["ready"] = bool(vector["enabled"] and graph["ready"] and self._graph_embedding_model and vector["ready"])
+        sparse = result["sparse"]
+        sparse["ready"] = bool(sparse["enabled"] and self._sparse_index_owner.available)
         return result
 
     def graph_query(self, cypher: str, params=()) -> list:
@@ -547,12 +574,7 @@ class Engram:
         return result
 
     def warm_vector_recall(self) -> bool:
-        """Load the query model and verify the configured graph ANN path.
-
-        Unlike request-time augmentation, startup warm-up is strict: an
-        enabled vector path that cannot reach its model, graph, or index must
-        not advertise a healthy server and then time out on the first proposal.
-        """
+        """Load the query model and report whether the optional graph ANN path is ready."""
         graph_config = self.config.get("graph") or {}
         if not graph_config.get("vector_enabled"):
             result = False
@@ -569,7 +591,8 @@ class Engram:
             min_similarity=0.0,
         )
         if getattr(client, "available", True) is False:
-            raise RuntimeError("configured MemGraph service is unavailable")
+            result = False
+            return result
         result = True
         return result
 
@@ -621,6 +644,73 @@ class Engram:
         if not isinstance(apply, bool):
             raise ValueError("index rebuild apply must be a boolean")
         result = self.repair_indexes(dry_run=not apply)
+        return result
+
+    def sparse_index_snapshot(self) -> SparseIndexState:
+        """Return the current immutable sparse secondary-index state."""
+        result = self._sparse_index_owner.snapshot()
+        return result
+
+    def rebuild_sparse_index(self) -> SparseIndexState:
+        """Atomically rebuild sparse retrieval from authoritative artifacts."""
+        repository = self.response_repository.snapshot()
+        try:
+            result = self._sparse_index_owner.rebuild(
+                repository["artifacts"].values(),
+                repository["state_generation"],
+            )
+            return result
+        except Exception as error:
+            self._sparse_index_owner.mark_unavailable(error)
+            raise
+
+    def synchronize_sparse_index(
+        self,
+        repository_state: Mapping[str, object],
+        changed_statement_ids: tuple[str, ...] = (),
+    ) -> bool:
+        """Publish a repository-derived sparse generation without affecting mutation success."""
+        try:
+            artifacts = repository_state["artifacts"]
+            generation = repository_state["state_generation"]
+            if not isinstance(artifacts, Mapping) or not isinstance(generation, int):
+                raise InvalidRequestError("repository state is malformed for sparse synchronization")
+            if changed_statement_ids:
+                self._sparse_index_owner.synchronize(artifacts, generation, changed_statement_ids)
+            else:
+                self._sparse_index_owner.rebuild(artifacts.values(), generation)
+            result = True
+            return result
+        except Exception as error:
+            self._sparse_index_owner.mark_unavailable(error)
+            logger.warning("Sparse index synchronization failed: %s", type(error).__name__)
+            result = False
+            return result
+
+    def check_sparse_index(self) -> SparseIndexCheckReport:
+        """Compare the live sparse index with authoritative response artifacts."""
+        repository = self.response_repository.snapshot()
+        result = self._sparse_index_owner.check_against(
+            repository["artifacts"].values(),
+            repository["state_generation"],
+        )
+        return result
+
+    def sparse_candidates(
+        self,
+        text: str,
+        scope,
+        *,
+        limit: int,
+        max_working_memory_bytes: int,
+    ) -> SparseSearchResult:
+        """Search the immutable sparse index under the common memory budget."""
+        result = self._sparse_index_owner.search(
+            text,
+            scope,
+            limit=limit,
+            max_working_memory_bytes=max_working_memory_bytes,
+        )
         return result
 
     def add_index_projection(self, projection: IndexProjection) -> IndexState:

@@ -26,6 +26,12 @@ def test_component_preflight_reports_nltk_readiness() -> None:
     assert Engram().component_status["nltk"] == {"enabled": True, "ready": True}
 
 
+def test_component_preflight_reports_disabled_sparse_readiness_independently() -> None:
+    engine = Engram()
+
+    assert engine.component_status["sparse"] == {"enabled": False, "ready": False}
+
+
 """Tests for statement storage."""
 
 

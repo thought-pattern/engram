@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
+from sentence_transformers import SentenceTransformer
 
 from engram import persistence, service as service_module
 from engram.artifacts import (
@@ -140,6 +141,16 @@ def engine_with_artifacts(*artifacts: CachedResponseArtifact) -> Engram:
     engine.response_repository = ArtifactRepository(artifacts)
     persistence.synchronize_response_compatibility_views(engine, ())
     return engine
+
+
+def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
+    """Mark an injected graph capability ready for resolver-planning tests."""
+    client = type("ReadyGraphCapability", (), {"available": True})()
+    engine._graph_client = client
+    engine.config["graph"]["enabled"] = True
+    if vector:
+        engine.config["graph"]["vector_enabled"] = True
+        engine._graph_embedding_model = cast(SentenceTransformer, object())
 
 
 def frame(
@@ -678,8 +689,7 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
 
 def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(monkeypatch) -> None:
     engine = Engram()
-    engine.config["graph"]["enabled"] = True
-    engine.config["graph"]["vector_enabled"] = True
+    enable_graph_resolvers(engine, vector=True)
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
     monkeypatch.setattr(
@@ -758,6 +768,7 @@ def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(mon
 
 def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consumed(monkeypatch) -> None:
     engine = Engram()
+    enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     discovered = _semantic_claim_projection("claim-after-candidate", 0.8)
     current = _current_claim_projection(discovered)
@@ -801,7 +812,7 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
 
 def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_or_accounting(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     structured = _structured_claim_projection("claim-shared")
     semantic = _semantic_claim_projection("claim-shared", 0.76)
@@ -876,7 +887,7 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
 
 def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     discovered = _structured_claim_projection("claim-orchestrated")
     current = _current_claim_projection(discovered)
     monkeypatch.setattr(
@@ -937,6 +948,7 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
 
 def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch) -> None:
     engine = Engram()
+    enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     discovered = _semantic_claim_projection("claim-below-floor", 0.59)
     current = _current_claim_projection(discovered)
@@ -981,6 +993,7 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
 
 def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded(monkeypatch) -> None:
     engine = Engram()
+    enable_graph_resolvers(engine, vector=True)
     statement_id = engine.store("Candidate response")
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     discovered = _semantic_claim_projection("claim-below-floor-with-candidate", 0.59)
@@ -1023,7 +1036,7 @@ def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded
 
 def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     discovered = tuple(_structured_claim_projection(f"claim-{index:02d}") for index in range(12))
     current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
     monkeypatch.setattr(
@@ -1057,7 +1070,7 @@ def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeyp
 
 def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     discovered = tuple(_structured_claim_projection(f"claim-output-{index:02d}") for index in range(4))
     current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
     monkeypatch.setattr(
@@ -1092,7 +1105,7 @@ def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch)
 
 def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     probe_projection = _structured_claim_projection("claim-byte-00")
     monkeypatch.setattr(
         engine,
@@ -1144,7 +1157,7 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
 
 def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     discovered = _structured_claim_projection("claim-no-diagnostics")
     current = _current_claim_projection(discovered)
     monkeypatch.setattr(
@@ -1177,7 +1190,7 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
 
 def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted(monkeypatch) -> None:
     engine = Engram()
-    engine._graph_client = MemGraphConnection()
+    enable_graph_resolvers(engine)
     discovered = _structured_claim_projection("claim-memory-bound")
     current = _current_claim_projection(discovered)
     monkeypatch.setattr(

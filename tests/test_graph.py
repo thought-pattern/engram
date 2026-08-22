@@ -365,14 +365,15 @@ def test_read_only_graph_wiring_graph_read_fn_passes_reads():
     assert rows == [{"result": "Greece"}]
 
 
-def test_read_only_graph_wiring_transport_neutral_preflight_rejects_unavailable_enabled_graph():
+def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
     client = MockGraphClient()
     client.available = False
-    with (
-        patch("engram.core.create_graph_client", return_value=client),
-        pytest.raises(ValueError, match="MemGraph service is unavailable"),
-    ):
-        Engram(config=engram_config(graph=graph_config(enabled=True)))
+    with patch("engram.core.create_graph_client", return_value=client):
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+
+    assert engram.component_status["graph"] == {"enabled": True, "ready": False}
+    assert engram.graph_query("RETURN 1") == []
+    assert engram.query("ordinary local request")["matches"] == []
 
 
 def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_component_readiness():
@@ -386,6 +387,7 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
         "nltk": {"enabled": True, "ready": True},
         "graph": {"enabled": True, "ready": True},
         "vector": {"enabled": False, "ready": False},
+        "sparse": {"enabled": False, "ready": False},
         "spacy": {"enabled": True, "ready": True},
     }
 

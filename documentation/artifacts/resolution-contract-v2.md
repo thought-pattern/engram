@@ -31,7 +31,7 @@ Elapsed time never changes resolver state, truncates a result, adds an exhausted
 
 The Python core accepts a transient cooperative cancellation callback. It is checked before resolver work, between resolvers, and within supported structured, semantic, evidence, and composition loops. `ResolutionCancelledError` propagates without a partial execution report, cached resolution record, or reusable knowledge miss. The callback is not serialized or encoded in request identity.
 
-Client deadlines and backend operational controls remain adapter/runtime concerns and are not encoded in the resolution budget. A cooperative check cannot interrupt a thread blocked in an external driver call, so enabled graph deployments require Memgraph's server-side query-execution timeout as the hard in-flight bound. These controls stop work or classify operational failure; they are not knowledge-quality policy. The [deployment runbook](../operations/deployment-and-rollback-v1.md) defines the operator requirement.
+Client deadlines and backend operational controls remain adapter/runtime concerns and are not encoded in the resolution budget. A cooperative check cannot interrupt a thread blocked in an external driver call, and Engram does not impose a MemGraph timeout. The graph-bound request may therefore remain outstanding, while optional graph I/O isolation keeps unrelated local work available. The [deployment runbook](../operations/deployment-and-rollback-v1.md) defines graph disablement, graceful drain, and the supervisor hard-stop boundary; none of those controls is knowledge-quality policy.
 
 ## Migration
 

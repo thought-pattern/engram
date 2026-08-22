@@ -1,8 +1,8 @@
 # Engram Project Tracking
 
-**Audience: Internal | Status: Enhancement program In Progress, 128/175; release Not Approved | 20 August 2026**
+**Audience: Internal | Status: Enhancement program In Progress, 143/175, 2 externally blocked; release Not Approved | 21 August 2026**
 
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
 Tracks implementation status only. Components and ordering follow [ENGRAM-DEVELOPMENT.md](ENGRAM-DEVELOPMENT.md). Each checkbox is a buildable, checkable artifact. Status is assessed against the active Engram codebase. Commit, review, and merge state are human workflow concerns and do not determine whether implementation work is Done.
 
@@ -22,11 +22,13 @@ Query identity is separate from lexical search terms. Tier controls eviction; li
 
 ### Bounded, offline execution
 
-Every resolver has explicit result, memory, graph, and output bounds. Caller cancellation is checked cooperatively, and enabled backends require their own hard operational timeout; Memgraph must be started with an approved positive query-execution timeout. Resolver and complete-turn durations are reported as observations and do not change knowledge eligibility or fusion. Models and language resources are provisioned before startup; tests and normal runtime do not depend on Internet downloads or uncontrolled external services.
+Every resolver has explicit result, memory, graph, and output bounds. Caller cancellation is checked cooperatively. Resolver and complete-turn durations are reported as observations and do not change knowledge eligibility or fusion. Required local language resources are provisioned before startup; tests and normal runtime do not depend on Internet downloads or uncontrolled external services. Graph and graph-vector capabilities remain optional even when configured: an unavailable capability reports `ready: false`, is omitted from resolver execution, and never prevents Engram's local paths from serving. Optional graph I/O releases the core-wide state lock, so another user's local-only work and status inspection continue while the graph-bound request remains outstanding; same-user context and retry identity remain serialized.
 
 ### Graph and data boundary
 
 Runtime graph access remains capability-limited and read-only. Metrics and logs omit request text, response text, raw customer graph content, credentials, and unbounded identifier labels by default. An Engram failure never blocks Tapestry's Actor path.
+
+Configured graph enablement grants permission to use the capability; it does not make MemGraph a service dependency. Overall readiness is independent of graph readiness.
 
 ### Authoritative state and interfaces
 
@@ -63,16 +65,16 @@ Deferred work remains Not Started. Blocked means a named external decision, depe
 | 9 | Temporal, trust, and conflict semantics | P2 | §§7-8 | Done | 9/9 |
 | 10 | Bounded graph composition | P2 | §§8-9 | Done | 8/8 |
 | 11 | Symbolic retrieval rewrite layer | P3 | §§1, 4-5 | Done | 7/7 |
-| 12 | Sparse retrieval enhancement | P3 | §§1-5 | Not Started | 0/8 |
+| 12 | Sparse retrieval enhancement | P3 | §§1-5 | Done | 8/8 |
 | 13 | Standalone semantic retrieval and reranking | P3 | §§5, 12 | Not Started | 0/9 |
 | 14 | Utility resolver plugins | P3 | §§4-5 | Not Started | 0/6 |
 | 15 | Interfaces, migration, security, and operations | Continuous | Cross-cutting | In Progress | 3/10 |
-| 16 | Evaluation, rollout, and release | Continuous | Cross-cutting | In Progress | 0/10 |
-| | **Program total** | | | **In Progress** | **135/175** |
+| 16 | Evaluation, rollout, and release | Continuous | Cross-cutting | In Progress (2 blocked) | 0/10 |
+| | **Program total** | | | **In Progress (2 blocked)** | **143/175** |
 
 P0 establishes correctness and the shared architecture. P1 uses those contracts to improve regulated recall and evidence handoff. P2 adds structured graph depth after unified resolution is stable. P3 work is optional and advances independently only when held-out evaluation justifies its resource and operating cost. §§15-16 apply throughout.
 
-Sections 0 through 11 are component-complete, not release-qualified. Resolution budget v2 removes elapsed-time limits from answer policy: resolver and complete-turn duration are reported, while row, count, byte, memory, and cost-class limits remain resource controls. Cooperative cancellation and backend query limits are operational controls and do not change an answer outcome. Section 11 adds a configuration-gated, independently authored retrieval-only rule corpus, fixed-point-only frame integration, complete traces, AIML isolation, corpus lint, and a repository-visible engineering promotion comparison. It improves exact recall from 3/23 to 23/23 with zero semantic collisions and zero false direct answers, and its final MCP evaluation completes and evaluates 1,000 Sarah turns, preserves sushi/cat likes and dog dislike, and obtains five explicit live MemGraph replies. Sections 15 and 16 remain release-critical. EGR-1502 supplies the stable Python identity/evidence boundary, EGR-1508 keeps serving paths offline after startup preflight, and EGR-1510 supplies the deployment/rollback runbook and isolated rollback exercise. The public Section 16 manifest contains only tuning content. Independent release-gate and final-test content is unprovisioned and unauthorized, proposed sample floors are unmet, and no release is approved. Section 5, Section 6, and all Section 8 through 11 engineering regression fixtures are not training or release data.
+Sections 0 through 12 are component-complete, not release-qualified. Resolution budget v2 removes elapsed-time limits from answer policy: resolver and complete-turn duration are reported, while row, count, byte, memory, and cost-class limits remain resource controls. Cooperative cancellation and optional-backend availability do not change knowledge eligibility or fusion. Section 11 adds configuration-gated retrieval-only rewrites. Section 12 adds default-off fielded BM25 over authoritative request representations, immutable rebuildable generations, bounded technical signals, incremental mutation synchronization, and common candidate diagnostics. Its engineering holdout reaches 24/24 top-one and recall@5 with zero negative candidates; the 10,000-document profile passes every declared startup, mutation, memory, disk, and query gate. Its final MCP evaluation completes and evaluates 1,000 Sarah turns, preserves sushi/cat likes and dog dislike, enables sparse retrieval, and obtains five explicit live MemGraph replies. Sections 15 and 16 remain release-critical. EGR-1502 supplies the stable Python identity/evidence boundary, EGR-1508 keeps serving paths offline after startup preflight, and EGR-1510 supplies the deployment/rollback runbook and isolated rollback exercise. The public Section 16 manifest contains only tuning content. Independent release-gate and final-test content is unprovisioned and unauthorized, proposed sample floors are unmet, and no release is approved. Section 5, Section 6, and all Section 8 through 12 engineering regression fixtures are not training or release data.
 
 ## Documented Baseline
 
@@ -97,7 +99,7 @@ These behaviors are reported by the source documentation and were reconciled in 
 | B: Identity-safe cache | §§1-3 and applicable §§15-16 | Component accepted; release pending | Scoped canonical requests and aliases resolve one unchanged accepted response without semantic overwrite; lifecycle is explicit. |
 | C: Unified resolution | §§4-7 and applicable §§15-16 | Component accepted; release pending | Common ANSWER, EVIDENCE, and MISS semantics, fusion, feedback, and response-less Claim evidence are available. |
 | D: Structured graph resolution | §§8-10 and applicable §§15-16 | Component accepted; protected gate unprovisioned | Bounded relation, temporal, conflict-aware, and shallow graph resolution passes engineering conformance; independent release evidence is still required. |
-| E: Retrieval expansion | Any promoted subset of §§11-14 plus §§15-16 | Component accepted; release pending | Section 11 passes its configuration-gated engineering value and safety gate; protected Section 16 release evidence remains unprovisioned. |
+| E: Retrieval expansion | Any promoted subset of §§11-14 plus §§15-16 | Component accepted; release pending | Sections 11 and 12 pass their configuration-gated engineering value, safety, and resource gates; protected Section 16 release evidence remains unprovisioned. |
 
 Gate E does not require every P3 workstream. Each optional resolver is independently promotable.
 
@@ -490,22 +492,26 @@ All eight tasks meet the Section 10 engineering exit condition. The strict algeb
 
 All seven tasks meet the Section 11 engineering exit condition. The rule and corpus codecs reject unknown or unsupported input; ordering and all resource bounds are explicit; only fixed-point chains enter resolver planning; the frame retains the original, every intermediate rule application, and final representation without changing identity; and pattern execution remains bound to the pre-rewrite request. The repository-visible holdout clears the accepted false-direct-answer gate and the component-specific recall/collision gate. This promotes the default-off component, not a product release: Section 16 protected data, numerical approval, and release authority remain unprovisioned.
 
-## §12. Sparse retrieval enhancement (0/8)
+## §12. Sparse retrieval enhancement (8/8)
 
 **Priority:** P3  
 **Depends on:** §§1-5.  
 **Exit:** A selected sparse implementation improves technical and long-tail retrieval at acceptable startup, mutation, memory, and latency cost while remaining rebuildable from authoritative state.
 
-1. [ ] **EGR-1201: Define fielded sparse documents.** Specify canonical request, aliases, entities, relation, keywords, technical identifiers, and optional response-text fields with explicit weights.
-2. [ ] **EGR-1202: Build a representative sparse benchmark.** Include phrases, proximity, prefixes, character n-grams, symbols, version strings, paths, error codes, and identifier boundary cases.
-3. [ ] **EGR-1203: Evaluate candidate engines.** Compare existing IDF overlap, BM25, SQLite FTS5, or another approved local CPU option on relevance, operations, licensing, and portability.
-4. [ ] **EGR-1204: Implement the selected rebuildable index.** Keep persisted response artifacts authoritative and support atomic rebuild and compatibility checks.
-5. [ ] **EGR-1205: Implement technical tokenization and field scoring.** Preserve meaningful punctuation and components without allowing identifier noise to dominate general language.
-6. [ ] **EGR-1206: Integrate sparse candidates and diagnostics.** Expose field contributions, phrase/proximity matches, normalized score, and resolver budget through the common model.
-7. [ ] **EGR-1207: Add mutation, recovery, and scale tests.** Cover commit, supersede, lifecycle, eviction, corrupt index, rebuild, large STATIC corpus, and concurrent readers.
-8. [ ] **EGR-1208: Pass the sparse promotion gate.** Demonstrate held-out recall or precision value and approved p50, p95, memory, disk, startup, and write-amplification results.
+1. [x] **EGR-1201: Define fielded sparse documents.** Specify canonical request, aliases, entities, relation, keywords, technical identifiers, and optional response-text fields with explicit weights.
+2. [x] **EGR-1202: Build a representative sparse benchmark.** Include phrases, proximity, prefixes, character n-grams, symbols, version strings, paths, error codes, and identifier boundary cases.
+3. [x] **EGR-1203: Evaluate candidate engines.** Compare existing IDF overlap, BM25, SQLite FTS5, or another approved local CPU option on relevance, operations, licensing, and portability.
+4. [x] **EGR-1204: Implement the selected rebuildable index.** Keep persisted response artifacts authoritative and support atomic rebuild and compatibility checks.
+5. [x] **EGR-1205: Implement technical tokenization and field scoring.** Preserve meaningful punctuation and components without allowing identifier noise to dominate general language.
+6. [x] **EGR-1206: Integrate sparse candidates and diagnostics.** Expose field contributions, phrase/proximity matches, normalized score, and resolver budget through the common model.
+7. [x] **EGR-1207: Add mutation, recovery, and scale tests.** Cover commit, supersede, lifecycle, eviction, corrupt index, rebuild, large STATIC corpus, and concurrent readers.
+8. [x] **EGR-1208: Pass the sparse promotion gate.** Demonstrate held-out recall or precision value and approved p50, p95, memory, disk, startup, and write-amplification results.
 
 **Evidence required:** engine decision record, benchmark corpus, relevance comparison, operational profile, index recovery tests, and license inventory.
+
+**Section 12 evidence:** [ADR 0006](documentation/decisions/0006-section12-fielded-bm25.md) selects the project-owned fielded BM25 implementation after comparing existing IDF overlap, unfielded BM25, and SQLite FTS5. The [version-1 contract](documentation/sparse/contracts-v1.md) fixes document fields/weights, tokenization, scoring, complete-or-abstain budgets, immutable lifecycle, compatibility checks, and common candidate diagnostics. The [28-case synthetic corpus](eval/section12-sparse-v1.json), [source-bound benchmark](documentation/sparse/benchmark-2026-08-21.json), and [license inventory](documentation/sparse/provenance-and-licensing-2026-08-21.md) supply relevance and operational evidence: 24/24 top-one and recall@5, zero negative candidates, 0.4005 ms 10,000-document query p95, 8,788.0011 ms build p95, 366,632,633 peak bytes, zero persisted bytes, and 0.241% incremental posting replacement. The [conformance report](documentation/sparse/section12-conformance-2026-08-21.md) records 128 focused and 1,535 full passing tests, clean static and medium/high security gates, all 11 promotion verdicts, optional graph execution-isolation and sparse-readiness regressions, the configured live MemGraph probe, and the official-MCP run with all 1,000 Sarah preference turns evaluated and passed while sparse is enabled and five turns use live MemGraph.
+
+All eight tasks meet the Section 12 engineering exit condition. The optional resolver improves technical and long-tail retrieval while authoritative JSON artifacts remain unchanged, index failure stays fail-soft, and disabled mode does no content projection. This promotion grants no Section 16 release authority.
 
 ## §13. Standalone semantic retrieval and reranking (0/9)
 
@@ -557,21 +563,25 @@ All seven tasks meet the Section 11 engineering exit condition. The rule and cor
 9. [ ] **EGR-1509: Add bounded operational telemetry.** Measure outcome, resolver contribution, rejection reasons, latency, budget exhaustion, rebuild, durability, and resource use without raw text or high-cardinality identifiers as labels.
 10. [x] **EGR-1510: Document deployment and rollback.** Cover standalone, graph-backed, and Tapestry-backed modes, health/readiness, startup rebuild, degraded dependencies, backups, lifecycle repair, feature flags, policy rollback, and incident response.
 
-**EGR-1508 evidence:** `engram.nltk_data.ensure_resource` is check-only unless the setup caller explicitly supplies `download=True`; every serving path uses that offline default. `Engram.preflight_components` rejects missing NLTK resources before serving and reports NLTK readiness alongside the existing eager spaCy, local-only embedding-model, graph, vector-index, and dimension checks. Focused tests prove that request/runtime checks never call `nltk.download`, the explicit bootstrap still can, missing data blocks startup with a bounded readiness error, and readiness is exposed. The complete repository and static gates were rerun after this cross-cutting change. Dependency acquisition remains available only through the documented setup commands, not through imports, startup, or requests.
+**EGR-1508 evidence:** `engram.nltk_data.ensure_resource` is check-only unless the setup caller explicitly supplies `download=True`; every serving path uses that offline default. `Engram.preflight_components` rejects missing required NLTK resources before serving and reports optional graph, graph-vector, and spaCy readiness without promoting them to service dependencies. Focused core, graph, resolver, MCP, and service tests prove that request/runtime checks never call `nltk.download`, the explicit bootstrap still can, missing required data blocks startup, and a configured but unavailable MemGraph leaves Engram ready while graph resolvers are unavailable and local requests continue. Dependency acquisition remains available only through the documented setup commands, not through imports, startup, or requests.
+
+**EGR-1506 partial evidence:** optional graph-client calls now execute outside the core-wide state lock in both unified resolution and legacy chat. `test_optional_graph_execution_does_not_hold_the_core_lock` and `test_legacy_chat_graph_execution_does_not_hold_the_core_lock` each hold one graph call outstanding while proving status and a different user's exact-only request complete; the same user's contextual request remains serialized, and a conflicting in-flight request-ID retry waits before failing closed. Fusion, accounting, persistence, and result publication reacquire the core lock. Graceful shutdown tracks an outstanding graph call; it does not invent a MemGraph deadline, and the supervisor remains the hard-stop boundary. EGR-1506 remains open until the Python/MCP/gRPC matrix also covers proposal races, cancellation, shutdown, and consistent visibility.
+
+**EGR-1509 partial evidence:** `core.status()` now reports sparse enablement/readiness independently. A failed sparse projection changes only `components.sparse.ready` to false while overall readiness and health remain true, and an explicit rebuild restores readiness. Full low-cardinality resolver, rebuild, latency, durability, and resource telemetry remains open.
 
 **EGR-1502 evidence:** [Python API v1](documentation/python-api.md) documents the authoritative identity, scope, resolution, evidence-package, feedback, concrete-absence, and cooperative-cancellation shapes. `EngramCore.resolve_request` accepts validated caller identity and returns the stabilized Section 7 result/package without transport-specific policy. Falsey non-mapping identity and budget inputs fail explicitly; absent inputs normalize to concrete empty mappings; keyed feedback examples and the core handoff use dictionary access consistently. Focused service, resolver, feedback, index, and concrete-absence unit tests cover compatibility and malformed-boundary behavior. Unit results are supporting evidence rather than release gates.
 
-**EGR-1510 evidence:** [Deployment and rollback runbook v1](documentation/operations/deployment-and-rollback-v1.md) covers all three modes, preflight/readiness, the required server-side Memgraph query bound, cooperative cancellation limits, backup, recovery, feature rollback, downgrade constraints, and incident response. Its [isolated executable rollback exercise](documentation/operations/rollback-exercise-2026-08-20.md) restores a copied authoritative store, proves original-request-id replay, excludes later state, and verifies repository/index consistency and health. The [security/privacy review](documentation/operations/security-privacy-review-2026-08-20.md) records remaining EGR-1507 and release blockers.
+**EGR-1510 evidence:** [Deployment and rollback runbook v1](documentation/operations/deployment-and-rollback-v1.md) covers all three modes, component readiness, optional graph degradation, cooperative cancellation limits, backup, recovery, feature rollback, downgrade constraints, and incident response. Its [isolated executable rollback exercise](documentation/operations/rollback-exercise-2026-08-20.md) restores a copied authoritative store, proves original-request-id replay, excludes later state, and verifies repository/index consistency and health. The [security/privacy review](documentation/operations/security-privacy-review-2026-08-20.md) records remaining EGR-1507 and release blockers.
 
 **Evidence required:** cross-adapter contract matrix, generated-stub check, persistence compatibility suite, concurrency suite, security review, offline-start test, telemetry cardinality review, and rollback exercise.
 
-## §16. Evaluation, rollout, and release (0/10) — In Progress
+## §16. Evaluation, rollout, and release (0/10) — In Progress; 2 externally blocked
 
 **Priority:** Continuous  
 **Depends on:** §0 baseline and every promoted behavior.  
 **Exit:** Each release is supported by reproducible held-out accuracy, inference-avoidance, evidence-usefulness, latency, memory, compatibility, failure, and rollback evidence.
 
-1. [~] **EGR-1601: Create versioned evaluation partitions.** Maintain disjoint tuning, release-gate, and final-test sets with independent labels and provenance. Unit tests, conformance fixtures, and regression cases may verify invariants but must not be used to fit or select policy parameters; prevent hidden leakage into authored rewrite rules or trained policies.
+1. [-] **EGR-1601: Create versioned evaluation partitions.** Maintain disjoint tuning, release-gate, and final-test sets with independent labels and provenance. Unit tests, conformance fixtures, and regression cases may verify invariants but must not be used to fit or select policy parameters; prevent hidden leakage into authored rewrite rules or trained policies.
 2. [~] **EGR-1602: Cover the required workload families.** Include exact, alias, paraphrase, multi-turn, technical, graph, temporal, ambiguous, conflicting, stale, scope, policy, unsupported, negative, and dependency-failure cases.
 3. [~] **EGR-1603: Add adversarial near-collision gates.** Make `when`/`where`, current/historical, positive/negative, same terms under different relations, and same language under different scopes mandatory release cases.
 4. [ ] **EGR-1604: Measure answer and evidence quality.** Track direct-answer acceptance, false direct answers, useful evidence, proposal acceptance, typed rejection distribution, later correction, and abstention quality. For nondeterministic components, use repeated trials, report dispersion or confidence intervals, and avoid treating individual failures as training examples without an explicit data-governance decision.
@@ -579,7 +589,7 @@ All seven tasks meet the Section 11 engineering exit condition. The rule and cor
 6. [ ] **EGR-1606: Measure component and resource performance.** Record p50 and p95 total and resolver latency, cold start, startup rebuild, persistence, graph recall, semantic recall, throughput, memory, disk, and CPU.
 7. [ ] **EGR-1607: Add failure and chaos scenarios.** Exercise unavailable graph, missing model, bad index, dimension mismatch, persistence degradation, restart, timeout, cancellation, partial evidence, and adapter outage with correct fallback.
 8. [ ] **EGR-1608: Implement staged rollout controls.** Support disabled, shadow, evidence-only, regulated-direct-answer, and rollback modes by namespace and policy version.
-9. [~] **EGR-1609: Define, calibrate, and approve numerical gates.** Record baseline-relative and absolute gates for false answers, value, p99, memory, startup, durability, and evidence size before tuning a feature for release. Select coefficients and thresholds only on the independently labeled tuning partition, freeze them before the release gate, use repeated-run statistics where execution is nondeterministic, and reserve final-test execution for the release decision.
+9. [-] **EGR-1609: Define, calibrate, and approve numerical gates.** Record baseline-relative and absolute gates for false answers, value, p99, memory, startup, durability, and evidence size before tuning a feature for release. Select coefficients and thresholds only on the independently labeled tuning partition, freeze them before the release gate, use repeated-run statistics where execution is nondeterministic, and reserve final-test execution for the release decision.
 10. [ ] **EGR-1610: Produce a release evidence packet.** Include source revision, configuration, artifacts, tests, benchmarks, evaluation results, known limitations, migrations, security review, rollout decision, and tracker updates.
 
 **Evidence required:** versioned corpus manifest, reproducible evaluation command, machine-readable results, rollout dashboard or report, chaos results, and approved release packet.
@@ -589,8 +599,9 @@ All seven tasks meet the Section 11 engineering exit condition. The rule and cor
 - [Evaluation foundation v1](documentation/evaluation/foundation-v1.md) and its [versioned manifest](eval/release-gate-foundation-v1.json) define one public tuning partition plus unprovisioned release-gate and final-test custody slots. Tuning covers 15 workload families and five adversarial contrast dimensions.
 - [Foundation runner](eval/run_release_gate_foundation.py) validates tuning coverage, rejects protected content committed to the repository, and reports independent provisioning, numerical approval, and 1,000/200 sample-floor gates as false. The [machine-readable result](documentation/evaluation/foundation-2026-08-19.json) records the governed source digest, `release_ready: false`, and `release_approved: false`.
 - Turn lengths are reported as p50, p95, p99, and maximum observations without a pass/fail threshold. False-answer, usefulness, memory, durability, and evidence-size criteria remain proposed pending independent release-owner review.
-- EGR-1601, EGR-1602, EGR-1603, and EGR-1609 remain In Progress because independent custodians and labels, protected end-to-end content, approved numerical gates, required sample sizes, and repeated nondeterministic trials are absent. The formerly visible release/final examples are compromised for release use and were removed rather than relabeled as sealed.
+- EGR-1602 and EGR-1603 remain In Progress because protected end-to-end content, required sample sizes, and repeated nondeterministic trials are absent. EGR-1601 and EGR-1609 are blocked on the named external custody and approval decisions below. The formerly visible release/final examples are compromised for release use and were removed rather than relabeled as sealed.
 
 ## Blocking Issues
 
-No blockers recorded. Add a blocker here only when a named external decision, dependency, or authorization prevents an active item from progressing; mark that item `[-]` in its component at the same time.
+- **EGR-1601 — independent evaluation custody:** an independent custodian must be assigned to author, label, retain, and authorize the protected release-gate and final-test partitions outside this repository.
+- **EGR-1609 — numerical release authority:** an independent release owner must be assigned to approve the numerical gates before protected calibration or release execution. Proposed engineering thresholds are not approval.

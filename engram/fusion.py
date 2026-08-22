@@ -1784,8 +1784,10 @@ def _normalize_validated_candidate_features(validated_candidate: Candidate) -> N
         assign(FusionFeature.EXACT, raw["exact_match"])
     if validated_candidate["source"] == CandidateSource.PATTERN and "pattern_specificity" in raw:
         assign(FusionFeature.PATTERN, _saturating(raw["pattern_specificity"], 4.0))
-    if validated_candidate["source"] == CandidateSource.LEXICAL:
-        if "lexical_score" in raw:
+    if validated_candidate["source"] in (CandidateSource.LEXICAL, CandidateSource.SPARSE):
+        if "sparse_score" in raw:
+            assign(FusionFeature.LEXICAL, raw["sparse_score"])
+        elif "lexical_score" in raw:
             assign(FusionFeature.LEXICAL, raw["lexical_score"])
         elif "lexical_overlap" in raw:
             assign(FusionFeature.LEXICAL, raw["lexical_overlap"])

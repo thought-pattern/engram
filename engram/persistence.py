@@ -779,4 +779,5 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
     # response repository independently rebuilds exact/alias/support indexes
     # from authoritative artifacts and never loads a persisted index snapshot.
     instance.rebuild_indexes(apply=True)
+    instance.synchronize_sparse_index(instance.response_repository.snapshot())
     return instance

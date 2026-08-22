@@ -1,0 +1,175 @@
+{
+  "completed_turns": 1000,
+  "configuration": {
+    "config_path_supplied": true,
+    "graph_enabled": true,
+    "graph_ready": true,
+    "memgraph_probe_every": 200,
+    "retrieval_rewrites_enabled": false,
+    "seed_path": "eval/section11-mcp-seed.json",
+    "sparse_enabled": true
+  },
+  "conversation_profile": "sarah-preferences",
+  "duration_seconds": 24.36444,
+  "engram_version": "1.1.11",
+  "evaluated_turns": 1000,
+  "finished_at": "2026-08-22T01:28:45.756552+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-1208 Section 12 MCP live MemGraph conformance",
+  "inspect": {
+    "history_size": 10,
+    "turn_count": 1000,
+    "user_id": "Sarah"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "graph",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "profile_definition": {
+    "dislikes": [
+      "dogs"
+    ],
+    "likes": [
+      "sushi",
+      "cats"
+    ],
+    "user_id": "Sarah"
+  },
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "source_state": {
+    "base_commit": "ce01596646f5c5ae85bd30c63bc7ae8ad38ecb36",
+    "branch": "graph",
+    "changed_paths": [
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/resolution-contract-v1.md",
+      "documentation/artifacts/resolution-contract-v2.md",
+      "documentation/composition/contracts-v1.md",
+      "documentation/composition/section10-conformance-2026-08-20.md",
+      "documentation/contextual/contracts-v2.md",
+      "documentation/decisions/0006-section12-fielded-bm25.md",
+      "documentation/evaluation/foundation-2026-08-19.json",
+      "documentation/evaluation/foundation-v1.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/operations/security-privacy-review-2026-08-20.md",
+      "documentation/python-api.md",
+      "documentation/sparse/",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/core.py",
+      "engram/fusion.py",
+      "engram/persistence.py",
+      "engram/resolvers.py",
+      "engram/service.py",
+      "engram/sparse.py",
+      "eval/section12-sparse-v1.json",
+      "scripts/benchmark_sparse.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_resolvers.py",
+      "tests/test_service.py",
+      "tests/test_sparse.py"
+    ],
+    "governed_source_sha256": "b5a5f892896757b671ac95a79fcd13838fd27abe4d5cf6872451eec71081fc81",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "sources": {
+    "graph": 5,
+    "pattern": 995
+  },
+  "started_at": "2026-08-22T01:28:21.391510+00:00",
+  "stop_summary": {
+    "catch_all_turns": 0,
+    "exchanges": 1000,
+    "learned_statements": 0,
+    "learned_unique_texts": 0,
+    "sources": {
+      "graph": 5,
+      "pattern": 995
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_evaluation": {
+    "check_names": [
+      "active_topic_string",
+      "captured_list",
+      "context_changes_object",
+      "dialogue_act_string",
+      "elapsed_nonnegative",
+      "entities_list",
+      "exact_fields",
+      "fact_admissions_list",
+      "input_continuity",
+      "learned_statements_list",
+      "memgraph_source_when_asked",
+      "pattern_string",
+      "response_nonempty",
+      "sarah_preference_continuity",
+      "score_finite",
+      "source_nonempty",
+      "turn_sequence",
+      "user_continuity"
+    ],
+    "checks_per_turn": 17,
+    "detailed_evaluation_sha256": "4617ae06d6e5ed660119904a93161a154f6c58db285ac2ba8c32502f1431a8f2",
+    "failed_turns": [],
+    "failure_counts": {},
+    "first_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 525.5362,
+      "passed": true,
+      "profile_check": "sarah_preference_continuity",
+      "profile_passed": true,
+      "response_bytes": 18,
+      "response_sha256": "a7f037c7f53da374d71dc49b6fe06ebfe250c60388fb1a74d2f1c5afbd9a9315",
+      "source": "pattern",
+      "turn": 1
+    },
+    "last_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 2930.7393,
+      "passed": true,
+      "profile_check": "memgraph_source_when_asked",
+      "profile_passed": true,
+      "response_bytes": 81,
+      "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+      "source": "graph",
+      "turn": 1000
+    },
+    "observation_sequence_sha256": "c044634d86fd892cd24f0b31c25e710bc94e1687c1ed967379e1bbef12967375",
+    "pass_runs": [
+      {
+        "bit": "1",
+        "turns": 1000
+      }
+    ],
+    "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
+    "passed_turns": 1000,
+    "response_sequence_sha256": "104c9d321cb45870fe9a876d5b81a6710db9d2862b342cab3e5d79a186f0ce19"
+  },
+  "turn_latency_ms": {
+    "maximum": 3810.8931,
+    "minimum": 1.86,
+    "p50": 2.5253,
+    "p95": 3.7728
+  }
+}

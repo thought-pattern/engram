@@ -12,7 +12,7 @@ This is not a release approval. Section 16 retains independent calibration and r
 | --- | --- |
 | EGR-1001 | `engram/composition.py` defines all nine operators, strict step/plan codecs, typed bindings and outputs. |
 | EGR-1002 | The compiler accepts only selected canonical identities and fixed plan fields; unsupported, ambiguous, missing, repeated-at-the-same-position, unbound, or cartesian forms abstain. Repeated Predicate occurrences at distinct positions are preserved. |
-| EGR-1003 | Hop, row, branch, candidate, path, evidence-byte, output-byte, and working-memory limits are checked before/during execution. Cooperative cancellation propagates. No elapsed answer threshold exists; graph deployment separately requires a backend operational timeout. |
+| EGR-1003 | Hop, row, branch, candidate, path, evidence-byte, output-byte, and working-memory limits are checked before/during execution. Cooperative cancellation propagates. No elapsed answer threshold or required MemGraph timeout exists; an outstanding driver call is isolated from unrelated local work. |
 | EGR-1004 | Execution sequences the fixed one-hop capability, validates every binding, reuses temporal/visibility eligibility, revalidates by Claim ID, rejects cycles, deduplicates paths and terminals, and orders results canonically. |
 | EGR-1005 | Boolean results require complete branch knowledge except invariant positive `EXISTS`/`OR`; aggregates refuse unknown completeness, duplicate COUNT cardinality, and missing/invalid types. |
 | EGR-1006 | evidence record schema 2 and package wire 2 carry ordered one/two-Claim paths with exact bindings, filters, operator, and aggregation inputs. |

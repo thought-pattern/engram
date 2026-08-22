@@ -383,10 +383,10 @@ def test_tls_requires_a_certificate_and_key_pair() -> None:
     core.close()
 
 
-def test_grpc_main_refuses_to_serve_after_component_preflight_failure(monkeypatch) -> None:
+def test_grpc_main_refuses_to_serve_after_required_component_preflight_failure(monkeypatch) -> None:
     def fail_open(**kwargs):
         del kwargs
-        raise InvalidRequestError("component preflight failed: graph unavailable")
+        raise InvalidRequestError("component preflight failed: required NLTK data unavailable")
 
     monkeypatch.setattr(grpc_server_module, "open_engram_core", fail_open)
 

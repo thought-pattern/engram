@@ -6,10 +6,22 @@ Configurations are plain dicts built by the factory functions below.
 import math
 import os
 from types import NoneType
+from typing import TypedDict, cast
 
 import yaml
 
 from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, SessionOverflow
+
+
+class SparseConfig(TypedDict):
+    enabled: bool
+    include_response_text: bool
+    max_query_terms: int
+    max_posting_visits: int
+    max_prefix_expansions: int
+
+
+EMPTY_SPARSE_CONFIG = cast(SparseConfig, EMPTY_CONFIG)
 
 
 def graph_config(
@@ -97,6 +109,35 @@ def graph_config(
     return config
 
 
+def sparse_config(
+    enabled: bool = False,
+    include_response_text: bool = False,
+    max_query_terms: int = 64,
+    max_posting_visits: int = 100_000,
+    max_prefix_expansions: int = 64,
+) -> SparseConfig:
+    """Build configuration for the rebuildable local sparse index."""
+    if not isinstance(enabled, bool):
+        raise ValueError("sparse enabled must be a boolean")
+    if not isinstance(include_response_text, bool):
+        raise ValueError("sparse include_response_text must be a boolean")
+    for name, value, maximum in (
+        ("max_query_terms", max_query_terms, 256),
+        ("max_posting_visits", max_posting_visits, 10_000_000),
+        ("max_prefix_expansions", max_prefix_expansions, 1_024),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
+            raise ValueError(f"sparse {name} must be an integer from 1 through {maximum}")
+    result: SparseConfig = {
+        "enabled": enabled,
+        "include_response_text": include_response_text,
+        "max_query_terms": max_query_terms,
+        "max_posting_visits": max_posting_visits,
+        "max_prefix_expansions": max_prefix_expansions,
+    }
+    return result
+
+
 def engram_config(
     # Capacity settings
     capacity: int = 10000,
@@ -135,10 +176,14 @@ def engram_config(
     fallback_response: str = "",  # Empty means an empty response on no match
     # Knowledge Graph settings
     graph: dict = EMPTY_CONFIG,
+    # Rebuildable local sparse retrieval
+    sparse: SparseConfig = EMPTY_SPARSE_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
         raise ValueError("graph config must be an object")
+    if not isinstance(sparse, dict):
+        raise ValueError("sparse config must be an object")
     if capacity < 1:
         raise ValueError("capacity must be at least 1")
     if max_sessions < 1:
@@ -195,6 +240,7 @@ def engram_config(
         "polish_responses": polish_responses,
         "fallback_response": fallback_response,
         "graph": dict(graph),
+        "sparse": sparse_config(**sparse) if sparse else sparse_config(),
     }
     return config
 
@@ -212,6 +258,7 @@ def config_to_dict(config: dict) -> dict:
     data["stopwords"] = sorted(config["stopwords"])
     graph = config.get("graph") or {}
     data["graph"] = {key: value for key, value in graph.items() if key != "password"}
+    data["sparse"] = dict(config.get("sparse") or sparse_config())
     return data
 
 
@@ -238,6 +285,13 @@ def config_from_dict(data: dict) -> dict:
             raise ValueError("serialized graph config must be an object")
         elif params["graph"]:
             params["graph"] = graph_config(**params["graph"])
+    if "sparse" in params:
+        if isinstance(params["sparse"], NoneType):
+            params["sparse"] = {}
+        elif not isinstance(params["sparse"], dict):
+            raise ValueError("serialized sparse config must be an object")
+        elif params["sparse"]:
+            params["sparse"] = sparse_config(**params["sparse"])
     config = engram_config(**params)
     return config
 
@@ -295,6 +349,21 @@ def load_config(path: str = "config.yml") -> dict:
                 f"(expected: {', '.join(sorted(graph_keys))})"
             )
         data["graph"] = graph_config(**data["graph"])
+    if "sparse" in data and data["sparse"]:
+        sparse_keys = {
+            "enabled",
+            "include_response_text",
+            "max_query_terms",
+            "max_posting_visits",
+            "max_prefix_expansions",
+        }
+        unknown_sparse = set(data["sparse"]) - sparse_keys
+        if unknown_sparse:
+            raise ValueError(
+                f"Unknown sparse config key(s) in {path}: {', '.join(sorted(unknown_sparse))} "
+                f"(expected: {', '.join(sorted(sparse_keys))})"
+            )
+        data["sparse"] = sparse_config(**data["sparse"])
 
     try:
         config = engram_config(**data)
