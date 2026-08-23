@@ -48,6 +48,53 @@ sparse:
   max_posting_visits: 100000
   max_prefix_expansions: 64
 
+# --- Standalone semantic retrieval (optional, local, rebuildable) ---
+# Provision the pinned artifact explicitly with
+# `python scripts/provision_semantic_model.py`, then copy the emitted manifest
+# values below. Runtime startup never downloads model files. Canonical requests
+# and aliases are embedded; accepted-response prose is never embedded.
+semantic:
+  enabled: false
+  model_path: ""
+  model_id: sentence-transformers/all-MiniLM-L6-v2
+  model_version: ""
+  license_id: apache-2.0
+  artifact_sha256: ""
+  dimension: 384
+  backend: native # native | onnx | quantized; only provisioned/installed backends become ready
+  normalization_version: 1
+  batch_size: 32
+  max_input_bytes: 16384
+  max_records: 100000
+  max_scan_records: 100000
+  min_similarity: 0.45
+
+# --- Candidate reranking (optional, independently gated) ---
+# Uses only a bounded fused-candidate shortlist and falls back to the baseline
+# order on input/time/dependency failure. Disable this independently to roll back.
+reranker:
+  enabled: false
+  implementation: transparent_logistic_v1
+  model_version: transparent-logistic-v1
+  shortlist_size: 8
+  max_input_bytes: 65536
+  max_model_time_ms: 25
+
+# --- Deterministic utility resolver (optional, local) ---
+# Only these compiled-in plugins can run. Requests must use the documented
+# command grammars; Python expressions, imports, and third-party plugins are
+# never accepted. Plugins can be promoted or rolled back independently.
+utility:
+  enabled: false
+  plugins:
+    - arithmetic_v1
+    - boolean_v1
+    - set_v1
+    - date_time_v1
+    - unit_conversion_v1
+    - version_v1
+    - identifier_v1
+
 # --- Output processing ---
 polish_responses: true # Repair casing in pattern-path responses
 

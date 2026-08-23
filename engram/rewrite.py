@@ -9,7 +9,7 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from enum import StrEnum
 from importlib.resources import files
-from typing import TypedDict, cast
+from typing import cast
 
 from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
 from engram.errors import InvalidRequestError, RewriteLimitError
@@ -27,7 +27,7 @@ DEFAULT_REWRITE_MAX_DEPTH = 8
 DEFAULT_REWRITE_MAX_EXPANSIONS = 16
 DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
 
-_RULE_FIELDS = frozenset(
+_RULE_FIELDS = set(
     {
         "schema_version",
         "rule_id",
@@ -41,7 +41,7 @@ _RULE_FIELDS = frozenset(
         "provenance",
     }
 )
-_INPUT_FIELDS = frozenset(
+_INPUT_FIELDS = set(
     {
         "match_mode",
         "pattern",
@@ -51,9 +51,9 @@ _INPUT_FIELDS = frozenset(
         "requires_inherited_subject",
     }
 )
-_PROVENANCE_FIELDS = frozenset({"author", "origin", "license", "created_at"})
-_CORPUS_FIELDS = frozenset({"schema_version", "corpus_id", "corpus_version", "rules"})
-_SAFE_TEMPLATE_FIELDS = frozenset({"subject"})
+_PROVENANCE_FIELDS = set({"author", "origin", "license", "created_at"})
+_CORPUS_FIELDS = set({"schema_version", "corpus_id", "corpus_version", "rules"})
+_SAFE_TEMPLATE_FIELDS = set({"subject"})
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’][^\W_]+)?", re.UNICODE)
 
 
@@ -84,55 +84,15 @@ class RewriteStopReason(StrEnum):
     TIME_LIMIT = "time_limit"
 
 
-RewriteInputConstraints = TypedDict(
-    "RewriteInputConstraints",
-    {
-        "match_mode": RewriteMatchMode,
-        "pattern": str,
-        "min_tokens": int,
-        "max_tokens": int,
-        "required_operators": tuple[QueryOperator, ...],
-        "requires_inherited_subject": bool,
-    },
-)
-RewriteProvenance = TypedDict(
-    "RewriteProvenance",
-    {"author": str, "origin": str, "license": str, "created_at": str},
-)
-RewriteRule = TypedDict(
-    "RewriteRule",
-    {
-        "schema_version": int,
-        "rule_id": str,
-        "rule_version": int,
-        "category": str,
-        "input_constraints": RewriteInputConstraints,
-        "output_template": str,
-        "priority": int,
-        "scope": RewriteScope,
-        "max_applications": int,
-        "provenance": RewriteProvenance,
-    },
-)
-RewriteExecution = TypedDict(
-    "RewriteExecution",
-    {
-        "original_text": str,
-        "final_text": str,
-        "chain": tuple[tuple[str, str, str], ...],
-        "stop_reason": RewriteStopReason,
-        "expansions": int,
-        "elapsed_ns": int,
-    },
-)
-RewriteLintFinding = TypedDict(
-    "RewriteLintFinding",
-    {"severity": str, "code": str, "rule_ids": tuple[str, ...], "detail": str},
-)
+RewriteInputConstraints = dict
+RewriteProvenance = dict
+RewriteRule = dict
+RewriteExecution = dict
+RewriteLintFinding = dict
 
 
-def _mapping(value: object, name: str, fields: frozenset[str]) -> Mapping[str, object]:
-    if not isinstance(value, Mapping) or frozenset(value) != fields:
+def _mapping(value: object, name: str, fields: set[str]) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or set(value) != fields:
         raise InvalidRequestError(f"{name} has invalid fields")
     return value
 

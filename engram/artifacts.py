@@ -11,7 +11,6 @@ import unicodedata
 from collections.abc import Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.constants import (
     ARTIFACT_PROVENANCE_FIELDS,
@@ -64,10 +63,10 @@ from engram.identity import (
 )
 
 
-def _require_exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[str, object]:
+def _require_exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
-    actual = frozenset(value)
+    actual = set(value)
     if actual != keys:
         missing = sorted(keys - actual)
         extra = sorted(actual - keys)
@@ -222,50 +221,9 @@ def _json_text(value: Mapping[str, object]) -> str:
     return result
 
 
-ArtifactProvenance = TypedDict(
-    "ArtifactProvenance",
-    {
-        "schema_version": int,
-        "source_label": str,
-        "caller_id": str,
-        "accepted_at": str,
-    },
-)
-ArtifactStatistics = TypedDict(
-    "ArtifactStatistics",
-    {
-        "schema_version": int,
-        "hit_count": int,
-        "query_count": int,
-        "last_hit": str,
-        "last_hit_available": bool,
-    },
-)
-CachedResponseArtifact = TypedDict(
-    "CachedResponseArtifact",
-    {
-        "schema_version": int,
-        "statement_id": str,
-        "generation": int,
-        "response": str,
-        "query_identity": QueryIdentity,
-        "retrieval": RetrievalRepresentation,
-        "tier": Tier,
-        "lifecycle": LifecycleState,
-        "scope": ScopeKey,
-        "support_claim_ids": tuple[str, ...],
-        "valid_from": str,
-        "valid_from_available": bool,
-        "valid_until": str,
-        "valid_until_available": bool,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-        "superseded_by": str,
-        "provenance": ArtifactProvenance,
-        "statistics": ArtifactStatistics,
-        "metadata": Mapping[str, object],
-    },
-)
+ArtifactProvenance = dict
+ArtifactStatistics = dict
+CachedResponseArtifact = dict
 
 
 def validate_artifact_provenance(value: object) -> ArtifactProvenance:
@@ -637,31 +595,9 @@ def cached_response_artifact_from_json(value: str) -> CachedResponseArtifact:
     return result
 
 
-LifecycleBaseDecision = TypedDict(
-    "LifecycleBaseDecision",
-    {
-        "lifecycle": LifecycleState,
-        "direct_answer_eligible": bool,
-        "reason": LifecycleDecisionReason,
-    },
-)
-LifecycleTransitionDecision = TypedDict(
-    "LifecycleTransitionDecision",
-    {
-        "current": LifecycleState,
-        "target": LifecycleState,
-        "operation": LifecycleOperation,
-        "allowed": bool,
-        "reason": LifecycleDecisionReason,
-    },
-)
-HistoricalKeyReuseDecision = TypedDict(
-    "HistoricalKeyReuseDecision",
-    {
-        "allowed": bool,
-        "reason": HistoricalKeyReuseReason,
-    },
-)
+LifecycleBaseDecision = dict
+LifecycleTransitionDecision = dict
+HistoricalKeyReuseDecision = dict
 
 
 def _require_lifecycle(value: object, name: str) -> LifecycleState:

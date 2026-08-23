@@ -8,7 +8,6 @@ import unicodedata
 from collections.abc import Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.constants import (
     ARTIFACT_GENERATION_CHANGE_FIELDS,
@@ -62,10 +61,10 @@ def _nonnegative_int(value: object, name: str) -> int:
     return value
 
 
-def _exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[str, object]:
+def _exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
-    actual = frozenset(value)
+    actual = set(value)
     if actual != keys:
         raise InvalidRequestError(f"{name} has invalid fields: missing={sorted(keys - actual)}, extra={sorted(actual - keys)}")
     return value
@@ -161,14 +160,7 @@ def _signature(value: object) -> str:
     return text
 
 
-ArtifactGenerationChange = TypedDict(
-    "ArtifactGenerationChange",
-    {
-        "statement_id": str,
-        "before_generation": int,
-        "after_generation": int,
-    },
-)
+ArtifactGenerationChange = dict
 
 
 def artifact_generation_change(
@@ -241,21 +233,7 @@ def normalize_artifact_generation_changes(value: object) -> tuple[ArtifactGenera
     return ordered
 
 
-MutationReceipt = TypedDict(
-    "MutationReceipt",
-    {
-        "sequence": int,
-        "request_id": str,
-        "operation": MutationOperation,
-        "payload_signature": str,
-        "result_code": MutationResultCode,
-        "affected_generations": tuple[ArtifactGenerationChange, ...],
-        "result": Mapping[str, object],
-        "completion_state": ReceiptCompletionState,
-        "created_at": str,
-        "schema_version": int,
-    },
-)
+MutationReceipt = dict
 
 
 def mutation_receipt(
@@ -419,15 +397,7 @@ def mutation_receipt_from_json(value: str) -> MutationReceipt:
     return receipt
 
 
-ReceiptTombstone = TypedDict(
-    "ReceiptTombstone",
-    {
-        "sequence": int,
-        "request_id": str,
-        "operation": MutationOperation,
-        "payload_signature": str,
-    },
-)
+ReceiptTombstone = dict
 
 
 def receipt_tombstone(
@@ -494,15 +464,7 @@ def receipt_tombstone_from_dict(value: object) -> ReceiptTombstone:
     return result
 
 
-ReceiptLookup = TypedDict(
-    "ReceiptLookup",
-    {
-        "outcome": ReceiptLookupOutcome,
-        "request_id": str,
-        "receipt_json": str,
-        "receipt_available": bool,
-    },
-)
+ReceiptLookup = dict
 
 
 def receipt_lookup(
@@ -758,7 +720,7 @@ def mutation_receipt_ledger_from_snapshot(value: Mapping[str, object]) -> Mutati
     data = _exact_mapping(
         value,
         "MutationReceiptLedger",
-        frozenset(
+        set(
             {
                 "schema_version",
                 "max_receipts",

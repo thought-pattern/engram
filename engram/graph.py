@@ -17,7 +17,6 @@ import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from types import NoneType
-from typing import TypedDict
 from uuid import UUID
 
 import mgclient
@@ -154,74 +153,16 @@ def _optional_projection_text(value: object, available: bool, name: str, maximum
     return result
 
 
-ClaimProjection = TypedDict(
-    "ClaimProjection",
-    {
-        "claim_id": str,
-        "subject_entity_id": str,
-        "predicate_id": str,
-        "object_entity_id": str,
-        "invalidated_at": str,
-        "invalidated_at_available": bool,
-        "system_from": str,
-        "system_from_available": bool,
-        "system_to": str,
-        "system_to_available": bool,
-        "valid_from": str,
-        "valid_from_available": bool,
-        "valid_to": str,
-        "valid_to_available": bool,
-        "predicate_canonical": bool,
-        "ownership_category": str,
-        "trust_category": str,
-        "trust_category_available": bool,
-        "supplied_trust": float,
-        "supplied_trust_available": bool,
-        "supplied_trust_version": int,
-        "supplied_trust_version_available": bool,
-        "structured_match": float,
-        "structured_match_available": bool,
-        "semantic_similarity": float,
-        "semantic_similarity_available": bool,
-        "projection_id": ClaimProjectionQuery,
-        "vector_index_id": str,
-        "vector_index_id_available": bool,
-    },
-)
+ClaimProjection = dict
 
 
-CanonicalEntityMatch = TypedDict(
-    "CanonicalEntityMatch",
-    {
-        "canonical_id": str,
-        "primary_label": str,
-        "aliases": tuple[str, ...],
-        "edge_surfaces": tuple[str, ...],
-        "entity_type": ExpectedObjectType,
-    },
-)
+CanonicalEntityMatch = dict
 
 
-CanonicalPredicateMatch = TypedDict(
-    "CanonicalPredicateMatch",
-    {
-        "canonical_id": str,
-        "primary_label": str,
-        "synonyms": tuple[str, ...],
-        "object_type": ExpectedObjectType,
-    },
-)
+CanonicalPredicateMatch = dict
 
 
-RelationClaimProjection = TypedDict(
-    "RelationClaimProjection",
-    {
-        "projection": ClaimProjection,
-        "object_label": str,
-        "object_type": ExpectedObjectType,
-        "predicate_cardinality": PredicateCardinality,
-    },
-)
+RelationClaimProjection = dict
 
 
 def _projection_text_collection(value: object, name: str) -> tuple[str, ...]:
@@ -253,7 +194,7 @@ def _projection_cardinality(value: object, name: str) -> PredicateCardinality:
 
 def canonical_entity_match_from_graph_row(value: object) -> CanonicalEntityMatch:
     """Decode one exact canonical entity match row without arbitrary graph properties."""
-    if not isinstance(value, Mapping) or frozenset(value) != CANONICAL_ENTITY_MATCH_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != CANONICAL_ENTITY_MATCH_FIELDS:
         raise InvalidRequestError("canonical entity match row has invalid fields")
     result: CanonicalEntityMatch = {
         "canonical_id": _projection_identifier(value["canonical_id"], "canonical entity ID"),
@@ -269,7 +210,7 @@ def canonical_entity_match_from_graph_row(value: object) -> CanonicalEntityMatch
 
 def canonical_predicate_match_from_graph_row(value: object) -> CanonicalPredicateMatch:
     """Decode one exact canonical Predicate match row."""
-    if not isinstance(value, Mapping) or frozenset(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
         raise InvalidRequestError("canonical Predicate match row has invalid fields")
     result: CanonicalPredicateMatch = {
         "canonical_id": _projection_identifier(value["canonical_id"], "canonical Predicate ID"),
@@ -434,7 +375,7 @@ def validate_claim_projection(value: object) -> ClaimProjection:
     """Revalidate and copy one in-memory Claim projection."""
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Claim projection must be an object")
-    observed = frozenset(value)
+    observed = set(value)
     if observed != CLAIM_PROJECTION_RECORD_FIELDS:
         raise InvalidRequestError(
             "Claim projection has invalid fields: "
@@ -453,7 +394,7 @@ def claim_projection_from_graph_row(
     """Decode one exact external graph row into a concrete projection."""
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Claim projection row must be an object")
-    observed = frozenset(value)
+    observed = set(value)
     if observed != CLAIM_PROJECTION_FIELDS:
         raise InvalidRequestError(
             "Claim projection row has invalid fields: "
@@ -951,7 +892,7 @@ class MemGraphConnection:
             raise InvalidRequestError("Claim projection embedding must be a non-empty list")
         if len(embedding) > MAX_CLAIM_PROJECTION_EMBEDDING_DIMENSIONS:
             raise InvalidRequestError(
-                "Claim projection embedding exceeds the limit of " f"{MAX_CLAIM_PROJECTION_EMBEDDING_DIMENSIONS} dimensions"
+                f"Claim projection embedding exceeds the limit of {MAX_CLAIM_PROJECTION_EMBEDDING_DIMENSIONS} dimensions"
             )
         for component in embedding:
             if isinstance(component, bool) or not isinstance(component, (int, float)) or not math.isfinite(float(component)):

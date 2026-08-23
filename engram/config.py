@@ -6,22 +6,22 @@ Configurations are plain dicts built by the factory functions below.
 import math
 import os
 from types import NoneType
-from typing import TypedDict, cast
+from typing import cast
 
 import yaml
 
 from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, SessionOverflow
+from engram.utilities import UtilityConfig, utility_config
 
-
-class SparseConfig(TypedDict):
-    enabled: bool
-    include_response_text: bool
-    max_query_terms: int
-    max_posting_visits: int
-    max_prefix_expansions: int
+SparseConfig = dict
+SemanticConfig = dict
+RerankerConfig = dict
 
 
 EMPTY_SPARSE_CONFIG = cast(SparseConfig, EMPTY_CONFIG)
+EMPTY_SEMANTIC_CONFIG = cast(SemanticConfig, EMPTY_CONFIG)
+EMPTY_RERANKER_CONFIG = cast(RerankerConfig, EMPTY_CONFIG)
+EMPTY_UTILITY_CONFIG = cast(UtilityConfig, EMPTY_CONFIG)
 
 
 def graph_config(
@@ -138,6 +138,114 @@ def sparse_config(
     return result
 
 
+def semantic_config(
+    enabled: bool = False,
+    model_path: str = "",
+    model_id: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_version: str = "",
+    license_id: str = "apache-2.0",
+    artifact_sha256: str = "",
+    dimension: int = 384,
+    backend: str = "native",
+    normalization_version: int = 1,
+    batch_size: int = 32,
+    max_input_bytes: int = 16_384,
+    max_records: int = 100_000,
+    max_scan_records: int = 100_000,
+    min_similarity: float = 0.45,
+) -> SemanticConfig:
+    """Build configuration for offline standalone semantic retrieval."""
+    if not isinstance(enabled, bool):
+        raise ValueError("semantic enabled must be a boolean")
+    for name, value in (
+        ("model_path", model_path),
+        ("model_id", model_id),
+        ("model_version", model_version),
+        ("license_id", license_id),
+        ("artifact_sha256", artifact_sha256),
+        ("backend", backend),
+    ):
+        if not isinstance(value, str):
+            raise ValueError(f"semantic {name} must be a string")
+    if not model_id.strip():
+        raise ValueError("semantic model_id must be a non-empty string")
+    if license_id.strip().casefold() not in {"apache-2.0", "mit", "bsd-3-clause"}:
+        raise ValueError("semantic license_id is not approved")
+    if backend not in {"native", "onnx", "quantized"}:
+        raise ValueError("semantic backend must be native, onnx, or quantized")
+    if artifact_sha256 and (len(artifact_sha256) != 64 or any(value not in "0123456789abcdefABCDEF" for value in artifact_sha256)):
+        raise ValueError("semantic artifact_sha256 must be a SHA-256 hex digest")
+    for name, value, maximum in (
+        ("dimension", dimension, 65_536),
+        ("normalization_version", normalization_version, 1_000_000),
+        ("batch_size", batch_size, 1_024),
+        ("max_input_bytes", max_input_bytes, 1_048_576),
+        ("max_records", max_records, 10_000_000),
+        ("max_scan_records", max_scan_records, 10_000_000),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
+            raise ValueError(f"semantic {name} must be an integer from 1 through {maximum}")
+    if (
+        not isinstance(min_similarity, (int, float))
+        or isinstance(min_similarity, bool)
+        or not math.isfinite(min_similarity)
+        or not -1.0 <= min_similarity <= 1.0
+    ):
+        raise ValueError("semantic min_similarity must be between -1 and 1")
+    if enabled and (not model_path.strip() or not model_version.strip() or not artifact_sha256):
+        raise ValueError("enabled semantic retrieval requires model_path, model_version, and artifact_sha256")
+    result: SemanticConfig = {
+        "enabled": enabled,
+        "model_path": model_path.strip(),
+        "model_id": model_id.strip(),
+        "model_version": model_version.strip(),
+        "license_id": license_id.strip().casefold(),
+        "artifact_sha256": artifact_sha256.casefold(),
+        "dimension": dimension,
+        "backend": backend,
+        "normalization_version": normalization_version,
+        "batch_size": batch_size,
+        "max_input_bytes": max_input_bytes,
+        "max_records": max_records,
+        "max_scan_records": max_scan_records,
+        "min_similarity": float(min_similarity),
+    }
+    return result
+
+
+def reranker_config(
+    enabled: bool = False,
+    implementation: str = "transparent_logistic_v1",
+    model_version: str = "transparent-logistic-v1",
+    shortlist_size: int = 8,
+    max_input_bytes: int = 65_536,
+    max_model_time_ms: int = 25,
+) -> RerankerConfig:
+    """Build the bounded optional reranker configuration."""
+    if not isinstance(enabled, bool):
+        raise ValueError("reranker enabled must be a boolean")
+    if implementation != "transparent_logistic_v1":
+        raise ValueError("reranker implementation must be transparent_logistic_v1")
+    if not isinstance(model_version, str) or not model_version.strip():
+        raise ValueError("reranker model_version must be a non-empty string")
+    for name, value, maximum in (
+        ("shortlist_size", shortlist_size, 64),
+        ("max_input_bytes", max_input_bytes, 1_048_576),
+        ("max_model_time_ms", max_model_time_ms, 10_000),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
+            raise ValueError(f"reranker {name} must be an integer from 1 through {maximum}")
+    result: RerankerConfig = {
+        "enabled": enabled,
+        "implementation": implementation,
+        "model_version": model_version.strip(),
+        "shortlist_size": shortlist_size,
+        "max_input_bytes": max_input_bytes,
+        "max_model_time_ms": max_model_time_ms,
+    }
+    return result
+
+
 def engram_config(
     # Capacity settings
     capacity: int = 10000,
@@ -178,12 +286,23 @@ def engram_config(
     graph: dict = EMPTY_CONFIG,
     # Rebuildable local sparse retrieval
     sparse: SparseConfig = EMPTY_SPARSE_CONFIG,
+    # Rebuildable local standalone semantic retrieval and optional reranking
+    semantic: SemanticConfig = EMPTY_SEMANTIC_CONFIG,
+    reranker: RerankerConfig = EMPTY_RERANKER_CONFIG,
+    # Allow-listed deterministic utility operations
+    utility: UtilityConfig = EMPTY_UTILITY_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
         raise ValueError("graph config must be an object")
     if not isinstance(sparse, dict):
         raise ValueError("sparse config must be an object")
+    if not isinstance(semantic, dict):
+        raise ValueError("semantic config must be an object")
+    if not isinstance(reranker, dict):
+        raise ValueError("reranker config must be an object")
+    if not isinstance(utility, dict):
+        raise ValueError("utility config must be an object")
     if capacity < 1:
         raise ValueError("capacity must be at least 1")
     if max_sessions < 1:
@@ -241,6 +360,9 @@ def engram_config(
         "fallback_response": fallback_response,
         "graph": dict(graph),
         "sparse": sparse_config(**sparse) if sparse else sparse_config(),
+        "semantic": semantic_config(**semantic) if semantic else semantic_config(),
+        "reranker": reranker_config(**reranker) if reranker else reranker_config(),
+        "utility": utility_config(**utility) if utility else utility_config(),
     }
     return config
 
@@ -259,6 +381,10 @@ def config_to_dict(config: dict) -> dict:
     graph = config.get("graph") or {}
     data["graph"] = {key: value for key, value in graph.items() if key != "password"}
     data["sparse"] = dict(config.get("sparse") or sparse_config())
+    data["semantic"] = dict(config.get("semantic") or semantic_config())
+    data["reranker"] = dict(config.get("reranker") or reranker_config())
+    data["utility"] = dict(config.get("utility") or utility_config())
+    data["utility"]["plugins"] = list(data["utility"]["plugins"])
     return data
 
 
@@ -292,6 +418,27 @@ def config_from_dict(data: dict) -> dict:
             raise ValueError("serialized sparse config must be an object")
         elif params["sparse"]:
             params["sparse"] = sparse_config(**params["sparse"])
+    if "semantic" in params:
+        if isinstance(params["semantic"], NoneType):
+            params["semantic"] = {}
+        elif not isinstance(params["semantic"], dict):
+            raise ValueError("serialized semantic config must be an object")
+        elif params["semantic"]:
+            params["semantic"] = semantic_config(**params["semantic"])
+    if "reranker" in params:
+        if isinstance(params["reranker"], NoneType):
+            params["reranker"] = {}
+        elif not isinstance(params["reranker"], dict):
+            raise ValueError("serialized reranker config must be an object")
+        elif params["reranker"]:
+            params["reranker"] = reranker_config(**params["reranker"])
+    if "utility" in params:
+        if isinstance(params["utility"], NoneType):
+            params["utility"] = {}
+        elif not isinstance(params["utility"], dict):
+            raise ValueError("serialized utility config must be an object")
+        elif params["utility"]:
+            params["utility"] = utility_config(**params["utility"])
     config = engram_config(**params)
     return config
 
@@ -364,6 +511,33 @@ def load_config(path: str = "config.yml") -> dict:
                 f"(expected: {', '.join(sorted(sparse_keys))})"
             )
         data["sparse"] = sparse_config(**data["sparse"])
+    if "semantic" in data and data["semantic"]:
+        semantic_keys = set(semantic_config())
+        unknown_semantic = set(data["semantic"]) - semantic_keys
+        if unknown_semantic:
+            raise ValueError(
+                f"Unknown semantic config key(s) in {path}: {', '.join(sorted(unknown_semantic))} "
+                f"(expected: {', '.join(sorted(semantic_keys))})"
+            )
+        data["semantic"] = semantic_config(**data["semantic"])
+    if "reranker" in data and data["reranker"]:
+        reranker_keys = set(reranker_config())
+        unknown_reranker = set(data["reranker"]) - reranker_keys
+        if unknown_reranker:
+            raise ValueError(
+                f"Unknown reranker config key(s) in {path}: {', '.join(sorted(unknown_reranker))} "
+                f"(expected: {', '.join(sorted(reranker_keys))})"
+            )
+        data["reranker"] = reranker_config(**data["reranker"])
+    if "utility" in data and data["utility"]:
+        utility_keys = set(utility_config())
+        unknown_utility = set(data["utility"]) - utility_keys
+        if unknown_utility:
+            raise ValueError(
+                f"Unknown utility config key(s) in {path}: {', '.join(sorted(unknown_utility))} "
+                f"(expected: {', '.join(sorted(utility_keys))})"
+            )
+        data["utility"] = utility_config(**data["utility"])
 
     try:
         config = engram_config(**data)

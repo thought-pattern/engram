@@ -1,0 +1,1260 @@
+{
+  "artifact": {
+    "actual_sha256": "ff12d37a18ee862cd4a5b8476466bc84f06d0801da9b749023eed74251cefcb8",
+    "artifact_sha256": "ff12d37a18ee862cd4a5b8476466bc84f06d0801da9b749023eed74251cefcb8",
+    "backend": "native",
+    "dimension": 384,
+    "license_id": "apache-2.0",
+    "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    "model_version": "826711e54e001c83835913827a843d8dd0a1def9",
+    "runtime_downloads_allowed": false,
+    "size_bytes": 91627950
+  },
+  "backends": {
+    "native": {
+      "available": true,
+      "cold_start_ms": 1216.2818,
+      "index_build_ms": 384.3974,
+      "maximum_repeated_score_drift": 0.0,
+      "metrics": {
+        "calibration": {
+          "false_answer_rate": 0.0,
+          "mrr": 1.0,
+          "positive_count": 9,
+          "query_count": 10,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0
+        },
+        "release": {
+          "false_answer_rate": 0.0,
+          "mrr": 0.8888888888888888,
+          "positive_count": 9,
+          "query_count": 10,
+          "recall_at_1": 0.8888888888888888,
+          "recall_at_3": 0.8888888888888888
+        },
+        "train": {
+          "false_answer_rate": 0.0,
+          "mrr": 1.0,
+          "positive_count": 9,
+          "query_count": 10,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0
+        }
+      },
+      "query_p50_ms": 21.7869,
+      "query_p95_ms": 26.1084,
+      "record_count": 36,
+      "rss_after_index_mib": 456.59375,
+      "rss_after_model_mib": 406.7578125,
+      "rss_before_mib": 386.36328125,
+      "throughput_queries_per_second": 45.758492776259274
+    },
+    "onnx": {
+      "available": false,
+      "reason": "no approved pre-provisioned ONNX artifact",
+      "runtime_available": false
+    },
+    "quantized": {
+      "available": false,
+      "reason": "no approved pre-provisioned quantized artifact"
+    }
+  },
+  "corpus": {
+    "path": "eval\\section13-semantic-v1.json",
+    "query_count": 30,
+    "version": "section13-semantic-v1"
+  },
+  "gates": {
+    "reranker": {
+      "checks": {
+        "p95_overhead_ms": true,
+        "peak_memory_mib": true,
+        "release_false_answer_delta": true,
+        "release_recall_delta": true
+      },
+      "passed": true,
+      "positive_value_observed": false,
+      "promoted_for_opt_in_component_use": false,
+      "thresholds": {
+        "p95_overhead_ms_max": 5.0,
+        "peak_memory_mib_max": 16.0,
+        "release_false_answer_delta_max": 0.0,
+        "release_recall_delta_min": 0.0
+      },
+      "values": {
+        "p95_overhead_ms": 0.1794,
+        "peak_memory_mib": 0.4375,
+        "release_false_answer_delta": 0.0,
+        "release_recall_delta": 0.0
+      }
+    },
+    "semantic": {
+      "checks": {
+        "cold_start_ms": true,
+        "p95_query_ms": true,
+        "peak_memory_mib": true,
+        "release_false_answer_rate": true,
+        "release_recall_at_1": true,
+        "release_recall_delta_vs_sparse": true
+      },
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "thresholds": {
+        "cold_start_ms_max": 15000.0,
+        "p95_query_ms_max": 500.0,
+        "peak_memory_mib_max": 768.0,
+        "release_false_answer_rate_max": 0.1,
+        "release_recall_at_1_min": 0.75,
+        "release_recall_delta_vs_sparse_min": 0.1
+      },
+      "values": {
+        "cold_start_ms": 1216.2818,
+        "p95_query_ms": 26.1084,
+        "peak_memory_mib": 456.59375,
+        "release_false_answer_rate": 0.0,
+        "release_recall_at_1": 0.8888888888888888,
+        "release_recall_delta_vs_sparse": 0.11111111111111105
+      }
+    }
+  },
+  "generated_at": "2026-08-22T08:18:57.407935+00:00",
+  "queries": {
+    "reranker": [
+      {
+        "candidate_ids": [
+          "sushi"
+        ],
+        "expected_statement_id": "sushi",
+        "latency_ms": 0.1236,
+        "partition": "train",
+        "query_id": "train-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 0.1128,
+        "partition": "train",
+        "query_id": "train-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 0.0979,
+        "partition": "train",
+        "query_id": "train-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 0.0973,
+        "partition": "train",
+        "query_id": "train-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 0.1354,
+        "partition": "train",
+        "query_id": "train-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate",
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "latency_ms": 0.1328,
+        "partition": "train",
+        "query_id": "train-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 0.1026,
+        "partition": "train",
+        "query_id": "train-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index"
+        ],
+        "expected_statement_id": "sql-index",
+        "latency_ms": 0.0965,
+        "partition": "train",
+        "query_id": "train-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "refunds"
+        ],
+        "expected_statement_id": "refunds",
+        "latency_ms": 0.0962,
+        "partition": "train",
+        "query_id": "train-09",
+        "rank": 1,
+        "top_statement_id": "refunds"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 0.0411,
+        "partition": "train",
+        "query_id": "train-10",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "sushi"
+        ],
+        "expected_statement_id": "sushi",
+        "latency_ms": 0.0929,
+        "partition": "calibration",
+        "query_id": "calibration-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 0.0993,
+        "partition": "calibration",
+        "query_id": "calibration-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 0.1008,
+        "partition": "calibration",
+        "query_id": "calibration-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 0.0978,
+        "partition": "calibration",
+        "query_id": "calibration-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 0.1343,
+        "partition": "calibration",
+        "query_id": "calibration-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "latency_ms": 0.0985,
+        "partition": "calibration",
+        "query_id": "calibration-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 0.0997,
+        "partition": "calibration",
+        "query_id": "calibration-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index"
+        ],
+        "expected_statement_id": "sql-index",
+        "latency_ms": 0.0992,
+        "partition": "calibration",
+        "query_id": "calibration-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "latency_ms": 0.0948,
+        "partition": "calibration",
+        "query_id": "calibration-09",
+        "rank": 1,
+        "top_statement_id": "shipping"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 0.0398,
+        "partition": "calibration",
+        "query_id": "calibration-10",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "sushi",
+        "latency_ms": 0.0421,
+        "partition": "release",
+        "query_id": "release-01",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 0.0981,
+        "partition": "release",
+        "query_id": "release-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 0.1794,
+        "partition": "release",
+        "query_id": "release-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 0.0968,
+        "partition": "release",
+        "query_id": "release-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 0.1912,
+        "partition": "release",
+        "query_id": "release-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 0.1008,
+        "partition": "release",
+        "query_id": "release-06",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "latency_ms": 0.0999,
+        "partition": "release",
+        "query_id": "release-07",
+        "rank": 1,
+        "top_statement_id": "shipping"
+      },
+      {
+        "candidate_ids": [
+          "paris"
+        ],
+        "expected_statement_id": "paris",
+        "latency_ms": 0.1008,
+        "partition": "release",
+        "query_id": "release-08",
+        "rank": 1,
+        "top_statement_id": "paris"
+      },
+      {
+        "candidate_ids": [
+          "photosynthesis"
+        ],
+        "expected_statement_id": "photosynthesis",
+        "latency_ms": 0.0983,
+        "partition": "release",
+        "query_id": "release-09",
+        "rank": 1,
+        "top_statement_id": "photosynthesis"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 0.039,
+        "partition": "release",
+        "query_id": "release-10",
+        "rank": 0,
+        "top_statement_id": ""
+      }
+    ],
+    "semantic": [
+      {
+        "candidate_ids": [
+          "sushi"
+        ],
+        "expected_statement_id": "sushi",
+        "latency_ms": 19.8563,
+        "partition": "train",
+        "query_id": "train-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 20.3604,
+        "partition": "train",
+        "query_id": "train-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 19.2987,
+        "partition": "train",
+        "query_id": "train-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 22.4089,
+        "partition": "train",
+        "query_id": "train-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 20.5002,
+        "partition": "train",
+        "query_id": "train-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate",
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "latency_ms": 22.7978,
+        "partition": "train",
+        "query_id": "train-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 21.3838,
+        "partition": "train",
+        "query_id": "train-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index"
+        ],
+        "expected_statement_id": "sql-index",
+        "latency_ms": 21.9435,
+        "partition": "train",
+        "query_id": "train-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "refunds"
+        ],
+        "expected_statement_id": "refunds",
+        "latency_ms": 21.5211,
+        "partition": "train",
+        "query_id": "train-09",
+        "rank": 1,
+        "top_statement_id": "refunds"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 22.0405,
+        "partition": "train",
+        "query_id": "train-10",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "sushi"
+        ],
+        "expected_statement_id": "sushi",
+        "latency_ms": 21.7869,
+        "partition": "calibration",
+        "query_id": "calibration-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 23.6276,
+        "partition": "calibration",
+        "query_id": "calibration-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 25.5943,
+        "partition": "calibration",
+        "query_id": "calibration-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 23.7539,
+        "partition": "calibration",
+        "query_id": "calibration-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 26.1084,
+        "partition": "calibration",
+        "query_id": "calibration-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "latency_ms": 19.1469,
+        "partition": "calibration",
+        "query_id": "calibration-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 21.9966,
+        "partition": "calibration",
+        "query_id": "calibration-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index"
+        ],
+        "expected_statement_id": "sql-index",
+        "latency_ms": 21.9901,
+        "partition": "calibration",
+        "query_id": "calibration-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "latency_ms": 18.9067,
+        "partition": "calibration",
+        "query_id": "calibration-09",
+        "rank": 1,
+        "top_statement_id": "shipping"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 21.2517,
+        "partition": "calibration",
+        "query_id": "calibration-10",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "sushi",
+        "latency_ms": 22.7566,
+        "partition": "release",
+        "query_id": "release-01",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "latency_ms": 23.089,
+        "partition": "release",
+        "query_id": "release-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "latency_ms": 21.4104,
+        "partition": "release",
+        "query_id": "release-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "latency_ms": 21.7729,
+        "partition": "release",
+        "query_id": "release-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh",
+          "tls-certificate"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "latency_ms": 26.4012,
+        "partition": "release",
+        "query_id": "release-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "latency_ms": 21.2092,
+        "partition": "release",
+        "query_id": "release-06",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "latency_ms": 22.1347,
+        "partition": "release",
+        "query_id": "release-07",
+        "rank": 1,
+        "top_statement_id": "shipping"
+      },
+      {
+        "candidate_ids": [
+          "paris"
+        ],
+        "expected_statement_id": "paris",
+        "latency_ms": 22.3081,
+        "partition": "release",
+        "query_id": "release-08",
+        "rank": 1,
+        "top_statement_id": "paris"
+      },
+      {
+        "candidate_ids": [
+          "photosynthesis"
+        ],
+        "expected_statement_id": "photosynthesis",
+        "latency_ms": 20.0416,
+        "partition": "release",
+        "query_id": "release-09",
+        "rank": 1,
+        "top_statement_id": "photosynthesis"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "latency_ms": 18.218,
+        "partition": "release",
+        "query_id": "release-10",
+        "rank": 0,
+        "top_statement_id": ""
+      }
+    ],
+    "sparse": [
+      {
+        "candidate_ids": [
+          "sushi",
+          "git-reset",
+          "tls-certificate",
+          "sql-index"
+        ],
+        "expected_statement_id": "sushi",
+        "partition": "train",
+        "query_id": "train-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "cats",
+          "paris",
+          "refunds"
+        ],
+        "expected_statement_id": "cats",
+        "partition": "train",
+        "query_id": "train-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "partition": "train",
+        "query_id": "train-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "python-generator",
+        "partition": "train",
+        "query_id": "train-04",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "partition": "train",
+        "query_id": "train-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate",
+          "git-reset",
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "partition": "train",
+        "query_id": "train-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset",
+          "python-generator"
+        ],
+        "expected_statement_id": "git-reset",
+        "partition": "train",
+        "query_id": "train-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index"
+        ],
+        "expected_statement_id": "sql-index",
+        "partition": "train",
+        "query_id": "train-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "git-reset",
+          "sushi",
+          "tls-certificate",
+          "sql-index",
+          "refunds"
+        ],
+        "expected_statement_id": "refunds",
+        "partition": "train",
+        "query_id": "train-09",
+        "rank": 5,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "photosynthesis"
+        ],
+        "expected_statement_id": "",
+        "partition": "train",
+        "query_id": "train-10",
+        "rank": 0,
+        "top_statement_id": "photosynthesis"
+      },
+      {
+        "candidate_ids": [
+          "sushi"
+        ],
+        "expected_statement_id": "sushi",
+        "partition": "calibration",
+        "query_id": "calibration-01",
+        "rank": 1,
+        "top_statement_id": "sushi"
+      },
+      {
+        "candidate_ids": [
+          "git-reset",
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "partition": "calibration",
+        "query_id": "calibration-02",
+        "rank": 2,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "partition": "calibration",
+        "query_id": "calibration-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "partition": "calibration",
+        "query_id": "calibration-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "partition": "calibration",
+        "query_id": "calibration-05",
+        "rank": 1,
+        "top_statement_id": "oauth-refresh"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate",
+          "git-reset"
+        ],
+        "expected_statement_id": "tls-certificate",
+        "partition": "calibration",
+        "query_id": "calibration-06",
+        "rank": 1,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "partition": "calibration",
+        "query_id": "calibration-07",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "sql-index",
+          "git-reset"
+        ],
+        "expected_statement_id": "sql-index",
+        "partition": "calibration",
+        "query_id": "calibration-08",
+        "rank": 1,
+        "top_statement_id": "sql-index"
+      },
+      {
+        "candidate_ids": [
+          "paris",
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "partition": "calibration",
+        "query_id": "calibration-09",
+        "rank": 2,
+        "top_statement_id": "paris"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "partition": "calibration",
+        "query_id": "calibration-10",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "sushi",
+        "partition": "release",
+        "query_id": "release-01",
+        "rank": 0,
+        "top_statement_id": ""
+      },
+      {
+        "candidate_ids": [
+          "cats"
+        ],
+        "expected_statement_id": "cats",
+        "partition": "release",
+        "query_id": "release-02",
+        "rank": 1,
+        "top_statement_id": "cats"
+      },
+      {
+        "candidate_ids": [
+          "dogs"
+        ],
+        "expected_statement_id": "dogs",
+        "partition": "release",
+        "query_id": "release-03",
+        "rank": 1,
+        "top_statement_id": "dogs"
+      },
+      {
+        "candidate_ids": [
+          "python-generator"
+        ],
+        "expected_statement_id": "python-generator",
+        "partition": "release",
+        "query_id": "release-04",
+        "rank": 1,
+        "top_statement_id": "python-generator"
+      },
+      {
+        "candidate_ids": [
+          "tls-certificate",
+          "oauth-refresh"
+        ],
+        "expected_statement_id": "oauth-refresh",
+        "partition": "release",
+        "query_id": "release-05",
+        "rank": 2,
+        "top_statement_id": "tls-certificate"
+      },
+      {
+        "candidate_ids": [
+          "git-reset"
+        ],
+        "expected_statement_id": "git-reset",
+        "partition": "release",
+        "query_id": "release-06",
+        "rank": 1,
+        "top_statement_id": "git-reset"
+      },
+      {
+        "candidate_ids": [
+          "shipping"
+        ],
+        "expected_statement_id": "shipping",
+        "partition": "release",
+        "query_id": "release-07",
+        "rank": 1,
+        "top_statement_id": "shipping"
+      },
+      {
+        "candidate_ids": [
+          "paris",
+          "refunds"
+        ],
+        "expected_statement_id": "paris",
+        "partition": "release",
+        "query_id": "release-08",
+        "rank": 1,
+        "top_statement_id": "paris"
+      },
+      {
+        "candidate_ids": [
+          "photosynthesis"
+        ],
+        "expected_statement_id": "photosynthesis",
+        "partition": "release",
+        "query_id": "release-09",
+        "rank": 1,
+        "top_statement_id": "photosynthesis"
+      },
+      {
+        "candidate_ids": [],
+        "expected_statement_id": "",
+        "partition": "release",
+        "query_id": "release-10",
+        "rank": 0,
+        "top_statement_id": ""
+      }
+    ]
+  },
+  "reranker": {
+    "health": {
+      "cancellations": 0,
+      "completed": 30,
+      "contract_version": 1,
+      "enabled": true,
+      "fallbacks": 0,
+      "implementation": "transparent_logistic_v1",
+      "last_reason": "completed",
+      "model_version": "transparent-logistic-v1",
+      "ready": true,
+      "requests": 30
+    },
+    "implementation": "transparent_logistic_v1",
+    "metrics": {
+      "calibration": {
+        "false_answer_rate": 0.0,
+        "mrr": 1.0,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0
+      },
+      "release": {
+        "false_answer_rate": 0.0,
+        "mrr": 0.8888888888888888,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 0.8888888888888888,
+        "recall_at_3": 0.8888888888888888
+      },
+      "train": {
+        "false_answer_rate": 0.0,
+        "mrr": 1.0,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0
+      }
+    },
+    "model_version": "transparent-logistic-v1",
+    "p50_overhead_ms": 0.0985,
+    "p95_overhead_ms": 0.1794,
+    "pairwise_encoder": {
+      "available": false,
+      "reason": "no approved local pairwise model artifact"
+    }
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "f052720f32db25e8670afb0591962fbb5fe0654a",
+    "branch": "graph",
+    "changed_paths": [
+      ".gitignore",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/code-style-migration.md",
+      "documentation/code-style.md",
+      "documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/semantic/",
+      "engram/artifacts.py",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/conversation.py",
+      "engram/coordination.py",
+      "engram/core.py",
+      "engram/dialogue.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/eviction.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mcp_server.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/nlp.py",
+      "engram/nltk_data.py",
+      "engram/pattern.py",
+      "engram/persistence.py",
+      "engram/phrasing.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/reranking.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/responses.py",
+      "engram/rewrite.py",
+      "engram/scoring.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sessions.py",
+      "engram/spacy_setup.py",
+      "engram/sparse.py",
+      "engram/substitutions.py",
+      "engram/template.py",
+      "engram/temporal.py",
+      "eval/run_conversation.py",
+      "eval/section13-semantic-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_semantic.py",
+      "scripts/cli.py",
+      "scripts/provision_semantic_model.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "scripts/setup_schema.py",
+      "tests/test_cli.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_persistence_v2.py",
+      "tests/test_phrasing.py",
+      "tests/test_pipeline.py",
+      "tests/test_reranking.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_semantic.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_template.py"
+    ],
+    "governed_source_sha256": "b7a1c3ec957dfd79a45de2b462c1e7c34a9ffbb8e44bc9f5436018933a278454",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "sparse_baseline": {
+    "metrics": {
+      "calibration": {
+        "false_answer_rate": 0.2,
+        "mrr": 0.8888888888888888,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 0.7777777777777778,
+        "recall_at_3": 1.0
+      },
+      "release": {
+        "false_answer_rate": 0.1,
+        "mrr": 0.8333333333333334,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 0.7777777777777778,
+        "recall_at_3": 0.8888888888888888
+      },
+      "train": {
+        "false_answer_rate": 0.2,
+        "mrr": 0.8,
+        "positive_count": 9,
+        "query_count": 10,
+        "recall_at_1": 0.7777777777777778,
+        "recall_at_3": 0.7777777777777778
+      }
+    }
+  }
+}

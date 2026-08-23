@@ -160,7 +160,7 @@ def test_v2_persists_no_derived_response_index_and_rebuilds_it_at_startup() -> N
     engram.response_repository = ArtifactRepository((artifact,))
     state = persistence.to_dict(engram)
 
-    assert frozenset(state["response_state"]) == frozenset(
+    assert set(state["response_state"]) == set(
         {"schema_version", "artifacts", "namespace_epochs", "mutation_receipts", "quarantine"}
     )
     assert "index_state" not in state["response_state"]

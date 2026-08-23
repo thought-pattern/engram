@@ -4,7 +4,6 @@ import math
 import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TypedDict
 
 from engram.constants import (
     MAX_TEMPORAL_SOURCE_BYTES,
@@ -15,21 +14,7 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 
-TemporalQuery = TypedDict(
-    "TemporalQuery",
-    {
-        "schema_version": int,
-        "operator": TemporalQueryOperator,
-        "axis": TemporalAxis,
-        "source_text": str,
-        "start": str,
-        "start_available": bool,
-        "end": str,
-        "end_available": bool,
-        "confidence": float,
-        "resolved": bool,
-    },
-)
+TemporalQuery = dict
 
 _DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
 _BETWEEN_RE = re.compile(rf"\bbetween\s+({_DATE_TOKEN})\s+(?:and|to)\s+({_DATE_TOKEN})\b", re.IGNORECASE)

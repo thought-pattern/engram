@@ -159,6 +159,9 @@ async def _run(
     memgraph_probe_every: int = 0,
     retrieval_rewrites_enabled: bool = False,
     sparse_enabled: bool = False,
+    semantic_enabled: bool = False,
+    reranker_enabled: bool = False,
+    utility_enabled: bool = False,
 ) -> dict:
     server = create_mcp_server()
     latencies_ms = []
@@ -194,7 +197,9 @@ async def _run(
         messages = (
             SARAH_SUSHI_MESSAGES
             if profile == "sarah-sushi"
-            else SARAH_PREFERENCE_MESSAGES if profile == "sarah-preferences" else MCP_CONFORMANCE_MESSAGES
+            else SARAH_PREFERENCE_MESSAGES
+            if profile == "sarah-preferences"
+            else MCP_CONFORMANCE_MESSAGES
         )
         for index in range(turns):
             call_started = time.perf_counter_ns()
@@ -277,9 +282,17 @@ async def _run(
     observation_sequence_bytes = json.dumps(observation_sequence, sort_keys=True, separators=(",", ":")).encode("utf-8")
     components = inspected.get("core_status", {}).get("components", {})
     graph_status = components.get("graph", {}) if isinstance(components, dict) else {}
+    semantic_status = components.get("semantic", {}) if isinstance(components, dict) else {}
+    reranker_status = components.get("reranker", {}) if isinstance(components, dict) else {}
+    utility_status = components.get("utility", {}) if isinstance(components, dict) else {}
+    optional_components_ready = (
+        (not semantic_enabled or semantic_status.get("ready") is True)
+        and (not reranker_enabled or reranker_status.get("ready") is True)
+        and (not utility_enabled or utility_status.get("ready") is True)
+    )
     run_result = {
         "gate": gate,
-        "passed": response_count == turns and not failed_turns,
+        "passed": response_count == turns and not failed_turns and optional_components_ready,
         "minimum_required_turns": MCP_CONFORMANCE_MINIMUM_TURNS,
         "requested_turns": turns,
         "completed_turns": len(evaluations),
@@ -295,6 +308,17 @@ async def _run(
             "memgraph_probe_every": memgraph_probe_every,
             "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
             "sparse_enabled": sparse_enabled,
+            "semantic_enabled": semantic_enabled,
+            "semantic_ready": semantic_status.get("ready", False),
+            "semantic_model_version": semantic_status.get("artifact_identity", {}).get("model_version", ""),
+            "semantic_record_count": semantic_status.get("record_count", 0),
+            "reranker_enabled": reranker_enabled,
+            "reranker_ready": reranker_status.get("ready", False),
+            "reranker_model_version": reranker_status.get("model_version", ""),
+            "utility_enabled": utility_enabled,
+            "utility_ready": utility_status.get("ready", False),
+            "utility_contract_version": utility_status.get("contract_version", ""),
+            "utility_plugins": utility_status.get("plugins", {}),
         },
         "server": {"name": server_name, "version": server_version},
         "engram_version": VERSION,
@@ -366,6 +390,26 @@ def _parser() -> argparse.ArgumentParser:
         help="Create an ephemeral runtime config with sparse.enabled=true",
     )
     parser.add_argument(
+        "--enable-semantic",
+        action="store_true",
+        help="Create an ephemeral runtime config with a checksum-gated standalone semantic model",
+    )
+    parser.add_argument(
+        "--semantic-manifest",
+        default="data/artifacts/models/all-MiniLM-L6-v2-826711e5.engram-model.json",
+        help="Local provisioning manifest used with --enable-semantic",
+    )
+    parser.add_argument(
+        "--enable-reranker",
+        action="store_true",
+        help="Create an ephemeral runtime config with the transparent reranker enabled",
+    )
+    parser.add_argument(
+        "--enable-utility",
+        action="store_true",
+        help="Create an ephemeral runtime config with all fixed utility plugins enabled",
+    )
+    parser.add_argument(
         "--memgraph-probe-every",
         type=int,
         default=0,
@@ -384,7 +428,7 @@ def main(argv: Sequence[str] = ()) -> int:
         raise ValueError("--memgraph-probe-every must be nonnegative")
     selected_config = args.config
     with tempfile.TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
-        if args.enable_rewrites or args.enable_sparse:
+        if args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility:
             raw_config = {}
             if args.config:
                 loaded = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
@@ -396,6 +440,27 @@ def main(argv: Sequence[str] = ()) -> int:
                 raw_config["retrieval_rewrites_enabled"] = True
             if args.enable_sparse:
                 raw_config["sparse"] = {"enabled": True}
+            if args.enable_semantic:
+                manifest = json.loads(Path(args.semantic_manifest).read_text(encoding="utf-8"))
+                required_manifest_fields = {
+                    "model_path",
+                    "model_id",
+                    "model_version",
+                    "license_id",
+                    "artifact_sha256",
+                    "dimension",
+                    "backend",
+                }
+                if not isinstance(manifest, dict) or not required_manifest_fields.issubset(manifest):
+                    raise ValueError("--semantic-manifest is malformed")
+                raw_config["semantic"] = {
+                    "enabled": True,
+                    **{name: manifest[name] for name in sorted(required_manifest_fields)},
+                }
+            if args.enable_reranker:
+                raw_config["reranker"] = {"enabled": True}
+            if args.enable_utility:
+                raw_config["utility"] = {"enabled": True}
             selected_path = Path(temporary_directory) / "config.yml"
             selected_path.write_text(yaml.safe_dump(raw_config, sort_keys=True), encoding="utf-8")
             selected_config = str(selected_path)
@@ -410,6 +475,9 @@ def main(argv: Sequence[str] = ()) -> int:
                 args.memgraph_probe_every,
                 args.enable_rewrites,
                 args.enable_sparse,
+                args.enable_semantic,
+                args.enable_reranker,
+                args.enable_utility,
             )
         )
     result_text = json.dumps(result, indent=2, sort_keys=True) + "\n"

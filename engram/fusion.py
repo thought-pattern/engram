@@ -7,7 +7,7 @@ import json
 import math
 from collections.abc import Callable, Mapping
 from types import MappingProxyType, NoneType
-from typing import TypedDict, cast
+from typing import cast
 
 from engram.artifacts import LifecycleState
 from engram.constants import (
@@ -44,6 +44,8 @@ from engram.constants import (
     MIN_FUSION_INDEPENDENT_SOURCES,
     NORMALIZED_FEATURE_SCHEMA_VERSION,
     NORMALIZED_FEATURE_SET_FIELDS,
+    UTILITY_CONTRACT_VERSION,
+    UTILITY_RESOLVER_VERSION,
     FusionFeature,
     FusionFeatureRole,
     FusionPolicyReason,
@@ -52,12 +54,13 @@ from engram.constants import (
     RelationSelectionReason,
 )
 from engram.eligibility import EpochEligibilityPolicy, evaluate_artifact_eligibility
-from engram.errors import InvalidRequestError
+from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.evidence import ClaimEligibilityEvaluator
 from engram.feedback import FeedbackStore, constraint_fingerprint
 from engram.graph import ClaimProjectionQuery, validate_claim_projection
 from engram.identity import ScopeKey
 from engram.relation import phrase_relation_result
+from engram.reranking import RERANKER_FEATURES, TransparentLogisticReranker
 from engram.resolution import (
     Candidate,
     CandidateSource,
@@ -82,24 +85,9 @@ from engram.resolution import (
     validate_evidence_reference,
     validate_query_frame,
 )
+from engram.utilities import UTILITY_PLUGIN_VERSION, evaluate_named_utility
 
-FeatureDefinition = TypedDict(
-    "FeatureDefinition",
-    {
-        "feature": FusionFeature,
-        "minimum": float,
-        "maximum": float,
-        "higher_is_better": bool,
-        "meaning": str,
-        "unavailable_meaning": str,
-        "producer": str,
-        "owner_section": str,
-        "trust_boundary": str,
-        "raw_range": str,
-        "combination_rule": str,
-        "role": FusionFeatureRole,
-    },
-)
+FeatureDefinition = dict
 
 
 def feature_definition(
@@ -229,8 +217,8 @@ def _load_mapping(value: str, name: str) -> Mapping[str, object]:
     return decoded
 
 
-def _exact_mapping(value: object, name: str, fields: frozenset[str]) -> Mapping[str, object]:
-    if not isinstance(value, Mapping) or frozenset(value) != fields or not all(isinstance(key, str) for key in value):
+def _exact_mapping(value: object, name: str, fields: set[str]) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or set(value) != fields or not all(isinstance(key, str) for key in value):
         raise InvalidRequestError(f"{name} has invalid fields")
     return value
 
@@ -238,10 +226,10 @@ def _exact_mapping(value: object, name: str, fields: frozenset[str]) -> Mapping[
 def _enum_feature_mapping(value: object, name: str, *, complete: bool) -> dict[FusionFeature, float]:
     if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
         raise InvalidRequestError(f"{name} must contain an object")
-    expected = frozenset(feature.value for feature in FusionFeature)
-    if complete and frozenset(value) != expected:
+    expected = {feature.value for feature in FusionFeature}
+    if complete and set(value) != expected:
         raise InvalidRequestError(f"{name} must contain every canonical feature")
-    if not complete and not frozenset(value).issubset(expected):
+    if not complete and not set(value).issubset(expected):
         raise InvalidRequestError(f"{name} contains an unsupported feature")
     try:
         result = {FusionFeature(key): _bounded_unit(item) for key, item in value.items()}
@@ -261,7 +249,7 @@ def _feature_tuple(value: object, name: str) -> tuple[FusionFeature, ...]:
 
 
 def _weighted_feature_mapping(value: object, name: str) -> dict[FusionFeature, float]:
-    if not isinstance(value, Mapping) or frozenset(value) != frozenset(feature.value for feature in FusionFeature):
+    if not isinstance(value, Mapping) or set(value) != {feature.value for feature in FusionFeature}:
         raise InvalidRequestError(f"{name} must contain every canonical feature")
     weighted: dict[FusionFeature, float] = {}
     for feature in FusionFeature:
@@ -311,10 +299,7 @@ def _number(value: object, name: str) -> float:
     return result
 
 
-NormalizedFeatureSet = TypedDict(
-    "NormalizedFeatureSet",
-    {"values": Mapping[FusionFeature, float], "available": tuple[FusionFeature, ...], "schema_version": int},
-)
+NormalizedFeatureSet = dict
 
 
 def normalized_feature_set(
@@ -404,21 +389,7 @@ def normalized_feature_set_from_json(value: str) -> NormalizedFeatureSet:
     return result
 
 
-FusionPolicy = TypedDict(
-    "FusionPolicy",
-    {
-        "policy_version": str,
-        "formula_version": int,
-        "weights": Mapping[FusionFeature, float],
-        "answer_threshold": float,
-        "evidence_threshold": float,
-        "ambiguity_margin": float,
-        "minimum_independent_sources": int,
-        "require_support_for_non_exact": bool,
-        "max_report_candidates": int,
-        "schema_version": int,
-    },
-)
+FusionPolicy = dict
 
 
 def fusion_policy(
@@ -502,7 +473,7 @@ def validate_fusion_policy(value: object) -> FusionPolicy:
 
 def fusion_policy_with_changes(value: object, changes: object) -> FusionPolicy:
     current = validate_fusion_policy(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(FUSION_POLICY_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(FUSION_POLICY_FIELDS):
         raise InvalidRequestError("fusion policy changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -536,7 +507,7 @@ def fusion_policy_to_json(value: object) -> str:
 def fusion_policy_from_dict(value: object) -> FusionPolicy:
     data = _exact_mapping(value, "FusionPolicy", FUSION_POLICY_FIELDS)
     raw_weights = data["weights"]
-    if not isinstance(raw_weights, Mapping) or frozenset(raw_weights) != frozenset(feature.value for feature in FusionFeature):
+    if not isinstance(raw_weights, Mapping) or set(raw_weights) != {feature.value for feature in FusionFeature}:
         raise InvalidRequestError("FusionPolicy weights have invalid fields")
     weights = {feature: _number(raw_weights[feature.value], f"FusionPolicy {feature.value} weight") for feature in FusionFeature}
     result = fusion_policy(
@@ -560,18 +531,7 @@ def fusion_policy_from_json(value: str) -> FusionPolicy:
     return result
 
 
-CandidateEligibility = TypedDict(
-    "CandidateEligibility",
-    {
-        "score_eligible": bool,
-        "evidence_eligible": bool,
-        "answer_eligible": bool,
-        "reason_codes": tuple[FusionPolicyReason, ...],
-        "feature_values": Mapping[FusionFeature, float],
-        "feature_available": tuple[FusionFeature, ...],
-        "schema_version": int,
-    },
-)
+CandidateEligibility = dict
 
 
 def candidate_eligibility(
@@ -971,9 +931,7 @@ class EngramCandidateAuthority:
             }:
                 if not provenance["truth_available"] or not isinstance(provenance["truth_value"], bool):
                     raise InvalidRequestError("composition truth is unavailable")
-                response = (
-                    f"{root_label} — {operator.value.lower()} {chain}: " f"{'true' if provenance['truth_value'] else 'false'}."
-                )
+                response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if provenance['truth_value'] else 'false'}."
             else:
                 aggregate = provenance["aggregate_value"]
                 if not provenance["aggregate_value_available"] or not isinstance(aggregate, str) or not aggregate:
@@ -995,6 +953,30 @@ class EngramCandidateAuthority:
             return self._relation_candidate(candidate, frame)
         if candidate["source"] == CandidateSource.UTILITY and candidate["provenance"].get("producer") == "graph_composition_v1":
             return self._composition_candidate(candidate, frame)
+        if candidate["source"] == CandidateSource.UTILITY and candidate["provenance"].get("producer") == UTILITY_RESOLVER_VERSION:
+            if frame["required_source_label"]:
+                return candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
+            if frame["required_metadata"]:
+                return candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
+            plugin_name = candidate["provenance"].get("plugin_name", "")
+            evaluated = evaluate_named_utility(frame["original_text"], plugin_name)
+            if (
+                evaluated["status"] != "resolved"
+                or evaluated["plugin_version"] != UTILITY_PLUGIN_VERSION
+                or evaluated["contract_version"] != UTILITY_CONTRACT_VERSION
+                or candidate["provenance"].get("plugin_version") != evaluated["plugin_version"]
+                or candidate["provenance"].get("contract_version") != evaluated["contract_version"]
+                or candidate["provenance"].get("canonical_input") != evaluated["canonical_input"]
+            ):
+                return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
+            digest = hashlib.sha256(
+                f"{plugin_name}:{evaluated['plugin_version']}:{evaluated['canonical_input']}".encode()
+            ).hexdigest()
+            if candidate["statement_id"] != f"utility:{plugin_name}:sha256:{digest}":
+                return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
+            if candidate["response"] != evaluated["response"]:
+                return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH,))
+            return candidate_eligibility(True, True, True)
         snapshot = self._engram.response_repository.snapshot()
         artifacts = snapshot["artifacts"]
         if candidate["statement_id"] in artifacts:
@@ -1160,15 +1142,7 @@ class EngramCandidateAuthority:
         return result
 
 
-FusionContribution = TypedDict(
-    "FusionContribution",
-    {
-        "candidate": Candidate,
-        "normalized": NormalizedFeatureSet,
-        "eligibility": CandidateEligibility,
-        "schema_version": int,
-    },
-)
+FusionContribution = dict
 
 
 def fusion_contribution(
@@ -1302,18 +1276,7 @@ def fusion_contribution_from_json(value: str) -> FusionContribution:
     return result
 
 
-FusedCandidate = TypedDict(
-    "FusedCandidate",
-    {
-        "candidate": Candidate,
-        "contributions": tuple[FusionContribution, ...],
-        "normalized": NormalizedFeatureSet,
-        "score": float,
-        "score_contributions": Mapping[FusionFeature, float],
-        "eligibility": CandidateEligibility,
-        "schema_version": int,
-    },
-)
+FusedCandidate = dict
 
 
 def fused_candidate(
@@ -1407,7 +1370,7 @@ def _trusted_fused_candidate(
 
 def fused_candidate_with_changes(value: object, changes: object) -> FusedCandidate:
     current = validate_fused_candidate(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(FUSED_CANDIDATE_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(FUSED_CANDIDATE_FIELDS):
         raise InvalidRequestError("fused candidate changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -1525,22 +1488,7 @@ def fused_candidate_from_json(value: str) -> FusedCandidate:
     return result
 
 
-FusionDecision = TypedDict(
-    "FusionDecision",
-    {
-        "outcome": ResolutionOutcome,
-        "selected_candidate": Candidate,
-        "selected_candidate_available": bool,
-        "response_candidates": tuple[Candidate, ...],
-        "evidence": tuple[EvidenceReference, ...],
-        "confidence": float,
-        "confidence_available": bool,
-        "reason_codes": tuple[str, ...],
-        "report": Mapping[str, object],
-        "working_memory_bytes": int,
-        "schema_version": int,
-    },
-)
+FusionDecision = dict
 
 
 def fusion_decision(
@@ -1782,6 +1730,12 @@ def _normalize_validated_candidate_features(validated_candidate: Candidate) -> N
 
     if validated_candidate["source"] == CandidateSource.EXACT and "exact_match" in raw:
         assign(FusionFeature.EXACT, raw["exact_match"])
+    if (
+        validated_candidate["source"] == CandidateSource.UTILITY
+        and validated_candidate["provenance"].get("producer") == UTILITY_RESOLVER_VERSION
+        and "utility_match" in raw
+    ):
+        assign(FusionFeature.EXACT, raw["utility_match"])
     if validated_candidate["source"] == CandidateSource.PATTERN and "pattern_specificity" in raw:
         assign(FusionFeature.PATTERN, _saturating(raw["pattern_specificity"], 4.0))
     if validated_candidate["source"] in (CandidateSource.LEXICAL, CandidateSource.SPARSE):
@@ -1924,6 +1878,7 @@ class CandidateFusionEngine:
         self,
         policy: object = {},
         authority: CandidateAuthority = abstaining_candidate_authority,
+        reranker: object = (),
     ) -> None:
         policy_value = fusion_policy() if policy == {} else policy
         try:
@@ -1932,8 +1887,11 @@ class CandidateFusionEngine:
             raise InvalidRequestError("fusion policy must be a FusionPolicy") from error
         if not callable(authority):
             raise InvalidRequestError("fusion authority must be callable")
+        if reranker != () and not isinstance(reranker, TransparentLogisticReranker):
+            raise InvalidRequestError("fusion reranker must be a TransparentLogisticReranker")
         self.policy = validated_policy
         self._authority = authority
+        self._reranker = reranker
 
     def _individual_eligibility(
         self,
@@ -2062,13 +2020,22 @@ class CandidateFusionEngine:
         reasons = list(eligibility["reason_codes"])
         answer_eligible = eligibility["answer_eligible"]
         exact_present = CandidateSource.EXACT in sources and values[FusionFeature.EXACT] == 1.0
+        utility_present = (
+            any(
+                contribution["candidate"]["source"] == CandidateSource.UTILITY
+                and contribution["candidate"]["provenance"].get("producer") == UTILITY_RESOLVER_VERSION
+                for contribution in active
+            )
+            and values[FusionFeature.EXACT] == 1.0
+        )
+        deterministic_present = exact_present or utility_present
         if evidence_conflicts:
             answer_eligible = False
             reasons.append(FusionPolicyReason.EVIDENCE_REFERENCE_CONFLICT)
-        if active and not exact_present and len(families) < self.policy["minimum_independent_sources"]:
+        if active and not deterministic_present and len(families) < self.policy["minimum_independent_sources"]:
             answer_eligible = False
             reasons.append(FusionPolicyReason.INDEPENDENT_SOURCES_MISSING)
-        if active and not exact_present and self.policy["require_support_for_non_exact"] and not support_present:
+        if active and not deterministic_present and self.policy["require_support_for_non_exact"] and not support_present:
             answer_eligible = False
             reasons.append(FusionPolicyReason.SUPPORT_INCOMPLETE)
         identity_features = (FusionFeature.ENTITY, FusionFeature.RELATION)
@@ -2164,6 +2131,7 @@ class CandidateFusionEngine:
         *,
         working_memory_limit: int = 0,
         working_memory_limit_available: bool = False,
+        cooperative_check: object = (),
     ) -> FusionDecision:
         frame = validate_query_frame(frame)
         if not isinstance(candidates, tuple):
@@ -2184,6 +2152,8 @@ class CandidateFusionEngine:
             raise InvalidRequestError("fusion working_memory_limit requires availability")
         if working_memory_limit_available and working_memory_limit > frame["budget"]["max_working_memory_bytes"]:
             raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
+        if cooperative_check != () and not callable(cooperative_check):
+            raise InvalidRequestError("fusion cooperative_check must be callable")
         memory_limit = working_memory_limit if working_memory_limit_available else frame["budget"]["max_working_memory_bytes"]
         serialized_candidates = tuple((candidate, _trusted_candidate_to_json(candidate)) for candidate in candidates)
         working_bytes = sum(len(value.encode("utf-8")) for _, value in serialized_candidates) + sum(
@@ -2242,6 +2212,83 @@ class CandidateFusionEngine:
                 )
                 return result
         fused = tuple(fused_values)
+        reranker_report: dict[str, object] = {
+            "applied": False,
+            "reason": "not_configured",
+            "model_version": "",
+            "elapsed_ns": 0,
+            "input_bytes": 0,
+            "scores": [],
+        }
+        if isinstance(self._reranker, TransparentLogisticReranker) and self._reranker.enabled:
+            shortlist = tuple(
+                {
+                    "statement_id": item["candidate"]["statement_id"],
+                    "base_score": item["score"],
+                    "features": {
+                        name: (
+                            item["score"] if name == "base_score" else item["normalized"]["values"].get(FusionFeature(name), 0.0)
+                        )
+                        for name in RERANKER_FEATURES
+                    },
+                }
+                for item in sorted(
+                    (value for value in fused if value["eligibility"]["score_eligible"]),
+                    key=lambda value: (-value["score"], value["candidate"]["statement_id"]),
+                )
+            )
+            try:
+                reranker_report = self._reranker.rerank(shortlist, cooperative_check)
+            except ResolutionCancelledError:
+                raise
+            except Exception as error:
+                self._reranker.record_fallback("reranker_exception")
+                reranker_report = {
+                    "applied": False,
+                    "reason": "reranker_exception",
+                    "exception_type": type(error).__name__,
+                    "model_version": self._reranker.settings["model_version"],
+                    "elapsed_ns": 0,
+                    "input_bytes": 0,
+                    "scores": [],
+                }
+            if reranker_report["applied"]:
+                reranked_scores = {
+                    value["statement_id"]: value["score"] for value in cast(list[Mapping[str, object]], reranker_report["scores"])
+                }
+                updated_fused = []
+                for item in fused:
+                    statement_id = item["candidate"]["statement_id"]
+                    if statement_id not in reranked_scores:
+                        updated_fused.append(item)
+                        continue
+                    rerank_score = cast(float, reranked_scores[statement_id])
+                    updated_candidate = _trusted_candidate_with_changes(
+                        item["candidate"],
+                        {
+                            "provenance": {
+                                **dict(item["candidate"]["provenance"]),
+                                "reranker_implementation": self._reranker.settings["implementation"],
+                                "reranker_model_version": self._reranker.settings["model_version"],
+                            },
+                            "diagnostics": {
+                                **dict(item["candidate"]["diagnostics"]),
+                                "fusion_base_score": item["score"],
+                                "reranker_score": rerank_score,
+                            },
+                        },
+                    )
+                    updated_fused.append(
+                        _trusted_fused_candidate(
+                            updated_candidate,
+                            item["contributions"],
+                            item["normalized"],
+                            rerank_score,
+                            item["score_contributions"],
+                            item["eligibility"],
+                        )
+                    )
+                fused = tuple(updated_fused)
         ranked = tuple(
             sorted(
                 (candidate for candidate in fused if candidate["eligibility"]["score_eligible"]),
@@ -2360,6 +2407,7 @@ class CandidateFusionEngine:
                 "top_two_margin_available": margin_available,
                 "evidence_conflict_count": top_level_evidence_conflicts,
                 "budget_exhausted": "",
+                "reranker": reranker_report,
                 "candidates": candidate_reports,
             }
             return result
@@ -2380,6 +2428,11 @@ class CandidateFusionEngine:
                 "top_two_margin_available": margin_available,
                 "evidence_conflict_count": top_level_evidence_conflicts,
                 "budget_exhausted": "",
+                "reranker": {
+                    "applied": reranker_report["applied"],
+                    "reason": reranker_report["reason"],
+                    "model_version": reranker_report["model_version"],
+                },
                 "candidates": [],
             }
         working_bytes += len(_json_text(report).encode("utf-8"))

@@ -31,7 +31,7 @@ EMPTY_METADATA: dict = {}
 DEFAULT_SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
 PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1_000
-REGULATOR_OUTCOMES = frozenset(
+REGULATOR_OUTCOMES = set(
     {
         "accepted",
         "rejected_quality",
@@ -57,7 +57,7 @@ DIALOGUE_SELF_INTRODUCTION = "self_introduction"
 DIALOGUE_STATEMENT = "statement"
 DIALOGUE_TOPIC_SHIFT = "topic_shift"
 EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
-VOWELS = frozenset("aeiou")
+VOWELS = set("aeiou")
 FRAME_OVERRIDES = MappingProxyType(
     {
         "precedes": "{s} precedes {o}",
@@ -142,8 +142,8 @@ MAX_METADATA_ITEMS = 1_024
 MAX_METADATA_KEY_BYTES = 256
 MAX_METADATA_STRING_BYTES = 16_384
 MAX_ARTIFACT_ENUM_BYTES = 16
-ARTIFACT_PROVENANCE_FIELDS = frozenset({"schema_version", "source_label", "caller_id", "accepted_at"})
-ARTIFACT_STATISTICS_FIELDS = frozenset(
+ARTIFACT_PROVENANCE_FIELDS = set({"schema_version", "source_label", "caller_id", "accepted_at"})
+ARTIFACT_STATISTICS_FIELDS = set(
     {
         "schema_version",
         "hit_count",
@@ -152,7 +152,7 @@ ARTIFACT_STATISTICS_FIELDS = frozenset(
         "last_hit_available",
     }
 )
-CACHED_RESPONSE_ARTIFACT_FIELDS = frozenset(
+CACHED_RESPONSE_ARTIFACT_FIELDS = set(
     {
         "schema_version",
         "statement_id",
@@ -176,9 +176,9 @@ CACHED_RESPONSE_ARTIFACT_FIELDS = frozenset(
         "metadata",
     }
 )
-LIFECYCLE_BASE_DECISION_FIELDS = frozenset({"lifecycle", "direct_answer_eligible", "reason"})
-LIFECYCLE_TRANSITION_DECISION_FIELDS = frozenset({"current", "target", "operation", "allowed", "reason"})
-HISTORICAL_KEY_REUSE_DECISION_FIELDS = frozenset({"allowed", "reason"})
+LIFECYCLE_BASE_DECISION_FIELDS = set({"lifecycle", "direct_answer_eligible", "reason"})
+LIFECYCLE_TRANSITION_DECISION_FIELDS = set({"current", "target", "operation", "allowed", "reason"})
+HISTORICAL_KEY_REUSE_DECISION_FIELDS = set({"allowed", "reason"})
 SCOPE_SCHEMA_VERSION = 1
 IDENTITY_SCHEMA_VERSION = 1
 RETRIEVAL_NORMALIZATION_VERSION = 1
@@ -197,8 +197,8 @@ MAX_LEXICAL_TERMS = 128
 MAX_RETRIEVAL_REPRESENTATION_BYTES = 4_096
 MAX_RETRIEVAL_ALIASES = 32
 MAX_IDENTITY_JSON_BYTES = 262_144
-SCOPE_KEY_FIELDS = frozenset({"schema_version", "namespace", "context_fingerprint"})
-SCOPED_RETRIEVAL_KEY_FIELDS = frozenset({"schema_version", "normalization_version", "scope", "normalized_key"})
+SCOPE_KEY_FIELDS = set({"schema_version", "namespace", "context_fingerprint"})
+SCOPED_RETRIEVAL_KEY_FIELDS = set({"schema_version", "normalization_version", "scope", "normalized_key"})
 EMPTY_SCOPE_KEY = MappingProxyType(
     {
         "schema_version": SCOPE_SCHEMA_VERSION,
@@ -206,11 +206,11 @@ EMPTY_SCOPE_KEY = MappingProxyType(
         "context_fingerprint": "",
     }
 )
-ENTITY_REFERENCE_FIELDS = frozenset({"surface", "canonical_id"})
-RELATION_REFERENCE_FIELDS = frozenset({"surface", "canonical_id"})
-IDENTITY_QUALIFIER_FIELDS = frozenset({"kind", "value"})
-RETRIEVAL_KEY_BINDING_FIELDS = frozenset({"key", "origin", "representation"})
-RETRIEVAL_REPRESENTATION_FIELDS = frozenset(
+ENTITY_REFERENCE_FIELDS = set({"surface", "canonical_id"})
+RELATION_REFERENCE_FIELDS = set({"surface", "canonical_id"})
+IDENTITY_QUALIFIER_FIELDS = set({"kind", "value"})
+RETRIEVAL_KEY_BINDING_FIELDS = set({"key", "origin", "representation"})
+RETRIEVAL_REPRESENTATION_FIELDS = set(
     {
         "schema_version",
         "normalization_version",
@@ -218,7 +218,7 @@ RETRIEVAL_REPRESENTATION_FIELDS = frozenset(
         "aliases",
     }
 )
-QUERY_IDENTITY_FIELDS = frozenset(
+QUERY_IDENTITY_FIELDS = set(
     {
         "schema_version",
         "normalization_version",
@@ -234,9 +234,9 @@ QUERY_IDENTITY_FIELDS = frozenset(
 EMPTY_RELATION_REFERENCE = MappingProxyType({"surface": "", "canonical_id": ""})
 ELIGIBILITY_CONTEXT_SCHEMA_VERSION = 1
 NAMESPACE_EPOCH_STATE_SCHEMA_VERSION = 1
-NAMESPACE_EPOCH_FIELDS = frozenset({"namespace", "knowledge_epoch", "knowledge_epoch_available"})
-EPOCH_INCREMENT_FIELDS = frozenset({"namespace", "previous_epoch", "knowledge_epoch", "reason"})
-TRUSTED_ELIGIBILITY_INPUT_FIELDS = frozenset(
+NAMESPACE_EPOCH_FIELDS = set({"namespace", "knowledge_epoch", "knowledge_epoch_available"})
+EPOCH_INCREMENT_FIELDS = set({"namespace", "previous_epoch", "knowledge_epoch", "reason"})
+TRUSTED_ELIGIBILITY_INPUT_FIELDS = set(
     {
         "namespace",
         "evaluation_time",
@@ -246,7 +246,7 @@ TRUSTED_ELIGIBILITY_INPUT_FIELDS = frozenset(
         "source_label",
     }
 )
-ELIGIBILITY_CONTEXT_FIELDS = frozenset(
+ELIGIBILITY_CONTEXT_FIELDS = set(
     {
         "schema_version",
         "evaluation_time",
@@ -258,7 +258,7 @@ ELIGIBILITY_CONTEXT_FIELDS = frozenset(
         "epoch_source",
     }
 )
-ELIGIBILITY_DECISION_FIELDS = frozenset(
+ELIGIBILITY_DECISION_FIELDS = set(
     {
         "statement_id",
         "generation",
@@ -274,7 +274,7 @@ ELIGIBILITY_DECISION_FIELDS = frozenset(
         "epoch_policy",
     }
 )
-CONTEXTUAL_EXACT_LOOKUP_RESULT_FIELDS = frozenset(
+CONTEXTUAL_EXACT_LOOKUP_RESULT_FIELDS = set(
     {
         "lookup",
         "decisions",
@@ -291,7 +291,7 @@ MAX_ELIGIBILITY_STATEMENT_ID_BYTES = 256
 MAX_ELIGIBILITY_CONTEXT_SIGNATURE_BYTES = 4_096
 INDEX_PROJECTION_SCHEMA_VERSION = 1
 INDEX_STATE_SCHEMA_VERSION = 1
-INDEX_STATE_FIELDS = frozenset(
+INDEX_STATE_FIELDS = set(
     {
         "state_generation",
         "retrieval_to_owners",
@@ -305,7 +305,7 @@ INDEX_STATE_FIELDS = frozenset(
         "schema_version",
     }
 )
-INDEX_PROJECTION_FIELDS = frozenset(
+INDEX_PROJECTION_FIELDS = set(
     {
         "schema_version",
         "statement_id",
@@ -317,7 +317,7 @@ INDEX_PROJECTION_FIELDS = frozenset(
         "normalization_version",
     }
 )
-INDEX_PROJECTION_BINDING_FIELDS = frozenset({"key", "provenance", "representation"})
+INDEX_PROJECTION_BINDING_FIELDS = set({"key", "provenance", "representation"})
 MAX_INDEX_STATEMENT_ID_BYTES = 256
 MAX_INDEX_RETRIEVAL_KEYS = 33
 MAX_INDEX_SUPPORT_IDS = 256
@@ -326,8 +326,8 @@ MAX_INDEX_REPORT_ITEMS = 1_000
 MAX_INDEX_REPORT_DETAIL_BYTES = 512
 MAX_INDEX_LOOKUP_OWNERS = 1_000
 MAX_INDEX_SUPPORT_SCAN_EDGES = 100_000
-SUPPORT_MATCH_FIELDS = frozenset({"statement_id", "matched_claim_ids"})
-SUPPORT_LOOKUP_RESULT_FIELDS = frozenset(
+SUPPORT_MATCH_FIELDS = set({"statement_id", "matched_claim_ids"})
+SUPPORT_LOOKUP_RESULT_FIELDS = set(
     {
         "queried_claim_ids",
         "matches",
@@ -338,10 +338,10 @@ SUPPORT_LOOKUP_RESULT_FIELDS = frozenset(
         "reason",
     }
 )
-SUPPORT_SCAN_PLAN_FIELDS = frozenset({"queried_claim_ids", "edge_count", "scan_limit", "complete", "reason"})
+SUPPORT_SCAN_PLAN_FIELDS = set({"queried_claim_ids", "edge_count", "scan_limit", "complete", "reason"})
 INDEX_SUPPORT_SCAN_LIMIT_REASON = "scan_limit_exceeded"
 MAX_INDEX_SUPPORT_REASON_BYTES = 64
-EXACT_LOOKUP_RESULT_FIELDS = frozenset(
+EXACT_LOOKUP_RESULT_FIELDS = set(
     {
         "outcome",
         "key",
@@ -355,10 +355,10 @@ EXACT_LOOKUP_RESULT_FIELDS = frozenset(
 )
 MAX_INDEX_PROVENANCE_BYTES = 32
 MAX_INDEX_REPRESENTATION_BYTES = 1_024
-RETRIEVAL_OWNER_FIELDS = frozenset({"statement_id", "generation", "provenance", "representation", "direct_answer_eligible"})
-INDEX_COLLISION_REPORT_FIELDS = frozenset({"key", "statement_ids", "truncated"})
-INDEX_BUILD_ISSUE_FIELDS = frozenset({"reason", "statement_id", "position", "detail", "input_only"})
-INDEX_BUILD_REPORT_FIELDS = frozenset(
+RETRIEVAL_OWNER_FIELDS = set({"statement_id", "generation", "provenance", "representation", "direct_answer_eligible"})
+INDEX_COLLISION_REPORT_FIELDS = set({"key", "statement_ids", "truncated"})
+INDEX_BUILD_ISSUE_FIELDS = set({"reason", "statement_id", "position", "detail", "input_only"})
+INDEX_BUILD_REPORT_FIELDS = set(
     {
         "input_count",
         "projection_count",
@@ -370,11 +370,9 @@ INDEX_BUILD_REPORT_FIELDS = frozenset(
         "omitted_collision_count",
     }
 )
-INDEX_CHECK_ISSUE_FIELDS = frozenset({"category", "index_name", "key", "expected", "actual", "error"})
-INDEX_CHECK_REPORT_FIELDS = frozenset({"consistent", "checked_state_generation", "issues", "omitted_issue_count"})
-INDEX_REPAIR_RESULT_FIELDS = frozenset(
-    {"applied", "changed", "before_generation", "after_generation", "candidate_report", "live_check"}
-)
+INDEX_CHECK_ISSUE_FIELDS = set({"category", "index_name", "key", "expected", "actual", "error"})
+INDEX_CHECK_REPORT_FIELDS = set({"consistent", "checked_state_generation", "issues", "omitted_issue_count"})
+INDEX_REPAIR_RESULT_FIELDS = set({"applied", "changed", "before_generation", "after_generation", "candidate_report", "live_check"})
 MAX_INDEX_CHECK_NAME_BYTES = 128
 MAX_INDEX_CHECK_KEY_BYTES = 4_096
 MAX_INDEX_CHECK_VALUE_BYTES = 4_096
@@ -430,7 +428,7 @@ MAX_RESOLUTION_DIAGNOSTIC_BYTES = 1_048_576
 MAX_RESOLUTION_WORKING_MEMORY_BYTES = 1_073_741_824
 MAX_RESOURCE_COUNTER = 9_223_372_036_854_775_807
 BUDGET_CONSUMPTION_SCHEMA_VERSION = 1
-BUDGET_CONSUMPTION_FIELDS = frozenset(
+BUDGET_CONSUMPTION_FIELDS = set(
     {
         "schema_version",
         "elapsed_ns",
@@ -469,8 +467,8 @@ QUERY_FRAME_FIELDS = set(
     }
 )
 MAX_REQUIRED_SOURCE_LABEL_BYTES = 256
-INHERITANCE_PROVENANCE_FIELDS = frozenset({"field_name", "source_turn"})
-REWRITE_TRACE_STEP_FIELDS = frozenset({"rule_id", "input_text", "output_text"})
+INHERITANCE_PROVENANCE_FIELDS = set({"field_name", "source_turn"})
+REWRITE_TRACE_STEP_FIELDS = set({"rule_id", "input_text", "output_text"})
 COMPACT_QUERY_FRAME_SCHEMA_VERSION = 2
 COMPACT_QUERY_FRAME_FIELDS = set(
     {
@@ -511,9 +509,9 @@ MAX_RELATION_SURFACES = 12
 MAX_RELATION_CANDIDATES = 8
 MAX_RELATION_PLAN_ROWS = 10
 MAX_RELATION_LABEL_BYTES = 256
-CANONICAL_ENTITY_MATCH_FIELDS = frozenset({"canonical_id", "primary_label", "aliases", "edge_surfaces", "entity_type"})
-CANONICAL_PREDICATE_MATCH_FIELDS = frozenset({"canonical_id", "primary_label", "synonyms", "object_type"})
-CANONICAL_RESOLUTION_FIELDS = frozenset(
+CANONICAL_ENTITY_MATCH_FIELDS = set({"canonical_id", "primary_label", "aliases", "edge_surfaces", "entity_type"})
+CANONICAL_PREDICATE_MATCH_FIELDS = set({"canonical_id", "primary_label", "synonyms", "object_type"})
+CANONICAL_RESOLUTION_FIELDS = set(
     {
         "schema_version",
         "status",
@@ -575,12 +573,12 @@ MAX_COMPOSITION_PATH_CLAIMS = 2
 MAX_COMPOSITION_BINDING_BYTES = 64
 MAX_COMPOSITION_PREDICATE_SURFACES = 12
 FEATURE_SET_SCHEMA_VERSION = 1
-FEATURE_SET_FIELDS = frozenset({"schema_version", "values", "unavailable"})
+FEATURE_SET_FIELDS = set({"schema_version", "values", "unavailable"})
 CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION = 1
 CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION = 2
 CLAIM_TRUST_INPUTS_SCHEMA_VERSION = 1
 DISCLOSURE_DECISION_SCHEMA_VERSION = 1
-CANONICAL_CLAIM_REFERENCES_FIELDS = frozenset({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"})
+CANONICAL_CLAIM_REFERENCES_FIELDS = set({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"})
 CLAIM_VALIDITY_INPUTS_FIELDS = set(
     {
         "schema_version",
@@ -610,7 +608,7 @@ CLAIM_VALIDITY_INPUTS_FIELDS = set(
         "valid_to_available",
     }
 )
-CLAIM_TRUST_INPUTS_FIELDS = frozenset(
+CLAIM_TRUST_INPUTS_FIELDS = set(
     {
         "schema_version",
         "trust_category",
@@ -621,7 +619,7 @@ CLAIM_TRUST_INPUTS_FIELDS = frozenset(
         "supplied_trust_version_available",
     }
 )
-DISCLOSURE_DECISION_FIELDS = frozenset(
+DISCLOSURE_DECISION_FIELDS = set(
     {"schema_version", "ownership", "basis", "scope", "policy_version", "authority", "authority_available"}
 )
 CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION = 2
@@ -641,7 +639,7 @@ CLAIM_EVIDENCE_PATH_STEP_FIELDS = set(
         "aggregation_inputs",
     }
 )
-CLAIM_EVIDENCE_RECORD_FIELDS = frozenset(
+CLAIM_EVIDENCE_RECORD_FIELDS = set(
     {
         "schema_version",
         "claim_id",
@@ -657,11 +655,9 @@ CLAIM_EVIDENCE_RECORD_FIELDS = frozenset(
     }
 )
 EVIDENCE_PACKAGE_WIRE_VERSION = 2
-EVIDENCE_PACKAGE_FIELDS = frozenset(
-    {"wire_version", "records", "retained_count", "omitted_count", "truncated", "truncation_reasons"}
-)
-EVIDENCE_USEFULNESS_DECISION_FIELDS = frozenset({"policy_version", "claim_id", "included", "reasons"})
-EVIDENCE_USEFULNESS_POLICY_FIELDS = frozenset(
+EVIDENCE_PACKAGE_FIELDS = set({"wire_version", "records", "retained_count", "omitted_count", "truncated", "truncation_reasons"})
+EVIDENCE_USEFULNESS_DECISION_FIELDS = set({"policy_version", "claim_id", "included", "reasons"})
+EVIDENCE_USEFULNESS_POLICY_FIELDS = set(
     {
         "policy_version",
         "canonical_completeness_floor",
@@ -672,15 +668,13 @@ EVIDENCE_USEFULNESS_POLICY_FIELDS = frozenset(
         "supplied_trust_floor_available",
     }
 )
-VISIBILITY_AUTHORIZATION_FIELDS = frozenset({"allowed", "scope", "ownership", "authority_id", "policy_version", "reason_code"})
-VISIBILITY_GRANT_FIELDS = frozenset({"scope", "ownership"})
-CLAIM_ELIGIBILITY_DECISION_FIELDS = frozenset(
-    {"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"}
-)
+VISIBILITY_AUTHORIZATION_FIELDS = set({"allowed", "scope", "ownership", "authority_id", "policy_version", "reason_code"})
+VISIBILITY_GRANT_FIELDS = set({"scope", "ownership"})
+CLAIM_ELIGIBILITY_DECISION_FIELDS = set({"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"})
 EVIDENCE_REFERENCE_SCHEMA_VERSION = 1
-EVIDENCE_REFERENCE_FIELDS = frozenset({"schema_version", "evidence_id", "resolver", "kind", "scope", "provenance", "diagnostics"})
+EVIDENCE_REFERENCE_FIELDS = set({"schema_version", "evidence_id", "resolver", "kind", "scope", "provenance", "diagnostics"})
 CANDIDATE_SCHEMA_VERSION = 1
-CANDIDATE_FIELDS = frozenset(
+CANDIDATE_FIELDS = set(
     {
         "schema_version",
         "candidate_id",
@@ -697,12 +691,12 @@ CANDIDATE_FIELDS = frozenset(
 )
 MAX_CANDIDATE_ID_BYTES = 256
 ACCOUNTING_OBSERVATION_SCHEMA_VERSION = 1
-ACCOUNTING_OBSERVATION_FIELDS = frozenset({"schema_version", "statement_id", "keywords"})
+ACCOUNTING_OBSERVATION_FIELDS = set({"schema_version", "statement_id", "keywords"})
 MAX_ACCOUNTING_KEYWORDS = 256
 MAX_ACCOUNTING_KEYWORD_BYTES = 256
 RESOLVER_RESULT_SCHEMA_VERSION = 1
 RESOLUTION_RESULT_SCHEMA_VERSION = 1
-RESOLVER_RESULT_FIELDS = frozenset(
+RESOLVER_RESULT_FIELDS = set(
     {
         "schema_version",
         "resolver",
@@ -716,7 +710,7 @@ RESOLVER_RESULT_FIELDS = frozenset(
         "consumption",
     }
 )
-RESOLUTION_RESULT_FIELDS = frozenset(
+RESOLUTION_RESULT_FIELDS = set(
     {
         "schema_version",
         "outcome",
@@ -746,6 +740,39 @@ LEXICAL_RESOLVER_NAME = "lexical"
 LEXICAL_RESOLVER_COST_CLASS = CostClass.CHEAP
 SPARSE_RESOLVER_NAME = "sparse"
 SPARSE_RESOLVER_COST_CLASS = CostClass.CHEAP
+UTILITY_RESOLVER_NAME = "utility"
+UTILITY_RESOLVER_COST_CLASS = CostClass.CHEAP
+UTILITY_CONTRACT_VERSION = "utility-plugin-v1"
+UTILITY_RESOLVER_VERSION = "utility-resolver-v1"
+UTILITY_PLUGIN_NAMES = (
+    "arithmetic_v1",
+    "boolean_v1",
+    "set_v1",
+    "date_time_v1",
+    "unit_conversion_v1",
+    "version_v1",
+    "identifier_v1",
+)
+UTILITY_MAX_INPUT_BYTES = 4_096
+UTILITY_MAX_OUTPUT_BYTES = 2_048
+UTILITY_MAX_TOKENS = 128
+UTILITY_MAX_OPERATIONS = 32
+UTILITY_MAX_NESTING = 16
+UTILITY_MAX_NUMERIC_DIGITS = 128
+UTILITY_MAX_ABSOLUTE_EXPONENT = 100
+UTILITY_MAX_POWER = 12
+UTILITY_MAX_COLLECTION_ITEMS = 64
+UTILITY_MAX_COLLECTION_ITEM_BYTES = 64
+UTILITY_NUMERIC_PRECISION_DIGITS = 34
+UTILITY_UNIT_PRECISION_DIGITS = 16
+STANDALONE_SEMANTIC_RESOLVER_NAME = "standalone_semantic"
+STANDALONE_SEMANTIC_RESOLVER_COST_CLASS = CostClass.EXPENSIVE
+APPROVED_SEMANTIC_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+APPROVED_SEMANTIC_MODEL_VERSION = "826711e54e001c83835913827a843d8dd0a1def9"
+APPROVED_SEMANTIC_LICENSE_ID = "apache-2.0"
+APPROVED_SEMANTIC_ARTIFACT_SHA256 = "ff12d37a18ee862cd4a5b8476466bc84f06d0801da9b749023eed74251cefcb8"
+APPROVED_SEMANTIC_BACKEND = "native"
+APPROVED_SEMANTIC_DIMENSION = 384
 STRUCTURED_GRAPH_RESOLVER_NAME = "structured_graph"
 STRUCTURED_GRAPH_RESOLVER_COST_CLASS = CostClass.STANDARD
 SUPPORT_SEMANTIC_RESOLVER_NAME = "support_semantic"
@@ -775,7 +802,7 @@ CANDIDATE_ELIGIBILITY_SCHEMA_VERSION = 1
 FUSION_CONTRIBUTION_SCHEMA_VERSION = 1
 FUSED_CANDIDATE_SCHEMA_VERSION = 1
 FUSION_DECISION_SCHEMA_VERSION = 1
-FEATURE_DEFINITION_FIELDS = frozenset(
+FEATURE_DEFINITION_FIELDS = set(
     {
         "feature",
         "minimum",
@@ -791,8 +818,8 @@ FEATURE_DEFINITION_FIELDS = frozenset(
         "role",
     }
 )
-NORMALIZED_FEATURE_SET_FIELDS = frozenset({"schema_version", "values", "available"})
-FUSION_POLICY_FIELDS = frozenset(
+NORMALIZED_FEATURE_SET_FIELDS = set({"schema_version", "values", "available"})
+FUSION_POLICY_FIELDS = set(
     {
         "schema_version",
         "policy_version",
@@ -806,7 +833,7 @@ FUSION_POLICY_FIELDS = frozenset(
         "max_report_candidates",
     }
 )
-CANDIDATE_ELIGIBILITY_FIELDS = frozenset(
+CANDIDATE_ELIGIBILITY_FIELDS = set(
     {
         "schema_version",
         "score_eligible",
@@ -817,11 +844,11 @@ CANDIDATE_ELIGIBILITY_FIELDS = frozenset(
         "feature_available",
     }
 )
-FUSION_CONTRIBUTION_FIELDS = frozenset({"schema_version", "candidate", "normalized", "eligibility"})
-FUSED_CANDIDATE_FIELDS = frozenset(
+FUSION_CONTRIBUTION_FIELDS = set({"schema_version", "candidate", "normalized", "eligibility"})
+FUSED_CANDIDATE_FIELDS = set(
     {"schema_version", "candidate", "contributions", "normalized", "score", "score_contributions", "eligibility"}
 )
-FUSION_DECISION_FIELDS = frozenset(
+FUSION_DECISION_FIELDS = set(
     {
         "schema_version",
         "outcome",
@@ -852,7 +879,7 @@ MAX_FUSION_REPORT_CONTRIBUTIONS = 8
 MAX_FUSION_REPORT_BYTES = 16_384
 MAX_FUSION_REASON_CODES = 64
 FEEDBACK_POLICY_SCHEMA_VERSION = 1
-FEEDBACK_POLICY_FIELDS = frozenset(
+FEEDBACK_POLICY_FIELDS = set(
     {
         "schema_version",
         "policy_version",
@@ -883,11 +910,11 @@ MAX_FEEDBACK_POLICY_RECORDS = 1_000_000
 FEEDBACK_STATISTICS_SCHEMA_VERSION = 1
 FEEDBACK_KEY_SCHEMA_VERSION = 1
 FEEDBACK_OBSERVATION_SCHEMA_VERSION = 1
-STATEMENT_FEEDBACK_KEY_FIELDS = frozenset(
+STATEMENT_FEEDBACK_KEY_FIELDS = set(
     {"schema_version", "statement_id", "generation", "generation_available", "policy_fingerprint", "contract_fingerprint"}
 )
-RELATIONSHIP_FEEDBACK_KEY_FIELDS = frozenset({"schema_version", "query_identity", "scope", "constraint_fingerprint", "statement"})
-FEEDBACK_OBSERVATION_FIELDS = frozenset(
+RELATIONSHIP_FEEDBACK_KEY_FIELDS = set({"schema_version", "query_identity", "scope", "constraint_fingerprint", "statement"})
+FEEDBACK_OBSERVATION_FIELDS = set(
     {
         "schema_version",
         "reference_kind",
@@ -908,7 +935,7 @@ FEEDBACK_OBSERVATION_FIELDS = frozenset(
 )
 FEEDBACK_BUCKET_SCHEMA_VERSION = 1
 FEEDBACK_RECORD_SCHEMA_VERSION = 1
-FEEDBACK_STATISTICS_FIELDS = frozenset(
+FEEDBACK_STATISTICS_FIELDS = set(
     {
         "schema_version",
         "candidate_count",
@@ -919,12 +946,12 @@ FEEDBACK_STATISTICS_FIELDS = frozenset(
         "rejected_policy",
     }
 )
-FEEDBACK_BUCKET_FIELDS = frozenset({"schema_version", "start_at", "statistics"})
-FEEDBACK_RECORD_FIELDS = frozenset({"schema_version", "key", "raw", "buckets", "last_outcome", "last_observed_at"})
+FEEDBACK_BUCKET_FIELDS = set({"schema_version", "start_at", "statistics"})
+FEEDBACK_RECORD_FIELDS = set({"schema_version", "key", "raw", "buckets", "last_outcome", "last_observed_at"})
 FEEDBACK_HISTORY_SCHEMA_VERSION = 1
-POLICY_SUPPRESSION_FIELDS = frozenset({"statement_id", "namespace", "policy_fingerprint", "observed_at"})
-STALE_EXCLUSION_FIELDS = frozenset({"statement_id", "generation", "generation_available", "observed_at"})
-FEEDBACK_HISTORY_FIELDS = frozenset(
+POLICY_SUPPRESSION_FIELDS = set({"statement_id", "namespace", "policy_fingerprint", "observed_at"})
+STALE_EXCLUSION_FIELDS = set({"statement_id", "generation", "generation_available", "observed_at"})
+FEEDBACK_HISTORY_FIELDS = set(
     {
         "schema_version",
         "value",
@@ -940,7 +967,7 @@ FEEDBACK_HISTORY_FIELDS = frozenset(
     }
 )
 FEEDBACK_STATE_SCHEMA_VERSION = 1
-FEEDBACK_STATE_FIELDS = frozenset(
+FEEDBACK_STATE_FIELDS = set(
     {
         "schema_version",
         "policy",
@@ -957,7 +984,7 @@ FEEDBACK_STATE_FIELDS = frozenset(
 )
 NEGATIVE_RESOLUTION_SCHEMA_VERSION = 1
 NEGATIVE_KEY_SCHEMA_VERSION = 1
-NEGATIVE_RESOLUTION_KEY_FIELDS = frozenset(
+NEGATIVE_RESOLUTION_KEY_FIELDS = set(
     {
         "schema_version",
         "query_identity",
@@ -971,8 +998,8 @@ NEGATIVE_RESOLUTION_KEY_FIELDS = frozenset(
         "policy_fingerprint",
     }
 )
-NEGATIVE_RESOLUTION_FIELDS = frozenset({"schema_version", "key", "reason", "created_at", "expires_at", "hit_count"})
-NEGATIVE_LOOKUP_FIELDS = frozenset({"hit", "record"})
+NEGATIVE_RESOLUTION_FIELDS = set({"schema_version", "key", "reason", "created_at", "expires_at", "hit_count"})
+NEGATIVE_LOOKUP_FIELDS = set({"hit", "record"})
 EMPTY_FINGERPRINT = "0" * 64
 EMPTY_NEGATIVE_CREATED_AT = "1970-01-01T00:00:00Z"
 EMPTY_NEGATIVE_EXPIRES_AT = "1970-01-01T00:00:01Z"
@@ -993,10 +1020,10 @@ MAX_NEGATIVE_RECORDS = 10_000
 MAX_NEGATIVE_TTL_SECONDS = 86_400
 MAX_CONSTRAINT_JSON_BYTES = 65_536
 MAX_PLAN_RESOLVERS = 64
-RESOLUTION_PLAN_ENTRY_FIELDS = frozenset({"resolver", "order", "configured", "available", "reason_code"})
-RESOLUTION_PLAN_FIELDS = frozenset({"entries"})
-EXECUTION_REPORT_FIELDS = frozenset({"results", "consumption", "exact_short_circuited", "reservations"})
-ACCOUNTING_FINALIZATION_FIELDS = frozenset(
+RESOLUTION_PLAN_ENTRY_FIELDS = set({"resolver", "order", "configured", "available", "reason_code"})
+RESOLUTION_PLAN_FIELDS = set({"entries"})
+EXECUTION_REPORT_FIELDS = set({"results", "consumption", "exact_short_circuited", "reservations"})
+ACCOUNTING_FINALIZATION_FIELDS = set(
     {
         "candidate_statement_ids",
         "accepted_statement_id",
@@ -1021,7 +1048,7 @@ RESOLVER_BUDGET_FIELDS = set(
     }
 )
 RESOLVER_RESERVATION_SCHEMA_VERSION = 1
-RESOLVER_RESERVATION_FIELDS = frozenset({"schema_version", "resolver", "order", "lease", "consumption"})
+RESOLVER_RESERVATION_FIELDS = set({"schema_version", "resolver", "order", "lease", "consumption"})
 CLAIM_DISCLOSURE_POLICY_VERSION = "claim-disclosure-v1"
 CLAIM_EVIDENCE_USEFULNESS_POLICY_VERSION = "claim-evidence-usefulness-v1"
 CANONICAL_COMPLETENESS_FLOOR_V1 = 1.0
@@ -1050,7 +1077,7 @@ MAX_CLAIM_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
 MAX_CLAIM_PROJECTION_IDENTIFIER_BYTES = 256
 MAX_CLAIM_PROJECTION_TERM_BYTES = 4_096
 MAX_CLAIM_PROJECTION_TIMESTAMP_BYTES = 40
-CLAIM_PROJECTION_FIELDS = frozenset(
+CLAIM_PROJECTION_FIELDS = set(
     {
         "claim_id",
         "subject_entity_id",
@@ -1080,7 +1107,7 @@ CLAIM_PROJECTION_FIELDS = frozenset(
         "semantic_similarity_available",
     }
 )
-CLAIM_PROJECTION_RECORD_FIELDS = CLAIM_PROJECTION_FIELDS | frozenset(
+CLAIM_PROJECTION_RECORD_FIELDS = CLAIM_PROJECTION_FIELDS | set(
     {
         "projection_id",
         "vector_index_id",
@@ -1203,16 +1230,16 @@ RELATION_ONE_HOP_CLAIM_PROJECTION_QUERY = (
     "ORDER BY c.id LIMIT $limit"
 )
 MAX_STRUCTURED_CLAIM_PROJECTION_TERMS = 3
-CLAIM_EVIDENCE_PRODUCERS = frozenset({"structured_graph", "support_semantic"})
+CLAIM_EVIDENCE_PRODUCERS = set({"structured_graph", "support_semantic"})
 MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
-COORDINATED_RESPONSE_STATE_FIELDS = frozenset(
+COORDINATED_RESPONSE_STATE_FIELDS = set(
     {
         "repository",
         "namespace_epochs",
         "mutation_receipts",
     }
 )
-COORDINATED_MUTATION_CANDIDATE_FIELDS = frozenset(
+COORDINATED_MUTATION_CANDIDATE_FIELDS = set(
     {
         "before",
         "after",
@@ -1220,7 +1247,7 @@ COORDINATED_MUTATION_CANDIDATE_FIELDS = frozenset(
         "affected_epoch_namespaces",
     }
 )
-MUTATION_EXECUTION_RESULT_FIELDS = frozenset(
+MUTATION_EXECUTION_RESULT_FIELDS = set(
     {
         "receipt",
         "checkpoint_count",
@@ -1233,21 +1260,21 @@ RESPONSE_STATE_SCHEMA_VERSION = 1
 LEGACY_PERSISTENCE_VERSION = 1
 MAX_QUARANTINE_DETAIL_BYTES = 512
 MAX_QUARANTINE_RECORDS = 100_000
-RESPONSE_QUARANTINE_RECORD_FIELDS = frozenset(
+RESPONSE_QUARANTINE_RECORD_FIELDS = set(
     {
         "statement_id",
         "reason",
         "detail",
     }
 )
-TIER_ADMISSION_POLICY_FIELDS = frozenset(
+TIER_ADMISSION_POLICY_FIELDS = set(
     {
         "dynamic_capacity",
         "eviction_policy",
         "minimum_protected_hit_rate",
     }
 )
-ADMISSION_PLAN_FIELDS = frozenset(
+ADMISSION_PLAN_FIELDS = set(
     {
         "outcome",
         "candidate",
@@ -1258,7 +1285,7 @@ ADMISSION_PLAN_FIELDS = frozenset(
         "lifecycle_changed",
     }
 )
-REPOSITORY_CHECK_REPORT_FIELDS = frozenset(
+REPOSITORY_CHECK_REPORT_FIELDS = set(
     {
         "consistent",
         "state_generation",
@@ -1267,7 +1294,7 @@ REPOSITORY_CHECK_REPORT_FIELDS = frozenset(
         "omitted_issue_count",
     }
 )
-REPOSITORY_STATE_FIELDS = frozenset(
+REPOSITORY_STATE_FIELDS = set(
     {
         "state_generation",
         "artifacts",
@@ -1292,14 +1319,14 @@ MAX_RESULT_STRING_BYTES = 16_384
 MAX_AFFECTED_GENERATIONS = 1_024
 MAX_RECEIPTS = 100_000
 MAX_TOMBSTONES = 100_000
-ARTIFACT_GENERATION_CHANGE_FIELDS = frozenset(
+ARTIFACT_GENERATION_CHANGE_FIELDS = set(
     {
         "statement_id",
         "before_generation",
         "after_generation",
     }
 )
-RECEIPT_TOMBSTONE_FIELDS = frozenset(
+RECEIPT_TOMBSTONE_FIELDS = set(
     {
         "sequence",
         "request_id",
@@ -1307,7 +1334,7 @@ RECEIPT_TOMBSTONE_FIELDS = frozenset(
         "payload_signature",
     }
 )
-MUTATION_RECEIPT_FIELDS = frozenset(
+MUTATION_RECEIPT_FIELDS = set(
     {
         "schema_version",
         "sequence",
@@ -1321,7 +1348,7 @@ MUTATION_RECEIPT_FIELDS = frozenset(
         "created_at",
     }
 )
-RECEIPT_LOOKUP_FIELDS = frozenset(
+RECEIPT_LOOKUP_FIELDS = set(
     {
         "outcome",
         "request_id",
@@ -1964,7 +1991,7 @@ FUSION_SOURCE_FAMILY = MappingProxyType(
         CandidateSource.UTILITY: "utility",
     }
 )
-FUSION_CONSERVATIVE_MINIMUM = frozenset(
+FUSION_CONSERVATIVE_MINIMUM = set(
     {
         FusionFeature.ENTITY,
         FusionFeature.RELATION,
@@ -1993,13 +2020,13 @@ FUSION_FEATURE_DEFINITION_SPECS: Mapping[FusionFeature, FusionFeatureDefinitionS
             0.0,
             1.0,
             True,
-            "scoped normalized request equality",
-            "exact resolver did not measure equality",
-            "ExactResolver.exact_match",
-            "§§3-5",
-            "exact source plus current authoritative artifact revalidation",
-            "exact_match in [0, 1] from the exact source only",
-            "maximum compatible exact observation",
+            "scoped request equality or revalidated deterministic utility execution",
+            "neither exact retrieval nor an allow-listed utility measured a deterministic match",
+            "ExactResolver.exact_match or UtilityResolver.utility_match",
+            "§§3-5, 14",
+            "authoritative artifact revalidation or repeat execution of the named built-in utility",
+            "exact_match or utility_match in [0, 1] from its dedicated source only",
+            "maximum compatible deterministic observation",
             FusionFeatureRole.SCORING_AND_GATE,
         ),
         FusionFeature.PATTERN: (
@@ -2271,7 +2298,7 @@ LEGAL_LIFECYCLE_TRANSITIONS = MappingProxyType(
         LifecycleState.RETIRED: EMPTY_MAPPING,
     }
 )
-TERMINAL_LIFECYCLE_STATES = frozenset(
+TERMINAL_LIFECYCLE_STATES = set(
     {
         LifecycleState.SUPERSEDED,
         LifecycleState.INVALIDATED,
@@ -2802,10 +2829,10 @@ IDENTITY_PUNCTUATION_TRANSLATION = str.maketrans(
 IDENTITY_CONTRACTION_RE = re.compile(
     r"(?<!\w)(?:" + "|".join(re.escape(key) for key in sorted(DEFAULT_CONTRACTIONS, key=len, reverse=True)) + r")(?!\w)"
 )
-IDENTITY_TECHNICAL_PUNCTUATION = frozenset("._:/\\-+#@'<>=%|&*$")
-IDENTITY_ALLOWED_RAW_WHITESPACE = frozenset("\t\n\r")
-IDENTITY_OPERATOR_TOKENS = frozenset({"who", "what", "where", "when", "which", "why", "how", "many"})
-IDENTITY_AUXILIARIES = frozenset(
+IDENTITY_TECHNICAL_PUNCTUATION = set("._:/\\-+#@'<>=%|&*$")
+IDENTITY_ALLOWED_RAW_WHITESPACE = set("\t\n\r")
+IDENTITY_OPERATOR_TOKENS = set({"who", "what", "where", "when", "which", "why", "how", "many"})
+IDENTITY_AUXILIARIES = set(
     {
         "am",
         "is",
@@ -2832,9 +2859,9 @@ IDENTITY_AUXILIARIES = frozenset(
     }
 )
 IDENTITY_DIRECT_LOOKUP_LEADS = ("find ", "lookup ", "look up ", "tell me about ", "show me ")
-IDENTITY_NEGATION_TERMS = frozenset({"not", "no", "never", "without", "neither", "nor"})
-IDENTITY_CURRENT_TERMS = frozenset({"current", "currently", "latest", "now", "today", "present"})
-IDENTITY_HISTORICAL_TERMS = frozenset({"historical", "historically", "previous", "previously", "former", "formerly", "past"})
+IDENTITY_NEGATION_TERMS = set({"not", "no", "never", "without", "neither", "nor"})
+IDENTITY_CURRENT_TERMS = set({"current", "currently", "latest", "now", "today", "present"})
+IDENTITY_HISTORICAL_TERMS = set({"historical", "historically", "previous", "previously", "former", "formerly", "past"})
 IDENTITY_COMPARISON_PHRASES = (
     "compare",
     "compared with",
@@ -2849,8 +2876,8 @@ IDENTITY_COMPARISON_PHRASES = (
     "newest",
 )
 IDENTITY_COMPARISON_OPERATOR_RE = re.compile(r"(?<![<>=!])(?:<=|>=|==|!=|<|>)(?![<>=])")
-IDENTITY_LOCATION_TERMS = frozenset({"near", "nearby", "within", "inside", "outside"})
-IDENTITY_RELATION_HINTS = frozenset(
+IDENTITY_LOCATION_TERMS = set({"near", "nearby", "within", "inside", "outside"})
+IDENTITY_RELATION_HINTS = set(
     {
         "acquire",
         "acquired",
@@ -2871,7 +2898,7 @@ IDENTITY_RELATION_HINTS = frozenset(
         "wrote",
     }
 )
-IDENTITY_ENTITY_EXCLUDED_WORDS = frozenset(
+IDENTITY_ENTITY_EXCLUDED_WORDS = set(
     {
         *IDENTITY_OPERATOR_TOKENS,
         *IDENTITY_AUXILIARIES,
@@ -2959,7 +2986,7 @@ DIALOGUE_TRANSIENT_RE = re.compile(
     r"this afternoon|this evening|this week|this month|this year)\b",
     re.IGNORECASE,
 )
-DIALOGUE_META_FACT_WORDS = frozenset(
+DIALOGUE_META_FACT_WORDS = set(
     {
         "answer",
         "chat",
@@ -2986,9 +3013,9 @@ DIALOGUE_META_FACT_WORDS = frozenset(
         "turn",
     }
 )
-DIALOGUE_VAGUE_FACT_SUBJECTS = frozenset({"anything", "everything", "nothing", "something", "stuff", "thing", "things"})
-DIALOGUE_TOPIC_TRAILERS = frozenset({"again", "broadly", "instead", "next", "now", "please", "specifically"})
-DIALOGUE_TOPIC_LEADING_MODIFIERS = frozenset(
+DIALOGUE_VAGUE_FACT_SUBJECTS = set({"anything", "everything", "nothing", "something", "stuff", "thing", "things"})
+DIALOGUE_TOPIC_TRAILERS = set({"again", "broadly", "instead", "next", "now", "please", "specifically"})
+DIALOGUE_TOPIC_LEADING_MODIFIERS = set(
     {
         "actually",
         "apparently",
@@ -3016,7 +3043,7 @@ DIALOGUE_TOPIC_LEADING_MODIFIERS = frozenset(
         "yes",
     }
 )
-DIALOGUE_GRAMMATICAL_TOPIC_WORDS = frozenset(
+DIALOGUE_GRAMMATICAL_TOPIC_WORDS = set(
     {
         "am",
         "are",
@@ -3068,10 +3095,10 @@ DIALOGUE_GRAMMATICAL_TOPIC_WORDS = frozenset(
     }
 )
 DIALOGUE_INVALID_TOPIC_WORDS = DIALOGUE_META_FACT_WORDS | DIALOGUE_VAGUE_FACT_SUBJECTS | DIALOGUE_GRAMMATICAL_TOPIC_WORDS
-DIALOGUE_AMBIGUOUS_CAPITALIZED_LEADS = frozenset(
+DIALOGUE_AMBIGUOUS_CAPITALIZED_LEADS = set(
     {"after", "allow", "because", "before", "for", "here", "if", "in", "one", "there", "to", "which", "with"}
 )
-DIALOGUE_ENTITY_LEADS = frozenset(
+DIALOGUE_ENTITY_LEADS = set(
     {
         "a",
         "an",
@@ -3102,11 +3129,11 @@ DIALOGUE_ENTITY_LEADS = frozenset(
     | DIALOGUE_TOPIC_LEADING_MODIFIERS
     | DIALOGUE_AMBIGUOUS_CAPITALIZED_LEADS
 )
-DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS = frozenset({"actually", "no", "okay", "right", "well", "yes"})
-DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS = frozenset({"generally", "occasionally", "often", "sometimes", "typically", "usually"})
-DIALOGUE_PERSONAL_FACT_OBJECT_WORDS = frozenset({"i", "me", "mine", "my", "our", "ours", "us", "we", "you", "your", "yours"})
+DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS = set({"actually", "no", "okay", "right", "well", "yes"})
+DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS = set({"generally", "occasionally", "often", "sometimes", "typically", "usually"})
+DIALOGUE_PERSONAL_FACT_OBJECT_WORDS = set({"i", "me", "mine", "my", "our", "ours", "us", "we", "you", "your", "yours"})
 DIALOGUE_ENTITY_LABEL_PRIORITY = MappingProxyType({"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3})
-DIALOGUE_BROAD_PATTERNS = frozenset({"THAT *", "THAT IS *", "THE *"})
+DIALOGUE_BROAD_PATTERNS = set({"THAT *", "THAT IS *", "THE *"})
 LIFECYCLE_EXCLUSION_REASONS = MappingProxyType(
     {
         LifecycleDecisionReason.SUPERSEDED: EligibilityExclusionReason.LIFECYCLE_SUPERSEDED,

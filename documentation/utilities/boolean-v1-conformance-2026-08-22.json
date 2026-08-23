@@ -1,0 +1,256 @@
+{
+  "contract": {
+    "accepted_frame_types": [
+      "direct_request"
+    ],
+    "bounds": {
+      "max_input_bytes": 4096,
+      "max_nesting": 16,
+      "max_operations": 32,
+      "max_output_bytes": 2048,
+      "max_tokens": 128,
+      "numeric_precision_digits": 34
+    },
+    "contract_version": "utility-plugin-v1",
+    "deterministic_result": "lowercase true or false",
+    "errors": [
+      "boolean_syntax",
+      "operation_limit"
+    ],
+    "evidence": "candidate provenance only; no Claim or learned-response evidence",
+    "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
+    "input_schema": "boolean followed by true|false, not, and, xor, or, and parentheses",
+    "name": "boolean_v1",
+    "version": "1.0.0"
+  },
+  "fuzz": {
+    "case_count": 500,
+    "oversized_output_count": 0,
+    "p95_latency_ms": 0.0385,
+    "passed": true,
+    "statuses": {
+      "rejected": 500
+    },
+    "unexpected_failure_count": 0
+  },
+  "gate": {
+    "checks": {
+      "conformance_accuracy": true,
+      "determinism": true,
+      "fuzz_safety": true,
+      "held_out_accuracy": true,
+      "latency": true,
+      "property_checks": true,
+      "resource_rejection": true,
+      "threat_payload_not_executed": true
+    },
+    "default_enabled": false,
+    "passed": true,
+    "promoted_for_opt_in_component_use": true,
+    "thresholds": {
+      "accuracy_min": 1.0,
+      "determinism_min": 1.0,
+      "fuzz_failure_rate_max": 0.0,
+      "p95_latency_ms_max": 250.0,
+      "resource_rejection_rate_min": 1.0
+    },
+    "values": {
+      "conformance_accuracy": 1.0,
+      "determinism_rate": 1.0,
+      "fuzz_failure_rate": 0.0,
+      "held_out_accuracy": 1.0,
+      "p95_latency_ms": 0.5753,
+      "resource_rejection_rate": 1.0
+    }
+  },
+  "generated_at": "2026-08-22T10:05:49.281963+00:00",
+  "partitions": {
+    "conformance": {
+      "accuracy": 1.0,
+      "case_count": 4,
+      "passed_count": 4,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "c87178ac27e64e788df5972ee9fde39621c54985fcbc7fcdef9f9028631973f7",
+          "latency_ms": 0.5753,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "true"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "b3398634d11642346c5f89fdb227631ba208078a89511ae9ad83bf86c4ee91b9",
+          "latency_ms": 0.0339,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "false"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "c86ebf8831633741e8b600e9a36441c89edf7ec3beb30ca47593d1d2fdf6a7ec",
+          "latency_ms": 0.0344,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "true"
+        },
+        {
+          "deterministic": true,
+          "error_code": "boolean_syntax",
+          "expected_status": "rejected",
+          "input_sha256": "e9f16fba0fa663802565e6c560efde7550cfe433f747100bc30b6d2d788e4622",
+          "latency_ms": 0.023,
+          "observed_status": "rejected",
+          "passed": true,
+          "response": ""
+        }
+      ]
+    },
+    "held_out": {
+      "accuracy": 1.0,
+      "case_count": 2,
+      "passed_count": 2,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "3997afd86d6e7d835f01a68e9fa0ad88d088d76c4781e5739e86becd23b9ffeb",
+          "latency_ms": 0.0353,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "true"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "c7e6f44f3a07dcfab22a0cb3f636d414f6361c46de60c9d1b8e0d2e88371c9b1",
+          "latency_ms": 0.0201,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "false"
+        }
+      ]
+    }
+  },
+  "plugin_name": "boolean_v1",
+  "properties": {
+    "double_negation": true
+  },
+  "resource_limit": {
+    "expected_error": "operation_limit",
+    "observed_error": "operation_limit",
+    "observed_status": "rejected",
+    "passed": true
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "f052720f32db25e8670afb0591962fbb5fe0654a",
+    "branch": "graph",
+    "changed_paths": [
+      ".gitignore",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/code-style-migration.md",
+      "documentation/code-style.md",
+      "documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/semantic/",
+      "documentation/utilities/",
+      "engram/artifacts.py",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/conversation.py",
+      "engram/coordination.py",
+      "engram/core.py",
+      "engram/dialogue.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/eviction.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mcp_server.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/nlp.py",
+      "engram/nltk_data.py",
+      "engram/pattern.py",
+      "engram/persistence.py",
+      "engram/phrasing.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/reranking.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/responses.py",
+      "engram/rewrite.py",
+      "engram/scoring.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sessions.py",
+      "engram/spacy_setup.py",
+      "engram/sparse.py",
+      "engram/substitutions.py",
+      "engram/template.py",
+      "engram/temporal.py",
+      "engram/utilities.py",
+      "eval/run_conversation.py",
+      "eval/section13-semantic-v1.json",
+      "eval/section14-utilities-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_semantic.py",
+      "scripts/benchmark_utilities.py",
+      "scripts/cli.py",
+      "scripts/provision_semantic_model.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "scripts/setup_schema.py",
+      "tests/test_cli.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_persistence_v2.py",
+      "tests/test_phrasing.py",
+      "tests/test_pipeline.py",
+      "tests/test_reranking.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_semantic.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_template.py",
+      "tests/test_utilities.py"
+    ],
+    "governed_source_sha256": "f18bd0e7c8a7bac7bf3d23f8711e44b46f44cd36ccb08d6cb6ce8ed7966c4b25",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "threat_probe": {
+    "error_code": "boolean_syntax",
+    "passed": true,
+    "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status": "rejected"
+  }
+}

@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType, NoneType
-from typing import TypedDict, cast
+from typing import cast
 
 from engram.constants import (
     DEFAULT_NEGATIVE_MAX_RECORDS,
@@ -139,10 +139,10 @@ def _boolean(value: object, name: str) -> bool:
     return value
 
 
-def _exact_mapping(value: object, name: str, fields: frozenset[str]) -> Mapping[str, object]:
+def _exact_mapping(value: object, name: str, fields: set[str]) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
-    actual = frozenset(value)
+    actual = set(value)
     if actual != fields:
         raise InvalidRequestError(f"{name} has invalid fields: missing={sorted(fields - actual)}, extra={sorted(actual - fields)}")
     return value
@@ -293,21 +293,7 @@ def constraint_fingerprint(
     return result
 
 
-FeedbackPolicy = TypedDict(
-    "FeedbackPolicy",
-    {
-        "policy_version": str,
-        "minimum_verdict_samples": int,
-        "prior_accept": float,
-        "prior_reject": float,
-        "half_life_seconds": int,
-        "bucket_seconds": int,
-        "max_buckets_per_record": int,
-        "max_statement_records": int,
-        "max_relationship_records": int,
-        "schema_version": int,
-    },
-)
+FeedbackPolicy = dict
 
 
 def feedback_policy(
@@ -373,7 +359,7 @@ def validate_feedback_policy(value: object) -> FeedbackPolicy:
 
 def feedback_policy_with_changes(value: object, changes: object) -> FeedbackPolicy:
     current = validate_feedback_policy(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(FEEDBACK_POLICY_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(FEEDBACK_POLICY_FIELDS):
         raise InvalidRequestError("feedback policy changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -432,17 +418,7 @@ def feedback_policy_fingerprint(policy: object = {}) -> str:
     return result
 
 
-StatementFeedbackKey = TypedDict(
-    "StatementFeedbackKey",
-    {
-        "statement_id": str,
-        "generation": int,
-        "generation_available": bool,
-        "policy_fingerprint": str,
-        "contract_fingerprint": str,
-        "schema_version": int,
-    },
-)
+StatementFeedbackKey = dict
 
 
 def statement_feedback_key(
@@ -540,16 +516,7 @@ def statement_feedback_key_from_json(value: str) -> StatementFeedbackKey:
     return result
 
 
-RelationshipFeedbackKey = TypedDict(
-    "RelationshipFeedbackKey",
-    {
-        "query_identity": QueryIdentity,
-        "scope": ScopeKey,
-        "constraint_fingerprint": str,
-        "statement": StatementFeedbackKey,
-        "schema_version": int,
-    },
-)
+RelationshipFeedbackKey = dict
 
 
 def relationship_feedback_key(
@@ -682,26 +649,7 @@ def relationship_feedback_key_from_json(value: str) -> RelationshipFeedbackKey:
     return result
 
 
-FeedbackObservation = TypedDict(
-    "FeedbackObservation",
-    {
-        "reference_kind": FeedbackReferenceKind,
-        "reference_id": str,
-        "kind": FeedbackObservationKind,
-        "outcome": FeedbackOutcome,
-        "query_identity": QueryIdentity,
-        "scope": ScopeKey,
-        "constraint_fingerprint": str,
-        "statement_id": str,
-        "generation": int,
-        "generation_available": bool,
-        "policy_fingerprint": str,
-        "observed_at": str,
-        "reason": str,
-        "contract_fingerprint": str,
-        "schema_version": int,
-    },
-)
+FeedbackObservation = dict
 
 
 def feedback_observation(
@@ -835,7 +783,7 @@ def validate_feedback_observation(value: object) -> FeedbackObservation:
 
 def feedback_observation_with_changes(value: object, changes: object) -> FeedbackObservation:
     current = validate_feedback_observation(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(FEEDBACK_OBSERVATION_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(FEEDBACK_OBSERVATION_FIELDS):
         raise InvalidRequestError("feedback observation changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -954,18 +902,7 @@ def feedback_observation_from_json(value: str) -> FeedbackObservation:
     return result
 
 
-FeedbackStatistics = TypedDict(
-    "FeedbackStatistics",
-    {
-        "candidate_count": int,
-        "accept_count": int,
-        "rejected_quality": int,
-        "rejected_context": int,
-        "rejected_stale": int,
-        "rejected_policy": int,
-        "schema_version": int,
-    },
-)
+FeedbackStatistics = dict
 
 
 def feedback_statistics(
@@ -1089,10 +1026,7 @@ def feedback_statistics_from_json(value: str) -> FeedbackStatistics:
     return result
 
 
-FeedbackBucket = TypedDict(
-    "FeedbackBucket",
-    {"start_at": str, "statistics": FeedbackStatistics, "schema_version": int},
-)
+FeedbackBucket = dict
 
 
 def feedback_bucket(
@@ -1161,17 +1095,7 @@ def _apply_buckets(
     return result
 
 
-StatementFeedbackRecord = TypedDict(
-    "StatementFeedbackRecord",
-    {
-        "key": StatementFeedbackKey,
-        "raw": FeedbackStatistics,
-        "buckets": tuple[FeedbackBucket, ...],
-        "last_outcome": FeedbackOutcome,
-        "last_observed_at": str,
-        "schema_version": int,
-    },
-)
+StatementFeedbackRecord = dict
 
 
 def statement_feedback_record(
@@ -1320,17 +1244,7 @@ def statement_feedback_record_from_dict(value: object) -> StatementFeedbackRecor
     return result
 
 
-RelationshipFeedbackRecord = TypedDict(
-    "RelationshipFeedbackRecord",
-    {
-        "key": RelationshipFeedbackKey,
-        "raw": FeedbackStatistics,
-        "buckets": tuple[FeedbackBucket, ...],
-        "last_outcome": FeedbackOutcome,
-        "last_observed_at": str,
-        "schema_version": int,
-    },
-)
+RelationshipFeedbackRecord = dict
 
 
 def relationship_feedback_record(
@@ -1485,10 +1399,7 @@ def relationship_feedback_record_from_dict(
     return result
 
 
-PolicySuppression = TypedDict(
-    "PolicySuppression",
-    {"statement_id": str, "namespace": str, "policy_fingerprint": str, "observed_at": str},
-)
+PolicySuppression = dict
 
 
 def policy_suppression(
@@ -1530,10 +1441,7 @@ def policy_suppression_from_dict(value: object) -> PolicySuppression:
     return result
 
 
-StaleExclusion = TypedDict(
-    "StaleExclusion",
-    {"statement_id": str, "generation": int, "generation_available": bool, "observed_at": str},
-)
+StaleExclusion = dict
 
 
 def stale_exclusion(statement_id: object, generation: object, generation_available: object, observed_at: object) -> StaleExclusion:
@@ -1577,22 +1485,7 @@ def stale_exclusion_from_dict(value: object) -> StaleExclusion:
     return result
 
 
-FeedbackHistory = TypedDict(
-    "FeedbackHistory",
-    {
-        "schema_version": int,
-        "value": float,
-        "available": bool,
-        "statement_value": float,
-        "statement_available": bool,
-        "relationship_value": float,
-        "relationship_available": bool,
-        "statement_samples": float,
-        "relationship_samples": float,
-        "policy_fingerprint": str,
-        "feedback_policy_fingerprint": str,
-    },
-)
+FeedbackHistory = dict
 
 
 def feedback_history(
@@ -1682,22 +1575,7 @@ def feedback_history_from_json(value: str) -> FeedbackHistory:
     return result
 
 
-FeedbackState = TypedDict(
-    "FeedbackState",
-    {
-        "policy": FeedbackPolicy,
-        "statement_records": tuple[StatementFeedbackRecord, ...],
-        "relationship_records": tuple[RelationshipFeedbackRecord, ...],
-        "policy_suppressions": tuple[PolicySuppression, ...],
-        "stale_exclusions": tuple[StaleExclusion, ...],
-        "receipts": dict[str, object],
-        "statement_evictions": int,
-        "relationship_evictions": int,
-        "policy_suppression_evictions": int,
-        "stale_exclusion_evictions": int,
-        "schema_version": int,
-    },
-)
+FeedbackState = dict
 
 
 def _freeze_feedback_value(value: object) -> object:
@@ -1987,10 +1865,7 @@ def feedback_state_from_json(value: str) -> FeedbackState:
     return result
 
 
-FeedbackMutationCandidate = TypedDict(
-    "FeedbackMutationCandidate",
-    {"before": FeedbackState, "after": FeedbackState, "receipt": MutationReceipt, "replayed": bool},
-)
+FeedbackMutationCandidate = dict
 
 
 class _PreparedFeedbackState(dict[str, object]):
@@ -2031,7 +1906,7 @@ def _trusted_feedback_mutation_candidate(
 
 
 def validate_feedback_mutation_candidate(value: object) -> FeedbackMutationCandidate:
-    data = _exact_mapping(value, "FeedbackMutationCandidate", frozenset({"before", "after", "receipt", "replayed"}))
+    data = _exact_mapping(value, "FeedbackMutationCandidate", set({"before", "after", "receipt", "replayed"}))
     result = feedback_mutation_candidate(data["before"], data["after"], data["receipt"], data["replayed"])
     return result
 
@@ -2560,21 +2435,7 @@ def feedback_store_from_dict(value: Mapping[str, object]) -> FeedbackStore:
     return result
 
 
-NegativeResolutionKey = TypedDict(
-    "NegativeResolutionKey",
-    {
-        "query_identity": QueryIdentity,
-        "scope": ScopeKey,
-        "constraint_fingerprint": str,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-        "normalization_version": int,
-        "resolver_plan_fingerprint": str,
-        "capability_readiness_fingerprint": str,
-        "policy_fingerprint": str,
-        "schema_version": int,
-    },
-)
+NegativeResolutionKey = dict
 
 
 def negative_resolution_key(
@@ -2646,7 +2507,7 @@ def validate_negative_resolution_key(value: object) -> NegativeResolutionKey:
 
 def negative_resolution_key_with_changes(value: object, changes: object) -> NegativeResolutionKey:
     current = validate_negative_resolution_key(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(NEGATIVE_RESOLUTION_KEY_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(NEGATIVE_RESOLUTION_KEY_FIELDS):
         raise InvalidRequestError("negative resolution key changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2721,17 +2582,7 @@ def negative_resolution_key_from_json(value: str) -> NegativeResolutionKey:
     return result
 
 
-NegativeResolution = TypedDict(
-    "NegativeResolution",
-    {
-        "key": NegativeResolutionKey,
-        "reason": NegativeResolutionReason,
-        "created_at": str,
-        "expires_at": str,
-        "hit_count": int,
-        "schema_version": int,
-    },
-)
+NegativeResolution = dict
 
 
 def negative_resolution(
@@ -2805,7 +2656,7 @@ def validate_negative_resolution(value: object) -> NegativeResolution:
 
 def negative_resolution_with_changes(value: object, changes: object) -> NegativeResolution:
     current = validate_negative_resolution(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(NEGATIVE_RESOLUTION_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(NEGATIVE_RESOLUTION_FIELDS):
         raise InvalidRequestError("negative resolution changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2857,7 +2708,7 @@ def negative_resolution_from_json(value: str) -> NegativeResolution:
     return result
 
 
-NegativeLookup = TypedDict("NegativeLookup", {"hit": bool, "record": NegativeResolution})
+NegativeLookup = dict
 
 
 def negative_lookup(hit: object, record: object = {}) -> NegativeLookup:

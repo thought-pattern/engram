@@ -5,7 +5,6 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import TypedDict
 
 from engram.constants import (
     COMPOSITION_CONTRACT_SCHEMA_VERSION,
@@ -30,41 +29,10 @@ from engram.graph import ClaimProjection, RelationClaimProjection, validate_rela
 from engram.relation import CanonicalResolution, canonical_resolution, validate_canonical_resolution
 from engram.resolution import validate_query_frame
 
-CompositionStep = TypedDict(
-    "CompositionStep",
-    {
-        "schema_version": int,
-        "branch": int,
-        "hop": int,
-        "subject_binding": str,
-        "subject_entity_id": str,
-        "predicate_id": str,
-        "predicate_label": str,
-        "object_binding": str,
-        "expected_object_type": ExpectedObjectType,
-        "max_candidates": int,
-    },
-)
+CompositionStep = dict
 
 
-CompositionPlan = TypedDict(
-    "CompositionPlan",
-    {
-        "schema_version": int,
-        "operator": GraphCompositionOperator,
-        "root_entity_id": str,
-        "root_label": str,
-        "steps": tuple[CompositionStep, ...],
-        "terminal_binding": str,
-        "aggregation_inputs": tuple[str, ...],
-        "descending": bool,
-        "max_hops": int,
-        "max_rows": int,
-        "max_branches": int,
-        "max_candidates_per_step": int,
-        "max_path_claims": int,
-    },
-)
+CompositionPlan = dict
 
 
 def _text(value: object, name: str, maximum: int = 256, *, allow_empty: bool = False) -> str:
@@ -611,45 +579,16 @@ def _typed_order_value(label: str, object_type: ExpectedObjectType) -> float:
     raise InvalidRequestError(CompositionReason.TYPE_UNAVAILABLE.value)
 
 
-CompositionPathEntry = TypedDict(
-    "CompositionPathEntry",
-    {
-        "step": CompositionStep,
-        "claim": RelationClaimProjection,
-        "decision": ClaimEligibilityDecision,
-    },
-)
+CompositionPathEntry = dict
 
 
 CompositionPath = tuple[CompositionPathEntry, ...]
 
 
-CompositionExecution = TypedDict(
-    "CompositionExecution",
-    {
-        "complete_paths": tuple[CompositionPath, ...],
-        "partial_paths": tuple[CompositionPath, ...],
-        "terminal_entity_ids": tuple[str, ...],
-        "terminal_labels": tuple[str, ...],
-        "terminal_types": tuple[ExpectedObjectType, ...],
-        "truth_value": bool,
-        "truth_available": bool,
-        "aggregate_value": str,
-        "aggregate_value_available": bool,
-        "direct_result": bool,
-        "truncated": bool,
-        "reasons": tuple[CompositionReason, ...],
-        "graph_rows": int,
-    },
-)
+CompositionExecution = dict
 
 
-class _TraversalState(TypedDict):
-    entity_id: str
-    entity_label: str
-    entity_type: ExpectedObjectType
-    entity_history: tuple[str, ...]
-    path: CompositionPath
+_TraversalState = dict
 
 
 def _path_key(path: CompositionPath) -> tuple[str, ...]:

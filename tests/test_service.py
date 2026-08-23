@@ -22,6 +22,25 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore, open_engram_core
 
 
+def test_resolution_reuses_the_plan_built_for_negative_lookup(monkeypatch) -> None:
+    core = EngramCore()
+    original = core._resolver_registry.plan
+    calls = 0
+
+    def plan(frame, configured_names=()):
+        nonlocal calls
+        calls += 1
+        return original(frame, configured_names)
+
+    monkeypatch.setattr(core._resolver_registry, "plan", plan)
+
+    result = core.resolve_request("unmatched request", "single-plan", configured_resolvers=("exact",))
+
+    assert result["outcome"].value == "MISS"
+    assert calls == 1
+    core.close(flush=False)
+
+
 def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     engine = Engram()
     entered = threading.Event()

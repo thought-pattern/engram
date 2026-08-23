@@ -173,10 +173,10 @@ The historical slice counts above record the migration sequence; they are not th
 | Logic-free returns | The repository-wide AST gate reports no return containing a call, expression, conditional, comprehension, container construction, or other computation; every return is bare or returns a name. |
 | Concrete absence | Production AST coverage for `engram`, `scripts`, and `eval` reports no `None` literal except `-> None` procedure annotations. Representative config, persistence, pipeline, fact, inspection, and report outputs recursively contain no `None` and serialize without JSON `null`. Explicit legacy persistence fixtures still prove documented historical `null` normalization. |
 | No union annotations | The repository-wide annotation gate reports no pipe union, `Optional`, or `Union` annotation in any governed module. |
-| Dictionaries instead of dataclasses | The repository contains no dataclass decorator and no class-syntax `TypedDict`. Record contracts use functional `TypedDict` declarations, validating factories, defensive validators, and explicit codecs. |
+| Dictionaries instead of record classes | The repository contains no dataclass decorator or `TypedDict` declaration. Record contracts use ordinary dictionaries, with runtime validation limited to trust boundaries, compatibility/resource invariants, and explicit codecs. |
 | Classes only for state | Every remaining class either writes or inherits persistent instance state or is an enum/exception type. There are no static/class methods and no stateless namespace classes; parsing, validation, policy, codec, transformation, and selection behavior is implemented as module-level functions. |
 
-`tests/test_code_style.py` makes those six architectural conclusions executable rather than relying on searches or the migration narrative. `tests/test_concrete_absence.py` independently covers production union and absence behavior, now including evaluation runners.
+The table records the completed migration conclusions. General style policy is enforced by Ruff, Black, and isort rather than duplicated in behavioral tests. The focused checks retained in `tests/test_source_contracts.py` cover the project-specific eager-import and concrete single-type annotation rules, while `tests/test_concrete_absence.py` covers runtime absence behavior.
 
 Final verification on the completed worktree:
 
@@ -194,3 +194,31 @@ Final verification on the completed worktree:
 - `git diff --check`: **passed**; the Windows line-ending notices are informational.
 
 The shared host's global `pip check` remains contaminated by a FastAPI/Starlette conflict outside Engram's dependency set. The isolated resolution above verifies the Engram pins without using that unrelated installation as evidence.
+
+## Ordinary dictionary alias migration — 22 August 2026
+
+All 124 production `TypedDict` declarations across 22 modules were replaced with
+ordinary `dict` aliases. The semantic alias names remain available to readers and
+callers, but they no longer impose a statically closed field schema. Existing runtime
+constructors, boundary validators, codecs, bounds, and compatibility checks were
+left unchanged; no additional validation factory was introduced as a substitute for
+`TypedDict`.
+
+Ruff now rejects future imports of `typing.TypedDict` and
+`typing_extensions.TypedDict`. Production also no longer uses `frozenset` merely
+to make constants or local collections harder to update; ordinary `set` values
+are used wherever hashability is not required. The source-contract test rejects
+both rigid dictionary typing and unnecessary frozen sets in production.
+
+The comprehensive follow-up removed repeated internal validation without weakening
+trust boundaries: resolver output is validated once on entry to the executor,
+plans are built once and reused, trusted internal serialization does not reconstruct
+validated records, and result trimming precomputes serialized sizes instead of
+revalidating and reserializing the whole result after each removal. External API,
+configuration, persistence, graph, and plugin-return boundaries remain validated.
+
+The completed follow-up passes all 1,566 tests, Pyright, Ruff lint and changed-surface
+Python formatting, isort, Vulture, `compileall`, `git diff --check`, and the configured
+Bandit gate. The host's Black 26.5.1 package did not complete even an import or
+`--version` probe, so it is explicitly not reported as passing; Ruff's configured
+Python formatter is the verified formatting result for this run.

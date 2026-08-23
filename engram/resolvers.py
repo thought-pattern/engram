@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypedDict, cast
+from typing import cast
 
 from engram.artifacts import CachedResponseArtifact, LifecycleState
 from engram.composition import (
@@ -42,10 +42,15 @@ from engram.constants import (
     RESOLVER_RESERVATION_SCHEMA_VERSION,
     SPARSE_RESOLVER_COST_CLASS,
     SPARSE_RESOLVER_NAME,
+    STANDALONE_SEMANTIC_RESOLVER_COST_CLASS,
+    STANDALONE_SEMANTIC_RESOLVER_NAME,
     STRUCTURED_GRAPH_RESOLVER_COST_CLASS,
     STRUCTURED_GRAPH_RESOLVER_NAME,
     SUPPORT_SEMANTIC_RESOLVER_COST_CLASS,
     SUPPORT_SEMANTIC_RESOLVER_NAME,
+    UTILITY_RESOLVER_COST_CLASS,
+    UTILITY_RESOLVER_NAME,
+    UTILITY_RESOLVER_VERSION,
     CanonicalResolutionStatus,
     CompositionReason,
     TemporalQueryOperator,
@@ -88,7 +93,12 @@ from engram.resolution import (
     ResolutionResult,
     ResolverResult,
     ResolverState,
+    _trusted_budget_consumption_with_changes,
+    _trusted_candidate_to_dict,
+    _trusted_candidate_with_changes,
+    _trusted_claim_evidence_record_to_dict,
     _trusted_evidence_package_to_json,
+    _trusted_evidence_reference_to_dict,
     _trusted_resolution_result,
     _trusted_resolution_result_to_json,
     _trusted_resolver_result_with_changes,
@@ -100,7 +110,6 @@ from engram.resolution import (
     build_evidence_package,
     candidate as resolution_candidate,
     candidate_to_dict,
-    candidate_with_changes,
     claim_evidence_path_step,
     claim_evidence_record_to_dict,
     claim_evidence_record_with_changes,
@@ -111,26 +120,13 @@ from engram.resolution import (
     feature_set,
     resolver_result,
     resolver_result_to_dict,
-    resolver_result_with_changes,
     validate_budget_consumption,
     validate_query_frame,
     validate_resolver_result,
 )
+from engram.utilities import UtilityRegistry
 
-ResolverBudget = TypedDict(
-    "ResolverBudget",
-    {
-        "schema_version": int,
-        "max_candidates": int,
-        "max_graph_rows": int,
-        "max_vector_results": int,
-        "max_evidence": int,
-        "max_evidence_bytes": int,
-        "max_output_bytes": int,
-        "max_diagnostic_bytes": int,
-        "max_working_memory_bytes": int,
-    },
-)
+ResolverBudget = dict
 
 
 def resolver_contract(value: object) -> tuple[str, CostClass, Callable[..., object], Callable[..., object]]:
@@ -257,16 +253,7 @@ def resolver_budget_from_json(value: str) -> ResolverBudget:
     return result
 
 
-ResolverReservation = TypedDict(
-    "ResolverReservation",
-    {
-        "schema_version": int,
-        "resolver": str,
-        "order": int,
-        "lease": ResolverBudget,
-        "consumption": BudgetConsumption,
-    },
-)
+ResolverReservation = dict
 
 
 def resolver_reservation(
@@ -301,7 +288,7 @@ def resolver_reservation(
 
 
 def validate_resolver_reservation(value: object) -> ResolverReservation:
-    if not isinstance(value, Mapping) or frozenset(value) != RESOLVER_RESERVATION_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
     result = resolver_reservation(
         value["resolver"],
@@ -315,7 +302,7 @@ def validate_resolver_reservation(value: object) -> ResolverReservation:
 
 def resolver_reservation_with_changes(value: object, changes: object) -> ResolverReservation:
     current = validate_resolver_reservation(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(RESOLVER_RESERVATION_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLVER_RESERVATION_FIELDS):
         raise InvalidRequestError("resolver reservation changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -336,7 +323,7 @@ def resolver_reservation_to_dict(value: object) -> dict[str, object]:
 
 
 def resolver_reservation_from_dict(value: object) -> ResolverReservation:
-    if not isinstance(value, Mapping) or frozenset(value) != RESOLVER_RESERVATION_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
     lease = value["lease"]
     consumption = value["consumption"]
@@ -367,16 +354,7 @@ def resolver_reservation_from_json(value: str) -> ResolverReservation:
     return result
 
 
-ResolutionPlanEntry = TypedDict(
-    "ResolutionPlanEntry",
-    {
-        "resolver": object,
-        "order": int,
-        "configured": bool,
-        "available": bool,
-        "reason_code": str,
-    },
-)
+ResolutionPlanEntry = dict
 
 
 def resolution_plan_entry(
@@ -405,7 +383,7 @@ def resolution_plan_entry(
 
 
 def validate_resolution_plan_entry(value: object) -> ResolutionPlanEntry:
-    if not isinstance(value, Mapping) or frozenset(value) != RESOLUTION_PLAN_ENTRY_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESOLUTION_PLAN_ENTRY_FIELDS:
         raise InvalidRequestError("ResolutionPlanEntry has invalid fields")
     result = resolution_plan_entry(
         value["resolver"],
@@ -419,6 +397,12 @@ def validate_resolution_plan_entry(value: object) -> ResolutionPlanEntry:
 
 def resolution_plan_entry_to_dict(value: object) -> dict[str, object]:
     current = validate_resolution_plan_entry(value)
+    result = _trusted_resolution_plan_entry_to_dict(current)
+    return result
+
+
+def _trusted_resolution_plan_entry_to_dict(current: ResolutionPlanEntry) -> dict[str, object]:
+    """Serialize an entry already produced by this module."""
     resolver = current["resolver"]
     name, cost_class, _, _ = resolver_contract(resolver)
     result = {
@@ -432,7 +416,7 @@ def resolution_plan_entry_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-ResolutionPlan = TypedDict("ResolutionPlan", {"entries": tuple[ResolutionPlanEntry, ...]})
+ResolutionPlan = dict
 
 
 def resolution_plan(entries: object) -> ResolutionPlan:
@@ -455,7 +439,7 @@ def resolution_plan(entries: object) -> ResolutionPlan:
 
 
 def validate_resolution_plan(value: object) -> ResolutionPlan:
-    if not isinstance(value, Mapping) or frozenset(value) != RESOLUTION_PLAN_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESOLUTION_PLAN_FIELDS:
         raise InvalidRequestError("ResolutionPlan has invalid fields")
     result = resolution_plan(value["entries"])
     return result
@@ -463,7 +447,13 @@ def validate_resolution_plan(value: object) -> ResolutionPlan:
 
 def resolution_plan_to_dict(value: object) -> dict[str, object]:
     current = validate_resolution_plan(value)
-    entries = [resolution_plan_entry_to_dict(entry) for entry in current["entries"]]
+    result = _trusted_resolution_plan_to_dict(current)
+    return result
+
+
+def _trusted_resolution_plan_to_dict(current: ResolutionPlan) -> dict[str, object]:
+    """Serialize a plan already produced or validated by this module."""
+    entries = [_trusted_resolution_plan_entry_to_dict(entry) for entry in current["entries"]]
     result: dict[str, object] = {"entries": entries}
     return result
 
@@ -514,7 +504,7 @@ def _working_size(value: object, seen=()) -> int:
     if isinstance(value, Mapping):
         result = 64 + sum(_working_size(key, visited) + _working_size(item, visited) for key, item in value.items())
         return result
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple, set)):
         result = 64 + sum(_working_size(item, visited) for item in value)
         return result
     result = len(str(value).encode("utf-8")) + 64
@@ -763,6 +753,107 @@ class ExactResolver:
         return result
 
 
+class UtilityResolver:
+    """Adapter over the configured fixed registry of deterministic operations."""
+
+    def __init__(self, registry: UtilityRegistry, clock_ns: Callable[[], int]) -> None:
+        if not isinstance(registry, UtilityRegistry):
+            raise InvalidRequestError("utility resolver requires a UtilityRegistry")
+        if not callable(clock_ns):
+            raise InvalidRequestError("utility resolver clock_ns must be callable")
+        self.name = UTILITY_RESOLVER_NAME
+        self.cost_class = UTILITY_RESOLVER_COST_CLASS
+        self._registry = registry
+        self._clock_ns = clock_ns
+
+    def available(self, frame: QueryFrame) -> bool:
+        del frame
+        return self._registry.available()
+
+    def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
+        if not budget["max_candidates"] or not budget["max_working_memory_bytes"]:
+            dimension = "candidates" if not budget["max_candidates"] else "working_memory_bytes"
+            return _exhausted_result(self.name, (dimension,))
+        started = self._clock_ns()
+        if frame["required_metadata"] or frame["required_source_label"]:
+            return resolver_result(
+                resolver=self.name,
+                state=ResolverState.COMPLETED,
+                reason_code="utility_filters_unsupported",
+                consumption=budget_consumption(elapsed_ns=max(0, self._clock_ns() - started), resolvers=1),
+            )
+        evaluation = self._registry.evaluate(frame["original_text"])
+        diagnostics = {
+            "plugin_name": evaluation["plugin_name"],
+            "plugin_version": evaluation["plugin_version"],
+            "error_code": evaluation["error_code"],
+            "operations": evaluation["operations"],
+        }
+        if evaluation["status"] == "miss":
+            return resolver_result(
+                resolver=self.name,
+                state=ResolverState.COMPLETED,
+                reason_code="utility_miss",
+                diagnostics=diagnostics,
+                consumption=budget_consumption(elapsed_ns=max(0, self._clock_ns() - started), resolvers=1),
+            )
+        if evaluation["status"] == "rejected":
+            return resolver_result(
+                resolver=self.name,
+                state=ResolverState.COMPLETED,
+                reason_code="utility_rejected",
+                diagnostics=diagnostics,
+                consumption=budget_consumption(elapsed_ns=max(0, self._clock_ns() - started), resolvers=1),
+            )
+        if evaluation["status"] == "failed":
+            return resolver_result(
+                resolver=self.name,
+                state=ResolverState.FAILED,
+                reason_code="utility_plugin_failure",
+                diagnostics=diagnostics,
+                consumption=budget_consumption(elapsed_ns=max(0, self._clock_ns() - started), resolvers=1),
+            )
+        digest = hashlib.sha256(
+            f"{evaluation['plugin_name']}:{evaluation['plugin_version']}:{evaluation['canonical_input']}".encode()
+        ).hexdigest()
+        statement_id = f"utility:{evaluation['plugin_name']}:sha256:{digest}"
+        current = resolution_candidate(
+            candidate_id=_candidate_id(CandidateSource.UTILITY, statement_id, frame["diagnostic_id"]),
+            statement_id=statement_id,
+            response=evaluation["response"],
+            source=CandidateSource.UTILITY,
+            features=feature_set(values={"utility_match": 1.0}, unavailable=()),
+            evidence=(),
+            scope=frame["scope"],
+            lifecycle=LifecycleState.ACTIVE,
+            provenance={
+                "producer": UTILITY_RESOLVER_VERSION,
+                "contract_version": evaluation["contract_version"],
+                "plugin_name": evaluation["plugin_name"],
+                "plugin_version": evaluation["plugin_version"],
+                "canonical_input": evaluation["canonical_input"],
+                "learnable": False,
+            },
+            diagnostics={"operations": evaluation["operations"]},
+        )
+        working_memory_bytes = _json_size(candidate_to_dict(current))
+        if working_memory_bytes > budget["max_working_memory_bytes"]:
+            return _memory_exhausted_result(self.name)
+        return resolver_result(
+            resolver=self.name,
+            state=ResolverState.COMPLETED,
+            reason_code="utility_resolved",
+            candidates=(current,),
+            diagnostics=diagnostics,
+            consumption=budget_consumption(
+                elapsed_ns=max(0, self._clock_ns() - started),
+                resolvers=1,
+                candidates=1,
+                working_memory_bytes=working_memory_bytes,
+            ),
+        )
+
+
 class PatternResolver:
     """Pure adapter over statement-backed AIML matching."""
 
@@ -905,6 +996,150 @@ class LexicalResolver:
             ),
         )
         return result
+
+
+class StandaloneSemanticResolver:
+    """Bounded adapter over canonical-request and alias embeddings."""
+
+    def __init__(self, engram, clock_ns: Callable[[], int]) -> None:
+        self.name = STANDALONE_SEMANTIC_RESOLVER_NAME
+        self.cost_class = STANDALONE_SEMANTIC_RESOLVER_COST_CLASS
+        self._engram = engram
+        self._clock_ns = clock_ns
+
+    def available(self, frame: QueryFrame) -> bool:
+        settings = self._engram.config.get("semantic") or {}
+        return bool(settings.get("enabled") and self._engram._semantic_index_owner.available)
+
+    def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
+        return self.resolve_with_cancellation(frame, budget, ())
+
+    def resolve_with_cancellation(
+        self,
+        frame: QueryFrame,
+        budget: ResolverBudget,
+        cooperative_check: object,
+    ) -> ResolverResult:
+        if not budget["max_candidates"] or not budget["max_vector_results"] or not budget["max_working_memory_bytes"]:
+            exhausted = tuple(
+                name
+                for present, name in (
+                    (budget["max_candidates"], "candidates"),
+                    (budget["max_vector_results"], "vector_results"),
+                    (budget["max_working_memory_bytes"], "working_memory_bytes"),
+                )
+                if not present
+            )
+            return _exhausted_result(self.name, exhausted)
+        started = self._clock_ns()
+        discovery = self._engram.semantic_candidates(
+            frame["resolved_text"],
+            frame["scope"],
+            limit=budget["max_candidates"],
+            max_vector_results=budget["max_vector_results"],
+            max_working_memory_bytes=budget["max_working_memory_bytes"],
+            cooperative_check=cooperative_check,
+        )
+        if not discovery["complete"]:
+            reason = discovery["reason"]
+            if reason == "semantic_unavailable":
+                return resolver_result(resolver=self.name, state=ResolverState.UNAVAILABLE, reason_code=reason)
+            dimension = {
+                "semantic_input_too_large": "input_bytes",
+                "semantic_scan_budget": "semantic_scan_records",
+                "vector_result_budget": "vector_results",
+                "working_memory_budget": "working_memory_bytes",
+            }.get(reason, "semantic_resources")
+            return resolver_result(
+                resolver=self.name,
+                state=ResolverState.EXHAUSTED,
+                reason_code=reason,
+                diagnostics={"scanned_records": discovery["scanned_records"]},
+                consumption=budget_consumption(
+                    elapsed_ns=max(0, self._clock_ns() - started),
+                    resolvers=1,
+                    working_memory_bytes=discovery["working_memory_bytes"],
+                    exhausted_dimensions=(dimension,),
+                ),
+            )
+        candidates = []
+        accounting = []
+        retained_bytes = discovery["working_memory_bytes"]
+        index_state = self._engram.semantic_index_snapshot()
+        for match in discovery["matches"]:
+            try:
+                artifact = self._engram.response_repository._trusted_get_artifact(match["statement_id"])
+            except ResourceNotFoundError:
+                continue
+            if artifact["generation"] != match["generation"] or not _artifact_matches_frame(artifact, frame):
+                continue
+            candidate = resolution_candidate(
+                candidate_id=_candidate_id(CandidateSource.STANDALONE_SEMANTIC, artifact["statement_id"], frame["diagnostic_id"]),
+                statement_id=artifact["statement_id"],
+                response=artifact["response"],
+                source=CandidateSource.STANDALONE_SEMANTIC,
+                features=feature_set(
+                    values={
+                        "semantic_score": match["similarity"],
+                        "semantic_alias_match": float(match["origin"] == "alias"),
+                    },
+                    unavailable=(),
+                ),
+                evidence=(),
+                scope=artifact["scope"],
+                lifecycle=artifact["lifecycle"],
+                provenance={
+                    "generation": artifact["generation"],
+                    "source_label": artifact["provenance"]["source_label"],
+                    "semantic_index_version": index_state["index_version"],
+                    "semantic_model_id": index_state["artifact_identity"]["model_id"],
+                    "semantic_model_version": index_state["artifact_identity"]["model_version"],
+                    "semantic_artifact_sha256": index_state["artifact_identity"]["artifact_sha256"],
+                    "semantic_backend": index_state["artifact_identity"]["backend"],
+                    "semantic_normalization_version": index_state["artifact_identity"]["normalization_version"],
+                    "matched_representation_id": match["representation_id"],
+                    "matched_representation_origin": match["origin"],
+                    "matched_alias_ordinal": match["ordinal"] if match["origin"] == "alias" else -1,
+                },
+                diagnostics={},
+            )
+            candidate_bytes = _json_size(candidate_to_dict(candidate))
+            if retained_bytes + candidate_bytes > budget["max_working_memory_bytes"]:
+                return resolver_result(
+                    resolver=self.name,
+                    state=ResolverState.EXHAUSTED,
+                    reason_code="semantic_candidate_memory_budget",
+                    diagnostics={"scanned_records": discovery["scanned_records"]},
+                    consumption=budget_consumption(
+                        elapsed_ns=max(0, self._clock_ns() - started),
+                        resolvers=1,
+                        vector_results=len(discovery["matches"]),
+                        working_memory_bytes=min(retained_bytes, budget["max_working_memory_bytes"]),
+                        exhausted_dimensions=("working_memory_bytes",),
+                    ),
+                )
+            retained_bytes += candidate_bytes
+            candidates.append(candidate)
+            accounting.append(accounting_observation(artifact["statement_id"], frame["identity"]["lexical_terms"]))
+        return resolver_result(
+            resolver=self.name,
+            state=ResolverState.COMPLETED,
+            reason_code="semantic_candidates" if candidates else "semantic_miss",
+            candidates=tuple(candidates),
+            accounting=tuple(accounting),
+            diagnostics={
+                "scanned_records": discovery["scanned_records"],
+                "model_version": index_state["artifact_identity"]["model_version"],
+                "backend": index_state["artifact_identity"]["backend"],
+            },
+            consumption=budget_consumption(
+                elapsed_ns=max(0, self._clock_ns() - started),
+                resolvers=1,
+                candidates=len(candidates),
+                vector_results=len(discovery["matches"]),
+                working_memory_bytes=retained_bytes,
+            ),
+        )
 
 
 class SparseResolver:
@@ -1374,7 +1609,9 @@ class StructuredGraphResolver:
             reason_code=(
                 "graph_composition_candidate"
                 if candidates
-                else "graph_composition_evidence" if records else "graph_composition_miss"
+                else "graph_composition_evidence"
+                if records
+                else "graph_composition_miss"
             ),
             candidates=tuple(candidates),
             claim_evidence=tuple(records),
@@ -1633,7 +1870,9 @@ class StructuredGraphResolver:
                 else (
                     "relation_claim_conflict"
                     if selection["conflict_claim_ids"]
-                    else "relation_claim_evidence" if records else "relation_graph_miss"
+                    else "relation_claim_evidence"
+                    if records
+                    else "relation_graph_miss"
                 )
             ),
             candidates=tuple(candidates),
@@ -2090,19 +2329,13 @@ class ResolverRegistry:
             elif not available:
                 reason = "dependency_unavailable"
             entries.append(resolution_plan_entry(resolver, order, selected, available, reason))
-        result = resolution_plan(tuple(entries))
+        # The registry owns every entry above: ordering comes from enumerate,
+        # and resolver uniqueness was established during construction.
+        result: ResolutionPlan = {"entries": tuple(entries)}
         return result
 
 
-ExecutionReport = TypedDict(
-    "ExecutionReport",
-    {
-        "results": tuple[ResolverResult, ...],
-        "consumption": BudgetConsumption,
-        "exact_short_circuited": bool,
-        "reservations": tuple[ResolverReservation, ...],
-    },
-)
+ExecutionReport = dict
 
 
 def execution_report(
@@ -2133,8 +2366,24 @@ def execution_report(
     return result
 
 
+def _trusted_execution_report(
+    results: tuple[ResolverResult, ...],
+    consumption: BudgetConsumption,
+    exact_short_circuited: bool,
+    reservations: tuple[ResolverReservation, ...],
+) -> ExecutionReport:
+    """Build a report from executor-owned records without revalidating them."""
+    result: ExecutionReport = {
+        "results": results,
+        "consumption": consumption,
+        "exact_short_circuited": exact_short_circuited,
+        "reservations": reservations,
+    }
+    return result
+
+
 def validate_execution_report(value: object) -> ExecutionReport:
-    if not isinstance(value, Mapping) or frozenset(value) != EXECUTION_REPORT_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != EXECUTION_REPORT_FIELDS:
         raise InvalidRequestError("ExecutionReport has invalid fields")
     result = execution_report(
         value["results"],
@@ -2147,7 +2396,7 @@ def validate_execution_report(value: object) -> ExecutionReport:
 
 def execution_report_with_changes(value: object, changes: object) -> ExecutionReport:
     current = validate_execution_report(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(EXECUTION_REPORT_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(EXECUTION_REPORT_FIELDS):
         raise InvalidRequestError("execution report changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2170,7 +2419,14 @@ def execution_report_canonical_claim_evidence(value: object, cooperative_check=(
     return result
 
 
-def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> ResolverResult:
+def _json_array_size(item_sizes: list[int]) -> int:
+    """Return exact compact-JSON bytes for an array of pre-sized values."""
+    result = 2 + sum(item_sizes) + max(0, len(item_sizes) - 1)
+    return result
+
+
+def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudget) -> ResolverResult:
+    """Bound one executor-validated result without revalidating its nested records."""
     candidates = list(result["candidates"][: lease["max_candidates"]])
     evidence = list(result["evidence"])
     claim_evidence = list(result["claim_evidence"])
@@ -2183,7 +2439,7 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         if len(retained) < len(candidate["evidence"]):
             exhausted.add("evidence")
         if retained != candidate["evidence"]:
-            candidates[index] = candidate_with_changes(candidate, {"evidence": retained})
+            candidates[index] = _trusted_candidate_with_changes(candidate, {"evidence": retained})
         remaining_evidence -= len(retained)
     retained_evidence = evidence[:remaining_evidence]
     if len(retained_evidence) < len(evidence):
@@ -2195,50 +2451,59 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         exhausted.add("evidence")
     claim_evidence = retained_claim_evidence
 
-    def evidence_values() -> list[dict[str, object]]:
-        result = (
-            [evidence_reference_to_dict(reference) for candidate in candidates for reference in candidate["evidence"]]
-            + [evidence_reference_to_dict(reference) for reference in evidence]
-            + [claim_evidence_record_to_dict(record) for record in claim_evidence]
-        )
-        return result
-
-    def values_size(values: list[dict[str, object]]) -> int:
-        result = _json_size(values) if values else 0
-        return result
-
-    while values_size(evidence_values()) > lease["max_evidence_bytes"]:
+    candidate_evidence_sizes = [
+        [_json_size(_trusted_evidence_reference_to_dict(reference)) for reference in candidate["evidence"]]
+        for candidate in candidates
+    ]
+    evidence_sizes = [_json_size(_trusted_evidence_reference_to_dict(reference)) for reference in evidence]
+    claim_evidence_sizes = [_json_size(_trusted_claim_evidence_record_to_dict(record)) for record in claim_evidence]
+    flattened_evidence_sizes = [
+        *[size for values in candidate_evidence_sizes for size in values],
+        *evidence_sizes,
+        *claim_evidence_sizes,
+    ]
+    evidence_size = _json_array_size(flattened_evidence_sizes) if flattened_evidence_sizes else 0
+    evidence_count = len(flattened_evidence_sizes)
+    while evidence_size > lease["max_evidence_bytes"]:
         if claim_evidence:
             claim_evidence.pop()
+            removed_size = claim_evidence_sizes.pop()
         elif evidence:
             evidence.pop()
+            removed_size = evidence_sizes.pop()
         else:
             candidate_index = next(
-                (index for index in range(len(candidates) - 1, -1, -1) if candidates[index]["evidence"]),
+                (index for index in range(len(candidates) - 1, -1, -1) if candidate_evidence_sizes[index]),
                 -1,
             )
             if candidate_index < 0:
                 break
-            candidate = candidates[candidate_index]
-            candidates[candidate_index] = candidate_with_changes(candidate, {"evidence": candidate["evidence"][:-1]})
+            removed_size = candidate_evidence_sizes[candidate_index].pop()
+        evidence_size -= removed_size + int(evidence_count > 1)
+        evidence_count -= 1
         exhausted.add("evidence_bytes")
+    for index, sizes in enumerate(candidate_evidence_sizes):
+        candidate = candidates[index]
+        if len(sizes) != len(candidate["evidence"]):
+            candidates[index] = _trusted_candidate_with_changes(candidate, {"evidence": candidate["evidence"][: len(sizes)]})
 
-    def output_size() -> int:
-        values = (
-            [candidate_to_dict(candidate) for candidate in candidates]
-            + [evidence_reference_to_dict(reference) for reference in evidence]
-            + [claim_evidence_record_to_dict(record) for record in claim_evidence]
-        )
-        result = values_size(values)
-        return result
-
-    while output_size() > lease["max_output_bytes"] and (candidates or evidence or claim_evidence):
+    candidate_sizes = [_json_size(_trusted_candidate_to_dict(candidate)) for candidate in candidates]
+    output_item_sizes = [*candidate_sizes, *evidence_sizes, *claim_evidence_sizes]
+    bounded_output_size = _json_array_size(output_item_sizes) if output_item_sizes else 0
+    output_count = len(output_item_sizes)
+    while bounded_output_size > lease["max_output_bytes"] and output_count:
         if claim_evidence:
             claim_evidence.pop()
+            removed_size = claim_evidence_sizes.pop()
         elif evidence:
             evidence.pop()
+            removed_size = evidence_sizes.pop()
         else:
             candidates.pop()
+            candidate_evidence_sizes.pop()
+            removed_size = candidate_sizes.pop()
+        bounded_output_size -= removed_size + int(output_count > 1)
+        output_count -= 1
         exhausted.add("output_bytes")
     diagnostics = result["diagnostics"]
     if diagnostics and _json_size(dict(diagnostics)) > lease["max_diagnostic_bytes"]:
@@ -2247,8 +2512,13 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         exhausted.add("diagnostic_bytes")
     accounting_ids = {candidate["statement_id"] for candidate in candidates}
     accounting = tuple(value for value in result["accounting"] if value["statement_id"] in accounting_ids)
-    candidate_bytes = values_size([candidate_to_dict(value) for value in candidates])
-    evidence_bytes = values_size(evidence_values())
+    candidate_bytes = _json_array_size(candidate_sizes) if candidate_sizes else 0
+    retained_evidence_sizes = [
+        *[size for values in candidate_evidence_sizes for size in values],
+        *evidence_sizes,
+        *claim_evidence_sizes,
+    ]
+    evidence_bytes = _json_array_size(retained_evidence_sizes) if retained_evidence_sizes else 0
     diagnostic_bytes = _json_size(dict(diagnostics)) if diagnostics else 0
     graph_rows = min(result["consumption"]["graph_rows"], lease["max_graph_rows"])
     vector_results = min(result["consumption"]["vector_results"], lease["max_vector_results"])
@@ -2258,8 +2528,8 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         exhausted.add("vector_results")
     estimated_memory = max(
         candidate_bytes
-        + values_size([evidence_reference_to_dict(value) for value in evidence])
-        + values_size([claim_evidence_record_to_dict(value) for value in claim_evidence])
+        + (_json_array_size(evidence_sizes) if evidence_sizes else 0)
+        + (_json_array_size(claim_evidence_sizes) if claim_evidence_sizes else 0)
         + diagnostic_bytes,
         result["consumption"]["working_memory_bytes"],
     )
@@ -2268,6 +2538,10 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         candidates = []
         evidence = []
         claim_evidence = []
+        candidate_sizes = []
+        candidate_evidence_sizes = []
+        evidence_sizes = []
+        claim_evidence_sizes = []
         accounting = ()
         diagnostics = MappingProxyType({})
         candidate_bytes = 0
@@ -2282,25 +2556,34 @@ def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> Reso
         vector_results=vector_results,
         evidence=len(evidence) + len(claim_evidence) + sum(len(candidate["evidence"]) for candidate in candidates),
         evidence_bytes=evidence_bytes,
-        output_bytes=output_size(),
+        output_bytes=_json_array_size([*candidate_sizes, *evidence_sizes, *claim_evidence_sizes])
+        if candidate_sizes or evidence_sizes or claim_evidence_sizes
+        else 0,
         diagnostic_bytes=diagnostic_bytes,
         working_memory_bytes=working_memory,
         exhausted_dimensions=tuple(sorted(exhausted)),
         measurement_available=result["consumption"]["measurement_available"],
     )
-    result = resolver_result(
-        resolver=result["resolver"],
-        state=result["state"],
-        reason_code=result["reason_code"],
-        candidates=tuple(candidates),
-        evidence=tuple(evidence),
-        claim_evidence=tuple(claim_evidence),
-        accounting=accounting,
-        diagnostics=diagnostics,
-        consumption=consumption,
-        schema_version=result["schema_version"],
+    result = _trusted_resolver_result_with_changes(
+        result,
+        {
+            "candidates": tuple(candidates),
+            "evidence": tuple(evidence),
+            "claim_evidence": tuple(claim_evidence),
+            "accounting": accounting,
+            "diagnostics": diagnostics,
+            "consumption": consumption,
+        },
     )
     return result
+
+
+def bound_resolver_result(result: ResolverResult, lease: ResolverBudget) -> ResolverResult:
+    """Validate a caller-supplied result and enforce one resolver lease."""
+    current = validate_resolver_result(result)
+    current_lease = validate_resolver_budget(lease)
+    bounded = _bound_validated_resolver_result(current, current_lease)
+    return bounded
 
 
 class ResolverExecutor:
@@ -2353,13 +2636,6 @@ class ResolverExecutor:
                 ledger.add(exhausted["consumption"])
                 break
             if not entry["configured"]:
-                results.append(
-                    resolver_result(
-                        resolver=resolver_name,
-                        state=ResolverState.SKIPPED,
-                        reason_code=entry["reason_code"],
-                    )
-                )
                 continue
             if not entry["available"]:
                 results.append(
@@ -2404,11 +2680,15 @@ class ResolverExecutor:
                 finished = self._clock_ns()
                 elapsed = max(0, finished - started)
                 current_raw = validate_resolver_result(raw)
-                raw = resolver_result_with_changes(
-                    current_raw,
-                    {"consumption": budget_consumption_with_changes(current_raw["consumption"], {"elapsed_ns": elapsed})},
+                updated_consumption = _trusted_budget_consumption_with_changes(
+                    current_raw["consumption"],
+                    {"elapsed_ns": elapsed},
                 )
-                result = bound_resolver_result(raw, lease)
+                raw = _trusted_resolver_result_with_changes(
+                    current_raw,
+                    {"consumption": updated_consumption},
+                )
+                result = _bound_validated_resolver_result(raw, lease)
             results.append(result)
             ledger.add(result["consumption"])
             reservations.append(resolver_reservation(resolver_name, entry["order"], lease, result["consumption"]))
@@ -2421,20 +2701,11 @@ class ResolverExecutor:
             ):
                 exact_short_circuited = True
                 break
-        report = execution_report(tuple(results), ledger.snapshot(), exact_short_circuited, tuple(reservations))
+        report = _trusted_execution_report(tuple(results), ledger.snapshot(), exact_short_circuited, tuple(reservations))
         return report
 
 
-AccountingFinalization = TypedDict(
-    "AccountingFinalization",
-    {
-        "candidate_statement_ids": tuple[str, ...],
-        "accepted_statement_id": str,
-        "candidacy_applied": bool,
-        "success_applied": bool,
-        "idempotent": bool,
-    },
-)
+AccountingFinalization = dict
 
 
 def accounting_finalization(
@@ -2473,7 +2744,7 @@ def accounting_finalization(
 
 
 def validate_accounting_finalization(value: object) -> AccountingFinalization:
-    if not isinstance(value, Mapping) or frozenset(value) != ACCOUNTING_FINALIZATION_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != ACCOUNTING_FINALIZATION_FIELDS:
         raise InvalidRequestError("AccountingFinalization has invalid fields")
     result = accounting_finalization(
         value["candidate_statement_ids"],
@@ -2695,9 +2966,21 @@ class ResolutionOrchestrator:
         accept_exact: bool = False,
         cooperative_check: object = (),
     ) -> tuple[ResolutionResult, AccountingFinalization]:
+        plan = self._registry.plan(frame, configured_names)
+        result = self._resolve_with_plan(frame, request_id, plan, accept_exact, cooperative_check)
+        return result
+
+    def _resolve_with_plan(
+        self,
+        frame: QueryFrame,
+        request_id: str,
+        plan: ResolutionPlan,
+        accept_exact: bool = False,
+        cooperative_check: object = (),
+    ) -> tuple[ResolutionResult, AccountingFinalization]:
+        """Resolve using a plan already created for this frame by the registry."""
         if not isinstance(accept_exact, bool):
             raise InvalidRequestError("accept_exact must be a boolean")
-        plan = self._registry.plan(frame, configured_names)
         execution = self._executor.execute(frame, plan, cooperative_check)
         _run_cooperative_check(cooperative_check)
         candidates = []
@@ -2715,6 +2998,7 @@ class ResolutionOrchestrator:
             tuple(evidence),
             working_memory_limit=fusion_memory_limit,
             working_memory_limit_available=True,
+            cooperative_check=cooperative_check,
         )
         _run_cooperative_check(cooperative_check)
         outcome = decision["outcome"]
@@ -2908,7 +3192,7 @@ class ResolutionOrchestrator:
         frame_diagnostics = bound_frame_diagnostics(
             {
                 "diagnostic_id": frame["diagnostic_id"],
-                "plan": resolution_plan_to_dict(plan),
+                "plan": _trusted_resolution_plan_to_dict(plan),
                 "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution["reservations"]],
                 "fusion": decision["report"],
                 "claim_evidence": evidence_diagnostics,

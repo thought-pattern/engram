@@ -5,7 +5,6 @@ import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
@@ -150,14 +149,7 @@ def _durable_state_signature(
     return signature
 
 
-CoordinatedResponseState = TypedDict(
-    "CoordinatedResponseState",
-    {
-        "repository": RepositoryState,
-        "namespace_epochs": Mapping[str, object],
-        "mutation_receipts": Mapping[str, object],
-    },
-)
+CoordinatedResponseState = dict
 
 
 def coordinated_response_state(
@@ -237,15 +229,7 @@ def coordinated_response_state_to_dict(
     return result
 
 
-CoordinatedMutationCandidate = TypedDict(
-    "CoordinatedMutationCandidate",
-    {
-        "before": CoordinatedResponseState,
-        "after": CoordinatedResponseState,
-        "receipt": MutationReceipt,
-        "affected_epoch_namespaces": tuple[str, ...],
-    },
-)
+CoordinatedMutationCandidate = dict
 
 
 def coordinated_mutation_candidate(
@@ -290,16 +274,7 @@ def validate_coordinated_mutation_candidate(value: object) -> CoordinatedMutatio
     return result
 
 
-MutationExecutionResult = TypedDict(
-    "MutationExecutionResult",
-    {
-        "receipt": MutationReceipt,
-        "checkpoint_count": int,
-        "durable": bool,
-        "published": bool,
-        "recovered": bool,
-    },
-)
+MutationExecutionResult = dict
 
 
 def mutation_execution_result(

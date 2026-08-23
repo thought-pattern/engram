@@ -74,3 +74,20 @@ def test_production_annotations_use_one_concrete_type() -> None:
             if _uses_union(annotation):
                 violations.append(f"{path.relative_to(REPOSITORY)}:{annotation.lineno}: {ast.unparse(annotation)}")
     assert violations == []
+
+
+def test_production_avoids_rigid_dictionary_typing_and_unneeded_frozen_sets() -> None:
+    violations = []
+    prohibited = {"TypedDict", "frozenset"}
+    for path, tree in _modules():
+        for node in ast.walk(tree):
+            name = ""
+            if isinstance(node, ast.Name):
+                name = node.id
+            elif isinstance(node, ast.Attribute):
+                name = node.attr
+            elif isinstance(node, ast.alias):
+                name = node.name.rsplit(".", 1)[-1]
+            if name in prohibited:
+                violations.append(f"{path.relative_to(REPOSITORY)}:{getattr(node, 'lineno', 0)}: {name}")
+    assert violations == []

@@ -2,7 +2,6 @@
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from engram.artifacts import (
@@ -65,16 +64,7 @@ def _mapping_copy(value: object, name: str) -> dict[str, object]:
     return copied
 
 
-ResponseMutationResult = TypedDict(
-    "ResponseMutationResult",
-    {
-        "receipt": MutationReceipt,
-        "replayed": bool,
-        "checkpoint_count": int,
-        "durable": bool,
-        "recovered": bool,
-    },
-)
+ResponseMutationResult = dict
 
 
 def response_mutation_result(

@@ -108,7 +108,9 @@ from engram.pattern import PatternMatcher, is_pure_wildcard
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
+from engram.reranking import TransparentLogisticReranker
 from engram.scoring import score_statement_components
+from engram.semantic import SemanticIndexCheckReport, SemanticIndexState, SemanticSearchResult, StandaloneSemanticIndexOwner
 from engram.spacy_setup import get_nlp
 from engram.sparse import SparseIndexCheckReport, SparseIndexOwner, SparseIndexState, SparseSearchResult
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
@@ -123,6 +125,7 @@ from engram.text import (
     normalize,
     restore_capture_case,
 )
+from engram.utilities import UtilityRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +160,7 @@ def _estimate_working_bytes(value: object, seen=()) -> int:
             _estimate_working_bytes(key, visited) + _estimate_working_bytes(item, visited) for key, item in value.items()
         )
         return result
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple, set)):
         result = 64 + sum(_estimate_working_bytes(item, visited) for item in value)
         return result
     result = len(str(value).encode("utf-8")) + 64
@@ -309,6 +312,12 @@ class Engram:
             self.config.get("sparse") or {},
             self.response_repository.snapshot()["state_generation"],
         )
+        self._semantic_index_owner = StandaloneSemanticIndexOwner(
+            self.config.get("semantic") or {},
+            self.response_repository.snapshot()["state_generation"],
+        )
+        self.reranker = TransparentLogisticReranker(self.config.get("reranker") or {})
+        self.utility_registry = UtilityRegistry(self.config.get("utility") or {})
         self.namespace_epochs = NamespaceEpochState()
         self.mutation_receipts = MutationReceiptLedger()
         self.feedback_store = FeedbackStore()
@@ -386,6 +395,9 @@ class Engram:
                 "enabled": self._sparse_index_owner.enabled,
                 "ready": self._sparse_index_owner.available,
             },
+            "semantic": self._semantic_index_owner.health(),
+            "reranker": self.reranker.health(),
+            "utility": self.utility_registry.health(),
             "spacy": {
                 "enabled": spacy_full_enabled or graph_enabled,
                 "ready": spacy_ready,
@@ -402,6 +414,9 @@ class Engram:
         vector["ready"] = bool(vector["enabled"] and graph["ready"] and self._graph_embedding_model and vector["ready"])
         sparse = result["sparse"]
         sparse["ready"] = bool(sparse["enabled"] and self._sparse_index_owner.available)
+        result["semantic"] = self._semantic_index_owner.health()
+        result["reranker"] = self.reranker.health()
+        result["utility"] = self.utility_registry.health()
         return result
 
     def graph_query(self, cypher: str, params=()) -> list:
@@ -712,6 +727,73 @@ class Engram:
             max_working_memory_bytes=max_working_memory_bytes,
         )
         return result
+
+    def semantic_index_snapshot(self) -> SemanticIndexState:
+        """Return the immutable standalone semantic-index state."""
+        return self._semantic_index_owner.snapshot()
+
+    def rebuild_semantic_index(self) -> SemanticIndexState:
+        """Atomically rebuild standalone embeddings from authoritative artifacts."""
+        repository = self.response_repository.snapshot()
+        try:
+            return self._semantic_index_owner.rebuild(
+                repository["artifacts"].values(),
+                repository["state_generation"],
+            )
+        except Exception as error:
+            self._semantic_index_owner.mark_unavailable(error)
+            raise
+
+    def synchronize_semantic_index(
+        self,
+        repository_state: Mapping[str, object],
+        changed_statement_ids: tuple[str, ...] = (),
+    ) -> bool:
+        """Publish a repository-derived embedding generation without affecting mutation success."""
+        if not self._semantic_index_owner.enabled:
+            return True
+        try:
+            artifacts = repository_state["artifacts"]
+            generation = repository_state["state_generation"]
+            if not isinstance(artifacts, Mapping) or not isinstance(generation, int):
+                raise InvalidRequestError("repository state is malformed for semantic synchronization")
+            if changed_statement_ids:
+                self._semantic_index_owner.synchronize(artifacts, generation, changed_statement_ids)
+            else:
+                self._semantic_index_owner.rebuild(artifacts.values(), generation)
+            return True
+        except Exception as error:
+            self._semantic_index_owner.mark_unavailable(error)
+            logger.warning("Standalone semantic index synchronization failed: %s", type(error).__name__)
+            return False
+
+    def check_semantic_index(self) -> SemanticIndexCheckReport:
+        """Compare standalone semantic projections with authoritative artifacts."""
+        repository = self.response_repository.snapshot()
+        return self._semantic_index_owner.check_against(
+            repository["artifacts"].values(),
+            repository["state_generation"],
+        )
+
+    def semantic_candidates(
+        self,
+        text: str,
+        scope,
+        *,
+        limit: int,
+        max_vector_results: int,
+        max_working_memory_bytes: int,
+        cooperative_check=(),
+    ) -> SemanticSearchResult:
+        """Search standalone request embeddings under shared request budgets."""
+        return self._semantic_index_owner.search(
+            text,
+            scope,
+            limit=limit,
+            max_vector_results=max_vector_results,
+            max_working_memory_bytes=max_working_memory_bytes,
+            cooperative_check=cooperative_check,
+        )
 
     def add_index_projection(self, projection: IndexProjection) -> IndexState:
         """Atomically add one generic index projection."""

@@ -15,6 +15,7 @@ from engram.core import Engram
 from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
+from engram.utilities import UTILITY_TZDATA_VERSION
 
 
 def same(a, b) -> bool:
@@ -389,6 +390,46 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
         "vector": {"enabled": False, "ready": False},
         "sparse": {"enabled": False, "ready": False},
         "spacy": {"enabled": True, "ready": True},
+        "semantic": {
+            "enabled": False,
+            "ready": False,
+            "error": "",
+            "artifact_identity": {},
+            "state_generation": 1,
+            "repository_state_generation": 1,
+            "record_count": 0,
+        },
+        "reranker": {
+            "enabled": False,
+            "ready": False,
+            "implementation": "transparent_logistic_v1",
+            "model_version": "transparent-logistic-v1",
+            "contract_version": 1,
+            "requests": 0,
+            "completed": 0,
+            "fallbacks": 0,
+            "cancellations": 0,
+            "last_reason": "disabled",
+        },
+        "utility": {
+            "enabled": False,
+            "ready": False,
+            "contract_version": "utility-plugin-v1",
+            "plugins": {
+                "arithmetic_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "boolean_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "set_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "date_time_v1": {
+                    "enabled": False,
+                    "ready": False,
+                    "version": "1.0.0",
+                    "timezone_database_version": UTILITY_TZDATA_VERSION,
+                },
+                "unit_conversion_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "version_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "identifier_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+            },
+        },
     }
 
 

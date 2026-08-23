@@ -522,7 +522,7 @@ def test_resolver_result_current_field_set_is_exact() -> None:
         {"resolver": "structured_graph", "claim_evidence": (_claim_record(),)},
     )
 
-    assert frozenset(resolver_result_to_dict(result)) == frozenset(
+    assert set(resolver_result_to_dict(result)) == set(
         {
             "schema_version",
             "resolver",

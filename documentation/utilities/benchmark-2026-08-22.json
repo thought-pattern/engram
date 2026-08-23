@@ -1,0 +1,260 @@
+{
+  "corpus": {
+    "path": "eval\\section14-utilities-v1.json",
+    "version": "section14-utilities-v1"
+  },
+  "enablement_decision": {
+    "all_plugins_independently_passed": true,
+    "decision": "promoted_for_opt_in_component_use_default_off",
+    "default_enabled": false,
+    "reason": "Section 14 supplies component evidence; protected default rollout remains owned by Section 16."
+  },
+  "fixed_registry": {
+    "dynamic_execution_calls": [],
+    "health": {
+      "contract_version": "utility-plugin-v1",
+      "enabled": true,
+      "plugins": {
+        "arithmetic_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        },
+        "boolean_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        },
+        "date_time_v1": {
+          "enabled": true,
+          "ready": true,
+          "timezone_database_version": "2024.1",
+          "version": "1.0.0"
+        },
+        "identifier_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        },
+        "set_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        },
+        "unit_conversion_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        },
+        "version_v1": {
+          "enabled": true,
+          "ready": true,
+          "version": "1.0.0"
+        }
+      },
+      "ready": true
+    },
+    "plugin_names": [
+      "arithmetic_v1",
+      "boolean_v1",
+      "set_v1",
+      "date_time_v1",
+      "unit_conversion_v1",
+      "version_v1",
+      "identifier_v1"
+    ]
+  },
+  "fuzz_cases_per_plugin": 500,
+  "generated_at": "2026-08-22T10:05:49.567502+00:00",
+  "passed": true,
+  "plugins": {
+    "arithmetic_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 1.0485,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "boolean_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 0.5753,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "date_time_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 8.9738,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "identifier_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 0.3599,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "set_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 0.6264,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "unit_conversion_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 0.9886,
+        "resource_rejection_rate": 1.0
+      }
+    },
+    "version_v1": {
+      "default_enabled": false,
+      "passed": true,
+      "promoted_for_opt_in_component_use": true,
+      "values": {
+        "conformance_accuracy": 1.0,
+        "determinism_rate": 1.0,
+        "fuzz_failure_rate": 0.0,
+        "held_out_accuracy": 1.0,
+        "p95_latency_ms": 0.403,
+        "resource_rejection_rate": 1.0
+      }
+    }
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "f052720f32db25e8670afb0591962fbb5fe0654a",
+    "branch": "graph",
+    "changed_paths": [
+      ".gitignore",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/code-style-migration.md",
+      "documentation/code-style.md",
+      "documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/semantic/",
+      "documentation/utilities/",
+      "engram/artifacts.py",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/conversation.py",
+      "engram/coordination.py",
+      "engram/core.py",
+      "engram/dialogue.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/eviction.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mcp_server.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/nlp.py",
+      "engram/nltk_data.py",
+      "engram/pattern.py",
+      "engram/persistence.py",
+      "engram/phrasing.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/reranking.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/responses.py",
+      "engram/rewrite.py",
+      "engram/scoring.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sessions.py",
+      "engram/spacy_setup.py",
+      "engram/sparse.py",
+      "engram/substitutions.py",
+      "engram/template.py",
+      "engram/temporal.py",
+      "engram/utilities.py",
+      "eval/run_conversation.py",
+      "eval/section13-semantic-v1.json",
+      "eval/section14-utilities-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_semantic.py",
+      "scripts/benchmark_utilities.py",
+      "scripts/cli.py",
+      "scripts/provision_semantic_model.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "scripts/setup_schema.py",
+      "tests/test_cli.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_persistence_v2.py",
+      "tests/test_phrasing.py",
+      "tests/test_pipeline.py",
+      "tests/test_reranking.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_semantic.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_template.py",
+      "tests/test_utilities.py"
+    ],
+    "governed_source_sha256": "f18bd0e7c8a7bac7bf3d23f8711e44b46f44cd36ccb08d6cb6ce8ed7966c4b25",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  }
+}

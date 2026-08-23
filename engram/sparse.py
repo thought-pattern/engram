@@ -15,9 +15,9 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import TypedDict, cast
+from typing import cast
 
-from engram.artifacts import CachedResponseArtifact, LifecycleState, validate_cached_response_artifact
+from engram.artifacts import CachedResponseArtifact, validate_cached_response_artifact
 from engram.config import SparseConfig, sparse_config
 from engram.constants import DEFAULT_STOPWORDS
 from engram.errors import InvalidRequestError
@@ -33,6 +33,10 @@ MAX_SPARSE_TOKENS_PER_FIELD = 2_048
 MAX_SPARSE_TECHNICAL_IDENTIFIERS = 256
 MAX_SPARSE_TOKEN_BYTES = 256
 MAX_SPARSE_RESULTS = 1_000
+SPARSE_DESCRIPTOR_WORKING_BYTES = 192
+SPARSE_IDENTIFIER_WORKING_BYTES = 128
+SPARSE_SCORE_WORKING_BYTES = 1_024
+SPARSE_MATCH_WORKING_BYTES = 768
 MIN_PREFIX_LENGTH = 3
 MAX_PREFIX_LENGTH = 12
 CHAR_NGRAM_SIZE = 3
@@ -62,7 +66,7 @@ _GENERAL_TOKEN = re.compile(r"[^\W_]+(?:['’][^\W_]+)?", re.UNICODE)
 _VERSION_TOKEN = re.compile(r"^v?\d+(?:\.\d+){1,5}(?:[-+][a-z0-9._-]+)?$", re.IGNORECASE)
 _ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _MIXED_IDENTIFIER = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9._:/\\+#@%$|&*<>=-]+$")
-_TECHNICAL_PUNCTUATION = frozenset("._:/\\-+#@%$|&*<>=")
+_TECHNICAL_PUNCTUATION = set("._:/\\-+#@%$|&*<>=")
 _BOUNDARY_PUNCTUATION = "\"'`()[]{};,!?"
 
 
@@ -104,62 +108,23 @@ def _validated_settings(value: Mapping[str, object]) -> SparseConfig:
     return result
 
 
-class SparseDocument(TypedDict):
-    schema_version: int
-    statement_id: str
-    scope: ScopeKey
-    lifecycle: LifecycleState
-    fields: Mapping[str, tuple[str, ...]]
-    tokens: Mapping[str, tuple[str, ...]]
-    technical_identifiers: tuple[str, ...]
+SparseDocument = dict
 
 
 SparsePosting = tuple[str, tuple[tuple[str, int], ...]]
 EMPTY_SPARSE_POSTING: SparsePosting = ("", ())
 
 
-class SparseIndexState(TypedDict):
-    schema_version: int
-    index_version: int
-    tokenizer_version: int
-    state_generation: int
-    repository_state_generation: int
-    config_fingerprint: str
-    documents: Mapping[str, SparseDocument]
-    postings: Mapping[str, tuple[SparsePosting, ...]]
-    document_frequencies: Mapping[str, int]
-    average_field_lengths: Mapping[str, float]
-    fingerprint: str
+SparseIndexState = dict
 
 
-class SparseMatch(TypedDict):
-    statement_id: str
-    score: float
-    field_contributions: Mapping[str, float]
-    phrase_fields: tuple[str, ...]
-    proximity_fields: tuple[str, ...]
-    minimum_proximity: int
-    prefix_match_count: int
-    character_ngram_similarity: float
-    technical_exact_match: bool
-    technical_exact_ratio: float
-    matched_term_count: int
+SparseMatch = dict
 
 
-class SparseSearchResult(TypedDict):
-    matches: tuple[SparseMatch, ...]
-    complete: bool
-    reason: str
-    query_term_count: int
-    posting_visits: int
-    working_memory_bytes: int
+SparseSearchResult = dict
 
 
-class SparseIndexCheckReport(TypedDict):
-    consistent: bool
-    repository_state_generation: int
-    document_count: int
-    issues: tuple[str, ...]
+SparseIndexCheckReport = dict
 
 
 def _normalized_text(value: str) -> str:
@@ -648,45 +613,115 @@ def search_sparse_index(
             working_memory_bytes=0,
         )
     descriptors = dict(base_descriptors)
-    exact_identifier_postings = {
-        identifier: tuple(
-            posting
-            for posting in state["postings"].get(f"x:{identifier}", ())
-            if state["documents"][posting[0]]["scope"] == validated_scope
-        )
-        for identifier in query_identifiers
-    }
+    posting_visits = 0
+    exact_identifier_sets = []
+    exact_identifier_item_count = 0
     for identifier in query_identifiers:
-        if exact_identifier_postings[identifier]:
+        statement_ids = set()
+        for posting in state["postings"].get(f"x:{identifier}", ()):
+            posting_visits += 1
+            if posting_visits > max_posting_visits:
+                return SparseSearchResult(
+                    matches=(),
+                    complete=False,
+                    reason="posting_visit_budget",
+                    query_term_count=len(descriptors),
+                    posting_visits=posting_visits,
+                    working_memory_bytes=256 + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES,
+                )
+            if state["documents"][posting[0]]["scope"] != validated_scope:
+                continue
+            projected_items = exact_identifier_item_count + 1
+            projected_memory = (
+                256 + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES + projected_items * SPARSE_IDENTIFIER_WORKING_BYTES
+            )
+            if projected_memory > max_working_memory_bytes:
+                return SparseSearchResult(
+                    matches=(),
+                    complete=False,
+                    reason="working_memory_budget",
+                    query_term_count=len(descriptors),
+                    posting_visits=posting_visits,
+                    working_memory_bytes=256
+                    + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                    + exact_identifier_item_count * SPARSE_IDENTIFIER_WORKING_BYTES,
+                )
+            statement_ids.add(posting[0])
+            exact_identifier_item_count = projected_items
+        exact_identifier_sets.append(statement_ids)
+        if statement_ids:
             continue
         ngrams = _character_ngrams(identifier)
         multiplier = 0.15 / max(1, len(ngrams))
         for ngram in ngrams:
             descriptors[f"g:{ngram}"] = multiplier
+    if len(descriptors) > max_query_terms:
+        return SparseSearchResult(
+            matches=(),
+            complete=False,
+            reason="query_term_budget",
+            query_term_count=len(descriptors),
+            posting_visits=posting_visits,
+            working_memory_bytes=0,
+        )
     if not descriptors:
         return SparseSearchResult(
             matches=(),
             complete=True,
             reason="no_sparse_terms",
             query_term_count=0,
-            posting_visits=0,
+            posting_visits=posting_visits,
             working_memory_bytes=0,
         )
 
     scores: dict[str, dict[str, float]] = {}
     matched_keys: dict[str, set[str]] = {}
-    posting_visits = 0
     document_count = max(1, len(state["documents"]))
-    exact_identifier_sets = [
-        {posting[0] for posting in exact_identifier_postings[identifier]}
-        for identifier in query_identifiers
-        if exact_identifier_postings[identifier]
-    ]
     candidate_pool: set[str] = set()
-    if exact_identifier_sets:
-        candidate_pool = set.intersection(*exact_identifier_sets)
+    populated_identifier_sets = [value for value in exact_identifier_sets if value]
+    if populated_identifier_sets:
+        projected_memory = (
+            256
+            + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+            + (exact_identifier_item_count + len(populated_identifier_sets[0])) * SPARSE_IDENTIFIER_WORKING_BYTES
+        )
+        if projected_memory > max_working_memory_bytes:
+            return SparseSearchResult(
+                matches=(),
+                complete=False,
+                reason="working_memory_budget",
+                query_term_count=len(descriptors),
+                posting_visits=posting_visits,
+                working_memory_bytes=256
+                + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                + exact_identifier_item_count * SPARSE_IDENTIFIER_WORKING_BYTES,
+            )
+        candidate_pool = set(populated_identifier_sets[0])
+        for statement_ids in populated_identifier_sets[1:]:
+            candidate_pool.intersection_update(statement_ids)
         if not candidate_pool:
-            candidate_pool = set.union(*exact_identifier_sets)
+            for statement_ids in populated_identifier_sets:
+                for statement_id in statement_ids:
+                    if statement_id in candidate_pool:
+                        continue
+                    projected_size = len(candidate_pool) + 1
+                    projected_memory = (
+                        256
+                        + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                        + (exact_identifier_item_count + projected_size) * SPARSE_IDENTIFIER_WORKING_BYTES
+                    )
+                    if projected_memory > max_working_memory_bytes:
+                        return SparseSearchResult(
+                            matches=(),
+                            complete=False,
+                            reason="working_memory_budget",
+                            query_term_count=len(descriptors),
+                            posting_visits=posting_visits,
+                            working_memory_bytes=256
+                            + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                            + (exact_identifier_item_count + len(candidate_pool)) * SPARSE_IDENTIFIER_WORKING_BYTES,
+                        )
+                    candidate_pool.add(statement_id)
     else:
         rare_limit = max(32, min(1_000, document_count // 10))
         anchor_terms = sorted(
@@ -695,37 +730,87 @@ def search_sparse_index(
             if 0 < state["document_frequencies"].get(term, 0) <= rare_limit
         )[:4]
         for _frequency, term in anchor_terms:
-            candidate_pool.update(
-                posting[0]
-                for posting in state["postings"].get(term, ())
-                if state["documents"][posting[0]]["scope"] == validated_scope
-            )
+            for posting in state["postings"].get(term, ()):
+                posting_visits += 1
+                if posting_visits > max_posting_visits:
+                    return SparseSearchResult(
+                        matches=(),
+                        complete=False,
+                        reason="posting_visit_budget",
+                        query_term_count=len(descriptors),
+                        posting_visits=posting_visits,
+                        working_memory_bytes=256
+                        + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                        + len(candidate_pool) * SPARSE_IDENTIFIER_WORKING_BYTES,
+                    )
+                statement_id = posting[0]
+                if state["documents"][statement_id]["scope"] != validated_scope or statement_id in candidate_pool:
+                    continue
+                projected_memory = (
+                    256
+                    + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                    + (len(candidate_pool) + 1) * SPARSE_IDENTIFIER_WORKING_BYTES
+                )
+                if projected_memory > max_working_memory_bytes:
+                    return SparseSearchResult(
+                        matches=(),
+                        complete=False,
+                        reason="working_memory_budget",
+                        query_term_count=len(descriptors),
+                        posting_visits=posting_visits,
+                        working_memory_bytes=256
+                        + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES
+                        + len(candidate_pool) * SPARSE_IDENTIFIER_WORKING_BYTES,
+                    )
+                candidate_pool.add(statement_id)
+    exact_identifier_sets.clear()
+    working_memory = (
+        256 + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES + len(candidate_pool) * SPARSE_IDENTIFIER_WORKING_BYTES
+    )
+    if working_memory > max_working_memory_bytes:
+        return SparseSearchResult(
+            matches=(),
+            complete=False,
+            reason="working_memory_budget",
+            query_term_count=len(descriptors),
+            posting_visits=posting_visits,
+            working_memory_bytes=0,
+        )
     for term, multiplier in descriptors.items():
         postings = state["postings"].get(term, ())
-        selected_postings: tuple[SparsePosting, ...]
         if candidate_pool:
-            selected_postings = tuple(
-                posting for statement_id in sorted(candidate_pool) if (posting := _posting_for(postings, statement_id))[0]
-            )
+            selected_postings = (posting for statement_id in candidate_pool if (posting := _posting_for(postings, statement_id))[0])
         else:
             selected_postings = postings
-        posting_visits += len(selected_postings)
-        if posting_visits > max_posting_visits:
-            return SparseSearchResult(
-                matches=(),
-                complete=False,
-                reason="posting_visit_budget",
-                query_term_count=len(descriptors),
-                posting_visits=posting_visits,
-                working_memory_bytes=0,
-            )
         document_frequency = state["document_frequencies"].get(term, 0)
         inverse_frequency = math.log(1.0 + (document_count - document_frequency + 0.5) / (document_frequency + 0.5))
         for posting in selected_postings:
+            posting_visits += 1
+            if posting_visits > max_posting_visits:
+                return SparseSearchResult(
+                    matches=(),
+                    complete=False,
+                    reason="posting_visit_budget",
+                    query_term_count=len(descriptors),
+                    posting_visits=posting_visits,
+                    working_memory_bytes=working_memory,
+                )
             statement_id = posting[0]
             document = state["documents"][statement_id]
             if document["scope"] != validated_scope:
                 continue
+            if statement_id not in scores:
+                projected_memory = working_memory + SPARSE_SCORE_WORKING_BYTES
+                if projected_memory > max_working_memory_bytes:
+                    return SparseSearchResult(
+                        matches=(),
+                        complete=False,
+                        reason="working_memory_budget",
+                        query_term_count=len(descriptors),
+                        posting_visits=posting_visits,
+                        working_memory_bytes=working_memory,
+                    )
+                working_memory = projected_memory
             contributions = scores.setdefault(statement_id, dict.fromkeys(SPARSE_FIELD_NAMES, 0.0))
             matched_keys.setdefault(statement_id, set()).add(term)
             for field_name, frequency in posting[1]:
@@ -734,19 +819,8 @@ def search_sparse_index(
                 denominator = frequency + 1.2 * (1.0 - 0.75 + 0.75 * field_length / average_length)
                 bm25 = inverse_frequency * (frequency * 2.2) / denominator
                 contributions[field_name] += bm25 * SPARSE_FIELD_WEIGHTS[field_name] * multiplier
-        working_estimate = 256 + posting_visits * 24 + len(scores) * 512
-        if working_estimate > max_working_memory_bytes:
-            return SparseSearchResult(
-                matches=(),
-                complete=False,
-                reason="working_memory_budget",
-                query_term_count=len(descriptors),
-                posting_visits=posting_visits,
-                working_memory_bytes=max_working_memory_bytes,
-            )
-
     query_ngrams = {f"g:{ngram}" for identifier in query_identifiers for ngram in _character_ngrams(identifier)}
-    matches = []
+    retained = []
     for statement_id, raw_fields in scores.items():
         document = state["documents"][statement_id]
         raw_total = sum(raw_fields.values())
@@ -773,34 +847,54 @@ def search_sparse_index(
             + 0.10 * ngram_similarity
             + 0.15 * technical_exact_ratio,
         )
+        ranking_key = (-score, statement_id)
+        worst_index = -1
+        if len(retained) >= limit:
+            worst_index = max(range(len(retained)), key=lambda index: (-retained[index]["score"], retained[index]["statement_id"]))
+            worst = retained[worst_index]
+            if ranking_key >= (-worst["score"], worst["statement_id"]):
+                continue
+        if worst_index < 0:
+            projected_memory = working_memory + SPARSE_MATCH_WORKING_BYTES
+            if projected_memory > max_working_memory_bytes:
+                return SparseSearchResult(
+                    matches=(),
+                    complete=False,
+                    reason="working_memory_budget",
+                    query_term_count=len(descriptors),
+                    posting_visits=posting_visits,
+                    working_memory_bytes=working_memory,
+                )
+            working_memory = projected_memory
         field_contributions = MappingProxyType(
             {
                 name: raw_fields[name] / (raw_fields[name] + normalization) if raw_fields[name] else 0.0
                 for name in SPARSE_FIELD_NAMES
             }
         )
-        matches.append(
-            SparseMatch(
-                statement_id=statement_id,
-                score=score,
-                field_contributions=field_contributions,
-                phrase_fields=phrase_fields,
-                proximity_fields=proximity_fields,
-                minimum_proximity=minimum_proximity,
-                prefix_match_count=prefix_count,
-                character_ngram_similarity=ngram_similarity,
-                technical_exact_match=technical_exact,
-                technical_exact_ratio=technical_exact_ratio,
-                matched_term_count=len(keys),
-            )
+        match = SparseMatch(
+            statement_id=statement_id,
+            score=score,
+            field_contributions=field_contributions,
+            phrase_fields=phrase_fields,
+            proximity_fields=proximity_fields,
+            minimum_proximity=minimum_proximity,
+            prefix_match_count=prefix_count,
+            character_ngram_similarity=ngram_similarity,
+            technical_exact_match=technical_exact,
+            technical_exact_ratio=technical_exact_ratio,
+            matched_term_count=len(keys),
         )
-    matches.sort(key=lambda match: (-match["score"], match["statement_id"]))
-    retained = tuple(matches[:limit])
-    working_memory = min(max_working_memory_bytes, 256 + posting_visits * 24 + len(scores) * 512 + len(retained) * 512)
+        if worst_index < 0:
+            retained.append(match)
+        else:
+            retained[worst_index] = match
+    retained.sort(key=lambda match: (-match["score"], match["statement_id"]))
+    retained_values = tuple(retained)
     result = SparseSearchResult(
-        matches=retained,
+        matches=retained_values,
         complete=True,
-        reason="sparse_candidates" if retained else "sparse_miss",
+        reason="sparse_candidates" if retained_values else "sparse_miss",
         query_term_count=len(descriptors),
         posting_visits=posting_visits,
         working_memory_bytes=working_memory,

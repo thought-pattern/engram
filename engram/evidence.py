@@ -4,7 +4,6 @@ import json
 import math
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import TypedDict
 
 from engram.constants import (
     CANONICAL_COMPLETENESS_FLOOR_V1,
@@ -68,17 +67,14 @@ def _no_cooperative_check() -> None:
     return
 
 
-def _exact_mapping(value: object, name: str, fields: frozenset[str]) -> Mapping[str, object]:
-    if not isinstance(value, Mapping) or frozenset(value) != fields:
+def _exact_mapping(value: object, name: str, fields: set[str]) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or set(value) != fields:
         raise InvalidRequestError(f"{name} has invalid fields")
     result = value
     return result
 
 
-EvidenceUsefulnessDecision = TypedDict(
-    "EvidenceUsefulnessDecision",
-    {"claim_id": str, "included": bool, "reasons": tuple[EvidenceUsefulnessReason, ...], "policy_version": str},
-)
+EvidenceUsefulnessDecision = dict
 
 
 def evidence_usefulness_decision(
@@ -144,18 +140,7 @@ def evidence_usefulness_decision_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-EvidenceUsefulnessPolicy = TypedDict(
-    "EvidenceUsefulnessPolicy",
-    {
-        "policy_version": str,
-        "canonical_completeness_floor": float,
-        "structured_match_floor": float,
-        "semantic_similarity_floor": float,
-        "source_agreement_floor": float,
-        "supplied_trust_floor": float,
-        "supplied_trust_floor_available": bool,
-    },
-)
+EvidenceUsefulnessPolicy = dict
 
 
 def evidence_usefulness_policy(
@@ -226,7 +211,7 @@ def evidence_usefulness_policy_with_changes(value: object, changes: object) -> E
     policy = validate_evidence_usefulness_policy(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("evidence usefulness policy changes must be an object")
-    if not frozenset(changes).issubset(EVIDENCE_USEFULNESS_POLICY_FIELDS):
+    if not set(changes).issubset(EVIDENCE_USEFULNESS_POLICY_FIELDS):
         raise InvalidRequestError("evidence usefulness policy changes contain an unknown field")
     updated: dict[str, object] = dict(policy)
     updated.update(changes)
@@ -344,17 +329,7 @@ def _timestamp(value: str) -> datetime:
     return parsed
 
 
-VisibilityAuthorization = TypedDict(
-    "VisibilityAuthorization",
-    {
-        "allowed": bool,
-        "scope": ScopeKey,
-        "ownership": ClaimOwnership,
-        "authority_id": str,
-        "policy_version": str,
-        "reason_code": str,
-    },
-)
+VisibilityAuthorization = dict
 
 
 def visibility_authorization(
@@ -401,7 +376,7 @@ def validate_visibility_authorization(value: object) -> VisibilityAuthorization:
     return result
 
 
-VisibilityGrant = TypedDict("VisibilityGrant", {"scope": ScopeKey, "ownership": ClaimOwnership})
+VisibilityGrant = dict
 
 
 def visibility_grant(scope: object, ownership: object) -> VisibilityGrant:
@@ -439,7 +414,7 @@ class ExactScopeVisibilityAuthority:
         keys = tuple((scope_key_signature(grant["scope"]), grant["ownership"]) for grant in validated_grants)
         if len(keys) != len(set(keys)):
             raise InvalidRequestError("visibility grants must be unique")
-        self._grants = frozenset(keys)
+        self._grants = set(keys)
 
     def evaluate(self, scope: ScopeKey, ownership: ClaimOwnership) -> VisibilityAuthorization:
         try:
@@ -461,17 +436,7 @@ class ExactScopeVisibilityAuthority:
         return result
 
 
-ClaimEligibilityDecision = TypedDict(
-    "ClaimEligibilityDecision",
-    {
-        "projection": ClaimProjection,
-        "eligible": bool,
-        "reason": ClaimEligibilityReason,
-        "disclosure": DisclosureDecision,
-        "disclosure_available": bool,
-        "revalidated": bool,
-    },
-)
+ClaimEligibilityDecision = dict
 
 
 def claim_eligibility_decision(
@@ -535,7 +500,7 @@ def claim_eligibility_decision_with_changes(value: object, changes: object) -> C
     decision = validate_claim_eligibility_decision(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("Claim eligibility decision changes must be an object")
-    if not frozenset(changes).issubset(CLAIM_ELIGIBILITY_DECISION_FIELDS):
+    if not set(changes).issubset(CLAIM_ELIGIBILITY_DECISION_FIELDS):
         raise InvalidRequestError("Claim eligibility decision changes contain an unknown field")
     updated: dict[str, object] = dict(decision)
     updated.update(changes)

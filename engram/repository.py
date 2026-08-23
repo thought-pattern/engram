@@ -5,7 +5,6 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.artifacts import (
     CachedResponseArtifact,
@@ -38,14 +37,7 @@ from engram.indexes import (
     validate_index_state,
 )
 
-TierAdmissionPolicy = TypedDict(
-    "TierAdmissionPolicy",
-    {
-        "dynamic_capacity": int,
-        "eviction_policy": EvictionPolicy,
-        "minimum_protected_hit_rate": float,
-    },
-)
+TierAdmissionPolicy = dict
 
 
 def tier_admission_policy(
@@ -72,7 +64,7 @@ def tier_admission_policy(
 
 def validate_tier_admission_policy(value: object) -> TierAdmissionPolicy:
     """Validate and copy one tier-admission policy dictionary."""
-    if not isinstance(value, Mapping) or frozenset(value) != TIER_ADMISSION_POLICY_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != TIER_ADMISSION_POLICY_FIELDS:
         raise InvalidRequestError("admission policy must be a TierAdmissionPolicy")
     dynamic_capacity = value.get("dynamic_capacity", ())
     eviction_policy = value.get("eviction_policy", ())
@@ -83,16 +75,7 @@ def validate_tier_admission_policy(value: object) -> TierAdmissionPolicy:
     return result
 
 
-RepositoryCheckReport = TypedDict(
-    "RepositoryCheckReport",
-    {
-        "consistent": bool,
-        "state_generation": int,
-        "artifact_count": int,
-        "issues": tuple[str, ...],
-        "omitted_issue_count": int,
-    },
-)
+RepositoryCheckReport = dict
 
 
 def repository_check_report(
@@ -126,7 +109,7 @@ def repository_check_report(
 def validate_repository_check_report(value: object) -> RepositoryCheckReport:
     """Validate and copy one repository-equivalence report dictionary."""
 
-    if not isinstance(value, Mapping) or frozenset(value) != REPOSITORY_CHECK_REPORT_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != REPOSITORY_CHECK_REPORT_FIELDS:
         raise InvalidRequestError("repository check report must be a RepositoryCheckReport")
     consistent = value.get("consistent", ())
     state_generation = value.get("state_generation", ())
@@ -314,15 +297,7 @@ def _is_protected_dynamic(artifact: CachedResponseArtifact, minimum_hit_rate: fl
     return result
 
 
-RepositoryState = TypedDict(
-    "RepositoryState",
-    {
-        "state_generation": int,
-        "artifacts": Mapping[str, CachedResponseArtifact],
-        "statements": Mapping[str, Mapping[str, object]],
-        "index_state": IndexState,
-    },
-)
+RepositoryState = dict
 
 
 def repository_state(
@@ -373,7 +348,7 @@ def repository_state(
 def validate_repository_state(value: object) -> RepositoryState:
     """Validate and copy one repository snapshot dictionary."""
 
-    if not isinstance(value, Mapping) or frozenset(value) != REPOSITORY_STATE_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != REPOSITORY_STATE_FIELDS:
         raise InvalidRequestError("repository state must be a RepositoryState")
     state_generation = value.get("state_generation", ())
     artifacts = value.get("artifacts", ())
@@ -385,18 +360,7 @@ def validate_repository_state(value: object) -> RepositoryState:
     return result
 
 
-AdmissionPlan = TypedDict(
-    "AdmissionPlan",
-    {
-        "outcome": AdmissionOutcome,
-        "candidate": RepositoryState,
-        "admitted_statement_id": str,
-        "evicted_statement_ids": tuple[str, ...],
-        "affected_epoch_namespaces": tuple[str, ...],
-        "residency_changed": bool,
-        "lifecycle_changed": bool,
-    },
-)
+AdmissionPlan = dict
 
 
 def admission_plan(
@@ -453,7 +417,7 @@ def admission_plan(
 def validate_admission_plan(value: object) -> AdmissionPlan:
     """Validate and copy one tier-admission result dictionary."""
 
-    if not isinstance(value, Mapping) or frozenset(value) != ADMISSION_PLAN_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != ADMISSION_PLAN_FIELDS:
         raise InvalidRequestError("admission plan must be an AdmissionPlan")
     outcome = value.get("outcome", ())
     candidate = value.get("candidate", ())

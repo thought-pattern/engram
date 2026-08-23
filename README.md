@@ -10,6 +10,7 @@ Key features:
 
 - **Keyword matching** - Fast, predictable retrieval using keyword overlap
 - **Optional sparse retrieval** - Fielded BM25 with phrase and technical-identifier signals
+- **Optional semantic retrieval and reranking** - Offline local request embeddings and a bounded transparent shortlist scorer
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
 - **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
@@ -159,9 +160,10 @@ undiluted.
 ## Configuration
 
 ```python
-from engram.config import engram_config, sparse_config
+from engram.config import engram_config, reranker_config, semantic_config, sparse_config
 from engram.constants import EvictionPolicy, SessionOverflow
 from engram.core import Engram
+from engram.utilities import utility_config
 
 config = engram_config(
     capacity=10000,              # Max DYNAMIC statements
@@ -176,6 +178,9 @@ config = engram_config(
     min_hit_rate=0.0,            # Protect proven statements above this hit rate
     retrieval_rewrites_enabled=False,  # Opt-in retrieval-only symbolic reductions
     sparse=sparse_config(enabled=False),  # Opt-in local fielded BM25
+    semantic=semantic_config(enabled=False),  # Requires an explicitly provisioned artifact when enabled
+    reranker=reranker_config(enabled=False),  # Independently controlled bounded shortlist scorer
+    utility=utility_config(enabled=False),  # Fixed, independently selectable deterministic operations
     learn_user_facts=True,       # Learn shared facts with user attribution
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
@@ -200,6 +205,21 @@ and persists no index data. Response text remains excluded unless
 optional enablement and readiness independently without changing overall service
 readiness. See the
 [version-1 sparse contract](documentation/sparse/contracts-v1.md).
+
+Standalone semantic retrieval and reranking are independently disabled by
+default. Before enabling semantic retrieval, run
+`python scripts/provision_semantic_model.py` and copy its model path, immutable
+version, checksum, license, backend, and dimension into external configuration.
+Serving never downloads model artifacts. Canonical requests and aliases are
+embedded; accepted-response prose is not. See the
+[version-1 semantic and reranking contract](documentation/semantic/contracts-v1.md).
+
+Deterministic utilities are also disabled by default. When enabled, only the
+configured compiled-in arithmetic, Boolean, set, date/time, unit, SemVer, and
+identifier grammars can run; configuration cannot name modules or expressions.
+Utility candidates are re-executed before fusion, are never learned or credited as
+knowledge, and can be rolled back individually. See the
+[version-1 utility contract](documentation/utilities/contracts-v1.md).
 
 ## Persistence
 

@@ -1,6 +1,6 @@
 # Engram Development Plan
 
-**Audience: Internal | Status: Sections 0-12 component-implemented; Sections 15-16 active; release not approved | Baseline: 10 August 2026 | Updated: 21 August 2026**
+**Audience: Internal | Status: Sections 0-13 component-implemented; Sections 15-16 active; release not approved | Baseline: 10 August 2026 | Updated: 22 August 2026**
 
 Implementation status for this plan is maintained in [ENGRAM-PROJECT-TRACKING.md](ENGRAM-PROJECT-TRACKING.md). This document defines the intended architecture, sequencing, contracts, and acceptance gates. It does not mark proposed work as implemented.
 
@@ -25,7 +25,7 @@ Current implementation context comes from the active [README](README.md), [MCP](
 
 Section 0 reconciled those claims against the active source and recorded the audited revision, discrepancies, tests, and measurements in [the source audit](documentation/baseline/source-audit-2026-08-11.md). Current-state statements below remain baseline descriptions; implementation completion is governed by the tracker and its linked evidence.
 
-Sections 0 through 12 have since been component-completed under that authority. The executable Section 4 substrate and its current resource/timing boundary are published in the [unified resolution contract v2](documentation/artifacts/resolution-contract-v2.md); v2 removes latency limits from answer policy while retaining elapsed reporting and non-time resource bounds. Section 5 feature semantics, authoritative revalidation, fusion, ambiguity, and policy boundaries are published in the [candidate-fusion contract v1](documentation/fusion/contracts-v1.md), with verification and benchmark evidence in the [Section 5 conformance report](documentation/fusion/section5-conformance-2026-08-15.md). Section 6 targeting, receipt, aggregation, aging, feedback-history, lifecycle-handoff, persistence, recovery, and negative-resolution boundaries are published in the [feedback and negative-resolution contract v1](documentation/feedback/contracts-v1.md), with verification and scale evidence in the [Section 6 conformance report](documentation/feedback/section6-conformance-2026-08-16.md). Section 7's in-place core evidence evolution, unchanged CLI/MCP/current-gRPC boundaries, strict contracts, disclosure gate, response-less producers, bounded orchestration, conformance results, and engineering benchmark are published in the [accepted decision](documentation/decisions/0005-section7-evidence-compatibility.md), [core handoff](documentation/evidence/core-handoff.md), and [Section 7 conformance report](documentation/evidence/section7-conformance-2026-08-16.md). Section 11's configuration-gated retrieval rewrites are published in [the symbolic rewrite contract](documentation/rewrite/contracts-v1.md). Section 12's fielded BM25 implementation, engine comparison, source-bound gate, and live MCP evidence are published in the [sparse contract](documentation/sparse/contracts-v1.md), [ADR 0006](documentation/decisions/0006-section12-fielded-bm25.md), and [conformance report](documentation/sparse/section12-conformance-2026-08-21.md). A future gRPC evidence RPC/message is versioned only when Section 15 changes that actual external interface. Component completion does not imply that Section 16's protected evaluation or release gate has passed.
+Sections 0 through 13 have since been component-completed under that authority. The executable Section 4 substrate and its current resource/timing boundary are published in the [unified resolution contract v2](documentation/artifacts/resolution-contract-v2.md); v2 removes latency limits from answer policy while retaining elapsed reporting and non-time resource bounds. Section 5 feature semantics, authoritative revalidation, fusion, ambiguity, and policy boundaries are published in the [candidate-fusion contract v1](documentation/fusion/contracts-v1.md), with verification and benchmark evidence in the [Section 5 conformance report](documentation/fusion/section5-conformance-2026-08-15.md). Section 6 targeting, receipt, aggregation, aging, feedback-history, lifecycle-handoff, persistence, recovery, and negative-resolution boundaries are published in the [feedback and negative-resolution contract v1](documentation/feedback/contracts-v1.md), with verification and scale evidence in the [Section 6 conformance report](documentation/feedback/section6-conformance-2026-08-16.md). Section 7's in-place core evidence evolution, unchanged CLI/MCP/current-gRPC boundaries, strict contracts, disclosure gate, response-less producers, bounded orchestration, conformance results, and engineering benchmark are published in the [accepted decision](documentation/decisions/0005-section7-evidence-compatibility.md), [core handoff](documentation/evidence/core-handoff.md), and [Section 7 conformance report](documentation/evidence/section7-conformance-2026-08-16.md). Section 11's configuration-gated retrieval rewrites are published in [the symbolic rewrite contract](documentation/rewrite/contracts-v1.md). Section 12's fielded BM25 implementation, engine comparison, source-bound gate, and live MCP evidence are published in the [sparse contract](documentation/sparse/contracts-v1.md), [ADR 0006](documentation/decisions/0006-section12-fielded-bm25.md), and [conformance report](documentation/sparse/section12-conformance-2026-08-21.md). Section 13's checksum-gated offline embeddings, exact-cosine lifecycle, transparent reranker, independent promotion decisions, and live MCP evidence are published in the [semantic contract](documentation/semantic/contracts-v1.md), [ADR 0007](documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md), and [conformance report](documentation/semantic/section13-conformance-2026-08-22.md). A future gRPC evidence RPC/message is versioned only when Section 15 changes that actual external interface. Component completion does not imply that Section 16's protected evaluation or release gate has passed.
 
 The 20 August 2026 execution update completes EGR-1502's stable [Python API v1](documentation/python-api.md), including authoritative identity input, the Section 7 evidence package, keyed feedback examples, strict mapping boundaries, concrete falsy absence, and a transient cooperative-cancellation hook. EGR-1510 adds the [deployment and rollback runbook](documentation/operations/deployment-and-rollback-v1.md) and its isolated rollback exercise. The [Section 16 evaluation foundation](documentation/evaluation/foundation-v1.md) now contains only public tuning cases and contrasts. Release-gate and final-test custody slots are unprovisioned and unauthorized; their previously visible examples were compromised for release use and removed. Proposed numerical sample floors are unmet, and no release approval is claimed. Engineering benchmark artifacts bind to governed source state and report turn-length distributions without a latency pass/fail threshold.
 
@@ -878,17 +878,66 @@ The accepted-response JSON state remains authoritative. The sparse index is an i
 
 ### 19.3 Optional standalone semantic retrieval
 
-Standalone dense retrieval should embed canonical requests and aliases, not accepted response prose. The feature remains configuration-gated, local, CPU-bound, eagerly initialized and readiness-checked at startup when enabled, and downstream of exact, rewrite, symbolic, and sparse retrieval.
+The version-1 standalone dense resolver embeds canonical requests and aliases,
+never accepted-response prose. It is configuration-gated, local, CPU-bound,
+eagerly initialized and readiness-checked when enabled, and registered downstream
+of exact, rewrite, symbolic, and sparse retrieval. Its immutable exact-cosine
+index supports incremental changed-statement replacement, retirement and
+supersession exclusion, consistency checks, and clean repository-derived rebuild.
+Every candidate is generation-revalidated and enters the shared eligibility and
+fusion policy.
 
-Model artifacts must be provisioned before startup. Benchmarks should compare the current sentence-transformer path with quantized or ONNX execution where licensing, numerical stability, and deployment support are acceptable.
+The model must be explicitly provisioned before startup. The pinned native
+`all-MiniLM-L6-v2` artifact is Apache-2.0, checksum and dimension gated, and loaded
+with CPU/offline/remote-code-disabled settings. Native, ONNX, and quantized
+variants are reported separately; an uninstalled runtime or unprovisioned
+artifact is recorded unavailable rather than downloaded or simulated. The
+[contract](documentation/semantic/contracts-v1.md), [ADR 0007](documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md),
+[frozen corpus](eval/section13-semantic-v1.json), and [benchmark](documentation/semantic/benchmark-2026-08-22.json)
+record the implementation and independent component gate.
 
 ### 19.4 Lightweight reranking
 
-Only a small candidate shortlist may reach reranking. Candidate approaches include logistic regression, a small learning-to-rank model, or a local pairwise encoder. Promotion requires a measured direct-answer precision or useful-evidence gain after accounting for latency, memory, cold start, explainability, and operational complexity.
+Only a bounded fused-candidate shortlist reaches reranking. Version 1 supplies a
+fixed, transparent logistic scorer over the published normalized fusion features
+and base score. Candidate count, serialized input bytes, measured model time, and
+output features are bounded; cancellation propagates, while input/time/scorer
+failure preserves baseline order. Loaded version, readiness, completions,
+fallbacks, and cancellations are observable without raw text. The reranker has an
+independent feature flag and configuration-only rollback.
+
+The frozen evaluation uses disjoint train, calibration, and release labels. No
+approved local pairwise artifact exists, so pairwise comparison is explicitly
+unavailable. The transparent scorer passes its safety, non-regression, and
+resource checks independently of semantic retrieval, but the release partition
+shows no positive ranking gain, so it is not promoted. These are
+repository-visible engineering results, not Section 16 protected release
+approval.
 
 ### 19.5 Utility resolvers
 
-Utility resolvers may cover arithmetic, date arithmetic, unit conversion, Boolean and set operations, version comparison, and identifier parsing. Each plugin declares accepted input types, computational bounds, deterministic formatting, error behavior, and an independent conformance suite. Utility output is not learned as authoritative knowledge unless committed through the ordinary accepted-response path.
+Section 14 supplies seven fixed built-in plugins: arithmetic, Boolean, set,
+date/time, unit conversion, SemVer comparison, and UUID/slug validation. The
+configuration is an allow-list of those names, not a module or entry-point loader.
+The implementation contains no general expression evaluator and performs no file,
+network, graph, subprocess, shell, or current-time operation.
+
+Each plugin publishes name/version, accepted direct-request grammar, hard input and
+work bounds, canonical output, evidence policy, stable errors, and health. Numeric
+work uses bounded Decimal precision and magnitude; set work has bounded items;
+date/time work requires ISO input and an explicit source offset; units must share a
+fixed dimension; versions are SemVer 2.0.0 only; identifiers are UUID or lowercase
+slug only. The [utility contract](documentation/utilities/contracts-v1.md) and
+[threat model](documentation/utilities/threat-model-v1.md) define the exact rules.
+
+A successful candidate records `learnable: false` and no accounting or Claim
+evidence. Fusion re-executes the named built-in and checks its canonical input,
+versions, statement digest, and response before granting deterministic answer
+authority. The result is never learned, persisted, or treated as accepted-response
+knowledge. Every plugin passed its own conformance, held-out, property, fuzz,
+resource, ambiguity, security, and integration gate and is promoted for opt-in
+component use. All remain disabled by default, and a plugin can be rolled back by
+removing its name without migrating data.
 
 ## 20. API evolution and compatibility
 
@@ -1073,6 +1122,7 @@ Any direct-answer change also requires a false-direct-answer comparison against 
 | Feedback overfits one user or context | Separate statement and relationship statistics, scope every observation, age counts, and require sample floors. |
 | Graph composition becomes open-ended | Internal parameterized plans with hard hop, row, branch, candidate, path, and output limits plus cooperative cancellation. |
 | Semantic retrieval adds startup or deployment cost | Configuration-gated local models, pre-provisioned artifacts, eager startup initialization and readiness checks, quantization benchmarks, cooperative cancellation, optional-backend isolation, and supervisor-controlled shutdown. |
+| Utility parsing becomes an execution surface | Fixed built-in names, dedicated narrow grammars, hard work/output bounds, no dynamic execution or I/O, authority re-execution, independent fuzz/security gates, and per-plugin rollback. |
 | Evidence payload exposes too much graph data | Minimal fields, visibility filters, size limits, transport review, and Tapestry revalidation. |
 | Protocol evolution breaks existing clients | Core-first contracts, additive fields, versioned protobuf when needed, compatibility tests, and staged migration. |
 | Improved cache availability is mistaken for authority | Preserve current support validation and Regulator acceptance in the Tapestry path. |
@@ -1107,4 +1157,6 @@ Section 10's closed algebra, strict bounded plans, fixed-capability one/two-hop 
 
 Section 12's default-off fielded BM25 resolver is implemented. It projects seven weighted fields from authoritative accepted-response artifacts, preserves bounded technical identifiers, exposes phrase/proximity/prefix/ngram/field diagnostics, shares the lexical fusion family, atomically rebuilds immutable generations, synchronizes only affected postings, reuses postings for statistics-only mutations, and persists no secondary state. The [Section 12 conformance report](documentation/sparse/section12-conformance-2026-08-21.md) records 128 focused and 1,535 full passing tests, all 11 engineering promotion verdicts, optional graph execution-isolation and sparse-readiness regressions, and a source-bound 1,000-turn official-MCP Sarah preference run with sparse enabled and five live MemGraph results.
 
-Section 3 retains ownership of artifact generations, lifecycle, epoch mutation, accepted-response and mutation-receipt persistence, migration, and startup derivation. Section 4 retains unique candidacy and accepted-success finalization. Section 5 owns the common feature vocabulary, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 6 owns feedback targets and receipts, scoped aggregates, their feature-owned codecs and migration contract, aging, the history producer, negative resolution, and bounded core inspection. Section 7 owns full response-less Claim contracts, fixed projections, current disclosure eligibility, initial unfitted usefulness, packaging, and the transport-neutral core handoff; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; Section 9 owns requested historical-time, trust-ranking, multi-value, and conflict semantics; Section 10 owns multi-hop evidence paths; and Section 12 owns the optional sparse document, tokenizer, index, and resolver contracts. Section 15 owns cross-feature schema/startup orchestration, adapter exposure and authorization, migration and backup operator experience, downgrade and rollback, operational telemetry, and deployment; stable Python mapping, offline serving preflight, deployment/rollback documentation, optional graph execution isolation, and independent sparse readiness reporting are complete. Section 16 owns independent custodianship, calibration, usefulness and avoided-work measurement, chaos, release-scale sample floors, and release approval. Its public tuning foundation passes integrity checks, while EGR-1601 is blocked on an independent evaluation custodian and EGR-1609 is blocked on an independent release owner; release-gate and final-test content remains unprovisioned and unauthorized.
+Section 13's default-off standalone semantic resolver and transparent reranker are implemented. The semantic index embeds only canonical requests and aliases from authoritative accepted-response artifacts, verifies a pinned local model license, checksum, revision, backend, and dimension before CPU-only offline loading, publishes immutable rebuildable generations, and enters the common eligibility and fusion path after cheaper resolvers. The independent engineering gate promotes semantic for opt-in component use after 0.8889 release recall@1, an 0.1111 gain over sparse, and zero false answers. The reranker passes its safety and resource checks but remains unpromoted because it adds no release recall. The [Section 13 conformance report](documentation/semantic/section13-conformance-2026-08-22.md) records the artifact policy, disjoint benchmark, 1,562-test full suite, and source-bound 1,000-turn official-MCP Sarah preference run with semantic, reranker, and live MemGraph ready.
+
+Section 3 retains ownership of artifact generations, lifecycle, epoch mutation, accepted-response and mutation-receipt persistence, migration, and startup derivation. Section 4 retains unique candidacy and accepted-success finalization. Section 5 owns the common feature vocabulary, fusion, ambiguity, calibrated confidence, thresholds, and policy reasons; Section 6 owns feedback targets and receipts, scoped aggregates, their feature-owned codecs and migration contract, aging, the history producer, negative resolution, and bounded core inspection. Section 7 owns full response-less Claim contracts, fixed projections, current disclosure eligibility, initial unfitted usefulness, packaging, and the transport-neutral core handoff; Section 8 owns contextual frame enrichment and canonical relation-aware graph plans; Section 9 owns requested historical-time, trust-ranking, multi-value, and conflict semantics; Section 10 owns multi-hop evidence paths; Section 12 owns the optional sparse document, tokenizer, index, and resolver contracts; and Section 13 owns standalone request embeddings, local model artifact compatibility, semantic-index lifecycle, semantic candidate production, and bounded transparent shortlist reranking. Section 15 owns cross-feature schema/startup orchestration, adapter exposure and authorization, migration and backup operator experience, downgrade and rollback, operational telemetry, and deployment; stable Python mapping, offline serving preflight, deployment/rollback documentation, optional graph execution isolation, and independent sparse and semantic readiness reporting are complete. Section 16 owns independent custodianship, calibration, usefulness and avoided-work measurement, chaos, release-scale sample floors, and release approval. Its public tuning foundation passes integrity checks, while EGR-1601 is blocked on an independent evaluation custodian and EGR-1609 is blocked on an independent release owner; release-gate and final-test content remains unprovisioned and unauthorized.

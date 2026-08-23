@@ -92,7 +92,6 @@ from engram.resolution import (
     resolution_result_to_json,
     validate_resolution_budget,
     validate_resolution_result,
-    validate_resolver_result,
 )
 from engram.resolvers import (
     ExactResolver,
@@ -103,9 +102,11 @@ from engram.resolvers import (
     ResolverExecutor,
     ResolverRegistry,
     SparseResolver,
+    StandaloneSemanticResolver,
     StructuredGraphResolver,
     SupportSemanticResolver,
-    resolution_plan_to_dict,
+    UtilityResolver,
+    _trusted_resolution_plan_to_dict,
     resolver_contract,
 )
 from engram.responses import AcceptedResponseService, LifecycleMutationReason
@@ -243,11 +244,7 @@ def _no_cancellation_check() -> None:
 
 def negative_resolution_admissible(value: ResolutionResult, plan) -> bool:
     """Return whether a complete knowledge miss is safe to cache negatively."""
-    try:
-        current = validate_resolution_result(value)
-    except InvalidRequestError:
-        result = False
-        return result
+    current = value
     if current["outcome"] != ResolutionOutcome.MISS or current["budget"]["exhausted_dimensions"]:
         result = False
         return result
@@ -266,15 +263,14 @@ def negative_resolution_admissible(value: ResolutionResult, plan) -> bool:
         "exact": "exact_MISS",
         "pattern": "pattern_miss",
         "lexical": "lexical_miss",
+        "utility": "utility_miss",
         "structured_graph": "structured_graph_miss",
         "support_semantic": "support_semantic_miss",
     }
     for entry in configured:
         resolver_name, _, _, _ = resolver_contract(entry["resolver"])
-        resolver_result = results.get(resolver_name, ())
-        try:
-            resolver_result = validate_resolver_result(resolver_result)
-        except InvalidRequestError:
+        resolver_result = results.get(resolver_name)
+        if not resolver_result:
             result = False
             return result
         expected_reason = knowledge_miss_reasons.get(resolver_name, "")
@@ -412,9 +408,11 @@ class EngramCore:
         self._resolver_registry = ResolverRegistry(
             (
                 ExactResolver(self.engram, time.monotonic_ns),
+                UtilityResolver(self.engram.utility_registry, time.monotonic_ns),
                 PatternResolver(self.engram, time.monotonic_ns),
                 LexicalResolver(self.engram, time.monotonic_ns),
                 SparseResolver(self.engram, time.monotonic_ns),
+                StandaloneSemanticResolver(self.engram, time.monotonic_ns),
                 StructuredGraphResolver(self.engram, time.monotonic_ns),
                 SupportSemanticResolver(self.engram, time.monotonic_ns),
             )
@@ -437,6 +435,7 @@ class EngramCore:
                     self.engram.feedback_store,
                     fusion_policy_value,
                 ),
+                reranker=self.engram.reranker,
             ),
         )
 
@@ -501,6 +500,7 @@ class EngramCore:
                         )
                     )
         self.engram.synchronize_sparse_index(state["repository"], changed_statement_ids)
+        self.engram.synchronize_semantic_index(state["repository"], changed_statement_ids)
         self._invalidate_negative_for_response_state(state)
 
     def __enter__(self) -> "EngramCore":
@@ -709,7 +709,7 @@ class EngramCore:
             result = empty_negative_resolution()["key"], False
             return result
         configured = tuple(resolver_contract(entry["resolver"])[0] for entry in plan["entries"] if entry["configured"])
-        serialized_entries = resolution_plan_to_dict(plan)["entries"]
+        serialized_entries = _trusted_resolution_plan_to_dict(plan)["entries"]
         if not isinstance(serialized_entries, list):
             raise LifecycleError("resolution plan entries are malformed")
         plan_entries = cast(list[dict[str, object]], serialized_entries)
@@ -902,7 +902,7 @@ class EngramCore:
                     )
                     if negative_lookup["hit"]:
                         result = negative_hit_result(frame, negative_started_ns)
-                        cached_result = validate_resolution_result(result)
+                        cached_result = result
                         self._resolution_requests[request_id] = {
                             "signature": signature,
                             "result": cached_result,
@@ -916,17 +916,17 @@ class EngramCore:
                             self._resolution_requests.pop(evicted_request_id)
                             self._resolution_accounting.discard(evicted_request_id)
                         remember_contextual_frame()
-                        public_result = validate_resolution_result(cached_result)
+                        public_result = validate_resolution_result(result)
                         return public_result
             except ResolutionCancelledError:
                 raise
             except Exception:
                 # Negative resolution is an optimization and always fails open.
                 negative_key_available = False
-            result, finalization = self._resolution_orchestrator.resolve(
+            result, finalization = self._resolution_orchestrator._resolve_with_plan(
                 frame,
                 request_id,
-                configured_names=configured_resolvers,
+                plan,
                 accept_exact=accept_exact,
                 cooperative_check=selected_cancellation_check,
             )
@@ -946,7 +946,7 @@ class EngramCore:
                 outcome=FeedbackOutcome.CANDIDATE,
                 observed_at=frame["eligibility_context"]["evaluation_time"],
             )
-            cached_result = validate_resolution_result(result)
+            cached_result = result
             record: dict[str, object] = {
                 "signature": signature,
                 "result": cached_result,
@@ -963,7 +963,7 @@ class EngramCore:
                 self._resolution_requests.pop(evicted_request_id)
                 self._resolution_accounting.discard(evicted_request_id)
             remember_contextual_frame()
-            public_result = validate_resolution_result(cached_result)
+            public_result = validate_resolution_result(result)
             return public_result
 
     def record_resolution_feedback(
@@ -1432,7 +1432,9 @@ class EngramCore:
                         "selected": (
                             "exact"
                             if exact_statement_id
-                            else "vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"
+                            else "vector"
+                            if entry["vector_score"] > entry["keyword_score"]
+                            else "keyword"
                         ),
                     }
                     candidates.append(candidate)

@@ -1,0 +1,257 @@
+{
+  "contract": {
+    "accepted_frame_types": [
+      "direct_request"
+    ],
+    "bounds": {
+      "max_input_bytes": 4096,
+      "max_nesting": 16,
+      "max_operations": 32,
+      "max_output_bytes": 2048,
+      "max_tokens": 128,
+      "numeric_precision_digits": 34
+    },
+    "contract_version": "utility-plugin-v1",
+    "deterministic_result": "ISO 8601 date, integer days, or seconds-precision timestamp with target zone",
+    "errors": [
+      "date_time_syntax",
+      "date_time_domain",
+      "timezone_not_allowed"
+    ],
+    "evidence": "candidate provenance only; no Claim or learned-response evidence",
+    "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
+    "input_schema": "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
+    "name": "date_time_v1",
+    "version": "1.0.0"
+  },
+  "fuzz": {
+    "case_count": 500,
+    "oversized_output_count": 0,
+    "p95_latency_ms": 0.0146,
+    "passed": true,
+    "statuses": {
+      "rejected": 500
+    },
+    "unexpected_failure_count": 0
+  },
+  "gate": {
+    "checks": {
+      "conformance_accuracy": true,
+      "determinism": true,
+      "fuzz_safety": true,
+      "held_out_accuracy": true,
+      "latency": true,
+      "property_checks": true,
+      "resource_rejection": true,
+      "threat_payload_not_executed": true
+    },
+    "default_enabled": false,
+    "passed": true,
+    "promoted_for_opt_in_component_use": true,
+    "thresholds": {
+      "accuracy_min": 1.0,
+      "determinism_min": 1.0,
+      "fuzz_failure_rate_max": 0.0,
+      "p95_latency_ms_max": 250.0,
+      "resource_rejection_rate_min": 1.0
+    },
+    "values": {
+      "conformance_accuracy": 1.0,
+      "determinism_rate": 1.0,
+      "fuzz_failure_rate": 0.0,
+      "held_out_accuracy": 1.0,
+      "p95_latency_ms": 8.9738,
+      "resource_rejection_rate": 1.0
+    }
+  },
+  "generated_at": "2026-08-22T10:05:49.389962+00:00",
+  "partitions": {
+    "conformance": {
+      "accuracy": 1.0,
+      "case_count": 4,
+      "passed_count": 4,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "3a19e3b77be46406ccf4a163219392103440e7c726e1c55ebae00b2a9b6fbb17",
+          "latency_ms": 0.4477,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "2024-02-29"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "19d111472fa9e569c72af8bddfc718017763265de07d1b8962ad59134f4b3590",
+          "latency_ms": 0.3538,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "21"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "2348f12baf1132a98a2421ac410a8cdde056bf3c6a8a2b705fa7e243b5352b76",
+          "latency_ms": 8.9738,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "2026-08-22T18:30:00+00:00[UTC]"
+        },
+        {
+          "deterministic": true,
+          "error_code": "date_time_domain",
+          "expected_status": "rejected",
+          "input_sha256": "cee746fd97d55bf551c763c7df3fbb49f32c700cb96202089aec5d8cd327a3c7",
+          "latency_ms": 0.0273,
+          "observed_status": "rejected",
+          "passed": true,
+          "response": ""
+        }
+      ]
+    },
+    "held_out": {
+      "accuracy": 1.0,
+      "case_count": 2,
+      "passed_count": 2,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "ae1fdca5169ef61d7d7f8920d1fe563d83e9a4282fcf2965beccff7809afe330",
+          "latency_ms": 0.0285,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "2024-12-31"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "b55f843bc2a10ab70d64806989b628d4fa2d9826cc6d06785bfe171bcbf07a51",
+          "latency_ms": 2.4379,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "2026-01-15T07:00:00-05:00[America/New_York]"
+        }
+      ]
+    }
+  },
+  "plugin_name": "date_time_v1",
+  "properties": {
+    "date_addition_round_trip": true
+  },
+  "resource_limit": {
+    "expected_error": "date_time_domain",
+    "observed_error": "date_time_domain",
+    "observed_status": "rejected",
+    "passed": true
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "f052720f32db25e8670afb0591962fbb5fe0654a",
+    "branch": "graph",
+    "changed_paths": [
+      ".gitignore",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/code-style-migration.md",
+      "documentation/code-style.md",
+      "documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/semantic/",
+      "documentation/utilities/",
+      "engram/artifacts.py",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/conversation.py",
+      "engram/coordination.py",
+      "engram/core.py",
+      "engram/dialogue.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/eviction.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mcp_server.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/nlp.py",
+      "engram/nltk_data.py",
+      "engram/pattern.py",
+      "engram/persistence.py",
+      "engram/phrasing.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/reranking.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/responses.py",
+      "engram/rewrite.py",
+      "engram/scoring.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sessions.py",
+      "engram/spacy_setup.py",
+      "engram/sparse.py",
+      "engram/substitutions.py",
+      "engram/template.py",
+      "engram/temporal.py",
+      "engram/utilities.py",
+      "eval/run_conversation.py",
+      "eval/section13-semantic-v1.json",
+      "eval/section14-utilities-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_semantic.py",
+      "scripts/benchmark_utilities.py",
+      "scripts/cli.py",
+      "scripts/provision_semantic_model.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "scripts/setup_schema.py",
+      "tests/test_cli.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_persistence_v2.py",
+      "tests/test_phrasing.py",
+      "tests/test_pipeline.py",
+      "tests/test_reranking.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_semantic.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_template.py",
+      "tests/test_utilities.py"
+    ],
+    "governed_source_sha256": "f18bd0e7c8a7bac7bf3d23f8711e44b46f44cd36ccb08d6cb6ce8ed7966c4b25",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "threat_probe": {
+    "error_code": "date_time_syntax",
+    "passed": true,
+    "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status": "rejected"
+  }
+}

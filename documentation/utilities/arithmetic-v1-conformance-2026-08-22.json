@@ -1,0 +1,258 @@
+{
+  "contract": {
+    "accepted_frame_types": [
+      "direct_request"
+    ],
+    "bounds": {
+      "max_input_bytes": 4096,
+      "max_nesting": 16,
+      "max_operations": 32,
+      "max_output_bytes": 2048,
+      "max_tokens": 128,
+      "numeric_precision_digits": 34
+    },
+    "contract_version": "utility-plugin-v1",
+    "deterministic_result": "canonical decimal text",
+    "errors": [
+      "arithmetic_syntax",
+      "arithmetic_domain",
+      "operation_limit",
+      "numeric_limit"
+    ],
+    "evidence": "candidate provenance only; no Claim or learned-response evidence",
+    "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
+    "input_schema": "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
+    "name": "arithmetic_v1",
+    "version": "1.0.0"
+  },
+  "fuzz": {
+    "case_count": 500,
+    "oversized_output_count": 0,
+    "p95_latency_ms": 0.0386,
+    "passed": true,
+    "statuses": {
+      "rejected": 500
+    },
+    "unexpected_failure_count": 0
+  },
+  "gate": {
+    "checks": {
+      "conformance_accuracy": true,
+      "determinism": true,
+      "fuzz_safety": true,
+      "held_out_accuracy": true,
+      "latency": true,
+      "property_checks": true,
+      "resource_rejection": true,
+      "threat_payload_not_executed": true
+    },
+    "default_enabled": false,
+    "passed": true,
+    "promoted_for_opt_in_component_use": true,
+    "thresholds": {
+      "accuracy_min": 1.0,
+      "determinism_min": 1.0,
+      "fuzz_failure_rate_max": 0.0,
+      "p95_latency_ms_max": 250.0,
+      "resource_rejection_rate_min": 1.0
+    },
+    "values": {
+      "conformance_accuracy": 1.0,
+      "determinism_rate": 1.0,
+      "fuzz_failure_rate": 0.0,
+      "held_out_accuracy": 1.0,
+      "p95_latency_ms": 1.0485,
+      "resource_rejection_rate": 1.0
+    }
+  },
+  "generated_at": "2026-08-22T10:05:49.225728+00:00",
+  "partitions": {
+    "conformance": {
+      "accuracy": 1.0,
+      "case_count": 4,
+      "passed_count": 4,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "4e4bbd75d486da1f49ba9db300dbfff3d350ac1a149ef769023ce77ee0a50df4",
+          "latency_ms": 1.0485,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "35"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "e2dae7949f150382d340642f1b1e6603ce88df2ef8ce79eeb7dbb6d34e3324f6",
+          "latency_ms": 0.0613,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "0.125"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "c4bbce421e80767442ce0d5eb10b686d120d00a7d3dc009d29e1b7c3a6782d0e",
+          "latency_ms": 0.0711,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "4096"
+        },
+        {
+          "deterministic": true,
+          "error_code": "arithmetic_domain",
+          "expected_status": "rejected",
+          "input_sha256": "9181082004922971d79520cf89e826f83a6d9eb7ffde22f43b65b7b2c249e4a8",
+          "latency_ms": 0.057,
+          "observed_status": "rejected",
+          "passed": true,
+          "response": ""
+        }
+      ]
+    },
+    "held_out": {
+      "accuracy": 1.0,
+      "case_count": 2,
+      "passed_count": 2,
+      "records": [
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "8e73197281e397900c76c62592214bc3ceceda2a3a29005db26a462d755961d7",
+          "latency_ms": 0.0643,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "5"
+        },
+        {
+          "deterministic": true,
+          "error_code": "",
+          "expected_status": "resolved",
+          "input_sha256": "90a706610b388e3ce39dccd9347d5146a8312789bb56585b032907b06518516f",
+          "latency_ms": 0.0416,
+          "observed_status": "resolved",
+          "passed": true,
+          "response": "0.3"
+        }
+      ]
+    }
+  },
+  "plugin_name": "arithmetic_v1",
+  "properties": {
+    "commutative_addition": true
+  },
+  "resource_limit": {
+    "expected_error": "operation_limit",
+    "observed_error": "operation_limit",
+    "observed_status": "rejected",
+    "passed": true
+  },
+  "schema_version": 1,
+  "source_state": {
+    "base_commit": "f052720f32db25e8670afb0591962fbb5fe0654a",
+    "branch": "graph",
+    "changed_paths": [
+      ".gitignore",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/code-style-migration.md",
+      "documentation/code-style.md",
+      "documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/semantic/",
+      "documentation/utilities/",
+      "engram/artifacts.py",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/contextual.py",
+      "engram/conversation.py",
+      "engram/coordination.py",
+      "engram/core.py",
+      "engram/dialogue.py",
+      "engram/eligibility.py",
+      "engram/errors.py",
+      "engram/eviction.py",
+      "engram/evidence.py",
+      "engram/feedback.py",
+      "engram/fusion.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/identity.py",
+      "engram/indexes.py",
+      "engram/mcp_server.py",
+      "engram/models.py",
+      "engram/mutations.py",
+      "engram/nlp.py",
+      "engram/nltk_data.py",
+      "engram/pattern.py",
+      "engram/persistence.py",
+      "engram/phrasing.py",
+      "engram/pipeline.py",
+      "engram/relation.py",
+      "engram/repository.py",
+      "engram/reranking.py",
+      "engram/resolution.py",
+      "engram/resolvers.py",
+      "engram/responses.py",
+      "engram/rewrite.py",
+      "engram/scoring.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sessions.py",
+      "engram/spacy_setup.py",
+      "engram/sparse.py",
+      "engram/substitutions.py",
+      "engram/template.py",
+      "engram/temporal.py",
+      "engram/utilities.py",
+      "eval/run_conversation.py",
+      "eval/section13-semantic-v1.json",
+      "eval/section14-utilities-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_semantic.py",
+      "scripts/benchmark_utilities.py",
+      "scripts/cli.py",
+      "scripts/provision_semantic_model.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "scripts/setup_schema.py",
+      "tests/test_cli.py",
+      "tests/test_core.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nltk_data.py",
+      "tests/test_pattern.py",
+      "tests/test_persistence_v2.py",
+      "tests/test_phrasing.py",
+      "tests/test_pipeline.py",
+      "tests/test_reranking.py",
+      "tests/test_resolution_contracts.py",
+      "tests/test_resolvers.py",
+      "tests/test_scoring.py",
+      "tests/test_semantic.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_spacy_features.py",
+      "tests/test_substitutions.py",
+      "tests/test_template.py",
+      "tests/test_utilities.py"
+    ],
+    "governed_source_sha256": "f18bd0e7c8a7bac7bf3d23f8711e44b46f44cd36ccb08d6cb6ce8ed7966c4b25",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "threat_probe": {
+    "error_code": "arithmetic_syntax",
+    "passed": true,
+    "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status": "rejected"
+  }
+}

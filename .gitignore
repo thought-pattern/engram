@@ -215,3 +215,6 @@ config.yml
 # NLTK data (downloaded at setup via `python -m engram.nltk_data`, not committed).
 # Only the downloaded model cache is ignored; data/seed.json is tracked.
 data/nltk_data/
+
+# Pre-provisioned local model artifacts are machine-local and checksum-gated.
+data/artifacts/

@@ -10,7 +10,6 @@ import json
 import threading
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.constants import (
     EXACT_LOOKUP_RESULT_FIELDS,
@@ -85,12 +84,12 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def _exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[str, object]:
+def _exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
-    if frozenset(value) != keys:
-        missing = sorted(keys - frozenset(value))
-        extra = sorted(frozenset(value) - keys)
+    if set(value) != keys:
+        missing = sorted(keys - set(value))
+        extra = sorted(set(value) - keys)
         raise InvalidRequestError(f"{name} has invalid fields: missing={missing}, extra={extra}")
     return value
 
@@ -105,19 +104,7 @@ def _key_text(key: ScopedRetrievalKey) -> str:
     return result
 
 
-IndexProjection = TypedDict(
-    "IndexProjection",
-    {
-        "statement_id": str,
-        "generation": int,
-        "retrieval_keys": tuple[RetrievalKeyBinding, ...],
-        "support_claim_ids": tuple[str, ...],
-        "direct_answer_eligible": bool,
-        "exclusion_reason": str,
-        "normalization_version": int,
-        "schema_version": int,
-    },
-)
+IndexProjection = dict
 
 
 def index_projection(
@@ -211,7 +198,7 @@ def index_projection_with_changes(value: object, changes: object) -> IndexProjec
     projection = validate_index_projection(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("index projection changes must be an object")
-    if not frozenset(changes).issubset(INDEX_PROJECTION_FIELDS):
+    if not set(changes).issubset(INDEX_PROJECTION_FIELDS):
         raise InvalidRequestError("index projection changes contain an unknown field")
     updated: dict[str, object] = dict(projection)
     updated.update(changes)
@@ -336,16 +323,7 @@ def index_projection_from_json(value: object) -> IndexProjection:
     return result
 
 
-RetrievalOwner = TypedDict(
-    "RetrievalOwner",
-    {
-        "statement_id": str,
-        "generation": int,
-        "provenance": RetrievalOrigin,
-        "representation": str,
-        "direct_answer_eligible": bool,
-    },
-)
+RetrievalOwner = dict
 
 RetrievalOwnerSignature = tuple[str, int, str, str, bool]
 
@@ -425,10 +403,7 @@ def retrieval_owner_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexCollisionReport = TypedDict(
-    "IndexCollisionReport",
-    {"key": ScopedRetrievalKey, "statement_ids": tuple[str, ...], "truncated": bool},
-)
+IndexCollisionReport = dict
 
 
 def index_collision_report(key: object, statement_ids: object, truncated: object) -> IndexCollisionReport:
@@ -482,10 +457,7 @@ def index_collision_report_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexBuildIssue = TypedDict(
-    "IndexBuildIssue",
-    {"reason": IndexIssueReason, "statement_id": str, "position": int, "detail": str, "input_only": bool},
-)
+IndexBuildIssue = dict
 
 IndexBuildIssueSignature = tuple[str, str, int, str, bool]
 
@@ -570,19 +542,7 @@ def index_build_issue_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexBuildReport = TypedDict(
-    "IndexBuildReport",
-    {
-        "input_count": int,
-        "projection_count": int,
-        "exact_key_count": int,
-        "support_edge_count": int,
-        "issues": tuple[IndexBuildIssue, ...],
-        "collisions": tuple[IndexCollisionReport, ...],
-        "omitted_issue_count": int,
-        "omitted_collision_count": int,
-    },
-)
+IndexBuildReport = dict
 
 
 def _index_build_report_from_validated(
@@ -688,19 +648,7 @@ def index_build_report_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-ExactLookupResult = TypedDict(
-    "ExactLookupResult",
-    {
-        "outcome": ExactLookupOutcome,
-        "key": ScopedRetrievalKey,
-        "statement_id": str,
-        "generation": int,
-        "provenance": str,
-        "representation": str,
-        "owner_statement_ids": tuple[str, ...],
-        "truncated": bool,
-    },
-)
+ExactLookupResult = dict
 
 
 def exact_lookup_result(
@@ -813,13 +761,7 @@ def exact_lookup_result_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-SupportMatch = TypedDict(
-    "SupportMatch",
-    {
-        "statement_id": str,
-        "matched_claim_ids": tuple[str, ...],
-    },
-)
+SupportMatch = dict
 
 
 def _support_claim_ids(value: object, name: str, *, allow_empty: bool) -> tuple[str, ...]:
@@ -866,18 +808,7 @@ def support_match_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-SupportLookupResult = TypedDict(
-    "SupportLookupResult",
-    {
-        "queried_claim_ids": tuple[str, ...],
-        "matches": tuple[SupportMatch, ...],
-        "omitted_match_count": int,
-        "omitted_edge_count": int,
-        "scanned_edge_count": int,
-        "complete": bool,
-        "reason": str,
-    },
-)
+SupportLookupResult = dict
 
 
 def _nonnegative_integer(value: object, name: str) -> int:
@@ -908,8 +839,8 @@ def support_lookup_result(
         raise InvalidRequestError("support lookup matches must use deterministic statement order")
     if len({match["statement_id"] for match in normalized_matches}) != len(normalized_matches):
         raise InvalidRequestError("support lookup matches must have unique statement IDs")
-    queried_set = frozenset(normalized_queried)
-    if any(not frozenset(match["matched_claim_ids"]).issubset(queried_set) for match in normalized_matches):
+    queried_set = set(normalized_queried)
+    if any(not set(match["matched_claim_ids"]).issubset(queried_set) for match in normalized_matches):
         raise InvalidRequestError("support lookup matched Claim IDs must be queried")
     omitted_matches = _nonnegative_integer(omitted_match_count, "support lookup omitted_match_count")
     omitted_edges = _nonnegative_integer(omitted_edge_count, "support lookup omitted_edge_count")
@@ -969,16 +900,7 @@ def support_lookup_result_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-SupportScanPlan = TypedDict(
-    "SupportScanPlan",
-    {
-        "queried_claim_ids": tuple[str, ...],
-        "edge_count": int,
-        "scan_limit": int,
-        "complete": bool,
-        "reason": str,
-    },
-)
+SupportScanPlan = dict
 
 
 def support_scan_plan(
@@ -1042,17 +964,7 @@ def support_scan_plan_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexCheckIssue = TypedDict(
-    "IndexCheckIssue",
-    {
-        "category": IndexCheckCategory,
-        "index_name": str,
-        "key": str,
-        "expected": tuple[str, ...],
-        "actual": tuple[str, ...],
-        "error": bool,
-    },
-)
+IndexCheckIssue = dict
 
 IndexCheckIssueSignature = tuple[str, str, str, tuple[str, ...], tuple[str, ...], bool]
 
@@ -1136,10 +1048,7 @@ def index_check_issue_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexCheckReport = TypedDict(
-    "IndexCheckReport",
-    {"consistent": bool, "checked_state_generation": int, "issues": tuple[IndexCheckIssue, ...], "omitted_issue_count": int},
-)
+IndexCheckReport = dict
 
 
 def index_check_report(
@@ -1196,21 +1105,7 @@ def index_check_report_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-IndexState = TypedDict(
-    "IndexState",
-    {
-        "state_generation": int,
-        "retrieval_to_owners": Mapping[ScopedRetrievalKeySignature, tuple[RetrievalOwner, ...]],
-        "statement_to_retrieval": Mapping[str, tuple[RetrievalKeyBinding, ...]],
-        "claim_to_statements": Mapping[str, tuple[str, ...]],
-        "statement_to_claims": Mapping[str, tuple[str, ...]],
-        "direct_retrieval": Mapping[ScopedRetrievalKeySignature, RetrievalOwner],
-        "projections": Mapping[str, IndexProjection],
-        "build_report": IndexBuildReport,
-        "normalization_version": int,
-        "schema_version": int,
-    },
-)
+IndexState = dict
 
 
 def _retrieval_key_signature(value: object) -> ScopedRetrievalKeySignature:
@@ -1519,17 +1414,7 @@ def index_state_support_lookup(
     return result
 
 
-IndexRepairResult = TypedDict(
-    "IndexRepairResult",
-    {
-        "applied": bool,
-        "changed": bool,
-        "before_generation": int,
-        "after_generation": int,
-        "candidate_report": IndexBuildReport,
-        "live_check": IndexCheckReport,
-    },
-)
+IndexRepairResult = dict
 
 
 def index_repair_result(
@@ -1876,7 +1761,7 @@ def _value_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, tuple):
         result = tuple(str(item) for item in value)
         return result
-    if isinstance(value, Mapping) and frozenset(value) == RETRIEVAL_OWNER_FIELDS:
+    if isinstance(value, Mapping) and set(value) == RETRIEVAL_OWNER_FIELDS:
         try:
             owner = validate_retrieval_owner(value)
         except InvalidRequestError:
@@ -1884,7 +1769,7 @@ def _value_tuple(value: object) -> tuple[str, ...]:
             return result
         result = (owner["statement_id"], owner["provenance"].value, str(owner["generation"]))
         return result
-    if isinstance(value, Mapping) and frozenset(value) == INDEX_PROJECTION_FIELDS:
+    if isinstance(value, Mapping) and set(value) == INDEX_PROJECTION_FIELDS:
         try:
             projection = validate_index_projection(value)
         except (InvalidRequestError, UnsupportedIdentityVersionError):

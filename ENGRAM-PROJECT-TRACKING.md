@@ -1,8 +1,8 @@
 # Engram Project Tracking
 
-**Audience: Internal | Status: Enhancement program In Progress, 143/175, 2 externally blocked; release Not Approved | 21 August 2026**
+**Audience: Internal | Status: Enhancement program In Progress, 158/175, 2 externally blocked; release Not Approved | 22 August 2026**
 
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 Tracks implementation status only. Components and ordering follow [ENGRAM-DEVELOPMENT.md](ENGRAM-DEVELOPMENT.md). Each checkbox is a buildable, checkable artifact. Status is assessed against the active Engram codebase. Commit, review, and merge state are human workflow concerns and do not determine whether implementation work is Done.
 
@@ -66,15 +66,15 @@ Deferred work remains Not Started. Blocked means a named external decision, depe
 | 10 | Bounded graph composition | P2 | §§8-9 | Done | 8/8 |
 | 11 | Symbolic retrieval rewrite layer | P3 | §§1, 4-5 | Done | 7/7 |
 | 12 | Sparse retrieval enhancement | P3 | §§1-5 | Done | 8/8 |
-| 13 | Standalone semantic retrieval and reranking | P3 | §§5, 12 | Not Started | 0/9 |
-| 14 | Utility resolver plugins | P3 | §§4-5 | Not Started | 0/6 |
+| 13 | Standalone semantic retrieval and reranking | P3 | §§5, 12 | Done | 9/9 |
+| 14 | Utility resolver plugins | P3 | §§4-5 | Done | 6/6 |
 | 15 | Interfaces, migration, security, and operations | Continuous | Cross-cutting | In Progress | 3/10 |
 | 16 | Evaluation, rollout, and release | Continuous | Cross-cutting | In Progress (2 blocked) | 0/10 |
-| | **Program total** | | | **In Progress (2 blocked)** | **143/175** |
+| | **Program total** | | | **In Progress (2 blocked)** | **158/175** |
 
 P0 establishes correctness and the shared architecture. P1 uses those contracts to improve regulated recall and evidence handoff. P2 adds structured graph depth after unified resolution is stable. P3 work is optional and advances independently only when held-out evaluation justifies its resource and operating cost. §§15-16 apply throughout.
 
-Sections 0 through 12 are component-complete, not release-qualified. Resolution budget v2 removes elapsed-time limits from answer policy: resolver and complete-turn duration are reported, while row, count, byte, memory, and cost-class limits remain resource controls. Cooperative cancellation and optional-backend availability do not change knowledge eligibility or fusion. Section 11 adds configuration-gated retrieval-only rewrites. Section 12 adds default-off fielded BM25 over authoritative request representations, immutable rebuildable generations, bounded technical signals, incremental mutation synchronization, and common candidate diagnostics. Its engineering holdout reaches 24/24 top-one and recall@5 with zero negative candidates; the 10,000-document profile passes every declared startup, mutation, memory, disk, and query gate. Its final MCP evaluation completes and evaluates 1,000 Sarah turns, preserves sushi/cat likes and dog dislike, enables sparse retrieval, and obtains five explicit live MemGraph replies. Sections 15 and 16 remain release-critical. EGR-1502 supplies the stable Python identity/evidence boundary, EGR-1508 keeps serving paths offline after startup preflight, and EGR-1510 supplies the deployment/rollback runbook and isolated rollback exercise. The public Section 16 manifest contains only tuning content. Independent release-gate and final-test content is unprovisioned and unauthorized, proposed sample floors are unmet, and no release is approved. Section 5, Section 6, and all Section 8 through 12 engineering regression fixtures are not training or release data.
+Sections 0 through 14 are component-complete, not release-qualified. Resolution budget v2 removes elapsed-time limits from answer policy: resolver and complete-turn duration are reported, while row, count, byte, memory, and cost-class limits remain resource controls. Cooperative cancellation and optional-backend availability do not change knowledge eligibility or fusion. Section 11 adds configuration-gated retrieval-only rewrites. Section 12 adds default-off fielded BM25 over authoritative request representations, immutable rebuildable generations, bounded technical signals, incremental mutation synchronization, and common candidate diagnostics. Section 13 adds checksum-gated offline standalone request embeddings and an independently controlled transparent reranker. The native semantic gate shows 0.8889 release recall@1, an 0.1111 gain over sparse, and zero false answers, so it is promoted for opt-in component use. Reranking remains unpromoted because its independently evaluated release recall gain is zero. Section 14 adds seven default-off, fixed built-in utility plugins with narrow grammars, hard computation/format bounds, no dynamic execution or learning, fusion authority re-execution, independent health/rollback, and per-plugin promotion for opt-in component use after all gates pass. Its final MCP evaluation completes and evaluates 1,000 Sarah turns, preserves sushi/cat likes and dog dislike, reports utility, semantic, reranker, and live MemGraph ready, and obtains five explicit graph replies. Sections 15 and 16 remain release-critical. EGR-1502 supplies the stable Python identity/evidence boundary, EGR-1508 keeps serving paths offline after startup preflight, and EGR-1510 supplies the deployment/rollback runbook and isolated rollback exercise. The public Section 16 manifest contains only tuning content. Independent release-gate and final-test content is unprovisioned and unauthorized, proposed sample floors are unmet, and no release is approved. Section 5, Section 6, and all Section 8 through 14 engineering regression fixtures are not training or release data.
 
 ## Documented Baseline
 
@@ -513,38 +513,46 @@ All seven tasks meet the Section 11 engineering exit condition. The rule and cor
 
 All eight tasks meet the Section 12 engineering exit condition. The optional resolver improves technical and long-tail retrieval while authoritative JSON artifacts remain unchanged, index failure stays fail-soft, and disabled mode does no content projection. This promotion grants no Section 16 release authority.
 
-## §13. Standalone semantic retrieval and reranking (0/9)
+## §13. Standalone semantic retrieval and reranking (9/9) — Done
 
 **Priority:** P3  
 **Depends on:** §§5 and 12.  
 **Exit:** Optional local semantic retrieval or reranking is promoted only when it improves held-out inference avoidance or evidence usefulness after all resource and safety costs are included.
 
-1. [ ] **EGR-1301: Define standalone embedding records.** Embed canonical requests and aliases, retain model and normalization versions, and do not use accepted response prose as the primary intent vector.
-2. [ ] **EGR-1302: Define model artifact policy.** Require approved licensing, pre-provisioned local files, checksums, dimensions, offline startup, and explicit unavailable behavior; prohibit runtime model downloads.
-3. [ ] **EGR-1303: Implement optional CPU embedding and index lifecycle.** Cover build, incremental update, supersession, invalidation, retirement, rebuild, dimension mismatch, and fail-soft operation.
-4. [ ] **EGR-1304: Integrate standalone semantic candidates.** Run after cheaper resolvers, expose alias provenance and semantic score, obey budget, and never bypass shared eligibility or fusion.
-5. [ ] **EGR-1305: Benchmark execution variants.** Compare supported native, ONNX, and quantized paths where available for recall, numerical drift, cold start, p95, throughput, memory, and artifact size.
-6. [ ] **EGR-1306: Define the reranker shortlist contract.** Bound input candidates, input length, model time, output features, cancellation, and fallback to pre-rerank order.
-7. [ ] **EGR-1307: Evaluate lightweight rerankers.** Compare transparent logistic regression or learning-to-rank with any approved small pairwise encoder using disjoint train, calibration, and release sets.
-8. [ ] **EGR-1308: Add model version, health, and rollback controls.** Expose loaded artifact identity, readiness, incompatibility, metrics, and a configuration-only rollback path.
-9. [ ] **EGR-1309: Pass independent semantic and reranker gates.** Promote each feature separately only when value exceeds approved false-answer, latency, memory, cold-start, and operating-complexity thresholds.
+1. [x] **EGR-1301: Define standalone embedding records.** Embed canonical requests and aliases, retain model and normalization versions, and do not use accepted response prose as the primary intent vector.
+2. [x] **EGR-1302: Define model artifact policy.** Require approved licensing, pre-provisioned local files, checksums, dimensions, offline startup, and explicit unavailable behavior; prohibit runtime model downloads.
+3. [x] **EGR-1303: Implement optional CPU embedding and index lifecycle.** Cover build, incremental update, supersession, invalidation, retirement, rebuild, dimension mismatch, and fail-soft operation.
+4. [x] **EGR-1304: Integrate standalone semantic candidates.** Run after cheaper resolvers, expose alias provenance and semantic score, obey budget, and never bypass shared eligibility or fusion.
+5. [x] **EGR-1305: Benchmark execution variants.** Compare supported native, ONNX, and quantized paths where available for recall, numerical drift, cold start, p95, throughput, memory, and artifact size.
+6. [x] **EGR-1306: Define the reranker shortlist contract.** Bound input candidates, input length, model time, output features, cancellation, and fallback to pre-rerank order.
+7. [x] **EGR-1307: Evaluate lightweight rerankers.** Compare transparent logistic regression or learning-to-rank with any approved small pairwise encoder using disjoint train, calibration, and release sets.
+8. [x] **EGR-1308: Add model version, health, and rollback controls.** Expose loaded artifact identity, readiness, incompatibility, metrics, and a configuration-only rollback path.
+9. [x] **EGR-1309: Complete independent semantic and reranker gate decisions.** Promote each feature separately only when value exceeds approved false-answer, latency, memory, cold-start, and operating-complexity thresholds; a safe non-regression without positive value is a completed withheld decision, not a passed value gate.
 
 **Evidence required:** model cards and licenses, checksums, offline-start tests, benchmark artifacts, held-out comparisons, health fixtures, and rollback exercise.
 
-## §14. Utility resolver plugins (0/6)
+**Section 13 evidence:** [ADR 0007](documentation/decisions/0007-section13-local-semantic-and-transparent-reranking.md) selects the pinned native CPU model, bounded exact-cosine index, and visible fixed logistic scorer. The [version-1 contract](documentation/semantic/contracts-v1.md), [tracked model manifest](documentation/semantic/model-manifest-all-MiniLM-L6-v2-826711e5.json), [30-query disjoint corpus](eval/section13-semantic-v1.json), and [source-bound benchmark](documentation/semantic/benchmark-2026-08-22.json) cover artifact licensing/checksum/offline policy, request-only records, lifecycle, failure, resolver/fusion, shortlist, health, and rollback contracts. Native semantic release recall@1 is 0.8889 versus sparse 0.7778, with zero semantic false answers, 26.1084 ms p95, 1,216.2818 ms cold start, and 456.5938 MiB peak observed process RSS; all six semantic gates pass and semantic is promoted for opt-in component use. Reranking passes its four safety/resource checks at 0.1794 ms p95 overhead and 0.4375 MiB measured incremental RSS, but its release recall gain is zero, so it remains unpromoted. ONNX, quantized, and pairwise paths are explicitly unavailable because reviewed local artifacts are not provisioned; installed runtime packages alone do not establish backend availability, and no runtime download or simulated result is used. The [conformance report](documentation/semantic/section13-conformance-2026-08-22.md) records the 1,566-test full suite, clean lint/type/import/dead-code/security gates, idempotent reused provisioning beneath ignored `data/artifacts/`, and an official-MCP run in which all 1,000 Sarah preference turns pass while semantic, reranker, and live MemGraph report ready and five turns are graph-sourced. Both benchmark and MCP evidence bind to governed source digest `b7a1c3ec957dfd79a45de2b462c1e7c34a9ffbb8e44bc9f5436018933a278454`; the host Black 26.5.1 installation did not complete its own import probe, so Ruff's changed-surface Python-format check is recorded instead of falsely claiming a Black pass.
+
+All nine tasks meet the Section 13 engineering exit condition. Semantic is an opt-in promoted component; reranking remains implemented, reversible, disabled by default, and withheld from promotion because independent evidence did not show positive value. This completion grants no Section 16 release authority.
+
+## §14. Utility resolver plugins (6/6)
 
 **Priority:** P3  
 **Depends on:** §§4-5.  
 **Exit:** Each promoted plugin resolves a declared deterministic input class within hard computational and formatting limits and cannot execute arbitrary code.
 
-1. [ ] **EGR-1401: Define the utility plugin contract.** Declare name, version, accepted frame types, input schema, bounds, deterministic result, evidence, errors, and health.
-2. [ ] **EGR-1402: Implement the allow-listed registry and sandbox boundary.** Load only configured built-in plugins, reject arbitrary imports or expressions, and isolate plugin failures.
-3. [ ] **EGR-1403: Implement arithmetic, Boolean, and set candidates.** Define numeric domains, precision, overflow, collection bounds, and canonical formatting.
-4. [ ] **EGR-1404: Implement date, time, and unit-conversion candidates.** Define timezone, calendar, locale, dimensional-analysis, precision, and ambiguity policies.
-5. [ ] **EGR-1405: Implement version and identifier candidates.** Define supported version schemes and identifier grammars without treating arbitrary strings as executable expressions.
-6. [ ] **EGR-1406: Gate each plugin independently.** Require conformance, property, fuzz, resource, ambiguity, integration, and held-out value tests before enabling it by default.
+1. [x] **EGR-1401: Define the utility plugin contract.** Declare name, version, accepted frame types, input schema, bounds, deterministic result, evidence, errors, and health.
+2. [x] **EGR-1402: Implement the allow-listed registry and sandbox boundary.** Load only configured built-in plugins, reject arbitrary imports or expressions, and isolate plugin failures.
+3. [x] **EGR-1403: Implement arithmetic, Boolean, and set candidates.** Define numeric domains, precision, overflow, collection bounds, and canonical formatting.
+4. [x] **EGR-1404: Implement date, time, and unit-conversion candidates.** Define timezone, calendar, locale, dimensional-analysis, precision, and ambiguity policies.
+5. [x] **EGR-1405: Implement version and identifier candidates.** Define supported version schemes and identifier grammars without treating arbitrary strings as executable expressions.
+6. [x] **EGR-1406: Gate each plugin independently.** Require conformance, property, fuzz, resource, ambiguity, integration, and held-out value tests before enabling it by default.
 
 **Evidence required:** plugin contract, threat model, per-plugin conformance artifacts, fuzz results, resource-limit tests, and enablement decision.
+
+**Section 14 evidence:** The [version-1 contract](documentation/utilities/contracts-v1.md) and [threat model](documentation/utilities/threat-model-v1.md) define the fixed registry, grammars, numeric/timezone/calendar/locale/dimension/version/identifier policies, hard resource and formatting bounds, stable results/errors, no-evidence/no-learning rule, health, security boundary, and per-plugin rollback. The [versioned corpus](eval/section14-utilities-v1.json), [source-bound summary](documentation/utilities/benchmark-2026-08-22.json), and seven adjacent per-plugin artifacts record 100% conformance and held-out accuracy, deterministic replay, passing domain properties and resource rejections, 3,500 seeded fuzz cases with zero unexpected failures or oversized output, bounded latency, and independent promotion decisions. All seven plugins are promoted for opt-in component use and remain disabled by default. The [conformance report](documentation/utilities/section14-conformance-2026-08-22.md) records 42 focused utility tests, the 1,608-test full suite, clean lint/type/import/dead-code/security/format gates, the two defects found and remediated during the comprehensive review, and the host-only non-project package conflict reported by `pip check`. The [official-MCP artifact](documentation/utilities/section14-mcp-sarah-preferences-memgraph-enabled-1000-turns-2026-08-22.json) passes all 1,000 evaluated Sarah preference turns with utility, semantic, reranker, and live MemGraph ready and five graph-sourced probes. Benchmark and MCP evidence bind to governed source digest `f18bd0e7c8a7bac7bf3d23f8711e44b46f44cd36ccb08d6cb6ce8ed7966c4b25`.
+
+All six tasks meet the Section 14 engineering exit condition. This completion is component evidence and grants no Section 16 release authority.
 
 ## §15. Interfaces, migration, security, and operations (3/10)
 

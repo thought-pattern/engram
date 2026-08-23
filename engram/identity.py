@@ -9,7 +9,6 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import TypedDict
 
 from engram.constants import (
     DEFAULT_CONTRACTIONS,
@@ -127,7 +126,7 @@ def _require_list(value: object, name: str) -> list[object]:
     return result
 
 
-def _require_exact_keys(data: Mapping[str, object], expected: frozenset[str], name: str) -> None:
+def _require_exact_keys(data: Mapping[str, object], expected: set[str], name: str) -> None:
     actual = set(data)
     missing = expected - actual
     extra = actual - expected
@@ -191,14 +190,7 @@ def _validate_canonical_id(value: object, name: str) -> str:
     return canonical_id
 
 
-ScopeKey = TypedDict(
-    "ScopeKey",
-    {
-        "schema_version": int,
-        "namespace": str,
-        "context_fingerprint": str,
-    },
-)
+ScopeKey = dict
 ScopeKeySignature = tuple[int, str, str]
 
 
@@ -274,13 +266,7 @@ def scope_key_from_json(value: str) -> ScopeKey:
     return result
 
 
-EntityReference = TypedDict(
-    "EntityReference",
-    {
-        "surface": str,
-        "canonical_id": str,
-    },
-)
+EntityReference = dict
 
 
 def entity_reference(surface: object, canonical_id: object = "") -> EntityReference:
@@ -328,13 +314,7 @@ def _entity_reference_key(value: object) -> tuple[str, str]:
     return result
 
 
-RelationReference = TypedDict(
-    "RelationReference",
-    {
-        "surface": str,
-        "canonical_id": str,
-    },
-)
+RelationReference = dict
 
 
 def relation_reference(surface: object = "", canonical_id: object = "") -> RelationReference:
@@ -378,13 +358,7 @@ def relation_reference_from_dict(value: object) -> RelationReference:
     return result
 
 
-IdentityQualifier = TypedDict(
-    "IdentityQualifier",
-    {
-        "kind": QualifierKind,
-        "value": str,
-    },
-)
+IdentityQualifier = dict
 
 
 def identity_qualifier(kind: QualifierKind, value: object) -> IdentityQualifier:
@@ -445,15 +419,7 @@ def _identity_qualifier_key(value: object) -> tuple[QualifierKind, str]:
     return result
 
 
-ScopedRetrievalKey = TypedDict(
-    "ScopedRetrievalKey",
-    {
-        "schema_version": int,
-        "normalization_version": int,
-        "scope": ScopeKey,
-        "normalized_key": str,
-    },
-)
+ScopedRetrievalKey = dict
 ScopedRetrievalKeySignature = tuple[int, int, ScopeKeySignature, str]
 
 
@@ -591,14 +557,7 @@ def scoped_retrieval_key_from_json(value: str) -> ScopedRetrievalKey:
     return result
 
 
-RetrievalKeyBinding = TypedDict(
-    "RetrievalKeyBinding",
-    {
-        "key": ScopedRetrievalKey,
-        "origin": RetrievalOrigin,
-        "representation": str,
-    },
-)
+RetrievalKeyBinding = dict
 
 
 def retrieval_key_binding(
@@ -642,15 +601,7 @@ def validate_retrieval_key_binding(value: object) -> RetrievalKeyBinding:
     return result
 
 
-RetrievalRepresentation = TypedDict(
-    "RetrievalRepresentation",
-    {
-        "canonical": str,
-        "aliases": tuple[str, ...],
-        "normalization_version": int,
-        "schema_version": int,
-    },
-)
+RetrievalRepresentation = dict
 
 
 def retrieval_representation(
@@ -800,20 +751,7 @@ def retrieval_representation_from_json(value: str) -> RetrievalRepresentation:
     return result
 
 
-QueryIdentity = TypedDict(
-    "QueryIdentity",
-    {
-        "canonical_form": str,
-        "operator": QueryOperator,
-        "entities": tuple[EntityReference, ...],
-        "relation": RelationReference,
-        "qualifiers": tuple[IdentityQualifier, ...],
-        "lexical_terms": tuple[str, ...],
-        "scope": ScopeKey,
-        "normalization_version": int,
-        "schema_version": int,
-    },
-)
+QueryIdentity = dict
 
 
 def query_identity(

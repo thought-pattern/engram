@@ -5,7 +5,6 @@ import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import TypedDict
 
 from engram.artifacts import CachedResponseArtifact, lifecycle_base_eligibility, validate_cached_response_artifact
 from engram.constants import (
@@ -50,10 +49,10 @@ from engram.indexes import (
 )
 
 
-def _require_exact_mapping(value: object, name: str, keys: frozenset[str]) -> Mapping[str, object]:
+def _require_exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
-    actual = frozenset(value)
+    actual = set(value)
     if actual != keys:
         missing = sorted(keys - actual)
         extra = sorted(actual - keys)
@@ -136,14 +135,7 @@ def _json_text(value: Mapping[str, object]) -> str:
     return result
 
 
-NamespaceEpoch = TypedDict(
-    "NamespaceEpoch",
-    {
-        "namespace": str,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-    },
-)
+NamespaceEpoch = dict
 
 
 def namespace_epoch(namespace: object, knowledge_epoch: object, knowledge_epoch_available: object) -> NamespaceEpoch:
@@ -174,15 +166,7 @@ def namespace_epoch_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-EpochIncrement = TypedDict(
-    "EpochIncrement",
-    {
-        "namespace": str,
-        "previous_epoch": int,
-        "knowledge_epoch": int,
-        "reason": EpochChangeReason,
-    },
-)
+EpochIncrement = dict
 
 
 def epoch_increment(
@@ -306,7 +290,7 @@ def namespace_epoch_state_from_snapshot(value: Mapping[str, object]) -> Namespac
     data = _require_exact_mapping(
         value,
         "NamespaceEpochState",
-        frozenset({"schema_version", "epochs"}),
+        set({"schema_version", "epochs"}),
     )
     _require_positive_version(
         data["schema_version"],
@@ -320,17 +304,7 @@ def namespace_epoch_state_from_snapshot(value: Mapping[str, object]) -> Namespac
     return result
 
 
-TrustedEligibilityInput = TypedDict(
-    "TrustedEligibilityInput",
-    {
-        "namespace": str,
-        "evaluation_time": str,
-        "evaluation_time_available": bool,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-        "source_label": str,
-    },
-)
+TrustedEligibilityInput = dict
 
 
 def trusted_eligibility_input(
@@ -391,19 +365,7 @@ def trusted_eligibility_input_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-EligibilityContext = TypedDict(
-    "EligibilityContext",
-    {
-        "schema_version": int,
-        "evaluation_time": str,
-        "evaluation_time_available": bool,
-        "namespace": str,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-        "artifact_repository_available": bool,
-        "epoch_source": EpochSource,
-    },
-)
+EligibilityContext = dict
 
 
 def eligibility_context(
@@ -523,23 +485,7 @@ def eligibility_context_from_json(value: object) -> EligibilityContext:
     return result
 
 
-EligibilityDecision = TypedDict(
-    "EligibilityDecision",
-    {
-        "statement_id": str,
-        "generation": int,
-        "lifecycle_base_eligible": bool,
-        "direct_answer_eligible": bool,
-        "exclusion_reason": EligibilityExclusionReason,
-        "evaluation_time": str,
-        "evaluation_time_available": bool,
-        "namespace": str,
-        "knowledge_epoch": int,
-        "knowledge_epoch_available": bool,
-        "artifact_repository_available": bool,
-        "epoch_policy": EpochEligibilityPolicy,
-    },
-)
+EligibilityDecision = dict
 
 
 def eligibility_decision(
@@ -848,16 +794,7 @@ def _trusted_index_projection_from_artifact(
     return result
 
 
-ContextualExactLookupResult = TypedDict(
-    "ContextualExactLookupResult",
-    {
-        "lookup": ExactLookupResult,
-        "decisions": tuple[EligibilityDecision, ...],
-        "context_signature": str,
-        "index_refreshed": bool,
-        "index_state_generation": int,
-    },
-)
+ContextualExactLookupResult = dict
 
 
 def contextual_exact_lookup_result(

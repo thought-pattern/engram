@@ -3,7 +3,6 @@
 import math
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import TypedDict
 
 from engram.constants import (
     CANONICAL_RESOLUTION_FIELDS,
@@ -28,49 +27,13 @@ from engram.resolution import validate_query_frame
 from engram.spacy_setup import get_nlp
 from engram.temporal import TemporalQuery, validate_temporal_query
 
-CanonicalResolution = TypedDict(
-    "CanonicalResolution",
-    {
-        "schema_version": int,
-        "status": CanonicalResolutionStatus,
-        "canonical_id": str,
-        "primary_label": str,
-        "object_type": ExpectedObjectType,
-        "score": float,
-        "candidate_ids": tuple[str, ...],
-        "evidence": tuple[str, ...],
-    },
-)
+CanonicalResolution = dict
 
 
-OneHopQueryPlan = TypedDict(
-    "OneHopQueryPlan",
-    {
-        "schema_version": int,
-        "template_id": RelationPlanTemplate,
-        "subject_entity_id": str,
-        "predicate_id": str,
-        "expected_object_type": ExpectedObjectType,
-        "max_rows": int,
-    },
-)
+OneHopQueryPlan = dict
 
 
-RelationClaimSelection = TypedDict(
-    "RelationClaimSelection",
-    {
-        "direct_answer": bool,
-        "selected_claim_id": str,
-        "selected_claim_id_available": bool,
-        "evidence_claim_ids": tuple[str, ...],
-        "conflict_claim_ids": tuple[str, ...],
-        "ranking_claim_ids": tuple[str, ...],
-        "reason": RelationSelectionReason,
-        "cardinality": PredicateCardinality,
-        "trust_version": int,
-        "trust_version_available": bool,
-    },
-)
+RelationClaimSelection = dict
 
 
 def _text(value: object, name: str, *, allow_empty: bool = False) -> str:
@@ -155,7 +118,7 @@ def canonical_resolution(
 
 
 def validate_canonical_resolution(value: object) -> CanonicalResolution:
-    if not isinstance(value, Mapping) or frozenset(value) != CANONICAL_RESOLUTION_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != CANONICAL_RESOLUTION_FIELDS:
         raise InvalidRequestError("CanonicalResolution has invalid fields")
     return canonical_resolution(
         value["status"],

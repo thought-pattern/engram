@@ -923,7 +923,7 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
     assert result["budget"]["working_memory_bytes"] <= query_frame["budget"]["max_working_memory_bytes"]
     claim_diagnostics = result["frame_diagnostics"]["claim_evidence"]
     assert isinstance(claim_diagnostics, Mapping)
-    assert frozenset(claim_diagnostics) == frozenset(
+    assert set(claim_diagnostics) == set(
         {
             "policy_version",
             "available",

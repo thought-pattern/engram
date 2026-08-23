@@ -2,7 +2,6 @@
 
 import math
 from collections.abc import Mapping
-from typing import TypedDict
 
 from engram.constants import (
     COMPACT_QUERY_FRAME_FIELDS,
@@ -18,10 +17,7 @@ from engram.constants import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
-    EntityReference,
-    IdentityQualifier,
     QueryIdentity,
-    RelationReference,
     entity_reference_from_dict,
     entity_reference_to_dict,
     extract_operator,
@@ -36,34 +32,12 @@ from engram.identity import (
     validate_relation_reference,
 )
 from engram.resolution import QueryFrame, inheritance_provenance, query_frame_with_changes, validate_query_frame
-from engram.temporal import TemporalQuery, temporal_query, temporal_query_from_dict, temporal_query_to_dict, validate_temporal_query
+from engram.temporal import temporal_query, temporal_query_from_dict, temporal_query_to_dict, validate_temporal_query
 
-CompactQueryFrame = TypedDict(
-    "CompactQueryFrame",
-    {
-        "schema_version": int,
-        "operator": QueryOperator,
-        "subjects": tuple[EntityReference, ...],
-        "relation": RelationReference,
-        "expected_object_type": ExpectedObjectType,
-        "temporal_query": TemporalQuery,
-        "qualifiers": tuple[IdentityQualifier, ...],
-        "source_turn": int,
-        "confidence": float,
-        "topic": str,
-    },
-)
+CompactQueryFrame = dict
 
 
-FrameOperatorClassification = TypedDict(
-    "FrameOperatorClassification",
-    {
-        "operator": QueryOperator,
-        "confidence": float,
-        "inherited": bool,
-        "source_turn": int,
-    },
-)
+FrameOperatorClassification = dict
 
 
 _FOLLOW_UP_LEADS = (
@@ -74,7 +48,7 @@ _FOLLOW_UP_LEADS = (
     "then ",
     "instead ",
 )
-_FOLLOW_UP_REFERENTS = frozenset({"it", "its", "that", "this", "they", "them", "their", "there", "he", "she"})
+_FOLLOW_UP_REFERENTS = set({"it", "its", "that", "this", "they", "them", "their", "there", "he", "she"})
 
 
 def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
@@ -176,7 +150,7 @@ def compact_query_frame(
 
 def validate_compact_query_frame(value: object) -> CompactQueryFrame:
     data = _mapping(value, "CompactQueryFrame")
-    observed = frozenset(data)
+    observed = set(data)
     if observed != COMPACT_QUERY_FRAME_FIELDS:
         raise InvalidRequestError(
             "CompactQueryFrame has invalid fields: "
@@ -217,7 +191,7 @@ def compact_query_frame_to_dict(value: object) -> dict[str, object]:
 
 def compact_query_frame_from_dict(value: object) -> CompactQueryFrame:
     data = _mapping(value, "CompactQueryFrame")
-    observed = frozenset(data)
+    observed = set(data)
     if observed != COMPACT_QUERY_FRAME_FIELDS:
         raise InvalidRequestError(
             "CompactQueryFrame has invalid fields: "

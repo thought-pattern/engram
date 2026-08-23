@@ -7,7 +7,7 @@ import threading
 from collections.abc import Callable, Mapping, Set as AbstractSet
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypedDict, cast
+from typing import cast
 
 from engram.artifacts import LifecycleState
 from engram.constants import (
@@ -117,7 +117,6 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.eligibility import (
-    EligibilityContext,
     EligibilityContextFactory,
     eligibility_context_from_dict,
     eligibility_context_to_dict,
@@ -125,7 +124,6 @@ from engram.eligibility import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
-    QueryIdentity,
     ScopeKey,
     build_retrieval_representation,
     build_standalone_identity,
@@ -140,7 +138,6 @@ from engram.identity import (
 )
 from engram.substitutions import expand_contractions
 from engram.temporal import (
-    TemporalQuery,
     parse_temporal_query,
     temporal_query,
     temporal_query_from_dict,
@@ -308,23 +305,7 @@ def _enum_tuple(values: object, enum_type, name: str, maximum: int) -> tuple:
     return values
 
 
-ResolutionBudget = TypedDict(
-    "ResolutionBudget",
-    {
-        "schema_version": int,
-        "max_resolvers": int,
-        "max_candidates": int,
-        "max_graph_rows": int,
-        "max_vector_results": int,
-        "max_evidence": int,
-        "max_evidence_bytes": int,
-        "max_output_bytes": int,
-        "max_diagnostic_bytes": int,
-        "max_working_memory_bytes": int,
-        "allowed_cost_classes": tuple[CostClass, ...],
-        "started_ns": int,
-    },
-)
+ResolutionBudget = dict
 
 
 def resolution_budget(
@@ -506,24 +487,7 @@ def resolution_budget_from_json(value: str) -> ResolutionBudget:
     return result
 
 
-BudgetConsumption = TypedDict(
-    "BudgetConsumption",
-    {
-        "schema_version": int,
-        "elapsed_ns": int,
-        "resolvers": int,
-        "candidates": int,
-        "graph_rows": int,
-        "vector_results": int,
-        "evidence": int,
-        "evidence_bytes": int,
-        "output_bytes": int,
-        "diagnostic_bytes": int,
-        "working_memory_bytes": int,
-        "exhausted_dimensions": tuple[str, ...],
-        "measurement_available": bool,
-    },
-)
+BudgetConsumption = dict
 
 
 def budget_consumption(
@@ -614,11 +578,22 @@ def budget_consumption_with_changes(value: object, changes: object) -> BudgetCon
     consumption = validate_budget_consumption(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("budget consumption changes must be an object")
-    if not frozenset(changes).issubset(BUDGET_CONSUMPTION_FIELDS):
+    if not set(changes).issubset(BUDGET_CONSUMPTION_FIELDS):
         raise InvalidRequestError("budget consumption changes contain an unknown field")
     updated: dict[str, object] = dict(consumption)
     updated.update(changes)
     result = validate_budget_consumption(updated)
+    return result
+
+
+def _trusted_budget_consumption_with_changes(
+    value: BudgetConsumption,
+    changes: Mapping[str, object],
+) -> BudgetConsumption:
+    """Copy executor-owned consumption and apply already bounded observations."""
+    updated: dict[str, object] = dict(value)
+    updated.update(changes)
+    result = cast(BudgetConsumption, updated)
     return result
 
 
@@ -675,7 +650,7 @@ def budget_consumption_from_json(value: str) -> BudgetConsumption:
     return result
 
 
-InheritanceProvenance = TypedDict("InheritanceProvenance", {"field_name": str, "source_turn": int})
+InheritanceProvenance = dict
 
 
 def inheritance_provenance(field_name: object, source_turn: object) -> InheritanceProvenance:
@@ -710,7 +685,7 @@ def inheritance_provenance_from_dict(value: object) -> InheritanceProvenance:
     return result
 
 
-RewriteTraceStep = TypedDict("RewriteTraceStep", {"rule_id": str, "input_text": str, "output_text": str})
+RewriteTraceStep = dict
 
 
 def rewrite_trace_step(rule_id: object, input_text: object, output_text: object) -> RewriteTraceStep:
@@ -740,25 +715,7 @@ def rewrite_trace_step_from_dict(value: object) -> RewriteTraceStep:
     return result
 
 
-QueryFrame = TypedDict(
-    "QueryFrame",
-    {
-        "original_text": str,
-        "resolved_text": str,
-        "identity": QueryIdentity,
-        "expected_object_type": ExpectedObjectType,
-        "temporal_query": TemporalQuery,
-        "inheritance": tuple[InheritanceProvenance, ...],
-        "rewrite_chain": tuple[RewriteTraceStep, ...],
-        "scope": ScopeKey,
-        "required_metadata": Mapping[str, object],
-        "required_source_label": str,
-        "budget": ResolutionBudget,
-        "eligibility_context": EligibilityContext,
-        "diagnostic_id": str,
-        "schema_version": int,
-    },
-)
+QueryFrame = dict
 
 
 def query_frame(
@@ -881,7 +838,7 @@ def validate_query_frame(value: object) -> QueryFrame:
 
 def query_frame_with_changes(value: object, changes: object) -> QueryFrame:
     current = validate_query_frame(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(QUERY_FRAME_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(QUERY_FRAME_FIELDS):
         raise InvalidRequestError("query frame changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -967,10 +924,7 @@ def query_frame_from_json(value: str) -> QueryFrame:
     return result
 
 
-FeatureSet = TypedDict(
-    "FeatureSet",
-    {"values": Mapping[str, float], "unavailable": tuple[str, ...], "schema_version": int},
-)
+FeatureSet = dict
 
 
 def feature_set(
@@ -1029,7 +983,7 @@ def feature_set_with_changes(value: object, changes: object) -> FeatureSet:
     features = validate_feature_set(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("feature set changes must be an object")
-    if not frozenset(changes).issubset(FEATURE_SET_FIELDS):
+    if not set(changes).issubset(FEATURE_SET_FIELDS):
         raise InvalidRequestError("feature set changes contain an unknown field")
     updated: dict[str, object] = dict(features)
     updated.update(changes)
@@ -1073,15 +1027,7 @@ def feature_set_from_json(value: str) -> FeatureSet:
     return result
 
 
-CanonicalClaimReferences = TypedDict(
-    "CanonicalClaimReferences",
-    {
-        "subject_entity_id": str,
-        "predicate_id": str,
-        "object_entity_id": str,
-        "schema_version": int,
-    },
-)
+CanonicalClaimReferences = dict
 
 
 def canonical_claim_references(
@@ -1118,7 +1064,7 @@ def canonical_claim_references_with_changes(value: object, changes: object) -> C
     references = validate_canonical_claim_references(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("canonical Claim reference changes must be an object")
-    if not frozenset(changes).issubset(CANONICAL_CLAIM_REFERENCES_FIELDS):
+    if not set(changes).issubset(CANONICAL_CLAIM_REFERENCES_FIELDS):
         raise InvalidRequestError("canonical Claim reference changes contain an unknown field")
     updated: dict[str, object] = dict(references)
     updated.update(changes)
@@ -1139,36 +1085,7 @@ def canonical_claim_references_from_dict(value: object) -> CanonicalClaimReferen
     return result
 
 
-ClaimValidityInputs = TypedDict(
-    "ClaimValidityInputs",
-    {
-        "evaluation_time": str,
-        "active": bool,
-        "system_current": bool,
-        "valid_time_current": bool,
-        "eligible_for_request": bool,
-        "system_time_match": bool,
-        "valid_time_match": bool,
-        "valid_time_match_available": bool,
-        "temporal_operator": TemporalQueryOperator,
-        "temporal_axis": TemporalAxis,
-        "requested_start": str,
-        "requested_start_available": bool,
-        "requested_end": str,
-        "requested_end_available": bool,
-        "system_from": str,
-        "system_from_available": bool,
-        "system_to": str,
-        "system_to_available": bool,
-        "invalidated_at": str,
-        "invalidated_at_available": bool,
-        "valid_from": str,
-        "valid_from_available": bool,
-        "valid_to": str,
-        "valid_to_available": bool,
-        "schema_version": int,
-    },
-)
+ClaimValidityInputs = dict
 
 
 def claim_validity_inputs(
@@ -1389,18 +1306,7 @@ def claim_validity_inputs_from_dict(value: object) -> ClaimValidityInputs:
     return result
 
 
-ClaimTrustInputs = TypedDict(
-    "ClaimTrustInputs",
-    {
-        "trust_category": str,
-        "trust_category_available": bool,
-        "supplied_trust": float,
-        "supplied_trust_available": bool,
-        "supplied_trust_version": int,
-        "supplied_trust_version_available": bool,
-        "schema_version": int,
-    },
-)
+ClaimTrustInputs = dict
 
 
 def claim_trust_inputs(
@@ -1467,7 +1373,7 @@ def claim_trust_inputs_with_changes(value: object, changes: object) -> ClaimTrus
     trust = validate_claim_trust_inputs(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("Claim trust changes must be an object")
-    if not frozenset(changes).issubset(CLAIM_TRUST_INPUTS_FIELDS):
+    if not set(changes).issubset(CLAIM_TRUST_INPUTS_FIELDS):
         raise InvalidRequestError("Claim trust changes contain an unknown field")
     updated: dict[str, object] = dict(trust)
     updated.update(changes)
@@ -1488,18 +1394,7 @@ def claim_trust_inputs_from_dict(value: object) -> ClaimTrustInputs:
     return result
 
 
-DisclosureDecision = TypedDict(
-    "DisclosureDecision",
-    {
-        "ownership": ClaimOwnership,
-        "basis": DisclosureBasis,
-        "scope": ScopeKey,
-        "policy_version": str,
-        "authority": str,
-        "authority_available": bool,
-        "schema_version": int,
-    },
-)
+DisclosureDecision = dict
 
 
 def disclosure_decision(
@@ -1571,7 +1466,7 @@ def disclosure_decision_with_changes(value: object, changes: object) -> Disclosu
     decision = validate_disclosure_decision(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("disclosure decision changes must be an object")
-    if not frozenset(changes).issubset(DISCLOSURE_DECISION_FIELDS):
+    if not set(changes).issubset(DISCLOSURE_DECISION_FIELDS):
         raise InvalidRequestError("disclosure decision changes contain an unknown field")
     updated: dict[str, object] = dict(decision)
     updated.update(changes)
@@ -1616,22 +1511,7 @@ def disclosure_decision_from_dict(value: object) -> DisclosureDecision:
     return result
 
 
-ClaimEvidencePathStep = TypedDict(
-    "ClaimEvidencePathStep",
-    {
-        "schema_version": int,
-        "position": int,
-        "claim_id": str,
-        "subject_entity_id": str,
-        "predicate_id": str,
-        "object_entity_id": str,
-        "operator": GraphCompositionOperator,
-        "input_binding": str,
-        "output_binding": str,
-        "filters": tuple[str, ...],
-        "aggregation_inputs": tuple[str, ...],
-    },
-)
+ClaimEvidencePathStep = dict
 
 
 _CLAIM_PATH_FILTERS = {
@@ -1755,22 +1635,7 @@ def claim_evidence_path_step_from_dict(value: object) -> ClaimEvidencePathStep:
     )
 
 
-ClaimEvidenceRecord = TypedDict(
-    "ClaimEvidenceRecord",
-    {
-        "claim_id": str,
-        "source_resolver": str,
-        "source_contributions": tuple[str, ...],
-        "features": FeatureSet,
-        "canonical_references": CanonicalClaimReferences,
-        "validity": ClaimValidityInputs,
-        "trust": ClaimTrustInputs,
-        "disclosure": DisclosureDecision,
-        "path": tuple[object, ...],
-        "selection_reasons": tuple[str, ...],
-        "schema_version": int,
-    },
-)
+ClaimEvidenceRecord = dict
 
 
 def claim_evidence_record(
@@ -1855,9 +1720,7 @@ def claim_evidence_record(
         _require_identifier(value, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for value in selection_reasons
     )
     if not reasons or len(reasons) > MAX_CLAIM_SELECTION_REASONS:
-        raise InvalidRequestError(
-            "Claim evidence selection_reasons must contain " f"1 through {MAX_CLAIM_SELECTION_REASONS} values"
-        )
+        raise InvalidRequestError(f"Claim evidence selection_reasons must contain 1 through {MAX_CLAIM_SELECTION_REASONS} values")
     if reasons != tuple(sorted(set(reasons))):
         raise InvalidRequestError("Claim evidence selection_reasons must be unique and sorted")
     result: ClaimEvidenceRecord = {
@@ -1900,7 +1763,7 @@ def claim_evidence_record_with_changes(value: object, changes: object) -> ClaimE
     record = validate_claim_evidence_record(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("Claim evidence changes must be an object")
-    if not frozenset(changes).issubset(CLAIM_EVIDENCE_RECORD_FIELDS):
+    if not set(changes).issubset(CLAIM_EVIDENCE_RECORD_FIELDS):
         raise InvalidRequestError("Claim evidence changes contain an unknown field")
     updated: dict[str, object] = dict(record)
     updated.update(changes)
@@ -2008,17 +1871,7 @@ def claim_evidence_record_from_json(value: object) -> ClaimEvidenceRecord:
     return result
 
 
-EvidencePackage = TypedDict(
-    "EvidencePackage",
-    {
-        "records": tuple[ClaimEvidenceRecord, ...],
-        "retained_count": int,
-        "omitted_count": int,
-        "truncated": bool,
-        "truncation_reasons": tuple[EvidencePackageTruncationReason, ...],
-        "wire_version": int,
-    },
-)
+EvidencePackage = dict
 
 
 def _evidence_package_payload(value: EvidencePackage) -> dict[str, object]:
@@ -2067,7 +1920,7 @@ def evidence_package(
         raise InvalidRequestError("evidence package truncation_reasons must be a tuple")
     if len(truncation_reasons) > MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS:
         raise InvalidRequestError(
-            "evidence package truncation_reasons exceeds the limit of " f"{MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS}"
+            f"evidence package truncation_reasons exceeds the limit of {MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS}"
         )
     if not all(isinstance(reason, EvidencePackageTruncationReason) for reason in truncation_reasons):
         raise InvalidRequestError("evidence package truncation_reasons must contain EvidencePackageTruncationReason values")
@@ -2135,7 +1988,7 @@ def evidence_package_with_changes(value: object, changes: object) -> EvidencePac
     package = validate_evidence_package(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("evidence package changes must be an object")
-    if not frozenset(changes).issubset(EVIDENCE_PACKAGE_FIELDS):
+    if not set(changes).issubset(EVIDENCE_PACKAGE_FIELDS):
         raise InvalidRequestError("evidence package changes contain an unknown field")
     updated: dict[str, object] = dict(package)
     updated.update(changes)
@@ -2276,18 +2129,7 @@ def evidence_package_from_json(value: str) -> EvidencePackage:
     return result
 
 
-EvidenceReference = TypedDict(
-    "EvidenceReference",
-    {
-        "evidence_id": str,
-        "resolver": str,
-        "kind": EvidenceKind,
-        "scope": ScopeKey,
-        "provenance": Mapping[str, object],
-        "diagnostics": Mapping[str, object],
-        "schema_version": int,
-    },
-)
+EvidenceReference = dict
 
 
 def evidence_reference(
@@ -2342,7 +2184,7 @@ def evidence_reference_with_changes(value: object, changes: object) -> EvidenceR
     reference = validate_evidence_reference(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("evidence reference changes must be an object")
-    if not frozenset(changes).issubset(EVIDENCE_REFERENCE_FIELDS):
+    if not set(changes).issubset(EVIDENCE_REFERENCE_FIELDS):
         raise InvalidRequestError("evidence reference changes contain an unknown field")
     updated: dict[str, object] = dict(reference)
     updated.update(changes)
@@ -2402,22 +2244,7 @@ def evidence_reference_from_json(value: str) -> EvidenceReference:
     return result
 
 
-Candidate = TypedDict(
-    "Candidate",
-    {
-        "schema_version": int,
-        "candidate_id": str,
-        "statement_id": str,
-        "response": str,
-        "source": CandidateSource,
-        "features": FeatureSet,
-        "evidence": tuple[EvidenceReference, ...],
-        "scope": ScopeKey,
-        "lifecycle": LifecycleState,
-        "provenance": Mapping[str, object],
-        "diagnostics": Mapping[str, object],
-    },
-)
+Candidate = dict
 
 
 def candidate(
@@ -2529,7 +2356,7 @@ def candidate_with_changes(value: object, changes: object) -> Candidate:
     current = validate_candidate(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("candidate changes must be an object")
-    if not frozenset(changes).issubset(CANDIDATE_FIELDS):
+    if not set(changes).issubset(CANDIDATE_FIELDS):
         raise InvalidRequestError("candidate changes contain an unknown field")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2630,14 +2457,7 @@ def empty_candidate() -> Candidate:
     return result
 
 
-AccountingObservation = TypedDict(
-    "AccountingObservation",
-    {
-        "schema_version": int,
-        "statement_id": str,
-        "keywords": tuple[str, ...],
-    },
-)
+AccountingObservation = dict
 
 
 def accounting_observation(
@@ -2681,7 +2501,7 @@ def accounting_observation_with_changes(value: object, changes: object) -> Accou
     observation = validate_accounting_observation(value)
     if not isinstance(changes, Mapping):
         raise InvalidRequestError("accounting observation changes must be an object")
-    if not frozenset(changes).issubset(ACCOUNTING_OBSERVATION_FIELDS):
+    if not set(changes).issubset(ACCOUNTING_OBSERVATION_FIELDS):
         raise InvalidRequestError("accounting observation changes contain an unknown field")
     updated: dict[str, object] = dict(observation)
     updated.update(changes)
@@ -2706,21 +2526,7 @@ def accounting_observation_from_dict(value: object) -> AccountingObservation:
     return result
 
 
-ResolverResult = TypedDict(
-    "ResolverResult",
-    {
-        "resolver": str,
-        "state": ResolverState,
-        "reason_code": str,
-        "candidates": tuple[Candidate, ...],
-        "evidence": tuple[EvidenceReference, ...],
-        "claim_evidence": tuple[ClaimEvidenceRecord, ...],
-        "accounting": tuple[AccountingObservation, ...],
-        "diagnostics": Mapping[str, object],
-        "consumption": BudgetConsumption,
-        "schema_version": int,
-    },
-)
+ResolverResult = dict
 
 
 def resolver_result(
@@ -2831,7 +2637,7 @@ def validate_resolver_result(value: object) -> ResolverResult:
 
 def resolver_result_with_changes(value: object, changes: object) -> ResolverResult:
     current = validate_resolver_result(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(RESOLVER_RESULT_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLVER_RESULT_FIELDS):
         raise InvalidRequestError("resolver result changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2914,25 +2720,7 @@ def resolver_result_from_json(value: str) -> ResolverResult:
     return result
 
 
-ResolutionResult = TypedDict(
-    "ResolutionResult",
-    {
-        "outcome": ResolutionOutcome,
-        "selected_candidate": Candidate,
-        "selected_candidate_available": bool,
-        "response_candidates": tuple[Candidate, ...],
-        "evidence": tuple[EvidenceReference, ...],
-        "confidence": float,
-        "confidence_available": bool,
-        "reason_codes": tuple[str, ...],
-        "frame_diagnostics": Mapping[str, object],
-        "resolver_results": tuple[ResolverResult, ...],
-        "budget": BudgetConsumption,
-        "evidence_package_available": bool,
-        "evidence_package": EvidencePackage,
-        "schema_version": int,
-    },
-)
+ResolutionResult = dict
 
 
 def resolution_result(
@@ -3117,7 +2905,7 @@ def validate_resolution_result(value: object) -> ResolutionResult:
 
 def resolution_result_with_changes(value: object, changes: object) -> ResolutionResult:
     current = validate_resolution_result(value)
-    if not isinstance(changes, Mapping) or not frozenset(changes).issubset(RESOLUTION_RESULT_FIELDS):
+    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLUTION_RESULT_FIELDS):
         raise InvalidRequestError("resolution result changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)

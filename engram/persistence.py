@@ -10,7 +10,6 @@ import json
 import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TypedDict
 
 from engram.artifacts import (
     CachedResponseArtifact,
@@ -74,14 +73,7 @@ def _bounded_quarantine_text(value: object, name: str, allow_empty: bool) -> str
     return value
 
 
-ResponseQuarantineRecord = TypedDict(
-    "ResponseQuarantineRecord",
-    {
-        "statement_id": str,
-        "reason": ResponseQuarantineReason,
-        "detail": str,
-    },
-)
+ResponseQuarantineRecord = dict
 
 
 def response_quarantine_record(
@@ -104,7 +96,7 @@ def response_quarantine_record(
 
 def validate_response_quarantine_record(value: object) -> ResponseQuarantineRecord:
     """Validate and copy one quarantine dictionary."""
-    if not isinstance(value, Mapping) or frozenset(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
         raise InvalidRequestError("ResponseQuarantineRecord must contain exactly statement_id, reason, and detail")
     statement_id = value.get("statement_id", ())
     reason = value.get("reason", ())
@@ -128,7 +120,7 @@ def response_quarantine_record_to_dict(value: object) -> dict[str, object]:
 
 def response_quarantine_record_from_dict(value: object) -> ResponseQuarantineRecord:
     """Decode one quarantine record from its exact persistent dictionary."""
-    if not isinstance(value, Mapping) or frozenset(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
+    if not isinstance(value, Mapping) or set(value) != RESPONSE_QUARANTINE_RECORD_FIELDS:
         raise InvalidRequestError("ResponseQuarantineRecord must contain exactly statement_id, reason, and detail")
     try:
         reason = ResponseQuarantineReason(value["reason"])
@@ -553,10 +545,10 @@ def _migrate_legacy_response_state(instance) -> None:
 def _load_response_state(instance, value: object) -> None:
     if not isinstance(value, Mapping):
         raise InvalidRequestError("response_state must be an object")
-    keys = frozenset({"schema_version", "artifacts", "namespace_epochs", "mutation_receipts", "quarantine"})
-    if frozenset(value) != keys:
+    keys = set({"schema_version", "artifacts", "namespace_epochs", "mutation_receipts", "quarantine"})
+    if set(value) != keys:
         raise InvalidRequestError(
-            f"response_state has invalid fields: missing={sorted(keys - frozenset(value))}, extra={sorted(frozenset(value) - keys)}"
+            f"response_state has invalid fields: missing={sorted(keys - set(value))}, extra={sorted(set(value) - keys)}"
         )
     if value["schema_version"] != RESPONSE_STATE_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported response_state schema_version: {value['schema_version']}")
@@ -780,4 +772,5 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
     # from authoritative artifacts and never loads a persisted index snapshot.
     instance.rebuild_indexes(apply=True)
     instance.synchronize_sparse_index(instance.response_repository.snapshot())
+    instance.synchronize_semantic_index(instance.response_repository.snapshot())
     return instance
