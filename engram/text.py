@@ -2,6 +2,7 @@
 
 import re
 from functools import lru_cache
+from threading import Lock
 from typing import Any, cast
 
 from nltk.corpus import wordnet, words
@@ -27,6 +28,8 @@ from engram.constants import (
 from engram.lexical import select_lexical_terms
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
+
+_wordnet_reader_lock = Lock()
 
 
 @lru_cache(maxsize=4096)
@@ -137,20 +140,12 @@ def extract_keywords(
         result = []
         return result
 
-    # Tokenize using NLTK
-    try:
-        tokens = word_tokenize(text)
-    except Exception:
-        # Fallback to simple split if NLTK fails
-        tokens = text.split()
+    tokens = word_tokenize(text)
 
     # Optional POS filtering
     if use_pos_filter:
-        try:
-            tagged = pos_tag(tokens)
-            tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]
-        except Exception:
-            pass  # Fall through to regular filtering
+        tagged = pos_tag(tokens)
+        tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]
 
     result = select_lexical_terms(tokens, stopwords)
     return result
@@ -206,7 +201,7 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
 
 @lru_cache(maxsize=1)
 def _ensure_tagger() -> None:
-    """Ensure the POS tagger data is available, fetching into the local data dir."""
+    """Check the locally provisioned POS tagger data used after startup preflight."""
 
     ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
     ensure_resource("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
@@ -233,12 +228,8 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
         return result
 
     _ensure_tagger()
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        result = []
-        return result
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     seen: set[str] = set()
     terms: list[str] = []
@@ -560,11 +551,8 @@ def first_clause(text: str) -> str:
         return text
 
     _ensure_tagger()
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        return text
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     for i in range(1, len(tagged) - 1):
         word, _ = tagged[i]
@@ -651,10 +639,11 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
         caller from mutating the cached value.
     """
 
-    _ensure_wordnet()
-
     synonyms = {word.lower()}
-    try:
+    # NLTK's shared reader opens and closes its zipped corpus around each read;
+    # concurrent access can trip its internal file-handle assertion.
+    with _wordnet_reader_lock:
+        _ensure_wordnet()
         wordnet_reader = cast(Any, wordnet)
         for syn in wordnet_reader.synsets(word):
             for lemma in syn.lemmas():
@@ -664,8 +653,6 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
                     if len(synonyms) >= max_synonyms + 1:
                         capped = tuple(synonyms)
                         return capped
-    except Exception:
-        pass
 
     result = tuple(synonyms)
     return result

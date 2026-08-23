@@ -2217,10 +2217,15 @@ class CandidateFusionEngine:
             "reason": "not_configured",
             "model_version": "",
             "elapsed_ns": 0,
+            "model_time_target_exceeded": False,
             "input_bytes": 0,
             "scores": [],
         }
         if isinstance(self._reranker, TransparentLogisticReranker) and self._reranker.enabled:
+            eligible_shortlist = sorted(
+                (value for value in fused if value["eligibility"]["score_eligible"]),
+                key=lambda value: (-value["score"], value["candidate"]["statement_id"]),
+            )[: self._reranker.settings["shortlist_size"]]
             shortlist = tuple(
                 {
                     "statement_id": item["candidate"]["statement_id"],
@@ -2232,10 +2237,7 @@ class CandidateFusionEngine:
                         for name in RERANKER_FEATURES
                     },
                 }
-                for item in sorted(
-                    (value for value in fused if value["eligibility"]["score_eligible"]),
-                    key=lambda value: (-value["score"], value["candidate"]["statement_id"]),
-                )
+                for item in eligible_shortlist
             )
             try:
                 reranker_report = self._reranker.rerank(shortlist, cooperative_check)
@@ -2249,6 +2251,7 @@ class CandidateFusionEngine:
                     "exception_type": type(error).__name__,
                     "model_version": self._reranker.settings["model_version"],
                     "elapsed_ns": 0,
+                    "model_time_target_exceeded": False,
                     "input_bytes": 0,
                     "scores": [],
                 }

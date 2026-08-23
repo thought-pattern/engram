@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -60,6 +62,8 @@ def main() -> int:
         "backend": APPROVED_SEMANTIC_BACKEND,
         "runtime_downloads_allowed": False,
     }
+    if destination.exists() and not destination.is_dir():
+        raise SystemExit(f"existing model destination is not a directory: {destination}")
     if destination.exists() and any(destination.iterdir()):
         if not manifest_path.is_file() or not (destination / "LICENSE").is_file():
             raise SystemExit(f"existing model destination is incomplete: {destination}")
@@ -79,22 +83,34 @@ def main() -> int:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps({**manifest, "manifest_path": str(manifest_path), "reused": True}, sort_keys=True))
         return 0
-    destination.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=DEFAULT_MODEL_ID,
-        revision=args.revision,
-        local_dir=destination,
-        allow_patterns=NATIVE_ALLOW_PATTERNS,
-    )
-    checksum = model_artifact_sha256(destination)
-    if checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
-        raise SystemExit(f"downloaded model artifact checksum is not approved: {destination}")
-    manifest = {
-        **expected_identity,
-        "artifact_sha256": checksum,
-        "model_path": str(destination),
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as temporary_name:
+        temporary = Path(temporary_name)
+        staged_model = temporary / "model"
+        staged_manifest = temporary / "manifest.json"
+        snapshot_download(
+            repo_id=DEFAULT_MODEL_ID,
+            revision=args.revision,
+            local_dir=staged_model,
+            allow_patterns=NATIVE_ALLOW_PATTERNS,
+        )
+        checksum = model_artifact_sha256(staged_model)
+        if checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
+            raise SystemExit(f"downloaded model artifact checksum is not approved: {destination}")
+        manifest = {
+            **expected_identity,
+            "artifact_sha256": checksum,
+            "model_path": str(destination),
+        }
+        staged_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if destination.exists():
+            destination.rmdir()
+        staged_model.replace(destination)
+        try:
+            staged_manifest.replace(manifest_path)
+        except OSError:
+            shutil.rmtree(destination)
+            raise
     print(json.dumps({**manifest, "manifest_path": str(manifest_path), "reused": False}, sort_keys=True))
     return 0
 

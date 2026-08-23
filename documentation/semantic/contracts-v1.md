@@ -49,7 +49,10 @@ manifest beneath `data/artifacts/models/`. A later invocation verifies the
 manifest identity, license, and complete payload checksum and reuses the existing
 artifact without calling the downloader. An incomplete, changed, or conflicting
 destination fails closed rather than overwriting or downloading again. The
-tracked manifest records the reviewed identity without embedding a machine-local
+initial download and manifest are staged in one temporary sibling directory;
+checksum verification completes before the model directory is atomically
+published, and an interrupted or rejected download leaves no partial destination.
+The tracked manifest records the reviewed identity without embedding a machine-local
 path. The upstream [model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
 and [license at the pinned revision](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/blob/826711e54e001c83835913827a843d8dd0a1def9/LICENSE)
 identify the artifact as Apache-2.0.
@@ -89,15 +92,17 @@ have no independent answer authority.
 
 `transparent_logistic_v1` accepts only the already fused, score-eligible
 shortlist. Configuration independently bounds the shortlist (maximum 64, default
-8), serialized feature input, and measured model time. Inputs are the published
+8) and serialized feature input. Inputs are the published
 normalized fusion features plus the base fusion score. Version 1 has a fixed
 intercept and fixed visible coefficients in `engram/reranking.py`; it has no
 learned or hidden state and no additional runtime dependency.
 
 Successful scoring records base score, normalized input features, final score,
-implementation, and model version. Cooperative cancellation propagates without
-publishing a partial decision. Input or time exhaustion, an unavailable model,
-or an unexpected scorer exception preserves the pre-rerank order. Disabling
+implementation, model version, elapsed time, and whether the configured model-time
+reporting target was exceeded. Elapsed time is observational and never changes
+fusion. Cooperative cancellation propagates without publishing a partial decision.
+Input exhaustion, an unavailable model, or an unexpected scorer exception
+preserves the pre-rerank order. Disabling
 `reranker.enabled` is the complete rollback and requires no data migration.
 
 The current approved pairwise comparison is `unavailable`: no reviewed local

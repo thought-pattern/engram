@@ -77,9 +77,9 @@ internal dictionaries are not repeatedly passed through schema factories.
 | `arithmetic_v1` | `calculate` or `arithmetic`, decimal literals, `+ - * / % **`, unary signs, and parentheses. A recursive-descent parser—not Python—uses 34 significant Decimal digits. Division by zero, non-integral or oversized powers, excessive operations/nesting, and excessive magnitude reject. |
 | `boolean_v1` | `boolean` plus `true`, `false`, `not`, `and`, `xor`, `or`, and parentheses. Precedence is `not`, `and`, `xor`, `or`; output is lowercase `true` or `false`. |
 | `set_v1` | `set union`, `intersection`, `difference`, or `symmetric difference`, followed by two brace-delimited comma lists joined by `and` or `with`. Items match `[A-Za-z0-9_.:-]+`; duplicates collapse and output sorts by Unicode code point. |
-| `date_time_v1` | ISO Gregorian date plus/minus days; signed day difference between two ISO dates; or conversion of an aware RFC3339 timestamp to `UTC`, `America/New_York`, `America/Los_Angeles`, `Europe/London`, or `Asia/Tokyo`. A source offset is mandatory, eliminating ambiguous/nonexistent local source times. Output is ISO 8601 with seconds and the target zone name. The packaged, locked `tzdata` version is reported in health. No current time or locale is read. |
+| `date_time_v1` | ISO Gregorian date plus/minus days; signed day difference between two ISO dates; or conversion of an aware RFC3339 timestamp to `UTC`, `America/New_York`, `America/Los_Angeles`, `Europe/London`, or `Asia/Tokyo`. A source offset is mandatory, eliminating ambiguous/nonexistent local source times. Output is ISO 8601 with the target zone name and preserves nonzero fractional seconds in canonical input and output. Zones are loaded directly from the exactly pinned packaged `tzdata`, whose version is reported in health. No system timezone database, current time, or locale is read. |
 | `unit_conversion_v1` | `convert <decimal> <unit> to <unit>` for length (`mm cm m km in ft yd mi`), mass (`g kg oz lb`), duration (`s min h`), or temperature (`C F K`). Cross-dimension conversion rejects. Factors are fixed Decimal constants; output uses 16 significant digits. |
-| `version_v1` | `compare version <left> and|to|with <right>` using SemVer 2.0.0 precedence. Leading-zero and grammar violations reject; build metadata is retained in output but ignored for precedence. |
+| `version_v1` | `compare version <left> and|to|with <right>` using SemVer 2.0.0 precedence and ASCII digits. Leading-zero, Unicode-digit, and other grammar violations reject; build metadata is retained in output but ignored for precedence. |
 | `identifier_v1` | `validate uuid|slug <value>`. UUID accepts 32 hexadecimal digits or the canonical hyphenated form and renders lowercase hyphenated text. Slug accepts lowercase ASCII alphanumeric segments separated by one hyphen. Invalid bounded identifiers produce an explicit deterministic `invalid` result; they are not executed or normalized into another grammar. |
 
 ## Errors, health, and rollback
@@ -96,4 +96,3 @@ version, every built-in plugin's independent enabled/ready/version fields, and t
 date plugin's timezone-database version. Disable `utility.enabled` to roll back all
 utility resolution, or remove one name from `utility.plugins` to roll back only
 that plugin. No data migration or index rebuild is involved.
-

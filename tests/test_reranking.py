@@ -63,7 +63,7 @@ def test_reranker_bounds_shortlist_and_input_bytes_with_baseline_fallback() -> N
     assert input_limited.health()["fallbacks"] == 1
 
 
-def test_reranker_time_budget_falls_back_and_reports_health() -> None:
+def test_reranker_reports_elapsed_target_without_changing_the_result() -> None:
     ticks = iter((0, 2_000_000))
     reranker = TransparentLogisticReranker(
         reranker_config(enabled=True, max_model_time_ms=1),
@@ -72,10 +72,11 @@ def test_reranker_time_budget_falls_back_and_reports_health() -> None:
 
     result = reranker.rerank(shortlist())
 
-    assert result["applied"] is False
-    assert result["reason"] == "model_time_budget"
+    assert result["applied"] is True
+    assert result["reason"] == "completed"
     assert result["elapsed_ns"] == 2_000_000
-    assert reranker.health()["last_reason"] == "model_time_budget"
+    assert result["model_time_target_exceeded"] is True
+    assert reranker.health()["last_reason"] == "completed"
 
 
 def test_reranker_propagates_cancellation_and_counts_it() -> None:
@@ -129,19 +130,40 @@ def test_fusion_applies_reranker_to_bounded_shortlist_and_preserves_provenance()
         scope=selected_scope,
         lifecycle=LifecycleState.ACTIVE,
     )
+    lexical = candidate(
+        candidate_id="lexical-candidate",
+        statement_id="lexical-statement",
+        response="Lexical response",
+        source=CandidateSource.LEXICAL,
+        features=feature_set({"lexical_score": 0.8}),
+        evidence=(),
+        scope=selected_scope,
+        lifecycle=LifecycleState.ACTIVE,
+    )
+    semantic = candidate(
+        candidate_id="semantic-candidate",
+        statement_id="semantic-statement",
+        response="Semantic response",
+        source=CandidateSource.STANDALONE_SEMANTIC,
+        features=feature_set({"semantic_score": 0.7}),
+        evidence=(),
+        scope=selected_scope,
+        lifecycle=LifecycleState.ACTIVE,
+    )
     fusion = CandidateFusionEngine(
         authority=permissive_candidate_authority,
         reranker=enabled_reranker(shortlist_size=2),
     )
 
-    decision = fusion.decide(frame, (exact,))
+    decision = fusion.decide(frame, (exact, lexical, semantic))
 
     assert decision["report"]["reranker"]["applied"] is True
+    assert len(decision["report"]["reranker"]["scores"]) == 2
     assert decision["selected_candidate"]["provenance"]["reranker_model_version"] == "transparent-logistic-v1"
     assert decision["selected_candidate"]["diagnostics"]["reranker_score"] > 0.0
 
 
-def test_fusion_uses_baseline_when_reranker_exceeds_time_budget() -> None:
+def test_fusion_does_not_use_reranker_elapsed_time_as_answer_policy() -> None:
     engine = Engram()
     selected_scope = scope_key()
     frame = QueryFrameBuilder(engine, lambda: 1, lambda: datetime(2026, 8, 22, tzinfo=UTC)).build(
@@ -168,10 +190,11 @@ def test_fusion_uses_baseline_when_reranker_exceeds_time_budget() -> None:
 
     decision = CandidateFusionEngine(authority=permissive_candidate_authority, reranker=reranker).decide(frame, (exact,))
 
-    assert decision["report"]["reranker"]["applied"] is False
-    assert decision["report"]["reranker"]["reason"] == "model_time_budget"
+    assert decision["report"]["reranker"]["applied"] is True
+    assert decision["report"]["reranker"]["reason"] == "completed"
+    assert decision["report"]["reranker"]["model_time_target_exceeded"] is True
     assert decision["selected_candidate"]["statement_id"] == "exact-statement"
-    assert "reranker_model_version" not in decision["selected_candidate"]["provenance"]
+    assert decision["selected_candidate"]["provenance"]["reranker_model_version"] == "transparent-logistic-v1"
 
 
 def test_fusion_counts_an_isolated_reranker_exception_as_a_fallback(monkeypatch) -> None:

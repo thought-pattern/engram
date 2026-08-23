@@ -31,7 +31,7 @@ dependencies = [
     "grpcio>=1.83,<1.84",
     "grpcio-health-checking>=1.83,<1.84",
     "protobuf>=7.35.1,<8",
-    "tzdata>=2024.1",
+    "tzdata==2026.3",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
@@ -44,15 +44,15 @@ engram-grpc = "engram.grpc_server:main"
 
 [project.optional-dependencies]
 dev = [
-    "bandit>=1.9.4",
-    "black>=26.5.1",
+    "bandit",
+    "black",
+    "isort",
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "pyright==1.1.411",
-    "ruff>=0.16.1",
+    "ruff",
     "grpcio-tools==1.83.0",
-    "vulture>=2.16",
+    "vulture",
 ]
 
 [build-system]

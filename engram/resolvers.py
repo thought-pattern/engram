@@ -1609,9 +1609,7 @@ class StructuredGraphResolver:
             reason_code=(
                 "graph_composition_candidate"
                 if candidates
-                else "graph_composition_evidence"
-                if records
-                else "graph_composition_miss"
+                else "graph_composition_evidence" if records else "graph_composition_miss"
             ),
             candidates=tuple(candidates),
             claim_evidence=tuple(records),
@@ -1870,9 +1868,7 @@ class StructuredGraphResolver:
                 else (
                     "relation_claim_conflict"
                     if selection["conflict_claim_ids"]
-                    else "relation_claim_evidence"
-                    if records
-                    else "relation_graph_miss"
+                    else "relation_claim_evidence" if records else "relation_graph_miss"
                 )
             ),
             candidates=tuple(candidates),
@@ -2556,9 +2552,11 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         vector_results=vector_results,
         evidence=len(evidence) + len(claim_evidence) + sum(len(candidate["evidence"]) for candidate in candidates),
         evidence_bytes=evidence_bytes,
-        output_bytes=_json_array_size([*candidate_sizes, *evidence_sizes, *claim_evidence_sizes])
-        if candidate_sizes or evidence_sizes or claim_evidence_sizes
-        else 0,
+        output_bytes=(
+            _json_array_size([*candidate_sizes, *evidence_sizes, *claim_evidence_sizes])
+            if candidate_sizes or evidence_sizes or claim_evidence_sizes
+            else 0
+        ),
         diagnostic_bytes=diagnostic_bytes,
         working_memory_bytes=working_memory,
         exhausted_dimensions=tuple(sorted(exhausted)),
@@ -2679,16 +2677,26 @@ class ResolverExecutor:
             else:
                 finished = self._clock_ns()
                 elapsed = max(0, finished - started)
-                current_raw = validate_resolver_result(raw)
-                updated_consumption = _trusted_budget_consumption_with_changes(
-                    current_raw["consumption"],
-                    {"elapsed_ns": elapsed},
-                )
-                raw = _trusted_resolver_result_with_changes(
-                    current_raw,
-                    {"consumption": updated_consumption},
-                )
-                result = _bound_validated_resolver_result(raw, lease)
+                try:
+                    current_raw = validate_resolver_result(raw)
+                except InvalidRequestError as error:
+                    result = resolver_result(
+                        resolver=resolver_name,
+                        state=ResolverState.FAILED,
+                        reason_code="invalid_resolver_result",
+                        diagnostics={"exception_type": type(error).__name__},
+                        consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
+                    )
+                else:
+                    updated_consumption = _trusted_budget_consumption_with_changes(
+                        current_raw["consumption"],
+                        {"elapsed_ns": elapsed},
+                    )
+                    raw = _trusted_resolver_result_with_changes(
+                        current_raw,
+                        {"consumption": updated_consumption},
+                    )
+                    result = _bound_validated_resolver_result(raw, lease)
             results.append(result)
             ledger.add(result["consumption"])
             reservations.append(resolver_reservation(resolver_name, entry["order"], lease, result["consumption"]))

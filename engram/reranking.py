@@ -144,6 +144,7 @@ class TransparentLogisticReranker:
                 "reason": "disabled",
                 "model_version": self.settings["model_version"],
                 "elapsed_ns": 0,
+                "model_time_target_exceeded": False,
                 "input_bytes": 0,
                 "scores": [],
             }
@@ -154,17 +155,20 @@ class TransparentLogisticReranker:
                 "reason": "shortlist_budget",
                 "model_version": self.settings["model_version"],
                 "elapsed_ns": max(0, self._clock_ns() - started),
+                "model_time_target_exceeded": False,
                 "input_bytes": 0,
                 "scores": [],
             }
         serialized = json.dumps(baseline, sort_keys=True, separators=(",", ":"), default=str).encode()
         if len(serialized) > self.settings["max_input_bytes"]:
             self._record("input_budget", fallback=True)
+            elapsed = max(0, self._clock_ns() - started)
             return {
                 "applied": False,
                 "reason": "input_budget",
                 "model_version": self.settings["model_version"],
-                "elapsed_ns": max(0, self._clock_ns() - started),
+                "elapsed_ns": elapsed,
+                "model_time_target_exceeded": elapsed > self.settings["max_model_time_ms"] * 1_000_000,
                 "input_bytes": len(serialized),
                 "scores": [],
             }
@@ -188,16 +192,6 @@ class TransparentLogisticReranker:
             self._record("cancelled", cancelled=True)
             raise
         elapsed = max(0, self._clock_ns() - started)
-        if elapsed > self.settings["max_model_time_ms"] * 1_000_000:
-            self._record("model_time_budget", fallback=True)
-            return {
-                "applied": False,
-                "reason": "model_time_budget",
-                "model_version": self.settings["model_version"],
-                "elapsed_ns": elapsed,
-                "input_bytes": len(serialized),
-                "scores": [],
-            }
         scored.sort(key=lambda value: (-value["score"], -value["base_score"], value["statement_id"]))
         self._record("completed", completed=True)
         return {
@@ -205,6 +199,7 @@ class TransparentLogisticReranker:
             "reason": "completed",
             "model_version": self.settings["model_version"],
             "elapsed_ns": elapsed,
+            "model_time_target_exceeded": elapsed > self.settings["max_model_time_ms"] * 1_000_000,
             "input_bytes": len(serialized),
             "scores": scored,
         }

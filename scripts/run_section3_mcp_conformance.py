@@ -197,9 +197,7 @@ async def _run(
         messages = (
             SARAH_SUSHI_MESSAGES
             if profile == "sarah-sushi"
-            else SARAH_PREFERENCE_MESSAGES
-            if profile == "sarah-preferences"
-            else MCP_CONFORMANCE_MESSAGES
+            else SARAH_PREFERENCE_MESSAGES if profile == "sarah-preferences" else MCP_CONFORMANCE_MESSAGES
         )
         for index in range(turns):
             call_started = time.perf_counter_ns()

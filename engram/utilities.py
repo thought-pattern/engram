@@ -10,8 +10,9 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
 from importlib.metadata import version as package_version
+from importlib.resources import files
 from types import MappingProxyType
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from engram.constants import (
     UTILITY_CONTRACT_VERSION,
@@ -45,14 +46,14 @@ UTILITY_ALLOWED_TIMEZONES = {
 UTILITY_TIMEZONE_LOOKUP = MappingProxyType({name.casefold(): name for name in UTILITY_ALLOWED_TIMEZONES})
 UTILITY_ITEM_RE = re.compile(r"[A-Za-z0-9_.:-]+\Z")
 UTILITY_SEMVER_RE = re.compile(
-    r"(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
-    r"(?:-(?P<pre>(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
+    r"(?:-(?P<pre>(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z"
 )
 UTILITY_UUID_RE = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\Z")
 UTILITY_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 UTILITY_RFC3339_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z",
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z",
     re.IGNORECASE,
 )
 
@@ -127,7 +128,7 @@ UTILITY_PLUGIN_CONTRACTS = MappingProxyType(
         "date_time_v1": _contract(
             "date_time_v1",
             "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
-            "ISO 8601 date, integer days, or seconds-precision timestamp with target zone",
+            "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
             ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
         ),
         "unit_conversion_v1": _contract(
@@ -430,6 +431,16 @@ def _iso_date(value: str) -> date:
     return parsed
 
 
+def _packaged_zone_info(zone_name: str) -> ZoneInfo:
+    """Load one allow-listed zone from the declared tzdata package."""
+    resource = files("tzdata.zoneinfo")
+    for part in zone_name.split("/"):
+        resource = resource.joinpath(part)
+    with resource.open("rb") as stream:
+        result = ZoneInfo.from_file(stream, key=zone_name)
+    return result
+
+
 def _evaluate_date_time(text: str) -> tuple[str, str, int]:
     arithmetic = re.fullmatch(
         r"\s*date\s+(\d{4}-\d{2}-\d{2})\s+(plus|minus)\s+(\d{1,6})\s+days?\s*\??\s*",
@@ -473,12 +484,9 @@ def _evaluate_date_time(text: str) -> tuple[str, str, int]:
         if requested_zone.casefold() not in UTILITY_TIMEZONE_LOOKUP:
             raise UtilityInputError("timezone_not_allowed")
         zone_name = UTILITY_TIMEZONE_LOOKUP[requested_zone.casefold()]
-        try:
-            converted = source.astimezone(ZoneInfo(zone_name))
-        except ZoneInfoNotFoundError as error:
-            raise UtilityInputError("date_time_domain") from error
-        response = f"{converted.isoformat(timespec='seconds')}[{zone_name}]"
-        return response, f"convert time {source.isoformat(timespec='seconds')} to {zone_name}", 1
+        converted = source.astimezone(_packaged_zone_info(zone_name))
+        response = f"{converted.isoformat()}[{zone_name}]"
+        return response, f"convert time {source.isoformat()} to {zone_name}", 1
     raise UtilityInputError("date_time_syntax")
 
 

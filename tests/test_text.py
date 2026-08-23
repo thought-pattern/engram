@@ -1,5 +1,8 @@
 """Tests for text processing."""
 
+import pytest
+
+from engram import text as text_module
 from engram.constants import DEFAULT_STOPWORDS
 from engram.text import (
     expand_query,
@@ -102,6 +105,16 @@ def test_extract_keywords_custom_stopwords() -> None:
     custom = {"custom", "stop"}
     result = extract_keywords("custom stop word", custom)
     assert result == ["word"]
+
+
+def test_required_nltk_failure_is_not_silently_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(_text: str) -> list[str]:
+        raise LookupError("required tokenizer missing")
+
+    monkeypatch.setattr(text_module, "word_tokenize", unavailable)
+
+    with pytest.raises(LookupError, match="required tokenizer missing"):
+        extract_keywords("required tokenizer", DEFAULT_STOPWORDS)
 
 
 """Tests for query expansion."""

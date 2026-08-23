@@ -17,7 +17,9 @@
       ],
       "held_out": [
         {"input": "calculate (17.5 - 2.5) / 3", "status": "resolved", "response": "5"},
-        {"input": "calculate 0.1 + 0.2", "status": "resolved", "response": "0.3"}
+        {"input": "calculate 0.1 + 0.2", "status": "resolved", "response": "0.3"},
+        {"input": "calculate -7 * 6", "status": "resolved", "response": "-42"},
+        {"input": "calculate 5 // 2", "status": "rejected", "error_code": "arithmetic_syntax"}
       ],
       "resource_input": "calculate 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1",
       "resource_error": "operation_limit"
@@ -31,7 +33,9 @@
       ],
       "held_out": [
         {"input": "boolean (true xor false) and true", "status": "resolved", "response": "true"},
-        {"input": "boolean not not false", "status": "resolved", "response": "false"}
+        {"input": "boolean not not false", "status": "resolved", "response": "false"},
+        {"input": "boolean false and true or true", "status": "resolved", "response": "true"},
+        {"input": "boolean true equals false", "status": "rejected", "error_code": "boolean_syntax"}
       ],
       "resource_input": "boolean not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not true",
       "resource_error": "operation_limit"
@@ -45,7 +49,9 @@
       ],
       "held_out": [
         {"input": "set symmetric difference {cat,dog} and {dog,sushi}", "status": "resolved", "response": "{cat, sushi}"},
-        {"input": "set union {} and {x}", "status": "resolved", "response": "{x}"}
+        {"input": "set union {} and {x}", "status": "resolved", "response": "{x}"},
+        {"input": "set difference {a,b,c} with {a,c}", "status": "resolved", "response": "{b}"},
+        {"input": "set intersection {good} and {bad item}", "status": "rejected", "error_code": "collection_item_invalid"}
       ],
       "resource_input": "set union {i00,i01,i02,i03,i04,i05,i06,i07,i08,i09,i10,i11,i12,i13,i14,i15,i16,i17,i18,i19,i20,i21,i22,i23,i24,i25,i26,i27,i28,i29,i30,i31,i32,i33,i34,i35,i36,i37,i38,i39,i40,i41,i42,i43,i44,i45,i46,i47,i48,i49,i50,i51,i52,i53,i54,i55,i56,i57,i58,i59,i60,i61,i62,i63,i64} and {x}",
       "resource_error": "collection_limit"
@@ -59,7 +65,9 @@
       ],
       "held_out": [
         {"input": "date 2025-01-01 minus 1 day", "status": "resolved", "response": "2024-12-31"},
-        {"input": "convert time 2026-01-15T12:00:00+00:00 to America/New_York", "status": "resolved", "response": "2026-01-15T07:00:00-05:00[America/New_York]"}
+        {"input": "convert time 2026-01-15T12:00:00+00:00 to America/New_York", "status": "resolved", "response": "2026-01-15T07:00:00-05:00[America/New_York]"},
+        {"input": "convert time 2026-08-22T14:30:00.100000+00:00 to UTC", "status": "resolved", "response": "2026-08-22T14:30:00.100000+00:00[UTC]"},
+        {"input": "convert time 2026-08-22T14:30:00+00:00 to Etc/Unknown", "status": "rejected", "error_code": "timezone_not_allowed"}
       ],
       "resource_input": "date 2026-01-01 plus 999999 days",
       "resource_error": "date_time_domain"
@@ -73,7 +81,9 @@
       ],
       "held_out": [
         {"input": "convert 5 km to mi", "status": "resolved", "response": "3.10685596118667 mi"},
-        {"input": "convert 273.15 K to C", "status": "resolved", "response": "0 C"}
+        {"input": "convert 273.15 K to C", "status": "resolved", "response": "0 C"},
+        {"input": "convert 90 min to h", "status": "resolved", "response": "1.5 h"},
+        {"input": "convert 1 parsec to m", "status": "rejected", "error_code": "unit_unknown"}
       ],
       "resource_input": "convert 999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 m to km",
       "resource_error": "numeric_limit"
@@ -87,7 +97,9 @@
       ],
       "held_out": [
         {"input": "compare version 2.1.0-rc.1 and 2.1.0-rc.2", "status": "resolved", "response": "2.1.0-rc.1 < 2.1.0-rc.2"},
-        {"input": "compare version 10.0.0 and 9.99.99", "status": "resolved", "response": "10.0.0 > 9.99.99"}
+        {"input": "compare version 10.0.0 and 9.99.99", "status": "resolved", "response": "10.0.0 > 9.99.99"},
+        {"input": "compare version 1.0.0-beta.11 and 1.0.0-rc.1", "status": "resolved", "response": "1.0.0-beta.11 < 1.0.0-rc.1"},
+        {"input": "compare version 1.2.3٠ and 1.2.30", "status": "rejected", "error_code": "version_syntax"}
       ],
       "resource_input": "compare version 111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111.0.0 and 1.0.0",
       "resource_error": "version_limit"
@@ -101,7 +113,9 @@
       ],
       "held_out": [
         {"input": "validate uuid 550E8400E29B41D4A716446655440000", "status": "resolved", "response": "valid uuid: 550e8400-e29b-41d4-a716-446655440000"},
-        {"input": "validate slug section-14-complete", "status": "resolved", "response": "valid slug: section-14-complete"}
+        {"input": "validate slug section-14-complete", "status": "resolved", "response": "valid slug: section-14-complete"},
+        {"input": "validate uuid definitely-not-a-uuid", "status": "resolved", "response": "invalid uuid"},
+        {"input": "validate slug two--hyphens", "status": "resolved", "response": "invalid slug"}
       ],
       "resource_input": "validate slug aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "resource_error": "identifier_limit"

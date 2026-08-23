@@ -1432,9 +1432,7 @@ class EngramCore:
                         "selected": (
                             "exact"
                             if exact_statement_id
-                            else "vector"
-                            if entry["vector_score"] > entry["keyword_score"]
-                            else "keyword"
+                            else "vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"
                         ),
                     }
                     candidates.append(candidate)

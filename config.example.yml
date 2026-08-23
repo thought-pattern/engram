@@ -71,7 +71,8 @@ semantic:
 
 # --- Candidate reranking (optional, independently gated) ---
 # Uses only a bounded fused-candidate shortlist and falls back to the baseline
-# order on input/time/dependency failure. Disable this independently to roll back.
+# order on input/dependency failure. Elapsed model time is diagnostic only.
+# Disable this independently to roll back.
 reranker:
   enabled: false
   implementation: transparent_logistic_v1

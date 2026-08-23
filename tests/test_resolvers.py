@@ -721,6 +721,23 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
     assert failed["consumption"]["exhausted_dimensions"] == ()
 
 
+def test_executor_isolates_a_malformed_resolver_result() -> None:
+    engine = Engram()
+    query_frame = frame(engine, "malformed resolver")
+    malformed = FakeResolver("malformed", cast(ResolverResult, {}))
+
+    result = ResolverExecutor(lambda: START_NS).execute(
+        query_frame,
+        ResolverRegistry((malformed,)).plan(query_frame),
+    )[
+        "results"
+    ][0]
+
+    assert result["state"] == ResolverState.FAILED
+    assert result["reason_code"] == "invalid_resolver_result"
+    assert result["diagnostics"] == {"exception_type": "InvalidRequestError"}
+
+
 def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
     engine = Engram()
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})

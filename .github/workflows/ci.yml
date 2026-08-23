@@ -19,6 +19,34 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: latest
+          check-latest: true
+
+      - name: Install analysis tools
+        run: |
+          pip install --upgrade black isort ruff bandit vulture
+          npm install --global pyright@latest
+
+      - name: Format
+        run: black -l 132 -t py311 .
+
+      - name: Import-order check
+        run: isort --check-only .
+
+      - name: Lint
+        run: ruff check --line-length 132 .
+
+      - name: Bytecode compilation check
+        run: python -m compileall -q engram scripts eval tests
+
+      - name: Security scan
+        run: bandit -q -ii -lll -r engram scripts eval
+
+      - name: Dead-code scan
+        run: vulture
+
       # pymgclient builds from source and needs OpenSSL headers and CMake.
       - name: Install build prerequisites
         run: sudo apt-get update && sudo apt-get install -y libssl-dev cmake
@@ -34,26 +62,14 @@ jobs:
       - name: Audit dependencies
         run: pip-audit --desc -r requirements.txt
 
+      - name: Type check
+        run: pyright
+
       - name: Fetch NLTK data
         run: python -m engram.nltk_data
 
       - name: Fetch spaCy model
         run: python -m spacy download en_core_web_sm
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Type check
-        run: pyright
-
-      - name: Format check
-        run: black --check .
-
-      - name: Security scan
-        run: bandit -q -ii -lll -r engram scripts eval
-
-      - name: Dead-code scan
-        run: vulture
 
       - name: Test
         run: pytest

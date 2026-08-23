@@ -467,18 +467,18 @@ class StandaloneSemanticIndexOwner:
         with self._lock:
             if repository_state_generation < self._state["repository_state_generation"]:
                 return self._state
-            if self._state["state_generation"] != live["state_generation"]:
-                return self.rebuild(artifacts.values(), repository_state_generation)
-            self._state = _state(
-                updated,
-                repository_state_generation=repository_state_generation,
-                state_generation=live["state_generation"] + 1,
-                settings=self._settings,
-                identity=self._identity,
-            )
-            self._healthy = True
-            self._last_error = ""
-            return self._state
+            if self._state["state_generation"] == live["state_generation"]:
+                self._state = _state(
+                    updated,
+                    repository_state_generation=repository_state_generation,
+                    state_generation=live["state_generation"] + 1,
+                    settings=self._settings,
+                    identity=self._identity,
+                )
+                self._healthy = True
+                self._last_error = ""
+                return self._state
+        return self.rebuild(artifacts.values(), repository_state_generation)
 
     def mark_unavailable(self, error: object) -> None:
         with self._lock:
@@ -606,11 +606,11 @@ class StandaloneSemanticIndexOwner:
             if callable(cooperative_check) and scanned_records % 64 == 1:
                 cooperative_check()
             similarity = sum(first * second for first, second in zip(query, record["embedding"], strict=True))
-            if similarity < self._settings["min_similarity"]:
+            if similarity <= 0.0 or similarity < self._settings["min_similarity"]:
                 continue
             match = {
                 "statement_id": record["statement_id"],
-                "similarity": max(-1.0, min(1.0, similarity)),
+                "similarity": min(1.0, similarity),
                 "origin": record["origin"],
                 "ordinal": record["ordinal"],
                 "representation_id": record["representation_id"],

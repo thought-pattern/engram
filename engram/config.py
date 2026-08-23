@@ -189,9 +189,9 @@ def semantic_config(
         not isinstance(min_similarity, (int, float))
         or isinstance(min_similarity, bool)
         or not math.isfinite(min_similarity)
-        or not -1.0 <= min_similarity <= 1.0
+        or not 0.0 <= min_similarity <= 1.0
     ):
-        raise ValueError("semantic min_similarity must be between -1 and 1")
+        raise ValueError("semantic min_similarity must be between 0 and 1")
     if enabled and (not model_path.strip() or not model_version.strip() or not artifact_sha256):
         raise ValueError("enabled semantic retrieval requires model_path, model_version, and artifact_sha256")
     result: SemanticConfig = {

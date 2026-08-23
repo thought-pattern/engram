@@ -5,6 +5,7 @@ import math
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -109,6 +110,11 @@ def settings(tmp_path: Path, **changes) -> dict:
     return semantic_config(**values)
 
 
+def test_semantic_similarity_threshold_uses_the_fusion_unit_interval() -> None:
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        semantic_config(min_similarity=-0.01)
+
+
 def owner(tmp_path: Path, model: FakeSemanticModel | None = None, **changes) -> StandaloneSemanticIndexOwner:
     selected_model = model or FakeSemanticModel()
     return StandaloneSemanticIndexOwner(settings(tmp_path, **changes), model_loader=lambda _: selected_model)
@@ -162,6 +168,29 @@ def test_provisioner_rejects_an_unapproved_revision(tmp_path: Path, monkeypatch)
 
     with pytest.raises(SystemExit, match="revision is not approved"):
         provision_semantic_model.main()
+
+
+def test_provisioner_cleans_partial_download_without_publishing_destination(tmp_path: Path, monkeypatch) -> None:
+    destination = tmp_path / "model"
+    monkeypatch.setattr(
+        provision_semantic_model,
+        "parse_args",
+        lambda: Namespace(destination=str(destination), revision=provision_semantic_model.DEFAULT_REVISION),
+    )
+
+    def partial_download(**kwargs) -> None:
+        local_dir = Path(kwargs["local_dir"])
+        local_dir.mkdir(parents=True)
+        (local_dir / "partial.bin").write_bytes(b"partial")
+        raise RuntimeError("download interrupted")
+
+    monkeypatch.setattr(provision_semantic_model, "snapshot_download", partial_download)
+
+    with pytest.raises(RuntimeError, match="download interrupted"):
+        provision_semantic_model.main()
+
+    assert not destination.exists()
+    assert not (tmp_path / "model.engram-model.json").exists()
 
 
 def frame(engine: Engram, request: str, namespace: str = "tenant-a") -> dict:
@@ -340,6 +369,48 @@ def test_incremental_update_reuses_unchanged_embeddings_and_tracks_retirement(tm
     assert "cats" not in state["by_statement"]
     assert result["matches"] == ()
     assert index.check_against((sushi, retired_cats), 3)["consistent"] is True
+
+
+def test_incremental_conflict_rebuild_releases_the_owner_lock(tmp_path: Path, monkeypatch) -> None:
+    index = owner(tmp_path)
+    sushi = artifact("sushi", "best sushi", "Sushi")
+    changed = artifact("sushi", "updated sushi", "Sushi", generation=2)
+    index.rebuild((sushi,), 2)
+    original_records = index._records
+    original_rebuild = index.rebuild
+
+    def conflicting_records(specs):
+        records = original_records(specs)
+        with index._lock:
+            live = index._state
+            index._state = semantic_module._state(
+                live["by_statement"],
+                repository_state_generation=live["repository_state_generation"],
+                state_generation=live["state_generation"] + 1,
+                settings=index._settings,
+                identity=index._identity,
+            )
+        return records
+
+    def observed_rebuild(artifacts, repository_state_generation):
+        completed = Event()
+
+        def read_snapshot() -> None:
+            index.snapshot()
+            completed.set()
+
+        reader = Thread(target=read_snapshot, daemon=True)
+        reader.start()
+        assert completed.wait(1.0), "semantic rebuild started while the owner lock was held"
+        return original_rebuild(artifacts, repository_state_generation)
+
+    monkeypatch.setattr(index, "_records", conflicting_records)
+    monkeypatch.setattr(index, "rebuild", observed_rebuild)
+
+    state = index.synchronize({"sushi": changed}, 3, ("sushi",))
+
+    assert state["repository_state_generation"] == 3
+    assert state["by_statement"]["sushi"][0]["generation"] == 2
 
 
 def test_normal_runtime_rejects_a_self_attested_unapproved_model_identity(tmp_path: Path) -> None:

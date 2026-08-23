@@ -18,11 +18,11 @@ protected knowledge stores.
 | --- | --- | --- |
 | Arbitrary code, import, or expression execution | Fixed plugin table; dedicated tokenizers/parsers; no dynamic execution, subprocess, shell, file, network, graph, or dynamic plugin API | AST check plus injection probes and source review |
 | Catastrophic or unbounded computation | Input, token, operation, nesting, power, magnitude, collection, output, and shared resolver-lease bounds | Per-plugin resource rejection and fuzz artifacts |
-| Regex denial of service | Anchored/simple grammars and a 4,096-byte input ceiling | Randomized matched-prefix fuzz and latency gate |
+| Regex denial of service | Anchored/simple grammars and a 4,096-byte input ceiling | Randomized matched-prefix fuzz, deterministic/canonical replay oracles, and latency gate |
 | Numeric overflow, non-finite output, or unstable formatting | Decimal-only numeric path, finite/magnitude checks, fixed precision, canonical formatting | Arithmetic/unit properties and held-out cases |
-| Timezone, calendar, locale, or current-time ambiguity | Explicit ISO inputs and numeric source offset; five target zones; locked packaged tzdata identity; Gregorian calendar; no locale/current time | Ambiguity rejections, leap-date and timezone held-out cases, health identity |
+| Timezone, calendar, locale, or current-time ambiguity | Explicit ISO inputs and numeric source offset; fraction-preserving canonicalization; five target zones loaded from exactly pinned packaged tzdata; Gregorian calendar; no system timezone database, locale, or current time | Ambiguity rejections, distinct fractional instants, leap-date and timezone held-out cases, health identity |
 | Unit dimension confusion | Fixed unit metadata and same-dimension check before conversion | Cross-dimension negative cases and round-trip property |
-| Version/identifier interpreted as code | Dedicated SemVer/UUID/slug grammars; values never leave pure string/numeric operations | Injection probes and invalid-grammar cases |
+| Version/identifier interpreted as code | Dedicated ASCII SemVer/UUID/slug grammars; values never leave pure string/numeric operations | Exact safe-disposition injection probes, Unicode-digit rejection, and invalid-grammar cases |
 | Forged candidate provenance or response | Fusion authority re-executes the named built-in and checks all identity/result fields | Forged-response integration regression |
 | Utility result learned as authoritative knowledge | No accounting observations, `learnable: false`, no repository/store/persistence writes | Core integration regression and contract audit |
 | One plugin failure blocks resolution | Unexpected error becomes bounded `utility_plugin_failure`; shared executor continues its plan | Injected failure regression and existing executor fail-soft suite |
@@ -41,4 +41,3 @@ Validation occurs where untrusted configuration/text enters and where a candidat
 crosses into authoritative fusion. Adding repeated dictionary validation or a
 generic sandbox process would add complexity without protecting another boundary
 in the current pure, hard-bounded implementation.
-

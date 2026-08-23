@@ -32,6 +32,15 @@ THREAT_INPUTS = {
     "version_v1": "compare version __import__('os') and 1.0.0",
     "identifier_v1": "validate slug __import__('os')",
 }
+THREAT_EXPECTATIONS = {
+    "arithmetic_v1": {"status": "rejected", "error_code": "arithmetic_syntax", "response": ""},
+    "boolean_v1": {"status": "rejected", "error_code": "boolean_syntax", "response": ""},
+    "set_v1": {"status": "rejected", "error_code": "collection_item_invalid", "response": ""},
+    "date_time_v1": {"status": "rejected", "error_code": "date_time_syntax", "response": ""},
+    "unit_conversion_v1": {"status": "rejected", "error_code": "unit_syntax", "response": ""},
+    "version_v1": {"status": "rejected", "error_code": "version_syntax", "response": ""},
+    "identifier_v1": {"status": "resolved", "error_code": "", "response": "invalid slug"},
+}
 FUZZ_PREFIXES = {
     "arithmetic_v1": "calculate ",
     "boolean_v1": "boolean ",
@@ -117,6 +126,8 @@ def fuzz_plugin(plugin_name: str, count: int) -> dict:
     statuses = {}
     failed = 0
     oversized_output = 0
+    contract_violations = 0
+    canonical_replay_failures = 0
     latencies = []
     for _ in range(count):
         suffix = "".join(randomizer.choice(alphabet) for _ in range(randomizer.randint(0, 256)))
@@ -127,13 +138,24 @@ def fuzz_plugin(plugin_name: str, count: int) -> dict:
         statuses[status] = statuses.get(status, 0) + 1
         failed += int(status == "failed")
         oversized_output += int(len(result["response"].encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES)
+        repeated = evaluate_named_utility(FUZZ_PREFIXES[plugin_name] + suffix, plugin_name)
+        if repeated != result or status not in {"resolved", "rejected"}:
+            contract_violations += 1
+        elif status == "resolved":
+            canonical = evaluate_named_utility(result["canonical_input"], plugin_name)
+            if canonical["status"] != "resolved" or canonical["response"] != result["response"]:
+                canonical_replay_failures += 1
+        elif result["response"] or result["canonical_input"] or not result["error_code"]:
+            contract_violations += 1
     return {
         "case_count": count,
         "statuses": statuses,
         "unexpected_failure_count": failed,
         "oversized_output_count": oversized_output,
+        "contract_violation_count": contract_violations,
+        "canonical_replay_failure_count": canonical_replay_failures,
         "p95_latency_ms": percentile(latencies, 0.95),
-        "passed": failed == 0 and oversized_output == 0,
+        "passed": failed == 0 and oversized_output == 0 and contract_violations == 0 and canonical_replay_failures == 0,
     }
 
 
@@ -177,6 +199,8 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
     resource = evaluate_named_utility(specification["resource_input"], plugin_name)
     resource_passed = resource["status"] == "rejected" and resource["error_code"] == specification["resource_error"]
     threat = evaluate_named_utility(THREAT_INPUTS[plugin_name], plugin_name)
+    threat_expected = THREAT_EXPECTATIONS[plugin_name]
+    threat_passed = all(threat[name] == value for name, value in threat_expected.items())
     fuzz = fuzz_plugin(plugin_name, fuzz_cases)
     properties = property_checks(plugin_name)
     values = {
@@ -184,7 +208,10 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
         "held_out_accuracy": partitions["held_out"]["accuracy"],
         "determinism_rate": sum(all_deterministic) / len(all_deterministic),
         "resource_rejection_rate": float(resource_passed),
-        "fuzz_failure_rate": fuzz["unexpected_failure_count"] / fuzz["case_count"],
+        "fuzz_failure_rate": (
+            fuzz["unexpected_failure_count"] + fuzz["contract_violation_count"] + fuzz["canonical_replay_failure_count"]
+        )
+        / fuzz["case_count"],
         "p95_latency_ms": max(percentile(all_latencies, 0.95), fuzz["p95_latency_ms"]),
     }
     checks = {
@@ -195,7 +222,7 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
         "fuzz_safety": values["fuzz_failure_rate"] <= gates["fuzz_failure_rate_max"] and fuzz["passed"],
         "latency": values["p95_latency_ms"] <= gates["p95_latency_ms_max"],
         "property_checks": all(properties.values()),
-        "threat_payload_not_executed": threat["status"] != "failed",
+        "threat_payload_safe_disposition": threat_passed,
     }
     passed = all(checks.values())
     return {
@@ -213,10 +240,11 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
             "passed": resource_passed,
         },
         "threat_probe": {
+            "expected": threat_expected,
             "status": threat["status"],
             "error_code": threat["error_code"],
             "response_sha256": hashlib.sha256(threat["response"].encode("utf-8")).hexdigest(),
-            "passed": threat["status"] != "failed",
+            "passed": threat_passed,
         },
         "fuzz": fuzz,
         "gate": {

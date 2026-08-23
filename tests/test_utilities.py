@@ -39,6 +39,11 @@ def enabled_registry(plugins=UTILITY_PLUGIN_NAMES) -> UtilityRegistry:
             "date_time_v1",
             "2026-08-22T18:30:00+00:00[UTC]",
         ),
+        (
+            "convert time 2026-08-22T14:30:00.100000+00:00 to UTC",
+            "date_time_v1",
+            "2026-08-22T14:30:00.100000+00:00[UTC]",
+        ),
         ("convert 32 F to C", "unit_conversion_v1", "0 C"),
         ("convert 5 km to mi", "unit_conversion_v1", "3.10685596118667 mi"),
         ("compare version 1.2.3-alpha.1 and 1.2.3", "version_v1", "1.2.3-alpha.1 < 1.2.3"),
@@ -124,6 +129,7 @@ def test_default_off_and_independent_plugin_selection() -> None:
         ("convert 1 kg to m", "dimension_mismatch"),
         ("convert 1 parsec to m", "unit_unknown"),
         ("compare version 01.2.3 and 1.2.3", "version_syntax"),
+        ("compare version 1.2.3٠ and 1.2.30", "version_syntax"),
     ],
 )
 def test_malformed_or_ambiguous_inputs_are_stable_rejections(query: str, error_code: str) -> None:
@@ -143,6 +149,15 @@ def test_collection_and_operation_resource_limits_are_hard() -> None:
     assert collection["error_code"] == "collection_limit"
     assert operations["status"] == "rejected"
     assert operations["error_code"] == "operation_limit"
+
+
+def test_date_time_canonicalization_keeps_distinct_fractional_instants() -> None:
+    first = evaluate_named_utility("convert time 2026-08-22T14:30:00.100000+00:00 to UTC", "date_time_v1")
+    second = evaluate_named_utility("convert time 2026-08-22T14:30:00.900000+00:00 to UTC", "date_time_v1")
+
+    assert first["status"] == second["status"] == "resolved"
+    assert first["canonical_input"] != second["canonical_input"]
+    assert first["response"] != second["response"]
 
 
 def test_expression_payload_is_data_and_never_executes(tmp_path) -> None:
