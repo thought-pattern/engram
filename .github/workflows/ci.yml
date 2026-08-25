@@ -68,5 +68,10 @@ jobs:
       - name: Check dependency compatibility
         run: pip check
 
+      - name: Provision NLP resources
+        run: |
+          python -m engram.nltk_data
+          python -m spacy download en_core_web_sm
+
       - name: Runtime tests
         run: pytest
