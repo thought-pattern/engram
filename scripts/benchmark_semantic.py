@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         "--manifest",
         default="data/artifacts/models/all-MiniLM-L6-v2-826711e5.engram-model.json",
     )
-    parser.add_argument("--output", default="documentation/semantic/benchmark-2026-08-22.json")
+    parser.add_argument("--output", default="eval/results/semantic/benchmark-2026-08-22.json")
     return parser.parse_args()
 
 

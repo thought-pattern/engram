@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -57,8 +56,7 @@ from engram.identity import (
     validate_scoped_retrieval_key,
 )
 
-REPOSITORY = Path(__file__).resolve().parent.parent
-NORMALIZATION_FIXTURE = REPOSITORY / "documentation" / "identity" / "normalization-v1.json"
+NORMALIZATION_FIXTURE = Path(__file__).parent / "fixtures" / "identity" / "normalization-v1.json"
 
 
 def _fixture() -> dict:
@@ -291,7 +289,7 @@ def test_scoped_retrieval_and_representations_representation_deduplicates_by_nor
 
 def test_scoped_retrieval_and_representations_representation_enforces_bounds_and_concrete_tuple_input() -> None:
     with pytest.raises(IdentityValidationError, match="must be a tuple"):
-        retrieval_representation("request", aliases=cast(tuple[str, ...], ["alias"]))
+        retrieval_representation("request", aliases=["alias"])
     with pytest.raises(IdentityValidationError, match="exceed"):
         retrieval_representation(
             "request",

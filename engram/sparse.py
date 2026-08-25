@@ -15,7 +15,6 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import cast
 
 from engram.artifacts import CachedResponseArtifact, validate_cached_response_artifact
 from engram.config import SparseConfig, sparse_config
@@ -223,19 +222,16 @@ def _sparse_document_from_validated_artifact(
         name: tuple(token for text in fields[name] for token in sparse_tokens(text))[:MAX_SPARSE_TOKENS_PER_FIELD]
         for name in SPARSE_FIELD_NAMES
     }
-    result = cast(
-        SparseDocument,
-        MappingProxyType(
-            {
-                "schema_version": SPARSE_DOCUMENT_SCHEMA_VERSION,
-                "statement_id": artifact["statement_id"],
-                "scope": MappingProxyType(validate_scope_key(artifact["scope"])),
-                "lifecycle": artifact["lifecycle"],
-                "fields": MappingProxyType(fields),
-                "tokens": MappingProxyType(tokens),
-                "technical_identifiers": fields["technical_identifiers"],
-            }
-        ),
+    result = MappingProxyType(
+        {
+            "schema_version": SPARSE_DOCUMENT_SCHEMA_VERSION,
+            "statement_id": artifact["statement_id"],
+            "scope": MappingProxyType(validate_scope_key(artifact["scope"])),
+            "lifecycle": artifact["lifecycle"],
+            "fields": MappingProxyType(fields),
+            "tokens": MappingProxyType(tokens),
+            "technical_identifiers": fields["technical_identifiers"],
+        }
     )
     return result
 
@@ -401,23 +397,20 @@ def build_sparse_index_state(
     frozen_postings = MappingProxyType(postings)
     frozen_averages = MappingProxyType(averages)
     fingerprint = _documents_fingerprint(frozen_documents, config_fingerprint)
-    result = cast(
-        SparseIndexState,
-        MappingProxyType(
-            {
-                "schema_version": SPARSE_INDEX_SCHEMA_VERSION,
-                "index_version": SPARSE_INDEX_VERSION,
-                "tokenizer_version": SPARSE_TOKENIZER_VERSION,
-                "state_generation": state_generation,
-                "repository_state_generation": repository_state_generation,
-                "config_fingerprint": config_fingerprint,
-                "documents": frozen_documents,
-                "postings": frozen_postings,
-                "document_frequencies": MappingProxyType(document_frequencies),
-                "average_field_lengths": frozen_averages,
-                "fingerprint": fingerprint,
-            }
-        ),
+    result = MappingProxyType(
+        {
+            "schema_version": SPARSE_INDEX_SCHEMA_VERSION,
+            "index_version": SPARSE_INDEX_VERSION,
+            "tokenizer_version": SPARSE_TOKENIZER_VERSION,
+            "state_generation": state_generation,
+            "repository_state_generation": repository_state_generation,
+            "config_fingerprint": config_fingerprint,
+            "documents": frozen_documents,
+            "postings": frozen_postings,
+            "document_frequencies": MappingProxyType(document_frequencies),
+            "average_field_lengths": frozen_averages,
+            "fingerprint": fingerprint,
+        }
     )
     return result
 
@@ -489,23 +482,20 @@ def update_sparse_index_state(
         if replacement is not None:
             fingerprint_value ^= _document_digest(replacement)
     fingerprint = f"{fingerprint_value:064x}"
-    result = cast(
-        SparseIndexState,
-        MappingProxyType(
-            SparseIndexState(
-                schema_version=SPARSE_INDEX_SCHEMA_VERSION,
-                index_version=SPARSE_INDEX_VERSION,
-                tokenizer_version=SPARSE_TOKENIZER_VERSION,
-                state_generation=live["state_generation"] + 1,
-                repository_state_generation=repository_state_generation,
-                config_fingerprint=config_fingerprint,
-                documents=frozen_documents,
-                postings=frozen_postings,
-                document_frequencies=MappingProxyType(document_frequencies),
-                average_field_lengths=averages,
-                fingerprint=fingerprint,
-            )
-        ),
+    result = MappingProxyType(
+        SparseIndexState(
+            schema_version=SPARSE_INDEX_SCHEMA_VERSION,
+            index_version=SPARSE_INDEX_VERSION,
+            tokenizer_version=SPARSE_TOKENIZER_VERSION,
+            state_generation=live["state_generation"] + 1,
+            repository_state_generation=repository_state_generation,
+            config_fingerprint=config_fingerprint,
+            documents=frozen_documents,
+            postings=frozen_postings,
+            document_frequencies=MappingProxyType(document_frequencies),
+            average_field_lengths=averages,
+            fingerprint=fingerprint,
+        )
     )
     return result
 
@@ -971,14 +961,11 @@ class SparseIndexOwner:
             if repository_state_generation < self._state["repository_state_generation"]:
                 return self._state
             if candidate["state_generation"] <= self._state["state_generation"]:
-                candidate = cast(
-                    SparseIndexState,
-                    MappingProxyType(
-                        {
-                            **candidate,
-                            "state_generation": self._state["state_generation"] + 1,
-                        }
-                    ),
+                candidate = MappingProxyType(
+                    {
+                        **candidate,
+                        "state_generation": self._state["state_generation"] + 1,
+                    }
                 )
             self._state = candidate
             self._healthy = True
@@ -1037,23 +1024,20 @@ class SparseIndexOwner:
             return self.rebuild(artifacts.values(), repository_state_generation)
         with self._lock:
             if repository_state_generation != self._state["repository_state_generation"]:
-                self._state = cast(
-                    SparseIndexState,
-                    MappingProxyType(
-                        SparseIndexState(
-                            schema_version=self._state["schema_version"],
-                            index_version=self._state["index_version"],
-                            tokenizer_version=self._state["tokenizer_version"],
-                            state_generation=self._state["state_generation"] + 1,
-                            repository_state_generation=repository_state_generation,
-                            config_fingerprint=self._state["config_fingerprint"],
-                            documents=self._state["documents"],
-                            postings=self._state["postings"],
-                            document_frequencies=self._state["document_frequencies"],
-                            average_field_lengths=self._state["average_field_lengths"],
-                            fingerprint=self._state["fingerprint"],
-                        )
-                    ),
+                self._state = MappingProxyType(
+                    SparseIndexState(
+                        schema_version=self._state["schema_version"],
+                        index_version=self._state["index_version"],
+                        tokenizer_version=self._state["tokenizer_version"],
+                        state_generation=self._state["state_generation"] + 1,
+                        repository_state_generation=repository_state_generation,
+                        config_fingerprint=self._state["config_fingerprint"],
+                        documents=self._state["documents"],
+                        postings=self._state["postings"],
+                        document_frequencies=self._state["document_frequencies"],
+                        average_field_lengths=self._state["average_field_lengths"],
+                        fingerprint=self._state["fingerprint"],
+                    )
                 )
             self._healthy = True
             self._last_error = ""

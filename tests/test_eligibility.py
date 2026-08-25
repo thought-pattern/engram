@@ -4,7 +4,6 @@ import json
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any, cast
 
 import pytest
 
@@ -274,10 +273,10 @@ def test_standalone_clock_boundary_requires_aware_utc(clock_value, message) -> N
 @pytest.mark.parametrize(
     ("call", "message"),
     [
-        (lambda: NamespaceEpochState(cast(Any, [])), "must be an object"),
+        (lambda: NamespaceEpochState([]), "must be an object"),
         (lambda: NamespaceEpochState({"tenant-a": True}), "64-bit integer"),
         (
-            lambda: NamespaceEpochState({"tenant-a": 0}).increment("tenant-a", 0, cast(Any, "artifact")),
+            lambda: NamespaceEpochState({"tenant-a": 0}).increment("tenant-a", 0, "artifact"),
             "reason must be an EpochChangeReason",
         ),
         (

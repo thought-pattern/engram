@@ -3,7 +3,6 @@
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import cast
 
 import pytest
 
@@ -176,7 +175,7 @@ def artifact(
 def report_candidates(decision) -> list[Mapping[str, object]]:
     values = decision["report"]["candidates"]
     assert isinstance(values, list)
-    result = cast(list[Mapping[str, object]], values)
+    result = values
     return result
 
 
@@ -185,7 +184,7 @@ def report_reason_codes(decision, index: int = 0) -> tuple[str, ...]:
     assert isinstance(eligibility, Mapping)
     values = eligibility["reason_codes"]
     assert isinstance(values, list) and all(isinstance(value, str) for value in values)
-    result = tuple(cast(list[str], values))
+    result = tuple(values)
     return result
 
 
@@ -267,10 +266,10 @@ def test_deduplication_retains_contributions_diagnostics_and_evidence() -> None:
     assert len(contributions) == 2
     fields = set()
     for item in contributions:
-        contribution = cast(Mapping[str, object], item)
+        contribution = item
         diagnostic_fields = contribution["diagnostic_fields"]
         assert isinstance(diagnostic_fields, list) and all(isinstance(value, str) for value in diagnostic_fields)
-        fields.add(tuple(cast(list[str], diagnostic_fields)))
+        fields.add(tuple(diagnostic_fields))
     assert fields == {("lexical_trace",), ("semantic_trace",)}
     assert "sensitive-value" not in json.dumps(dict(decision["report"]))
     assert decision["working_memory_bytes"] > 0
@@ -298,7 +297,7 @@ def test_transparent_fusion_answers_only_supported_independent_agreement() -> No
 def test_fusion_fast_path_still_rejects_malformed_public_candidates() -> None:
     malformed_data: dict[str, object] = dict(supported_pair()[0])
     malformed_data["source"] = "lexical"
-    malformed = cast(Candidate, malformed_data)
+    malformed = malformed_data
 
     with pytest.raises(InvalidRequestError, match="candidate source"):
         conformance_fusion().decide(frame(), (malformed,))
@@ -353,7 +352,7 @@ def test_close_distinct_candidates_abstain_even_above_answer_threshold() -> None
     assert len(decision["response_candidates"]) == 2
     assert decision["reason_codes"][0] == FusionPolicyReason.AMBIGUOUS_TOP_CANDIDATES.value
     assert decision["report"]["top_two_margin_available"] is True
-    assert cast(float, decision["report"]["top_two_margin"]) < fusion_policy()["ambiguity_margin"]
+    assert decision["report"]["top_two_margin"] < fusion_policy()["ambiguity_margin"]
 
 
 @pytest.mark.parametrize(
@@ -369,10 +368,10 @@ def test_central_structural_eligibility_filters_before_scoring(changed, expected
     decision = conformance_fusion().decide(frame(), (candidate_with_changes(value, changed),))
 
     assert decision["outcome"] == ResolutionOutcome.MISS
-    eligibility = cast(Mapping[str, object], report_candidates(decision)[0]["eligibility"])
+    eligibility = report_candidates(decision)[0]["eligibility"]
     reason_codes = eligibility["reason_codes"]
     assert isinstance(reason_codes, list) and all(isinstance(value, str) for value in reason_codes)
-    assert expected_reason.value in cast(list[str], reason_codes)
+    assert expected_reason.value in reason_codes
 
 
 def test_conflicting_responses_for_one_statement_are_not_selectable() -> None:
@@ -448,10 +447,10 @@ def test_authoritative_revalidation_blocks_stale_hidden_or_changed_state(
     decision = fusion.decide(frame(engine), (exact,))
 
     assert decision["outcome"] == ResolutionOutcome.MISS
-    eligibility = cast(Mapping[str, object], report_candidates(decision)[0]["eligibility"])
+    eligibility = report_candidates(decision)[0]["eligibility"]
     reason_codes = eligibility["reason_codes"]
     assert isinstance(reason_codes, list) and all(isinstance(value, str) for value in reason_codes)
-    assert expected_reason.value in cast(list[str], reason_codes)
+    assert expected_reason.value in reason_codes
 
 
 def test_authoritative_features_use_explicit_support_history_and_authority() -> None:
@@ -464,8 +463,8 @@ def test_authoritative_features_use_explicit_support_history_and_authority() -> 
     decision = fusion.decide(frame(engine), (exact,))
 
     assert decision["outcome"] == ResolutionOutcome.ANSWER
-    normalized = cast(Mapping[str, object], report_candidates(decision)[0]["normalized_features"])
-    values = cast(Mapping[str, float], normalized["values"])
+    normalized = report_candidates(decision)[0]["normalized_features"]
+    values = normalized["values"]
     assert values["support"] == 1.0
     assert values["history"] == 0.75
     assert values["authority"] == 0.85

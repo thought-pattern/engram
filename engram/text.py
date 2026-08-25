@@ -3,7 +3,6 @@
 import re
 from functools import lru_cache
 from threading import Lock
-from typing import Any, cast
 
 from nltk.corpus import wordnet, words
 from nltk.metrics.distance import edit_distance
@@ -633,7 +632,7 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     # concurrent access can trip its internal file-handle assertion.
     with _wordnet_reader_lock:
         _ensure_wordnet()
-        wordnet_reader = cast(Any, wordnet)
+        wordnet_reader = wordnet
         for syn in wordnet_reader.synsets(word):
             for lemma in syn.lemmas():
                 name = lemma.name().lower().replace("_", " ")

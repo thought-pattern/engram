@@ -8,7 +8,6 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -18,13 +17,12 @@ from engram.constants import VERSION, ExpectedObjectType
 from engram.core import Engram
 from engram.graph import ClaimProjectionQuery, claim_projection, relation_claim_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
-from engram.resolution import QueryFrame
 from engram.service import EngramCore
 from engram.spacy_setup import get_nlp
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_MANIFEST = Path("eval/section8-relation-followup-v1.json")
-DEFAULT_OUTPUT = Path("documentation/contextual/benchmark-2026-08-20.json")
+DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark-2026-08-20.json")
 
 
 def _claim_row(claim_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:
@@ -250,7 +248,7 @@ def run(manifest_path: Path) -> dict:
                 )
                 latency_ms = (time.perf_counter_ns() - started) / 1_000_000
                 all_latencies.append(latency_ms)
-                frame = cast(QueryFrame, core._resolution_requests[request_id]["frame"])
+                frame = core._resolution_requests[request_id]["frame"]
                 observed_inheritance = sorted(item["field_name"] for item in frame["inheritance"])
                 responses = [candidate["response"] for candidate in result["response_candidates"]]
                 if result["selected_candidate_available"]:

@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from typing import Any, cast
 
 import pytest
 
@@ -215,7 +214,7 @@ def test_feedback_accepts_the_declared_thousand_observation_batch() -> None:
 
     candidate = store.prepare("feedback-batch", values)
 
-    receipt_result = cast(Any, mutation_receipt_to_dict(candidate["receipt"])["result"])
+    receipt_result = mutation_receipt_to_dict(candidate["receipt"])["result"]
     assert receipt_result["observation_count"] == 1_000
     assert candidate["after"]["statement_records"][0]["raw"]["accept_count"] == 1_000
     assert candidate["after"]["relationship_records"][0]["raw"]["accept_count"] == 1_000
@@ -228,9 +227,9 @@ def test_feedback_store_snapshots_share_only_immutable_aggregate_records() -> No
     record = snapshot["statement_records"][0]
 
     with pytest.raises(TypeError):
-        cast(Any, record)["last_observed_at"] = "2026-08-15T13:00:00Z"
+        record["last_observed_at"] = "2026-08-15T13:00:00Z"
     with pytest.raises(TypeError):
-        cast(Any, record["raw"])["accept_count"] = 99
+        record["raw"]["accept_count"] = 99
 
     assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 1
 
@@ -257,7 +256,7 @@ def test_lifecycle_execution_status_does_not_change_feedback_retry_identity() ->
 
     assert first["replayed"] is False
     assert replay["replayed"] is True
-    assert cast(Any, mutation_receipt_to_dict(replay["receipt"])["result"])["lifecycle_status"] == "conflicted"
+    assert mutation_receipt_to_dict(replay["receipt"])["result"]["lifecycle_status"] == "conflicted"
 
 
 def test_feedback_partitions_isolate_scope_query_generation_and_policy() -> None:
@@ -383,7 +382,7 @@ def test_negative_store_has_fixed_ttl_capacity_exact_isolation_and_invalidation(
     assert store.inspect()["evictions"] == 1
     changed_plan = negative_resolution_key_with_changes(third, {"resolver_plan_fingerprint": canonical_fingerprint("plan-b")})
     assert store.lookup(changed_plan, "2026-08-15T12:01:03Z")["hit"] is False
-    assert cast(int, store.inspect()["invalidations"]) >= 1
+    assert store.inspect()["invalidations"] >= 1
     store.admit(changed_plan, "2026-08-15T12:01:04Z")
     assert store.invalidate_epoch_snapshot({"epochs": {"tenant-a": 2}}) == 2
 
@@ -410,7 +409,7 @@ def test_core_negative_hit_bypasses_resolvers_and_plan_changes_do_not_reuse() ->
     assert hit["budget"]["resolvers"] == 0
     assert changed["outcome"] == ResolutionOutcome.MISS
     assert "negative_resolution_hit" not in changed["reason_codes"]
-    inspection = cast(Any, core.inspect_feedback_learning()["negative_resolution"])
+    inspection = core.inspect_feedback_learning()["negative_resolution"]
     assert inspection["hits"] == 1
     assert inspection["invalidations"] >= 1
 
@@ -439,7 +438,7 @@ def test_non_exact_plans_do_not_cache_misses_that_can_hide_new_knowledge() -> No
     )
 
     assert first["outcome"] == ResolutionOutcome.MISS
-    assert cast(Any, core.inspect_feedback_learning()["negative_resolution"])["admissions"] == 0
+    assert core.inspect_feedback_learning()["negative_resolution"]["admissions"] == 0
     assert "negative_resolution_hit" not in second["reason_codes"]
     assert any(result["reason_code"] == "lexical_candidates" for result in second["resolver_results"])
 
@@ -520,7 +519,7 @@ def test_policy_filtered_exact_miss_is_never_negative_admitted() -> None:
 
     assert first["resolver_results"][0]["reason_code"] == "exact_required_filter_excluded"
     assert "negative_resolution_hit" not in second["reason_codes"]
-    assert cast(Any, core.inspect_feedback_learning()["negative_resolution"])["admissions"] == 0
+    assert core.inspect_feedback_learning()["negative_resolution"]["admissions"] == 0
 
 
 def test_core_feedback_candidacy_verdict_retry_conflict_and_stale_handoff() -> None:
@@ -535,7 +534,7 @@ def test_core_feedback_candidacy_verdict_retry_conflict_and_stale_handoff() -> N
     assert replay["idempotent"] is True
     assert core.engram.response_repository.get_artifact(statement_id)["lifecycle"] == LifecycleState.INVALIDATED
     assert core.engram.feedback_store.stale_excluded(statement_id, 2) is True
-    inspection = cast(Any, core.inspect_feedback_learning()["feedback"])
+    inspection = core.inspect_feedback_learning()["feedback"]
     assert inspection["statement_record_count"] == 1
     assert inspection["statements"][0]["statistics"]["candidate_count"] == 1
     assert inspection["statements"][0]["statistics"]["rejected_stale"] == 1
@@ -557,7 +556,7 @@ def test_policy_feedback_suppresses_only_matching_namespace_and_policy_partition
     )
 
     assert suppressed["outcome"] == ResolutionOutcome.MISS
-    fusion_report = cast(Any, suppressed["frame_diagnostics"]["fusion"])
+    fusion_report = suppressed["frame_diagnostics"]["fusion"]
     assert fusion_report["candidates"][0]["eligibility"]["reason_codes"] == ("feedback_policy_suppressed",)
 
 
@@ -574,7 +573,7 @@ def test_feedback_history_is_produced_for_fusion_without_weakening_hard_gates() 
         )
 
     evaluated = core.resolve_request("What is Engram?", "history-evaluated", namespace="tenant-a", configured_resolvers=("exact",))
-    normalized = cast(Any, evaluated["frame_diagnostics"]["fusion"])["candidates"][0]["normalized_features"]
+    normalized = evaluated["frame_diagnostics"]["fusion"]["candidates"][0]["normalized_features"]
 
     assert evaluated["outcome"] == ResolutionOutcome.ANSWER
     assert "history" in normalized["available"]
@@ -713,7 +712,7 @@ def test_legacy_proposal_path_uses_shared_feedback_owner() -> None:
     proposal = core.propose("What is cached?", "proposal-1", namespace="tenant-a")
     resolved = core.resolve(proposal["proposal_id"], "rejected_context", learned["statement_id"], "wrong context")
 
-    inspection = cast(Any, core.inspect_feedback_learning()["feedback"])
+    inspection = core.inspect_feedback_learning()["feedback"]
     assert resolved["resolved"] is True
     assert inspection["statement_record_count"] == 1
     assert inspection["statements"][0]["statistics"]["candidate_count"] == 1

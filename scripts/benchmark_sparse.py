@@ -12,7 +12,6 @@ import tracemalloc
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -36,7 +35,7 @@ from engram.sparse import SparseIndexOwner, sparse_document_from_artifact, spars
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_CORPUS = Path("eval/section12-sparse-v1.json")
-DEFAULT_OUTPUT = Path("documentation/sparse/benchmark-2026-08-21.json")
+DEFAULT_OUTPUT = Path("eval/results/sparse/benchmark-2026-08-21.json")
 SCALE_DOCUMENTS = 10_000
 SCALE_QUERY_SAMPLES = 200
 SCALE_BUILD_SAMPLES = 5
@@ -48,7 +47,7 @@ def _percentile(values: list[float], fraction: float) -> float:
     return ordered[index]
 
 
-def _measure(operation: Callable[[], object], samples: int) -> dict[str, Any]:
+def _measure(operation: Callable[[], object], samples: int) -> dict[str, object]:
     durations = []
     for _ in range(samples):
         started = time.perf_counter_ns()
@@ -208,7 +207,7 @@ def _relevance(
     name: str,
     search: Callable[[str, int], list[tuple[str, float]]],
     queries: list[object],
-) -> dict[str, Any]:
+) -> dict[str, object]:
     positive = 0
     top_one = 0
     top_five = 0
@@ -264,7 +263,7 @@ def _latency(
     search: Callable[[str, int], list[tuple[str, float]]],
     queries: list[object],
     repeats: int,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     samples = []
     for _ in range(repeats):
         for raw in queries:
@@ -299,7 +298,7 @@ def _scale_artifacts(count: int) -> tuple[CachedResponseArtifact, ...]:
     return tuple(values)
 
 
-def _scale_profile() -> dict[str, Any]:
+def _scale_profile() -> dict[str, object]:
     artifacts = _scale_artifacts(SCALE_DOCUMENTS)
     settings = sparse_config(enabled=True)
     owner_holder: list[SparseIndexOwner] = []
@@ -339,7 +338,7 @@ def _scale_profile() -> dict[str, Any]:
     first = artifacts[0]
     updated = cached_response_artifact_to_dict(first)
     updated["generation"] = 2
-    statistics_value = dict(cast(Mapping[str, object], updated["statistics"]))
+    statistics_value = dict(updated["statistics"])
     statistics_value["query_count"] = 1
     updated["statistics"] = statistics_value
     statistics_artifact = cached_response_artifact_from_dict(updated)
@@ -392,7 +391,7 @@ def _scale_profile() -> dict[str, Any]:
     }
 
 
-def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_scale: bool = True) -> dict[str, Any]:
+def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_scale: bool = True) -> dict[str, object]:
     if repeats < 20:
         raise ValueError("sparse benchmark requires at least 20 relevance repeats")
     corpus = _load(corpus_path)

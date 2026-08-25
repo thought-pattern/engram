@@ -131,7 +131,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("documentation/temporal/benchmark-2026-08-20.json"),
+        default=Path("eval/results/temporal/benchmark-2026-08-20.json"),
     )
     arguments = parser.parse_args()
     report = run(arguments.corpus)

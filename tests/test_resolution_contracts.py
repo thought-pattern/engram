@@ -3,7 +3,6 @@
 import json
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, cast
 
 import pytest
 
@@ -299,7 +298,7 @@ def test_frame_codec_preserves_traces_and_immutable_metadata() -> None:
     assert rewrite_copy == decoded["rewrite_chain"][0] and rewrite_copy is not decoded["rewrite_chain"][0]
     assert isinstance(decoded["required_metadata"], MappingProxyType)
     with pytest.raises(TypeError):
-        cast(Any, decoded["required_metadata"])["changed"] = True
+        decoded["required_metadata"]["changed"] = True
 
 
 def test_frame_rejects_identity_and_eligibility_scope_mismatch() -> None:
@@ -371,7 +370,7 @@ def test_evidence_reference_is_an_exact_isolated_dictionary() -> None:
     assert copied["provenance"] is not reference["provenance"]
     assert copied["diagnostics"] is not reference["diagnostics"]
     with pytest.raises(TypeError):
-        cast(Any, reference["provenance"])["changed"] = True
+        reference["provenance"]["changed"] = True
     malformed = dict(reference)
     malformed["unexpected"] = True
     with pytest.raises(InvalidRequestError, match="invalid fields"):

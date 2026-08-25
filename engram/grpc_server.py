@@ -10,7 +10,6 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
 
 import grpc
 from google.protobuf import empty_pb2, json_format, struct_pb2
@@ -27,7 +26,8 @@ from engram.errors import (
     ResolutionCancelledError,
     ResourceNotFoundError,
 )
-from engram.resolution import resolution_result_to_dict
+from engram.identity import query_identity_from_dict
+from engram.resolution import resolution_budget_from_dict, resolution_result_to_dict
 from engram.service import EngramCore, open_engram_core
 from engram.v1 import engram_pb2, engram_pb2_grpc
 from engram.v2 import engram_pb2 as evidence_pb2, engram_pb2_grpc as evidence_pb2_grpc
@@ -52,31 +52,66 @@ def _from_struct(value: struct_pb2.Struct) -> dict:
     return result
 
 
+def _restore_contract_integers(value: object) -> object:
+    """Restore integer JSON fields erased by protobuf Struct's number type."""
+    if type(value) is dict:
+        result: object = {key: _restore_contract_integers(item) for key, item in value.items()}
+    elif type(value) is list:
+        result = [_restore_contract_integers(item) for item in value]
+    elif type(value) is float and value.is_integer():
+        result = int(value)
+    else:
+        result = value
+    return result
+
+
+def _contract_from_struct(value: struct_pb2.Struct) -> dict:
+    """Convert a Struct into JSON-facing contract primitives."""
+    restored = _restore_contract_integers(_from_struct(value))
+    if not isinstance(restored, dict):
+        raise InvalidRequestError("contract payload must be an object")
+    return restored
+
+
+def _identity_from_struct(value: struct_pb2.Struct) -> dict:
+    """Decode a JSON-facing identity payload into its runtime contract."""
+    data = _contract_from_struct(value)
+    result = query_identity_from_dict(data) if data else {}
+    return result
+
+
+def _budget_from_struct(value: struct_pb2.Struct) -> dict:
+    """Decode a JSON-facing budget payload into its runtime contract."""
+    data = _contract_from_struct(value)
+    result = resolution_budget_from_dict(data) if data else {}
+    return result
+
+
 def _to_evidence_resolution(value: dict) -> evidence_pb2.ResolutionResult:
     """Translate one validated core result to the explicit v2 wire contract."""
     current = resolution_result_to_dict(value)
-    package = cast(dict, current["evidence_package"])
+    package = current["evidence_package"]
     result = evidence_pb2.ResolutionResult(
-        schema_version=cast(int, current["schema_version"]),
-        outcome=cast(str, current["outcome"]),
-        selected_candidate=_to_struct(cast(dict, current["selected_candidate"])),
-        selected_candidate_available=cast(bool, current["selected_candidate_available"]),
-        response_candidates=[_to_struct(cast(dict, item)) for item in cast(list, current["response_candidates"])],
-        evidence=[_to_struct(cast(dict, item)) for item in cast(list, current["evidence"])],
-        confidence=cast(float, current["confidence"]),
-        confidence_available=cast(bool, current["confidence_available"]),
-        reason_codes=cast(list[str], current["reason_codes"]),
-        frame_diagnostics=_to_struct(cast(dict, current["frame_diagnostics"])),
-        resolver_results=[_to_struct(cast(dict, item)) for item in cast(list, current["resolver_results"])],
-        budget=_to_struct(cast(dict, current["budget"])),
-        evidence_package_available=cast(bool, current["evidence_package_available"]),
+        schema_version=current["schema_version"],
+        outcome=current["outcome"],
+        selected_candidate=_to_struct(current["selected_candidate"]),
+        selected_candidate_available=current["selected_candidate_available"],
+        response_candidates=[_to_struct(item) for item in current["response_candidates"]],
+        evidence=[_to_struct(item) for item in current["evidence"]],
+        confidence=current["confidence"],
+        confidence_available=current["confidence_available"],
+        reason_codes=current["reason_codes"],
+        frame_diagnostics=_to_struct(current["frame_diagnostics"]),
+        resolver_results=[_to_struct(item) for item in current["resolver_results"]],
+        budget=_to_struct(current["budget"]),
+        evidence_package_available=current["evidence_package_available"],
         evidence_package=evidence_pb2.EvidencePackage(
-            wire_version=cast(int, package["wire_version"]),
-            records=[_to_struct(cast(dict, item)) for item in cast(list, package["records"])],
-            retained_count=cast(int, package["retained_count"]),
-            omitted_count=cast(int, package["omitted_count"]),
-            truncated=cast(bool, package["truncated"]),
-            truncation_reasons=cast(list[str], package["truncation_reasons"]),
+            wire_version=package["wire_version"],
+            records=[_to_struct(item) for item in package["records"]],
+            retained_count=package["retained_count"],
+            omitted_count=package["omitted_count"],
+            truncated=package["truncated"],
+            truncation_reasons=package["truncation_reasons"],
         ),
     )
     return result
@@ -162,7 +197,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         self.health_servicer.set(SERVICE_NAME, serving_status)
         self.health_servicer.set(EVIDENCE_SERVICE_NAME, serving_status)
 
-    def _invoke(self, context: grpc.ServicerContext, operation: Callable[[], Any]) -> Any:
+    def _invoke(self, context: grpc.ServicerContext, operation: Callable[[], object]) -> object:
         try:
             result = operation()
             return result
@@ -345,10 +380,10 @@ class EngramEvidenceGrpcService(evidence_pb2_grpc.EngramEvidenceServiceServicer)
                     user_id=request.user_id,
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
-                    identity=_from_struct(request.identity),
+                    identity=_identity_from_struct(request.identity),
                     required_metadata=_from_struct(request.required_metadata),
                     required_source_label=request.required_source_label,
-                    budget=_from_struct(request.budget),
+                    budget=_budget_from_struct(request.budget),
                     configured_resolvers=tuple(request.configured_resolvers),
                     accept_exact=request.accept_exact,
                     cancellation_check=lambda: _grpc_cancellation_check(context, cancelled),
@@ -538,6 +573,12 @@ def main(argv: Sequence[str] = ()) -> int:
         return result
     LOGGER.info("Engram gRPC server stopped")
     result = 0
+    return result
+
+
+def console_main() -> int:
+    """Run the packaged console entry point with the process arguments."""
+    result = main(tuple(sys.argv[1:]))
     return result
 
 

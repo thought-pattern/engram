@@ -16,7 +16,6 @@ from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 from uuid import uuid4
 
 from engram import persistence, sessions
@@ -398,7 +397,7 @@ class EngramCore:
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
         self._resolution_requests: dict[str, dict[str, object]] = {}
-        self._clock: Callable[[], datetime] = cast(Callable[[], datetime], clock) if callable(clock) else lambda: datetime.now(UTC)
+        self._clock: Callable[[], datetime] = clock if callable(clock) else lambda: datetime.now(UTC)
         self.lock = threading.RLock()
         self._resolution_condition = threading.Condition(self.lock)
         self._active_resolution_request_ids: set[str] = set()
@@ -831,7 +830,7 @@ class EngramCore:
         serialized_entries = _trusted_resolution_plan_to_dict(plan)["entries"]
         if not isinstance(serialized_entries, list):
             raise LifecycleError("resolution plan entries are malformed")
-        plan_entries = cast(list[dict[str, object]], serialized_entries)
+        plan_entries = serialized_entries
         resolver_plan = [
             {
                 "resolver": value["resolver"],
@@ -926,16 +925,14 @@ class EngramCore:
                 raise InvalidRequestError("accept_exact must be a boolean")
             if cancellation_check != () and not callable(cancellation_check):
                 raise InvalidRequestError("cancellation_check must be callable")
-            selected_cancellation_check = (
-                cast(Callable[[], object], cancellation_check) if callable(cancellation_check) else _no_cancellation_check
-            )
+            selected_cancellation_check = cancellation_check if callable(cancellation_check) else _no_cancellation_check
 
             def check_cancellation() -> None:
                 selected_cancellation_check()
 
             check_cancellation()
             rollout = select_rollout(self.engram.config, namespace)
-            rollout_mode = cast(RolloutMode, rollout["mode"])
+            rollout_mode = rollout["mode"]
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
             signature_budget.pop("started_ns")
             signature = service_request_signature(
@@ -1155,7 +1152,7 @@ class EngramCore:
                     probe_result = probe_receipt["result"]
                     if not isinstance(probe_result, dict):
                         raise LifecycleError("feedback replay lifecycle result is malformed")
-                    lifecycle_status = LifecycleHandoffStatus(cast(str, probe_result["lifecycle_status"]))
+                    lifecycle_status = LifecycleHandoffStatus(probe_result["lifecycle_status"])
                 elif target["generation_available"]:
                     lifecycle_status = LifecycleHandoffStatus.PENDING
                     previous_response_ids = tuple(sorted(self.engram.response_repository.snapshot()["artifacts"]))
@@ -1686,7 +1683,7 @@ class EngramCore:
                     probe_result = probe_receipt["result"]
                     if not isinstance(probe_result, dict):
                         raise LifecycleError("proposal feedback replay lifecycle result is malformed")
-                    lifecycle_status = LifecycleHandoffStatus(cast(str, probe_result["lifecycle_status"]))
+                    lifecycle_status = LifecycleHandoffStatus(probe_result["lifecycle_status"])
                 elif target["generation_available"]:
                     lifecycle_status = LifecycleHandoffStatus.PENDING
                     previous_response_ids = tuple(sorted(self.engram.response_repository.snapshot()["artifacts"]))

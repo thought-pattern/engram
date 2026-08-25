@@ -18,7 +18,7 @@ from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_CORPUS = Path("eval/section11-rewrite-v1.json")
-DEFAULT_OUTPUT = Path("documentation/rewrite/benchmark-2026-08-20.json")
+DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark-2026-08-20.json")
 
 
 def _percentile(values: list[float], fraction: float) -> float:

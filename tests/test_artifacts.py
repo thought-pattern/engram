@@ -1,7 +1,6 @@
 """Section 3 accepted-response artifact and lifecycle contracts."""
 
 from inspect import signature
-from typing import Any, cast
 
 import pytest
 
@@ -269,18 +268,18 @@ def test_capacity_eviction_never_changes_lifecycle(state) -> None:
 @pytest.mark.parametrize(
     ("call", "message"),
     [
-        (lambda: lifecycle_base_eligibility(cast(Any, "ACTIVE")), "lifecycle must be a LifecycleState"),
+        (lambda: lifecycle_base_eligibility("ACTIVE"), "lifecycle must be a LifecycleState"),
         (
             lambda: lifecycle_transition_decision(
                 LifecycleState.ACTIVE,
                 LifecycleState.RETIRED,
-                cast(Any, "RETIRE"),
+                "RETIRE",
             ),
             "operation must be a LifecycleOperation",
         ),
         (
             lambda: historical_key_reuse_decision(
-                explicit_replacement=cast(Any, 1),
+                explicit_replacement=1,
                 expected_statement_id="stmt-old",
                 expected_generation=1,
             ),
@@ -362,7 +361,7 @@ def test_metadata_is_deeply_immutable_and_json_concrete() -> None:
 
     assert cached_response_artifact_to_dict(artifact)["metadata"] == {"nested": {"items": [1, "two", False]}}
     with pytest.raises(TypeError):
-        cast(dict[str, object], artifact["metadata"])["new"] = "value"
+        artifact["metadata"]["new"] = "value"
 
 
 @pytest.mark.parametrize(
@@ -457,7 +456,7 @@ def test_artifact_constructor_rejects_wrong_concrete_types(overrides, message) -
 
 def test_artifact_json_loader_rejects_malformed_and_non_object_values() -> None:
     with pytest.raises(InvalidRequestError, match="must be a string"):
-        cached_response_artifact_from_json(cast(Any, {}))
+        cached_response_artifact_from_json({})
     with pytest.raises(InvalidRequestError, match="malformed"):
         cached_response_artifact_from_json("{")
     with pytest.raises(InvalidRequestError, match="must contain an object"):

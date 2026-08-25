@@ -59,7 +59,7 @@ from engram.resolvers import (
 )
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = Path("documentation/evidence/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/evidence/benchmark-2026-08-19.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="section7-benchmark")

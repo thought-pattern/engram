@@ -2,7 +2,6 @@
 
 import threading
 from collections.abc import Mapping
-from typing import Any, cast
 
 import pytest
 
@@ -146,7 +145,7 @@ def test_response_mutation_result_is_a_revalidated_plain_dictionary() -> None:
     malformed = dict(result)
     malformed["checkpoint_count"] = 2
     with pytest.raises(InvalidRequestError, match="zero or one"):
-        response_mutation_result_to_dict(cast(Any, malformed))
+        response_mutation_result_to_dict(malformed)
 
 
 @pytest.mark.parametrize("response", ["", "IDK", "  IdK!  "])
@@ -422,7 +421,7 @@ def test_lifecycle_transition_requires_typed_reason_caller_and_expected_generati
     before = coordinated_response_state_signature(command.coordinator.snapshot())
 
     with pytest.raises(InvalidRequestError, match="LifecycleMutationReason"):
-        command.invalidate_response("stmt-1", 1, cast(Any, "SOURCE_RETRACTED"), "operator-a", "request-invalid")
+        command.invalidate_response("stmt-1", 1, "SOURCE_RETRACTED", "operator-a", "request-invalid")
     with pytest.raises(InvalidRequestError, match="caller_id"):
         command.invalidate_response("stmt-1", 1, LifecycleMutationReason.SOURCE_RETRACTED, "", "request-invalid")
     with pytest.raises(ConflictError, match="generation conflict"):

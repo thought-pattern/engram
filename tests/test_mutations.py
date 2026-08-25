@@ -1,7 +1,6 @@
 """Section 3 durable mutation receipt tests."""
 
 import threading
-from typing import Any, cast
 
 import pytest
 
@@ -96,7 +95,7 @@ def test_receipt_codec_round_trip_is_deterministic_and_deeply_immutable() -> Non
     assert mutation_receipt_to_dict(restored)["result"] == {"nested": {"items": [1, "é"]}, "statement_id": "stmt-1"}
     assert "\\u00e9" not in encoded
     with pytest.raises(TypeError):
-        cast(dict[str, object], receipt["result"])["new"] = "value"
+        receipt["result"]["new"] = "value"
 
 
 def test_exact_completed_retry_replays_original_receipt() -> None:
@@ -168,8 +167,8 @@ def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon(
         ledger.record(receipt)
 
     snapshot = ledger.snapshot()
-    receipts_state = cast(list[dict[str, object]], snapshot["receipts"])
-    tombstones_state = cast(list[dict[str, object]], snapshot["tombstones"])
+    receipts_state = snapshot["receipts"]
+    tombstones_state = snapshot["tombstones"]
     assert [item["request_id"] for item in receipts_state] == ["request-3", "request-4"]
     assert [item["request_id"] for item in tombstones_state] == ["request-2"]
     assert (
@@ -255,7 +254,7 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
     ("call", "message"),
     [
         (lambda: MutationReceiptLedger(max_receipts=0), "positive bounded integer"),
-        (lambda: MutationReceiptLedger(receipts=cast(Any, [])), "tuple"),
+        (lambda: MutationReceiptLedger(receipts=[]), "tuple"),
         (
             lambda: mutation_receipt_from_json("[]"),
             "must contain an object",
@@ -265,7 +264,7 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
             "lowercase SHA-256",
         ),
         (
-            lambda: canonical_payload_signature(cast(Any, [])),
+            lambda: canonical_payload_signature([]),
             "payload must be an object",
         ),
     ],

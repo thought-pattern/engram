@@ -1,7 +1,6 @@
 """Tests for the shared persistent conversation runtime."""
 
 import json
-from typing import cast
 
 import pytest
 
@@ -37,7 +36,7 @@ def test_runtime_rejects_empty_or_batch_input() -> None:
     with pytest.raises(ValueError, match="one non-empty string"):
         runtime.send("")
     with pytest.raises(ValueError, match="one non-empty string"):
-        runtime.send(cast(str, ["first", "second"]))
+        runtime.send(["first", "second"])
 
 
 def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:

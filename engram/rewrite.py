@@ -1,7 +1,5 @@
 """Versioned, bounded, retrieval-only symbolic rewrites."""
 
-from __future__ import annotations
-
 import json
 import re
 import time
@@ -9,7 +7,6 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from enum import StrEnum
 from importlib.resources import files
-from typing import cast
 
 from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
 from engram.errors import InvalidRequestError, RewriteLimitError
@@ -337,7 +334,7 @@ class RewriteEngine:
             raise InvalidRequestError("rewrite inherited_subject must be a boolean")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("rewrite cooperative_check must be callable")
-        check = cast(Callable[[], object], cooperative_check) if callable(cooperative_check) else lambda: False
+        check = cooperative_check if callable(cooperative_check) else lambda: False
         started = self._clock_ns()
         current = original
         seen = {current.casefold()}

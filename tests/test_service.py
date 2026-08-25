@@ -2,7 +2,6 @@
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import cast
 
 import pytest
 
@@ -405,7 +404,7 @@ def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None
     core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
 
     receipt_state = core.engram.mutation_receipts.snapshot()["receipts"]
-    receipt_ids = [receipt["request_id"] for receipt in cast(list[dict[str, str]], receipt_state)]
+    receipt_ids = [receipt["request_id"] for receipt in receipt_state]
     accounting_ids = [request_id for request_id in receipt_ids if request_id.startswith("internal:")]
     assert len(accounting_ids) == 2
     assert all(len(request_id.encode("utf-8")) <= 256 for request_id in accounting_ids)

@@ -7,7 +7,6 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -209,12 +208,12 @@ def _run_case(case: dict[str, object], frame, evaluator: ClaimEligibilityEvaluat
     raw_expected = case["expected"]
     if not isinstance(raw_expected, dict) or not all(isinstance(name, str) for name in raw_expected):
         raise ValueError("composition corpus expected value must be a string-keyed object")
-    expected = cast(dict[str, object], raw_expected)
+    expected = raw_expected
     expected_reasons = expected.get("reasons")
     if not isinstance(expected_reasons, list) or not all(isinstance(reason, str) for reason in expected_reasons):
         raise ValueError("composition corpus expected reasons must be a string list")
     comparable = {name: observed[name] for name in expected if name != "reasons"}
-    reasons_match = set(expected_reasons).issubset(cast(list[str], observed["reasons"]))
+    reasons_match = set(expected_reasons).issubset(observed["reasons"])
     passed = comparable == {name: value for name, value in expected.items() if name != "reasons"} and reasons_match
     bounded = (
         1 <= plan["max_hops"] <= 2
@@ -251,7 +250,7 @@ def run(corpus_path: Path) -> dict[str, object]:
         for raw_case in raw_cases:
             if not isinstance(raw_case, dict):
                 raise ValueError("composition corpus cases must be objects")
-            case = _run_case(cast(dict[str, object], raw_case), frame, evaluator)
+            case = _run_case(raw_case, frame, evaluator)
             case["split"] = split
             results.append(case)
     durations = [float(case["elapsed_ms"]) for case in results]

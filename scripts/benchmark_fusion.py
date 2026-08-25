@@ -32,7 +32,7 @@ from engram.resolution import (
 )
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = Path("documentation/fusion/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark-2026-08-19.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="fusion-benchmark")

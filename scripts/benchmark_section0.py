@@ -14,7 +14,6 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -26,7 +25,7 @@ from engram.core import Engram
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("documentation/baseline/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/baseline/benchmark-2026-08-19.json")
 PACKAGE_NAMES = (
     "grpcio",
     "grpcio-tools",
@@ -212,7 +211,7 @@ def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCor
             )
         engram.config["graph"]["enabled"] = True
         engram.config["graph"]["vector_enabled"] = True
-        benchmark_engram = cast(Any, engram)
+        benchmark_engram = engram
         benchmark_engram._graph_client = SyntheticVectorGraph(claim_id)
         benchmark_engram._graph_embedding_model = object()
         benchmark_engram._encode_graph_query = lambda text: [0.0] * 384

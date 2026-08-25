@@ -1,5 +1,4 @@
 import copy
-from typing import Any, cast
 
 import pytest
 
@@ -62,7 +61,7 @@ def quality_run(partition: str, *, passed: bool = True, false_answers: int = 0) 
 
 def evidence_item(name: str, data: dict) -> dict[str, object]:
     result = {
-        "path": f"documentation/evaluation/{name}.json",
+        "path": f"eval/results/evaluation/{name}.json",
         "available": True,
         "current": True,
         "passed": True,
@@ -124,7 +123,7 @@ def supporting_evidence() -> dict[str, dict[str, object]]:
 
 def test_manifest_defines_three_complete_project_owned_partitions() -> None:
     validation = validate_manifest(load_manifest())
-    coverage = cast(dict[str, tuple[str, ...]], validation["partition_coverage"])
+    coverage = validation["partition_coverage"]
 
     assert validation["partition_count"] == 3
     assert validation["case_count"] == 45
@@ -145,7 +144,7 @@ def test_every_partition_executes_all_adversarial_identity_contrasts(partition: 
 
 
 def test_manifest_rejects_cross_partition_request_reuse() -> None:
-    manifest = cast(dict[str, Any], copy.deepcopy(load_manifest()))
+    manifest = copy.deepcopy(load_manifest())
     manifest["cases"][15]["request"] = manifest["cases"][0]["request"]
 
     with pytest.raises(ValueError, match="requests must be disjoint"):
@@ -153,7 +152,7 @@ def test_manifest_rejects_cross_partition_request_reuse() -> None:
 
 
 def test_manifest_rejects_external_or_independent_partition_ownership() -> None:
-    manifest = cast(dict[str, Any], copy.deepcopy(load_manifest()))
+    manifest = copy.deepcopy(load_manifest())
     manifest["partitions"][1]["ownership"] = "independent_custodian"
 
     with pytest.raises(ValueError, match="project ownership"):
@@ -161,7 +160,7 @@ def test_manifest_rejects_external_or_independent_partition_ownership() -> None:
 
 
 def test_manifest_rejects_unapproved_numerical_gates() -> None:
-    manifest = cast(dict[str, Any], copy.deepcopy(load_manifest()))
+    manifest = copy.deepcopy(load_manifest())
     manifest["numerical_gates"]["status"] = "pending"
 
     with pytest.raises(ValueError, match="must be approved"):
@@ -187,14 +186,11 @@ def test_project_qualification_executes_in_order_and_approves_release(monkeypatc
         return quality_run(partition)
 
     monkeypatch.setattr(foundation_module, "run_quality_probes", run_quality)
-    result = cast(
-        dict[str, Any],
-        run_foundation(
-            load_manifest(),
-            supporting_evidence(),
-            {"governed_source_sha256": "a" * 64},
-            "b" * 64,
-        ),
+    result = run_foundation(
+        load_manifest(),
+        supporting_evidence(),
+        {"governed_source_sha256": "a" * 64},
+        "b" * 64,
     )
 
     assert calls == ["tuning"] * 3 + ["release_gate"] * 3 + ["final_test"] * 3
@@ -213,14 +209,11 @@ def test_failed_release_gate_prevents_final_test(monkeypatch) -> None:
         return quality_run(partition, false_answers=int(partition == "release_gate"))
 
     monkeypatch.setattr(foundation_module, "run_quality_probes", run_quality)
-    result = cast(
-        dict[str, Any],
-        run_foundation(
-            load_manifest(),
-            supporting_evidence(),
-            {"governed_source_sha256": "a" * 64},
-            "b" * 64,
-        ),
+    result = run_foundation(
+        load_manifest(),
+        supporting_evidence(),
+        {"governed_source_sha256": "a" * 64},
+        "b" * 64,
     )
 
     assert "final_test" not in calls
@@ -238,14 +231,11 @@ def test_stale_supporting_evidence_blocks_release(monkeypatch) -> None:
         lambda partition, case_requests: quality_run(partition),
     )
 
-    result = cast(
-        dict[str, Any],
-        run_foundation(
-            load_manifest(),
-            evidence,
-            {"governed_source_sha256": "a" * 64},
-            "b" * 64,
-        ),
+    result = run_foundation(
+        load_manifest(),
+        evidence,
+        {"governed_source_sha256": "a" * 64},
+        "b" * 64,
     )
 
     assert result["partition_results"]["release_gate"]["gate_checks"]["supporting_evidence_current_and_passed"] is False
@@ -258,14 +248,11 @@ def test_release_decision_binds_source_configuration_gates_and_evidence(monkeypa
         "run_quality_probes",
         lambda partition, case_requests: quality_run(partition),
     )
-    result = cast(
-        dict[str, Any],
-        run_foundation(
-            load_manifest(),
-            supporting_evidence(),
-            {"governed_source_sha256": "a" * 64},
-            "b" * 64,
-        ),
+    result = run_foundation(
+        load_manifest(),
+        supporting_evidence(),
+        {"governed_source_sha256": "a" * 64},
+        "b" * 64,
     )
     decision = result["release_decision"]
 

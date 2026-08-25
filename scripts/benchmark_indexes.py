@@ -10,7 +10,6 @@ import tracemalloc
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
@@ -39,8 +38,8 @@ from engram.models import statement
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("documentation/indexes/benchmark-2026-08-19.json")
-BASELINE_INPUT = Path("documentation/baseline/benchmark-2026-08-11.json")
+DEFAULT_OUTPUT = Path("eval/results/indexes/benchmark-2026-08-19.json")
+BASELINE_INPUT = Path("eval/results/baseline/benchmark-2026-08-11.json")
 EXACT_CORPUS_SIZES = (10_000, 100_000)
 SUPPORT_FANOUTS = (1, 10, 100)
 FULL_PROPOSAL_CORPUS_SIZE = 5_000
@@ -125,7 +124,7 @@ def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object
                 },
             )
         )
-    benchmark_engram = cast(Any, engram)
+    benchmark_engram = engram
     benchmark_engram.statements = statements
     benchmark_engram.statement_index = {item["id"]: index for index, item in enumerate(statements)}
     benchmark_engram._index_owner = IndexOwner(tuple(projection_from_statement(item) for item in statements))
@@ -273,10 +272,7 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
         **{f"mutation_{name}": _latency(value, "p99_ms") for name, value in mutations.items()},
         **{f"exact_lookup_{name}": _latency(value, "p99_ms") for name, value in exact_results.items()},
         **{f"support_lookup_{name}": _latency(value, "p99_ms") for name, value in support_results.items()},
-        **{
-            f"support_proposal_{item['support_fanout']}": _latency(cast(dict[str, object], item["proposal"]), "p99_ms")
-            for item in full_proposal
-        },
+        **{f"support_proposal_{item['support_fanout']}": _latency(item["proposal"], "p99_ms") for item in full_proposal},
     }
     maximum_p99 = max(p99_measurements.values())
 
@@ -336,7 +332,7 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
             "build_memory_gate_passed": memory["peak_bytes"] <= ADR_BUILD_MEMORY_BYTES,
         },
     }
-    correctness_result = cast(dict[str, bool], result["correctness"])
+    correctness_result = result["correctness"]
     correctness_passed = (
         all(value for name, value in correctness_result.items() if name != "checker_omitted_issue_count")
         and result["correctness"]["checker_omitted_issue_count"] == 0

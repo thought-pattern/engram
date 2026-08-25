@@ -8,7 +8,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
 
 import grpc
 import pytest
@@ -20,7 +19,9 @@ from engram.constants import MAX_REQUEST_BYTES, Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, PersistenceError
 from engram.grpc_server import SERVICE_NAME, create_grpc_server
+from engram.identity import build_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
+from engram.resolution import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore, open_engram_core
 from engram.v1 import engram_pb2, engram_pb2_grpc
 from engram.v2 import engram_pb2 as evidence_pb2, engram_pb2_grpc as evidence_pb2_grpc
@@ -39,6 +40,12 @@ def _as_dict(message: struct_pb2.Struct) -> dict:
     return result
 
 
+def _as_struct(value: dict) -> struct_pb2.Struct:
+    result = struct_pb2.Struct()
+    json_format.ParseDict(value, result)
+    return result
+
+
 @contextmanager
 def _running_server(core: EngramCore, **kwargs):
     server = create_grpc_server(core, bind_address="127.0.0.1:0", **kwargs)
@@ -52,13 +59,13 @@ def _running_server(core: EngramCore, **kwargs):
 
 
 def _health_status(channel: grpc.Channel) -> int:
-    health_stub = cast(Any, health_pb2_grpc.HealthStub(channel))
+    health_stub = health_pb2_grpc.HealthStub(channel)
     result = health_stub.Check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5).status
     return result
 
 
 def _trailing_metadata(error: grpc.RpcError) -> dict[str, str]:
-    metadata = cast(tuple[tuple[str, str], ...], error.trailing_metadata())
+    metadata = error.trailing_metadata()
     result = dict(metadata)
     return result
 
@@ -287,6 +294,26 @@ def test_v2_evidence_service_delegates_unified_resolution_to_the_shared_core() -
         assert result.evidence_package.records == []
 
 
+def test_v2_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:
+    core = _core()
+    identity = build_standalone_identity("Uncached v2 contract request")
+    budget = resolution_budget()
+    with _running_server(core) as (_, channel, _):
+        stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
+
+        result = stub.ResolveEvidence(
+            evidence_pb2.ResolveEvidenceRequest(
+                request="Uncached v2 contract request",
+                request_id="resolve-v2-contracts",
+                identity=_as_struct(query_identity_to_dict(identity)),
+                budget=_as_struct(resolution_budget_to_dict(budget)),
+                configured_resolvers=("exact",),
+            )
+        )
+
+        assert result.outcome == "MISS"
+
+
 def test_v2_evidence_service_enforces_the_shared_request_bound() -> None:
     core = _core()
     with _running_server(core) as (_, channel, _):
@@ -329,7 +356,7 @@ def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -
 def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and_grpc() -> None:
     mcp = MCPConversationService()
     mcp.start(seed_path="")
-    core = cast(EngramCore, mcp.core)
+    core = mcp.core
     created = core.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
     mcp_replay = mcp.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
 
@@ -363,7 +390,7 @@ def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and
 def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adapter_visibility() -> None:
     mcp = MCPConversationService()
     mcp.start(seed_path="")
-    core = cast(EngramCore, mcp.core)
+    core = mcp.core
     learned = core.learn_response("What is concurrent?", "One accepted result.", "concurrent-learn")
     proposal = core.propose("What is concurrent?", "concurrent-proposal")
 
@@ -474,7 +501,7 @@ def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monke
             stub.LearnResponse(request)
 
         metadata = _trailing_metadata(failed.value)
-        details = cast(str, failed.value.details())
+        details = failed.value.details()
         assert failed.value.code() == grpc.StatusCode.UNAVAILABLE
         assert details == "Engram persistence failure"
         assert "disk unavailable" not in details
@@ -636,6 +663,20 @@ def test_grpc_main_refuses_to_serve_after_required_component_preflight_failure(m
     monkeypatch.setattr(grpc_server_module, "open_engram_core", fail_open)
 
     assert grpc_server_module.main(["--log-level", "ERROR"]) == 1
+
+
+def test_grpc_console_entry_point_forwards_process_arguments(monkeypatch) -> None:
+    observed = []
+
+    def run(argv=()):
+        observed.extend(argv)
+        return 7
+
+    monkeypatch.setattr(grpc_server_module, "main", run)
+    monkeypatch.setattr(sys, "argv", ["engram-grpc", "--store-path", "state.json", "--tls-cert", "server.pem"])
+
+    assert grpc_server_module.console_main() == 7
+    assert observed == ["--store-path", "state.json", "--tls-cert", "server.pem"]
 
 
 def test_committed_generated_stubs_match_the_proto(tmp_path) -> None:

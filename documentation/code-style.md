@@ -34,12 +34,19 @@ from .config import engram_config
 from engram.text import *
 ```
 
+Engram runs exclusively on Python 3.12 and later. Never use `__future__` imports.
+
+Do not import `typing` or `typing_extensions`. Use native Python types such as
+`dict`, `list`, `tuple`, `set`, and `object` directly. Duck typing is acceptable;
+omit an annotation when expressing it would require a typing-only construct. Do
+not add casts, typing helpers, or compatibility imports to satisfy a static type
+checker.
+
 Keep imports at module scope, immediately after the module docstring. Group them in this order, with one blank line between groups:
 
-1. Future imports.
-2. Python standard-library imports.
-3. Third-party imports.
-4. Engram imports.
+1. Python standard-library imports.
+2. Third-party imports.
+3. Engram imports.
 
 Generated protobuf and gRPC modules under `engram/v1/` and `engram/v2/` are
 compiler output. Regenerate them from the corresponding `engram.proto`.
@@ -53,6 +60,14 @@ constant where it is used.
 
 Values derived during one operation are local variables. Compiler-generated
 constants remain in reproducible generated files.
+
+## Project boundaries
+
+Python modules, tests, scripts, and evaluation tools must not read from, write
+to, or otherwise depend on the `documentation/` directory. Store test-owned
+inputs under `tests/fixtures/` and generated evaluation results under
+`eval/results/`. Documentation may describe those resources, but it is never a
+runtime or test data source.
 
 ## Return statements
 
@@ -99,6 +114,11 @@ reproducible from their `engram.proto` sources.
 Use one concrete type in production annotations and represent availability with a
 Boolean. Normalize external variants at the boundary.
 
+Use only native Python types in annotations. Never import `typing` or
+`typing_extensions`, and never use `typing.cast`. Runtime behavior and clear
+validation take precedence over satisfying Pyright; duck-typed values do not need
+an annotation merely to guide a static checker.
+
 ## Data structures
 
 Use dictionaries for data contracts, decoded records, intermediate values, and
@@ -127,7 +147,9 @@ selection. Pass required inputs explicitly and return concrete values.
 The Google Python Style Guide governs naming, docstrings, comments, exceptions,
 comprehensions, type annotations, function design, and topics beyond these rules.
 
-Format Python code automatically with Black's 132-character line length and Python 3.11 output target:
+The runtime baseline is Python 3.12 or later. Format Python code automatically
+with Black's intentionally retained Python 3.11 formatting mode, because the
+project does not use Black's Python 3.12 formatting choices:
 
 ```bash
 black -l 132 -t py311 .

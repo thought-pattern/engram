@@ -8,7 +8,6 @@ import time
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys.path:
@@ -25,14 +24,14 @@ from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_FOUNDATION = Path("eval/release-gate-foundation-v1.json")
-DEFAULT_BASELINE = Path("documentation/evaluation/section16-performance-2026-08-23.json")
-DEFAULT_SEMANTIC = Path("documentation/evaluation/section16-semantic-2026-08-23.json")
-DEFAULT_CONTEXTUAL = Path("documentation/evaluation/section16-contextual-2026-08-23.json")
-DEFAULT_TEMPORAL = Path("documentation/evaluation/section16-temporal-2026-08-23.json")
-DEFAULT_COMPOSITION = Path("documentation/evaluation/section16-composition-2026-08-23.json")
-DEFAULT_EVIDENCE = Path("documentation/evaluation/section16-evidence-2026-08-23.json")
-DEFAULT_MCP = Path("documentation/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json")
-DEFAULT_OUTPUT = Path("documentation/evaluation/section16-engineering-2026-08-23.json")
+DEFAULT_BASELINE = Path("eval/results/evaluation/section16-performance-2026-08-23.json")
+DEFAULT_SEMANTIC = Path("eval/results/evaluation/section16-semantic-2026-08-23.json")
+DEFAULT_CONTEXTUAL = Path("eval/results/evaluation/section16-contextual-2026-08-23.json")
+DEFAULT_TEMPORAL = Path("eval/results/evaluation/section16-temporal-2026-08-23.json")
+DEFAULT_COMPOSITION = Path("eval/results/evaluation/section16-composition-2026-08-23.json")
+DEFAULT_EVIDENCE = Path("eval/results/evaluation/section16-evidence-2026-08-23.json")
+DEFAULT_MCP = Path("eval/results/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json")
+DEFAULT_OUTPUT = Path("eval/results/evaluation/section16-engineering-2026-08-23.json")
 DIRECT_RESPONSE = "Support is open from nine to five."
 DEFAULT_ARTIFACT_METADATA = {"approved": True}
 EMPTY_REQUIRED_METADATA: dict = {}
@@ -119,7 +118,7 @@ def run_resolution_probe(
     accept_exact: bool = True,
     required_metadata: dict = EMPTY_REQUIRED_METADATA,
     expected_response: str = "",
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, object], dict[str, object]]:
     started = time.perf_counter_ns()
     result = core.resolve_request(
         request,
@@ -139,7 +138,7 @@ def run_resolution_probe(
         )
     )
     correct = result["outcome"] in expected_outcomes and response_correct
-    record: dict[str, Any] = {
+    record: dict[str, object] = {
         "id": probe_id,
         "family": family,
         "expected_outcomes": tuple(value.value for value in expected_outcomes),
@@ -157,7 +156,7 @@ def run_resolution_probe(
 
 def partition_requests(manifest: dict[str, object], partition: str) -> dict[str, str]:
     """Return one request per workload family for a declared partition."""
-    cases = cast(list[object], manifest["cases"])
+    cases = manifest["cases"]
     result = {
         str(case["family"]): str(case["request"]) for case in cases if isinstance(case, dict) and case.get("partition") == partition
     }
@@ -167,7 +166,7 @@ def partition_requests(manifest: dict[str, object], partition: str) -> dict[str,
 def run_quality_probes(
     partition: str = "tuning",
     case_requests: dict = DEFAULT_QUALITY_REQUESTS,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Execute deterministic quality probes for one evaluation partition."""
     cpu_started = time.process_time_ns()
     namespace = f"eval-{partition.replace('_', '-')}"
@@ -415,7 +414,7 @@ def run_quality_probes(
     for result in results:
         for resolver in result["resolver_results"]:
             resolver_latencies[resolver["resolver"]].append(resolver["consumption"]["elapsed_ns"] / 1_000_000)
-    result: dict[str, Any] = {
+    result: dict[str, object] = {
         "partition": partition,
         "probes": tuple(probes),
         "metrics": {
@@ -493,11 +492,11 @@ def load_evidence(path: Path, current_digest: str) -> dict[str, object]:
 
 def performance_summary(evidence: dict[str, dict[str, object]], direct: dict[str, object]) -> dict[str, object]:
     """Extract the Section 16 resource measures from source-bound artifacts."""
-    direct_values = cast(dict[str, Any], direct)
+    direct_values = direct
     performance_name = "performance" if "performance" in evidence else "baseline"
-    baseline = cast(dict[str, Any], evidence[performance_name]["data"])
-    semantic = cast(dict[str, Any], evidence["semantic"]["data"])
-    mcp = cast(dict[str, Any], evidence["mcp"]["data"])
+    baseline = evidence[performance_name]["data"]
+    semantic = evidence["semantic"]["data"]
+    mcp = evidence["mcp"]["data"]
     largest = baseline["lexical"][-1]
     native = semantic["backends"]["native"]
     expected_graph_probes = mcp["requested_turns"] // mcp["configuration"]["memgraph_probe_every"]
@@ -526,11 +525,11 @@ def performance_summary(evidence: dict[str, dict[str, object]], direct: dict[str
     return result
 
 
-def avoided_work(quality: dict[str, Any], foundation: dict[str, object]) -> dict[str, object]:
+def avoided_work(quality: dict[str, object], foundation: dict[str, object]) -> dict[str, object]:
     """Apply the versioned modeled Tapestry counterfactual to correct direct answers."""
-    counterfactual = cast(dict[str, Any], foundation["engineering_counterfactual"])
-    per_answer = cast(dict[str, Any], counterfactual["per_direct_answer"])
-    direct = cast(dict[str, Any], quality["metrics"]["direct_answer_acceptance"])
+    counterfactual = foundation["engineering_counterfactual"]
+    per_answer = counterfactual["per_direct_answer"]
+    direct = quality["metrics"]["direct_answer_acceptance"]
     count = direct["accepted"]
     direct_latency = sum(record["latency_ms"] for record in quality["probes"] if record["family"] in {"exact", "alias"})
     result = {
@@ -554,7 +553,7 @@ def run_engineering(arguments: argparse.Namespace) -> dict[str, object]:
     foundation = load_manifest(arguments.foundation)
     foundation_validation = validate_manifest(foundation)
     source = benchmark_source_state()
-    digest = cast(str, source["governed_source_sha256"])
+    digest = source["governed_source_sha256"]
     quality = run_quality_probes("tuning", partition_requests(foundation, "tuning"))
     evidence = {
         "baseline": load_evidence(arguments.baseline, digest),
@@ -600,7 +599,7 @@ def run_engineering(arguments: argparse.Namespace) -> dict[str, object]:
         "evidence_sources": {name: {key: value for key, value in item.items() if key != "data"} for name, item in evidence.items()},
         "performance": performance,
         "engineering_evidence_complete": quality["passed"] and evidence_ready and len(workload_evidence) == 15,
-        "release_authority": "documentation/evaluation/foundation-2026-08-19.json",
+        "release_authority": "eval/results/evaluation/foundation-2026-08-19.json",
     }
     return result
 
@@ -625,7 +624,7 @@ def main() -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(arguments.output)
-    quality = cast(dict[str, Any], result["quality"])
+    quality = result["quality"]
     return 0 if quality["passed"] else 1
 
 

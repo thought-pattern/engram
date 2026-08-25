@@ -4,9 +4,8 @@ import json
 import math
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
 
 from engram.config import reranker_config
 from engram.errors import InvalidRequestError, ResolutionCancelledError
@@ -69,12 +68,12 @@ class TransparentLogisticReranker:
 
     def __init__(self, settings: Mapping[str, object], clock_ns: object = ()) -> None:
         try:
-            self.settings = reranker_config(**cast(dict, dict(settings)))
+            self.settings = reranker_config(**dict(settings))
         except (TypeError, ValueError) as error:
             raise InvalidRequestError(str(error)) from error
         if clock_ns != () and not callable(clock_ns):
             raise InvalidRequestError("reranker clock_ns must be callable")
-        self._clock_ns = cast(Callable[[], int], clock_ns) if callable(clock_ns) else time.monotonic_ns
+        self._clock_ns = clock_ns if callable(clock_ns) else time.monotonic_ns
         self._lock = threading.Lock()
         self._requests = 0
         self._completed = 0
@@ -179,7 +178,7 @@ class TransparentLogisticReranker:
             for value in baseline:
                 if callable(cooperative_check):
                     cooperative_check()
-                score, normalized = _score(cast(Mapping[str, object], value["features"]))
+                score, normalized = _score(value["features"])
                 scored.append(
                     {
                         "statement_id": value["statement_id"],

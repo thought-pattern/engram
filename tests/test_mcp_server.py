@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import cast
 
 import pytest
 from mcp.client import Client
@@ -22,7 +21,7 @@ from scripts.run_section3_mcp_conformance import _evaluate_turn, _run_length_enc
 
 
 def _runtime(service: MCPConversationService) -> ConversationRuntime:
-    result = cast(ConversationRuntime, service.runtime)
+    result = service.runtime
     return result
 
 
@@ -182,7 +181,7 @@ def test_mcp_start_keeps_serving_when_optional_graph_is_unavailable(tmp_path, mo
 
     service = MCPConversationService()
     started = service.start(seed_path="", config_path=str(config))
-    core = cast(EngramCore, service.core)
+    core = service.core
 
     assert started["user_id"] == "0"
     assert core.status()["ready"] is True
@@ -351,7 +350,7 @@ def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
 def test_abandoned_mcp_wait_does_not_claim_to_cancel_started_mutation(tmp_path, monkeypatch) -> None:
     service = MCPConversationService()
     service.start(seed_path=str(_seed_file(tmp_path)))
-    core = cast(EngramCore, service.core)
+    core = service.core
     entered = threading.Event()
     release = threading.Event()
     original = core.learn_response

@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from engram.config import load_config
 from engram.graph import MemGraphConnection
 
-SCHEMA_FILE = Path("schema.cypher")
+SCHEMA_FILE = REPO_ROOT / "schema.cypher"
 
 
 def parse_statements(text):

@@ -9,7 +9,6 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys.path:
@@ -34,9 +33,9 @@ from eval.run_section16_engineering import (
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_MANIFEST = Path("eval/release-gate-foundation-v1.json")
-DEFAULT_CHAOS = Path("documentation/evaluation/section16-chaos-2026-08-23.json")
-DEFAULT_ENGINEERING = Path("documentation/evaluation/section16-engineering-2026-08-23.json")
-DEFAULT_OUTPUT = Path("documentation/evaluation/foundation-2026-08-19.json")
+DEFAULT_CHAOS = Path("eval/results/evaluation/section16-chaos-2026-08-23.json")
+DEFAULT_ENGINEERING = Path("eval/results/evaluation/section16-engineering-2026-08-23.json")
+DEFAULT_OUTPUT = Path("eval/results/evaluation/foundation-2026-08-19.json")
 PARTITION_NAMES = ("tuning", "release_gate", "final_test")
 WORKLOAD_FAMILIES = (
     "exact",
@@ -66,7 +65,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("evaluation input must be a JSON object")
-    result = cast(dict[str, object], value)
+    result = value
     return result
 
 
@@ -86,7 +85,7 @@ def file_sha256(path: Path) -> str:
 def require_mapping(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be an object")
-    result = cast(dict[str, object], value)
+    result = value
     return result
 
 
@@ -329,7 +328,7 @@ def execute_partition_contrasts(manifest: dict[str, object], partition: str) -> 
     return result
 
 
-def aggregate_quality(runs: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+def aggregate_quality(runs: tuple[dict[str, object], ...]) -> dict[str, object]:
     """Aggregate deterministic quality trials and report observed dispersion."""
     probes = []
     typed_rejections = Counter()
@@ -350,7 +349,7 @@ def aggregate_quality(runs: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     p99_values = []
     memory_values = []
     for trial, run in enumerate(runs, start=1):
-        metrics = cast(dict[str, Any], run["metrics"])
+        metrics = run["metrics"]
         for record in run["probes"]:
             probes.append({**record, "trial": trial})
             latencies.append(float(record["latency_ms"]))
@@ -446,8 +445,8 @@ def load_current_evidence(arguments: argparse.Namespace, source_digest: str) -> 
 
 def build_partition_result(
     partition: str,
-    quality: dict[str, Any],
-    baseline_quality: dict[str, Any],
+    quality: dict[str, object],
+    baseline_quality: dict[str, object],
     evidence: dict[str, dict[str, object]],
     manifest: dict[str, object],
     contrasts: tuple[dict[str, object], ...],
@@ -456,8 +455,8 @@ def build_partition_result(
 ) -> dict[str, object]:
     """Apply the approved gates to one measured partition."""
     numerical_gates = require_mapping(manifest.get("numerical_gates"), "numerical_gates")
-    metrics = cast(dict[str, Any], quality["metrics"])
-    baseline_metrics = cast(dict[str, Any], baseline_quality["metrics"])
+    metrics = quality["metrics"]
+    baseline_metrics = baseline_quality["metrics"]
     false_gate = require_mapping(numerical_gates.get("false_direct_answer_rate"), "false_direct_answer_rate")
     useful_gate = require_mapping(numerical_gates.get("useful_evidence_rate"), "useful_evidence_rate")
     memory_gate = require_mapping(numerical_gates.get("peak_memory_bytes"), "peak_memory_bytes")
@@ -467,14 +466,14 @@ def build_partition_result(
     )
     evidence_gate = require_mapping(numerical_gates.get("evidence_package_bytes"), "evidence_package_bytes")
     turn_length_gate = require_mapping(numerical_gates.get("turn_length_reporting"), "turn_length_reporting")
-    semantic = cast(dict[str, Any], evidence["semantic"]["data"])
+    semantic = evidence["semantic"]["data"]
     native = semantic["backends"]["native"]
     peak_memory_bytes = round(max(native["rss_after_model_mib"], native["rss_after_index_mib"]) * MIB)
     baseline_peak_memory_bytes = round(native["rss_before_mib"] * MIB)
-    evidence_benchmark = cast(dict[str, Any], evidence["evidence"]["data"])
+    evidence_benchmark = evidence["evidence"]["data"]
     evidence_package_bytes = int(evidence_benchmark["ten_record_package_bytes"])
     baseline_evidence_package_bytes = int(evidence_benchmark["ten_record_package_bytes"])
-    baseline = cast(dict[str, Any], evidence["performance"]["data"])
+    baseline = evidence["performance"]["data"]
     startup = baseline["startup"]["cold_process_import_and_construction"]
     turn = quality["performance"]["total_latency_ms"]
     false_rate = float(metrics["false_direct_answers"]["rate"])

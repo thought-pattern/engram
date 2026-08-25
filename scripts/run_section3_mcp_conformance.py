@@ -32,7 +32,7 @@ from engram.constants import (
 from engram.mcp_server import create_mcp_server
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("documentation/artifacts/mcp-conversation-1000-turns-2026-08-12.json")
+DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns-2026-08-12.json")
 SARAH_SUSHI_MESSAGES = (
     "Sushi is good.",
     "What's good?",

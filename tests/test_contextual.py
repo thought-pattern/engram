@@ -1,7 +1,6 @@
 """Section 8 compact query-frame and bounded follow-up tests."""
 
 from datetime import timedelta
-from typing import cast
 
 import pytest
 
@@ -17,7 +16,6 @@ from engram.contextual import (
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.identity import entity_reference, identity_qualifier, relation_reference
-from engram.resolution import QueryFrame
 from engram.service import EngramCore
 
 
@@ -43,7 +41,7 @@ def test_compact_query_frame_codec_is_exact_bounded_and_deterministic() -> None:
     assert compact_query_frame_from_dict(encoded) == value
     assert encoded["operator"] == "when"
     assert encoded["expected_object_type"] == "DATE"
-    subjects = cast(list[dict[str, object]], encoded["subjects"])
+    subjects = encoded["subjects"]
     assert subjects[0]["canonical_id"] == "entity:ada-lovelace"
 
     malformed = dict(encoded)
@@ -188,7 +186,7 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     assert current["subjects"][0]["surface"] == "Ada Lovelace"
     assert current["relation"]["surface"] == "born"
     assert current["expected_object_type"] == ExpectedObjectType.PLACE
-    cached_frame = cast(QueryFrame, core._resolution_requests["sarah-2"]["frame"])
+    cached_frame = core._resolution_requests["sarah-2"]["frame"]
     assert {(item["field_name"], item["source_turn"]) for item in cached_frame["inheritance"]} == {
         ("subjects", 1),
         ("relation", 1),
@@ -216,8 +214,8 @@ def test_self_contained_request_and_other_user_do_not_receive_prior_context() ->
     assert [subject["surface"] for subject in sarah["subjects"]] == ["London"]
     assert sarah["relation"]["surface"] == ""
     assert robin["subjects"] == ()
-    sarah_reset = cast(QueryFrame, core._resolution_requests["sarah-reset"]["frame"])
-    robin_first = cast(QueryFrame, core._resolution_requests["robin-first"]["frame"])
+    sarah_reset = core._resolution_requests["sarah-reset"]["frame"]
+    robin_first = core._resolution_requests["robin-first"]["frame"]
     assert sarah_reset["inheritance"] == ()
     assert robin_first["inheritance"] == ()
 
@@ -235,7 +233,7 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     core.engram.sessions["Sarah"]["active_topic"] = "Grace Hopper"
     core.resolve_request("And then?", "topic-2", user_id="Sarah", configured_resolvers=("exact",))
 
-    topic_frame = cast(QueryFrame, core._resolution_requests["topic-2"]["frame"])
+    topic_frame = core._resolution_requests["topic-2"]["frame"]
     assert topic_frame["inheritance"] == ()
     assert topic_frame["identity"]["operator"] == QueryOperator.UNKNOWN
     core.engram.sessions["Sarah"]["last_active"] -= timedelta(days=1)
@@ -255,7 +253,7 @@ def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> 
 
     core.resolve_request("And then?", "distance-4", user_id="Sarah", configured_resolvers=("exact",))
 
-    distant_frame = cast(QueryFrame, core._resolution_requests["distance-4"]["frame"])
+    distant_frame = core._resolution_requests["distance-4"]["frame"]
     assert distant_frame["inheritance"] == ()
     assert distant_frame["identity"]["operator"] == QueryOperator.UNKNOWN
 

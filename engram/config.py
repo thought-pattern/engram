@@ -6,7 +6,6 @@ Configurations are plain dicts built by the factory functions below.
 import math
 import os
 from types import NoneType
-from typing import cast
 
 import yaml
 
@@ -19,11 +18,11 @@ RerankerConfig = dict
 RolloutConfig = dict
 
 
-EMPTY_SPARSE_CONFIG = cast(SparseConfig, EMPTY_CONFIG)
-EMPTY_SEMANTIC_CONFIG = cast(SemanticConfig, EMPTY_CONFIG)
-EMPTY_RERANKER_CONFIG = cast(RerankerConfig, EMPTY_CONFIG)
-EMPTY_ROLLOUT_CONFIG = cast(RolloutConfig, EMPTY_CONFIG)
-EMPTY_UTILITY_CONFIG = cast(UtilityConfig, EMPTY_CONFIG)
+EMPTY_SPARSE_CONFIG = EMPTY_CONFIG
+EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
+EMPTY_RERANKER_CONFIG = EMPTY_CONFIG
+EMPTY_ROLLOUT_CONFIG = EMPTY_CONFIG
+EMPTY_UTILITY_CONFIG = EMPTY_CONFIG
 
 
 def graph_config(

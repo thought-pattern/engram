@@ -3,10 +3,8 @@
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import cast
 
 import pytest
-from sentence_transformers import SentenceTransformer
 
 from engram import persistence, service as service_module
 from engram.artifacts import (
@@ -40,7 +38,6 @@ from engram.resolution import (
     EvidenceReference,
     QueryFrame,
     QueryFrameBuilder,
-    ResolutionBudget,
     ResolutionOutcome,
     ResolverResult,
     ResolverState,
@@ -150,7 +147,7 @@ def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
     engine.config["graph"]["enabled"] = True
     if vector:
         engine.config["graph"]["vector_enabled"] = True
-        engine._graph_embedding_model = cast(SentenceTransformer, object())
+        engine._graph_embedding_model = object()
 
 
 def frame(
@@ -162,7 +159,7 @@ def frame(
     required_source_label: str = "",
     budget: object = EMPTY_MAPPING,
 ):
-    selected_budget = cast(ResolutionBudget, budget) if budget is not EMPTY_MAPPING else capture_resolution_budget(lambda: START_NS)
+    selected_budget = budget if budget is not EMPTY_MAPPING else capture_resolution_budget(lambda: START_NS)
     result = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         request,
         scope_key(namespace=namespace),
@@ -724,7 +721,7 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
 def test_executor_isolates_a_malformed_resolver_result() -> None:
     engine = Engram()
     query_frame = frame(engine, "malformed resolver")
-    malformed = FakeResolver("malformed", cast(ResolverResult, {}))
+    malformed = FakeResolver("malformed", {})
 
     result = ResolverExecutor(lambda: START_NS).execute(
         query_frame,

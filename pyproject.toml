@@ -40,7 +40,7 @@ dependencies = [
 
 [project.scripts]
 engram-mcp = "engram.mcp_server:main"
-engram-grpc = "engram.grpc_server:main"
+engram-grpc = "engram.grpc_server:console_main"
 
 [project.optional-dependencies]
 dev = [
@@ -79,8 +79,8 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"typing.TypedDict".msg = "Use ordinary dict annotations and runtime validation."
-"typing_extensions.TypedDict".msg = "Use ordinary dict annotations and runtime validation."
+"typing".msg = "Use native Python types and runtime validation; do not import typing."
+"typing_extensions".msg = "Use native Python types and runtime validation; do not import typing_extensions."
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -95,9 +95,9 @@ combine-as-imports = true
 # These files are compiler output and are checked for reproducibility in tests.
 "engram/v1/engram_pb2*" = ["ALL"]
 
-# Black is the formatter of record: `black -l 132 -t py311`. The code targets
+# Black is the formatter of record: `black -l 132 -t py311`. The runtime targets
 # 3.12+ (see requires-python and ruff target-version), but the py311 formatting
-# style is preferred over py312's.
+# style is intentionally retained instead of py312's.
 [tool.black]
 line-length = 132
 target-version = ["py311"]

@@ -1,13 +1,10 @@
 """Versioned candidate normalization, fusion, eligibility, and ambiguity policy."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
 from types import MappingProxyType, NoneType
-from typing import cast
 
 from engram.artifacts import LifecycleState
 from engram.constants import (
@@ -872,12 +869,12 @@ class EngramCandidateAuthority:
         )
         if not all(isinstance(value, tuple) for value in tuple_values):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
-        claim_ids = cast(tuple[object, ...], tuple_values[0])
-        identity_chain = cast(tuple[object, ...], tuple_values[1])
-        trust_chain = cast(tuple[object, ...], tuple_values[2])
-        predicate_labels = cast(tuple[object, ...], tuple_values[3])
-        terminal_labels = cast(tuple[object, ...], tuple_values[4])
-        terminal_types = cast(tuple[object, ...], tuple_values[5])
+        claim_ids = tuple_values[0]
+        identity_chain = tuple_values[1]
+        trust_chain = tuple_values[2]
+        predicate_labels = tuple_values[3]
+        terminal_labels = tuple_values[4]
+        terminal_types = tuple_values[5]
         if not 1 <= len(claim_ids) <= 2 or not (len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(claim_ids)):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
         if (
@@ -899,8 +896,8 @@ class EngramCandidateAuthority:
                     raise InvalidRequestError("composition Claim was not read by ID")
                 identity_value = identity_chain[index]
                 trust_value = trust_chain[index]
-                identity = cast(tuple[object, ...], identity_value) if isinstance(identity_value, tuple) else ()
-                trust = cast(tuple[object, ...], trust_value) if isinstance(trust_value, tuple) else ()
+                identity = identity_value if isinstance(identity_value, tuple) else ()
+                trust = trust_value if isinstance(trust_value, tuple) else ()
                 if not isinstance(identity, tuple) or len(identity) != 3 or not isinstance(trust, tuple) or len(trust) != 2:
                     raise InvalidRequestError("composition provenance chain is malformed")
                 if (
@@ -2256,16 +2253,14 @@ class CandidateFusionEngine:
                     "scores": [],
                 }
             if reranker_report["applied"]:
-                reranked_scores = {
-                    value["statement_id"]: value["score"] for value in cast(list[Mapping[str, object]], reranker_report["scores"])
-                }
+                reranked_scores = {value["statement_id"]: value["score"] for value in reranker_report["scores"]}
                 updated_fused = []
                 for item in fused:
                     statement_id = item["candidate"]["statement_id"]
                     if statement_id not in reranked_scores:
                         updated_fused.append(item)
                         continue
-                    rerank_score = cast(float, reranked_scores[statement_id])
+                    rerank_score = reranked_scores[statement_id]
                     updated_candidate = _trusted_candidate_with_changes(
                         item["candidate"],
                         {

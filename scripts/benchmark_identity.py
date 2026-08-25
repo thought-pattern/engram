@@ -17,7 +17,7 @@ if str(REPOSITORY) not in sys.path:
 from engram.identity import build_scoped_retrieval_key, build_standalone_identity, normalize_retrieval_key, scope_key
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("documentation/identity/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/identity/benchmark-2026-08-19.json")
 REQUESTS = (
     "When was Ada Lovelace born?",
     "Where was Ada Lovelace born?",

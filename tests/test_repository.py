@@ -3,7 +3,6 @@
 import threading
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
 
 import pytest
 
@@ -98,7 +97,7 @@ def test_compatibility_statement_derives_exact_text_identity_provenance_and_stat
     assert tapestry["request"] == artifact["retrieval"]["canonical"]
     assert tapestry["support"] == ({"claim_id": "claim-stmt-1"},)
     with pytest.raises(TypeError):
-        cast(dict[str, object], statement)["text"] = "rewritten"
+        statement["text"] = "rewritten"
 
 
 def test_repository_build_is_conservative_and_equivalent() -> None:
@@ -139,7 +138,7 @@ def test_repository_lookup_and_statement_views_do_not_expose_mutable_authority()
     view["text"] = "caller rewrite"
     view_template = object_mapping(view["template"])
     view_tapestry = object_mapping(view_template["tapestry"])
-    view_metadata = cast(dict[str, object], object_mapping(view_tapestry["metadata"]))
+    view_metadata = object_mapping(view_tapestry["metadata"])
     view_metadata["approved"] = False
     artifact["response"] = "caller artifact rewrite"
 
@@ -312,12 +311,12 @@ def test_repository_rejects_duplicate_wrong_and_missing_inputs() -> None:
     with pytest.raises(ConflictError, match="duplicate"):
         build_repository_state((artifact, artifact))
     with pytest.raises(InvalidRequestError, match="iterable"):
-        build_repository_state(cast(Any, {artifact["statement_id"]: artifact}))
+        build_repository_state({artifact["statement_id"]: artifact})
     repository = ArtifactRepository()
     with pytest.raises(ResourceNotFoundError, match="not found"):
         repository.get_artifact("missing")
     with pytest.raises(InvalidRequestError, match="RepositoryRemovalReason"):
-        repository.candidate_without_artifact("missing", 1, cast(Any, "delete"))
+        repository.candidate_without_artifact("missing", 1, "delete")
 
 
 def test_dynamic_admission_below_capacity_changes_no_existing_residency() -> None:
@@ -473,7 +472,7 @@ def test_admission_rejects_collision_and_wrong_policy_type(policy, message) -> N
     repository = ArtifactRepository((artifact,))
     incoming = artifact if isinstance(policy, Mapping) else accepted_artifact("stmt-new")
     with pytest.raises((ConflictError, InvalidRequestError), match=message):
-        repository.plan_admission(incoming, cast(Any, policy))
+        repository.plan_admission(incoming, policy)
 
 
 @pytest.mark.parametrize(

@@ -137,7 +137,7 @@ Version 1 performs these ordered operations:
 8. collapse whitespace.
 
 The function is deterministic and idempotent. Its golden fixture is
-[normalization-v1.json](normalization-v1.json). Key-changing behavior requires a
+[normalization-v1.json](../../tests/fixtures/identity/normalization-v1.json). Key-changing behavior requires a
 new normalization version and fixtures.
 
 ## Standalone extraction

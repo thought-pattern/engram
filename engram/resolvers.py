@@ -6,7 +6,6 @@ import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import cast
 
 from engram.artifacts import CachedResponseArtifact, LifecycleState
 from engram.composition import (
@@ -140,7 +139,7 @@ def resolver_contract(value: object) -> tuple[str, CostClass, Callable[..., obje
         raise InvalidRequestError("resolver must have a bounded non-empty name")
     if not isinstance(cost_class, CostClass) or not callable(available_operation) or not callable(resolve_operation):
         raise InvalidRequestError("resolver must implement resolver operations")
-    result = (name, cost_class, cast(Callable[..., object], available_operation), cast(Callable[..., object], resolve_operation))
+    result = (name, cost_class, available_operation, resolve_operation)
     return result
 
 
@@ -2783,7 +2782,7 @@ def accounting_signature(results: tuple[ResolverResult, ...], accepted_statement
     stable_results = []
     for result in results:
         value = resolver_result_to_dict(result)
-        consumption = dict(cast(Mapping[str, object], value["consumption"]))
+        consumption = dict(value["consumption"])
         consumption["elapsed_ns"] = 0
         value["consumption"] = consumption
         stable_results.append(value)

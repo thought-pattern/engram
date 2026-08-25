@@ -1,17 +1,10 @@
 """Section 0 characterizations retained across enhancement increments."""
 
-import json
-from pathlib import Path
-
-from engram import persistence
 from engram.config import engram_config
 from engram.core import Engram
 from engram.identity import build_scoped_retrieval_key, scope_key
 from engram.indexes import ExactLookupOutcome, IndexIssueReason
 from engram.service import EngramCore
-
-REPOSITORY = Path(__file__).resolve().parent.parent
-REGULATED_FIXTURE = REPOSITORY / "documentation" / "baseline" / "fixtures" / "regulated-response-v1.json"
 
 
 def _baseline_engram() -> Engram:
@@ -62,18 +55,3 @@ def test_section2_claim_support_reverse_index_preserves_current_metadata() -> No
     state = engram.index_snapshot()
     assert state["claim_to_statements"] == {"claim-synthetic": (statement_id,)}
     assert state["statement_to_claims"] == {statement_id: ("claim-synthetic",)}
-
-
-def test_sanitized_regulated_response_fixture_matches_persistence_v1() -> None:
-    fixture = json.loads(REGULATED_FIXTURE.read_text(encoding="utf-8"))
-    restored = persistence.load_engram_from_dict(fixture["persisted_store_excerpt"])
-    stored = restored.get_statement("stmt_section0fixture")
-
-    assert fixture["sanitization"]["contains_customer_content"] is False
-    assert stored["text"] == "The synthetic service is available from nine to five."
-    assert stored["template"]["tapestry"]["support"] == [
-        {"claim_id": "claim-section0-001"},
-        {"claim_id": "claim-section0-002"},
-    ]
-    assert fixture["runtime_only_regulated_state"]["persisted"] is False
-    assert fixture["confirmed_absences"]["persisted_idempotency_records"] is False

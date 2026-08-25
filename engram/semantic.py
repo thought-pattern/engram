@@ -9,10 +9,9 @@ import hashlib
 import json
 import math
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
 
 from sentence_transformers import SentenceTransformer
 
@@ -201,34 +200,31 @@ def _representation_specs(artifact: CachedResponseArtifact, settings: SemanticCo
 
 
 def _embedding_record(spec: Mapping[str, object], embedding: tuple[float, ...], identity: Mapping[str, object]) -> EmbeddingRecord:
-    statement_id = cast(str, spec["statement_id"])
-    generation = cast(int, spec["generation"])
-    origin = cast(str, spec["origin"])
-    ordinal = cast(int, spec["ordinal"])
-    text = cast(str, spec["text"])
+    statement_id = spec["statement_id"]
+    generation = spec["generation"]
+    origin = spec["origin"]
+    ordinal = spec["ordinal"]
+    text = spec["text"]
     digest = hashlib.sha256(f"{statement_id}\0{generation}\0{origin}\0{ordinal}\0{text}".encode()).hexdigest()
-    result = cast(
-        EmbeddingRecord,
-        MappingProxyType(
-            {
-                "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
-                "representation_id": f"semantic:sha256:{digest}",
-                "statement_id": statement_id,
-                "generation": generation,
-                "scope": MappingProxyType(validate_scope_key(spec["scope"])),
-                "lifecycle": spec["lifecycle"],
-                "origin": origin,
-                "ordinal": ordinal,
-                "text": text,
-                "model_id": identity["model_id"],
-                "model_version": identity["model_version"],
-                "artifact_sha256": identity["artifact_sha256"],
-                "backend": identity["backend"],
-                "dimension": identity["dimension"],
-                "normalization_version": identity["normalization_version"],
-                "embedding": embedding,
-            }
-        ),
+    result = MappingProxyType(
+        {
+            "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
+            "representation_id": f"semantic:sha256:{digest}",
+            "statement_id": statement_id,
+            "generation": generation,
+            "scope": MappingProxyType(validate_scope_key(spec["scope"])),
+            "lifecycle": spec["lifecycle"],
+            "origin": origin,
+            "ordinal": ordinal,
+            "text": text,
+            "model_id": identity["model_id"],
+            "model_version": identity["model_version"],
+            "artifact_sha256": identity["artifact_sha256"],
+            "backend": identity["backend"],
+            "dimension": identity["dimension"],
+            "normalization_version": identity["normalization_version"],
+            "embedding": embedding,
+        }
     )
     return result
 
@@ -268,22 +264,19 @@ def _state(
         for record in records
     ]
     fingerprint = hashlib.sha256(json.dumps(fingerprint_values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    result = cast(
-        SemanticIndexState,
-        MappingProxyType(
-            {
-                "schema_version": SEMANTIC_INDEX_SCHEMA_VERSION,
-                "index_version": SEMANTIC_INDEX_VERSION,
-                "state_generation": state_generation,
-                "repository_state_generation": repository_state_generation,
-                "config_fingerprint": _config_fingerprint(settings),
-                "artifact_identity": identity,
-                "by_statement": MappingProxyType(ordered),
-                "records": records,
-                "record_count": len(records),
-                "fingerprint": fingerprint,
-            }
-        ),
+    result = MappingProxyType(
+        {
+            "schema_version": SEMANTIC_INDEX_SCHEMA_VERSION,
+            "index_version": SEMANTIC_INDEX_VERSION,
+            "state_generation": state_generation,
+            "repository_state_generation": repository_state_generation,
+            "config_fingerprint": _config_fingerprint(settings),
+            "artifact_identity": identity,
+            "by_statement": MappingProxyType(ordered),
+            "records": records,
+            "record_count": len(records),
+            "fingerprint": fingerprint,
+        }
     )
     return result
 
@@ -298,15 +291,13 @@ class StandaloneSemanticIndexOwner:
         model_loader: object = (),
     ) -> None:
         try:
-            self._settings = semantic_config(**cast(dict, dict(settings)))
+            self._settings = semantic_config(**dict(settings))
         except (TypeError, ValueError) as error:
             raise InvalidRequestError(str(error)) from error
         if model_loader != () and not callable(model_loader):
             raise InvalidRequestError("semantic model_loader must be callable")
         injected_loader = callable(model_loader)
-        self._model_loader = (
-            cast(Callable[[SemanticConfig], object], model_loader) if callable(model_loader) else _load_native_model
-        )
+        self._model_loader = model_loader if callable(model_loader) else _load_native_model
         self._lock = threading.RLock()
         self._model: object = ()
         self._healthy = not self._settings["enabled"]
@@ -392,7 +383,7 @@ class StandaloneSemanticIndexOwner:
         model = self._model
         if not model:
             raise InvalidRequestError("semantic model is unavailable")
-        embeddings = _encode(model, tuple(cast(str, spec["text"]) for spec in specs), self._settings)
+        embeddings = _encode(model, tuple(spec["text"] for spec in specs), self._settings)
         return tuple(_embedding_record(spec, embedding, self._identity) for spec, embedding in zip(specs, embeddings, strict=True))
 
     def rebuild(

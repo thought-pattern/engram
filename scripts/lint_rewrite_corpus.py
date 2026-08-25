@@ -15,7 +15,7 @@ from engram.rewrite import RewriteEngine, lint_rewrite_corpus, load_default_rewr
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_CASES = Path("eval/section11-rewrite-v1.json")
-DEFAULT_OUTPUT = Path("documentation/rewrite/lint-2026-08-20.json")
+DEFAULT_OUTPUT = Path("eval/results/rewrite/lint-2026-08-20.json")
 
 
 def _cases(path: Path) -> list[dict[str, object]]:

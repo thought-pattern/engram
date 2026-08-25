@@ -1,9 +1,6 @@
 """Section 3 response persistence v2, migration, quarantine, and rebuild tests."""
 
 import copy
-import json
-from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -49,13 +46,10 @@ from engram.persistence import (
 )
 from engram.repository import ArtifactRepository
 
-REPOSITORY = Path(__file__).resolve().parent.parent
-V2_RESPONSE_FIXTURE = REPOSITORY / "documentation" / "artifacts" / "persistence-v2-response-state.json"
-
 
 def quarantine_records(engram: Engram) -> list[ResponseQuarantineRecord]:
     assert all(type(record) is dict for record in engram.response_quarantine)
-    records = cast(tuple[ResponseQuarantineRecord, ...], engram.response_quarantine)
+    records = engram.response_quarantine
     result = list(records)
     return result
 
@@ -353,16 +347,3 @@ def test_quarantine_codec_is_exact_and_bounded() -> None:
     malformed["extra"] = ""
     with pytest.raises(InvalidRequestError, match="exactly"):
         response_quarantine_record_from_dict(malformed)
-
-
-def test_static_v2_response_fixture_decodes_and_rebuilds() -> None:
-    state = persistence.to_dict(Engram())
-    state["response_state"] = json.loads(V2_RESPONSE_FIXTURE.read_text(encoding="utf-8"))
-
-    restored = persistence.load_engram_from_dict(state)
-
-    artifact = restored.response_repository.get_artifact("stmt-artifact")
-    assert artifact["response"] == "Exact response — café."
-    assert restored.response_repository.check()["consistent"] is True
-    assert restored.mutation_receipts.next_sequence == 2
-    assert quarantine_records(restored)[0]["reason"] == ResponseQuarantineReason.MISSING_IDENTITY

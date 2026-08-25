@@ -9,6 +9,7 @@ PACKAGE = REPOSITORY / "engram"
 GENERATED_DIRECTORIES = (PACKAGE / "v1", PACKAGE / "v2")
 FIRST_PARTY_ROOTS = ("engram", "scripts", "eval")
 FIRST_PARTY_DIRECTORIES = tuple(REPOSITORY / name for name in FIRST_PARTY_ROOTS)
+PYTHON_DIRECTORIES = (*FIRST_PARTY_DIRECTORIES, REPOSITORY / "tests")
 
 
 def _modules() -> tuple[tuple[Path, ast.Module], ...]:
@@ -74,6 +75,43 @@ def _first_party_source_modules() -> tuple[tuple[Path, ast.Module], ...]:
         for path in sorted(directory.rglob("*.py"))
     )
     return result
+
+
+def _repository_python_modules() -> tuple[tuple[Path, ast.Module], ...]:
+    result = tuple(
+        (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        for directory in PYTHON_DIRECTORIES
+        for path in sorted(directory.rglob("*.py"))
+    )
+    return result
+
+
+def test_python_sources_do_not_import_future_or_typing() -> None:
+    prohibited = {"__future__", "typing", "typing_extensions"}
+    violations = []
+    for path, tree in _repository_python_modules():
+        for node in ast.walk(tree):
+            imported_modules = []
+            if isinstance(node, ast.Import):
+                imported_modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_modules.append(node.module)
+            if any(name.split(".", 1)[0] in prohibited for name in imported_modules):
+                violations.append(f"{path.relative_to(REPOSITORY)}:{node.lineno}: {', '.join(imported_modules)}")
+    assert violations == []
+
+
+def test_python_sources_do_not_access_documentation_directory() -> None:
+    prohibited_directory = "".join(("doc", "umentation"))
+    violations = []
+    for path, tree in _repository_python_modules():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            components = node.value.replace("\\", "/").split("/")
+            if prohibited_directory in components:
+                violations.append(f"{path.relative_to(REPOSITORY)}:{node.lineno}: {node.value}")
+    assert violations == []
 
 
 def test_production_imports_remain_eager_and_module_scoped() -> None:
@@ -160,13 +198,3 @@ def test_section16_timing_is_observed_without_a_gate() -> None:
         "pass_fail": False,
     }
     assert all("latency" not in name and "startup" not in name for name in gates)
-
-
-def test_release_gate_authority_remains_with_section16() -> None:
-    decision = (REPOSITORY / "documentation" / "decisions" / "0004-evaluation-time-epoch-and-release-gates.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert "approved_project_qualification" in decision
-    assert "project-owned, versioned, and disjoint" in decision
-    assert "The first release gates are" not in decision

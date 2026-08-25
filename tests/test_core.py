@@ -3,7 +3,6 @@
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -1826,7 +1825,7 @@ def test_external_fact_ingestion_add_fact_validates_input() -> None:
     with pytest.raises(ValueError):
         engram.add_fact("")
     with pytest.raises(ValueError):
-        engram.add_fact("A fact", source_label=cast(str, ()))
+        engram.add_fact("A fact", source_label=())
 
 
 """Restating or contradicting a known fact surfaces the stored belief."""

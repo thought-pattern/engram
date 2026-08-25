@@ -7,7 +7,6 @@ import threading
 from collections.abc import Callable, Mapping, Set as AbstractSet
 from datetime import datetime
 from types import MappingProxyType
-from typing import cast
 
 from engram.artifacts import LifecycleState
 from engram.constants import (
@@ -593,7 +592,7 @@ def _trusted_budget_consumption_with_changes(
     """Copy executor-owned consumption and apply already bounded observations."""
     updated: dict[str, object] = dict(value)
     updated.update(changes)
-    result = cast(BudgetConsumption, updated)
+    result = updated
     return result
 
 
@@ -889,9 +888,7 @@ def query_frame_from_dict(value: object) -> QueryFrame:
         ),
         original_text=_require_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
         resolved_text=_require_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
-        identity=query_identity_from_dict(
-            cast(Mapping[str, object], _thaw_json(_freeze_mapping(data["identity"], "frame identity")))
-        ),
+        identity=query_identity_from_dict(_thaw_json(_freeze_mapping(data["identity"], "frame identity"))),
         expected_object_type=expected_type,
         temporal_query_value=temporal_query_from_dict(_freeze_mapping(data["temporal_query"], "frame temporal_query")),
         inheritance=tuple(inheritance_provenance_from_dict(_freeze_mapping(item, "inheritance item")) for item in inheritance),
@@ -1698,7 +1695,7 @@ def claim_evidence_record(
         normalized_path = tuple(validate_claim_evidence_path_step(value) for value in path)
         if not 1 <= len(normalized_path) <= MAX_COMPOSITION_PATH_CLAIMS:
             raise InvalidRequestError(f"composed Claim evidence path must contain 1 through {MAX_COMPOSITION_PATH_CLAIMS} steps")
-        steps = cast(tuple[ClaimEvidencePathStep, ...], normalized_path)
+        steps = normalized_path
         if tuple(step["position"] for step in steps) != tuple(range(len(steps))):
             raise InvalidRequestError("composed Claim evidence path positions must be contiguous and ordered")
         claim_ids = tuple(step["claim_id"] for step in steps)
@@ -2368,7 +2365,7 @@ def _trusted_candidate_with_changes(value: Candidate, changes: Mapping[str, obje
     """Copy an engine-owned candidate and apply engine-established fields."""
     updated: dict[str, object] = dict(value)
     updated.update(changes)
-    result = cast(Candidate, updated)
+    result = updated
     return result
 
 
@@ -2652,7 +2649,7 @@ def _trusted_resolver_result_with_changes(
     """Copy an executor-owned resolver result and apply orchestrator fields."""
     updated: dict[str, object] = dict(value)
     updated.update(changes)
-    result = cast(ResolverResult, updated)
+    result = updated
     return result
 
 

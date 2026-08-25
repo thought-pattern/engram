@@ -2,7 +2,6 @@
 
 from collections import Counter
 from collections.abc import Mapping
-from typing import cast
 
 from engram.config import rollout_config
 from engram.constants import RolloutMode
@@ -20,8 +19,8 @@ from engram.resolution import (
 
 def select_rollout(config: Mapping[str, object], namespace: str) -> dict[str, object]:
     """Select the exact namespace override or the configured default."""
-    policy = cast(dict, config.get("rollout") or rollout_config())
-    namespaces = cast(dict, policy["namespaces"])
+    policy = config.get("rollout") or rollout_config()
+    namespaces = policy["namespaces"]
     result = {
         "policy_version": policy["policy_version"],
         "mode": namespaces.get(namespace, policy["default_mode"]),
@@ -32,9 +31,9 @@ def select_rollout(config: Mapping[str, object], namespace: str) -> dict[str, ob
 
 def rollout_status(config: Mapping[str, object]) -> dict[str, object]:
     """Return fixed-cardinality rollout state without namespace labels."""
-    policy = cast(dict, config.get("rollout") or rollout_config())
-    namespaces = cast(dict, policy["namespaces"])
-    default_mode = cast(RolloutMode, policy["default_mode"])
+    policy = config.get("rollout") or rollout_config()
+    namespaces = policy["namespaces"]
+    default_mode = policy["default_mode"]
     counts = Counter(namespaces.values())
     result = {
         "policy_version": policy["policy_version"],
@@ -48,7 +47,7 @@ def rollout_status(config: Mapping[str, object]) -> dict[str, object]:
 def apply_rollout(result: ResolutionResult, selection: Mapping[str, object]) -> ResolutionResult:
     """Apply output visibility for a selected rollout mode."""
     current = validate_resolution_result(result)
-    mode = cast(RolloutMode, selection["mode"])
+    mode = selection["mode"]
     if mode == RolloutMode.REGULATED_DIRECT_ANSWER:
         return current
 

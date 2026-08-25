@@ -93,7 +93,7 @@ Within-artifact duplicate keys retain canonical provenance when one duplicate is
 one key remain visible in ownership and collision reports but are omitted from direct lookup. Reports expose at most 1,000
 issues, collisions, or lookup owners and record omitted counts.
 
-The reproducible fixture [classification-v1.json](classification-v1.json) covers legacy missing identity, a canonical/alias
+The reproducible fixture [classification-v1.json](../../tests/fixtures/indexes/classification-v1.json) covers legacy missing identity, a canonical/alias
 cross-artifact collision, an unsupported schema, and malformed support.
 
 ## Mutation, concurrency, and repair

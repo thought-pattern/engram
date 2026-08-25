@@ -421,7 +421,7 @@ def test_builder_classifies_invalid_and_legacy_inputs_without_guessing() -> None
 
 
 def test_classification_fixture() -> None:
-    fixture_path = Path(__file__).parents[1] / "documentation" / "indexes" / "classification-v1.json"
+    fixture_path = Path(__file__).parent / "fixtures" / "indexes" / "classification-v1.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     for case in fixture["cases"]:

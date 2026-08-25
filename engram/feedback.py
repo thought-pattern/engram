@@ -1,7 +1,5 @@
 """Versioned feedback learning and bounded negative-resolution state."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import math
@@ -11,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType, NoneType
-from typing import cast
 
 from engram.constants import (
     DEFAULT_NEGATIVE_MAX_RECORDS,
@@ -182,7 +179,7 @@ def canonical_fingerprint(value: object) -> str:
     return result
 
 
-def _feedback_payload_signature(observations: tuple[FeedbackObservation, ...]) -> str:
+def _feedback_payload_signature(observations) -> str:
     """Hash a bounded observation sequence without the generic receipt item ceiling.
 
     Feedback observations are already strict, bounded contracts.  Hashing each
@@ -607,26 +604,26 @@ def relationship_feedback_key_from_dict(
         raise InvalidRequestError("relationship scope_cache must be a dictionary")
     if statement_cache != () and not isinstance(statement_cache, dict):
         raise InvalidRequestError("relationship statement_cache must be a dictionary")
-    identities = cast(dict[str, QueryIdentity], identity_cache) if isinstance(identity_cache, dict) else {}
-    scopes = cast(dict[str, ScopeKey], scope_cache) if isinstance(scope_cache, dict) else {}
-    statements = cast(dict[str, StatementFeedbackKey], statement_cache) if isinstance(statement_cache, dict) else {}
+    identities = identity_cache if isinstance(identity_cache, dict) else {}
+    scopes = scope_cache if isinstance(scope_cache, dict) else {}
+    statements = statement_cache if isinstance(statement_cache, dict) else {}
     identity_fingerprint = canonical_fingerprint(data["query_identity"])
     scope_fingerprint = canonical_fingerprint(data["scope"])
     statement_fingerprint = canonical_fingerprint(data["statement"])
     if identity_fingerprint in identities:
         query_identity = identities[identity_fingerprint]
     else:
-        query_identity = query_identity_from_dict(cast(Mapping[str, object], data["query_identity"]))
+        query_identity = query_identity_from_dict(data["query_identity"])
         identities[identity_fingerprint] = query_identity
     if scope_fingerprint in scopes:
         scope = scopes[scope_fingerprint]
     else:
-        scope = scope_key_from_dict(cast(Mapping[str, object], data["scope"]))
+        scope = scope_key_from_dict(data["scope"])
         scopes[scope_fingerprint] = scope
     if statement_fingerprint in statements:
         statement = statements[statement_fingerprint]
     else:
-        statement = statement_feedback_key_from_dict(cast(Mapping[str, object], data["statement"]))
+        statement = statement_feedback_key_from_dict(data["statement"])
         statements[statement_fingerprint] = statement
     version = _integer(data["schema_version"], "relationship feedback key schema_version", 0)
     if version != FEEDBACK_KEY_SCHEMA_VERSION:
@@ -1582,12 +1579,10 @@ def _freeze_feedback_value(value: object) -> object:
     """Recursively freeze one validated feedback contract for structural sharing."""
     value_type = type(value)
     if value_type in (dict, MappingProxyType):
-        mapping = cast(Mapping[object, object], value)
+        mapping = value
         result: object = MappingProxyType({key: _freeze_feedback_value(nested) for key, nested in mapping.items()})
-    elif value_type is tuple:
-        result = tuple(_freeze_feedback_value(nested) for nested in cast(tuple[object, ...], value))
-    elif value_type is list:
-        result = tuple(_freeze_feedback_value(nested) for nested in cast(list[object], value))
+    elif value_type is tuple or value_type is list:
+        result = tuple(_freeze_feedback_value(nested) for nested in value)
     else:
         result = value
     return result
@@ -1646,12 +1641,10 @@ def _feedback_wire_value(value: object) -> object:
     """Project an already validated feedback value into deterministic JSON types."""
     value_type = type(value)
     if value_type in (dict, MappingProxyType):
-        mapping = cast(Mapping[object, object], value)
+        mapping = value
         result: object = {key: _feedback_wire_value(nested) for key, nested in mapping.items()}
-    elif value_type is tuple:
-        result = [_feedback_wire_value(nested) for nested in cast(tuple[object, ...], value)]
-    elif value_type is list:
-        result = [_feedback_wire_value(nested) for nested in cast(list[object], value)]
+    elif value_type is tuple or value_type is list:
+        result = [_feedback_wire_value(nested) for nested in value]
     elif isinstance(value, Enum):
         result = value.value
     else:
@@ -1807,7 +1800,7 @@ def validate_feedback_state(value: object) -> FeedbackState:
 
 def feedback_state_to_dict(value: object) -> dict[str, object]:
     current = validate_feedback_state(value)
-    result = cast(dict[str, object], _feedback_wire_value(current))
+    result = _feedback_wire_value(current)
     return result
 
 
@@ -1832,10 +1825,10 @@ def feedback_state_from_dict(value: object) -> FeedbackState:
         values = data[name]
         if not isinstance(values, list) or not all(isinstance(item, Mapping) for item in values):
             raise InvalidRequestError(f"feedback state {name} must be an array of objects")
-    statement_values = cast(list[Mapping[str, object]], data["statement_records"])
-    relationship_values = cast(list[Mapping[str, object]], data["relationship_records"])
-    suppression_values = cast(list[Mapping[str, object]], data["policy_suppressions"])
-    exclusion_values = cast(list[Mapping[str, object]], data["stale_exclusions"])
+    statement_values = data["statement_records"]
+    relationship_values = data["relationship_records"]
+    suppression_values = data["policy_suppressions"]
+    exclusion_values = data["stale_exclusions"]
     parsed_statements = tuple(statement_feedback_record_from_dict(item) for item in statement_values)
     statement_cache = {_trusted_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
     identity_cache: dict[str, QueryIdentity] = {}
@@ -1849,7 +1842,7 @@ def feedback_state_from_dict(value: object) -> FeedbackState:
         parsed_relationships,
         tuple(policy_suppression_from_dict(item) for item in suppression_values),
         tuple(stale_exclusion_from_dict(item) for item in exclusion_values),
-        cast(Mapping[str, object], data["receipts"]),
+        data["receipts"],
         data["statement_evictions"],
         data["relationship_evictions"],
         data["policy_suppression_evictions"],
@@ -1941,7 +1934,7 @@ def _new_relationship_record(observation: FeedbackObservation, policy: FeedbackP
 def _record_buckets(value: object) -> tuple[FeedbackBucket, ...]:
     if not isinstance(value, Mapping) or not isinstance(value.get("buckets", []), tuple):
         raise InvalidRequestError("feedback record must contain a tuple of buckets")
-    result = tuple(validate_feedback_bucket(bucket) for bucket in cast(tuple[object, ...], value["buckets"]))
+    result = tuple(validate_feedback_bucket(bucket) for bucket in value["buckets"])
     return result
 
 
@@ -1978,17 +1971,11 @@ class FeedbackStore:
         self._install(validated_state)
 
     def _install(self, state: FeedbackState) -> None:
-        policy = cast(FeedbackPolicy, _freeze_feedback_value(state["policy"]))
-        statement_records = tuple(
-            cast(StatementFeedbackRecord, _freeze_feedback_value(record)) for record in state["statement_records"]
-        )
-        relationship_records = tuple(
-            cast(RelationshipFeedbackRecord, _freeze_feedback_value(record)) for record in state["relationship_records"]
-        )
-        policy_suppressions = tuple(
-            cast(PolicySuppression, _freeze_feedback_value(value)) for value in state["policy_suppressions"]
-        )
-        stale_exclusions = tuple(cast(StaleExclusion, _freeze_feedback_value(value)) for value in state["stale_exclusions"])
+        policy = _freeze_feedback_value(state["policy"])
+        statement_records = tuple(_freeze_feedback_value(record) for record in state["statement_records"])
+        relationship_records = tuple(_freeze_feedback_value(record) for record in state["relationship_records"])
+        policy_suppressions = tuple(_freeze_feedback_value(value) for value in state["policy_suppressions"])
+        stale_exclusions = tuple(_freeze_feedback_value(value) for value in state["stale_exclusions"])
         self._state_dirty = False
         self._policy = policy
         self._statement_records = {statement_feedback_key_fingerprint(record["key"]): record for record in statement_records}
@@ -2046,7 +2033,7 @@ class FeedbackStore:
             result = _trusted_feedback_state_copy(state)
             return result
 
-    def _candidate_copy(self) -> FeedbackStore:
+    def _candidate_copy(self):
         """Create one shallow off-live owner while sharing immutable records."""
 
         candidate = object.__new__(FeedbackStore)
@@ -2097,7 +2084,7 @@ class FeedbackStore:
             updated_statement = _trusted_statement_feedback_record_apply(statement, observation, self._policy)
         else:
             updated_statement = _new_statement_record(observation, self._policy)
-        self._statement_records[statement_fingerprint] = cast(StatementFeedbackRecord, _freeze_feedback_value(updated_statement))
+        self._statement_records[statement_fingerprint] = _freeze_feedback_value(updated_statement)
         relationship_key = _trusted_feedback_observation_relationship_key(observation, statement_key)
         relationship_fingerprint = _trusted_feedback_key_fingerprint(relationship_key)
         relationship = self._relationship_records.get(relationship_fingerprint)
@@ -2105,18 +2092,15 @@ class FeedbackStore:
             updated_relationship = _trusted_relationship_feedback_record_apply(relationship, observation, self._policy)
         else:
             updated_relationship = _new_relationship_record(observation, self._policy)
-        self._relationship_records[relationship_fingerprint] = cast(
-            RelationshipFeedbackRecord, _freeze_feedback_value(updated_relationship)
-        )
+        self._relationship_records[relationship_fingerprint] = _freeze_feedback_value(updated_relationship)
         suppression_key = (
             observation["statement_id"],
             observation["scope"]["namespace"],
             observation["policy_fingerprint"],
         )
         if observation["outcome"] == FeedbackOutcome.REJECTED_POLICY:
-            self._policy_suppressions[suppression_key] = cast(
-                PolicySuppression,
-                _freeze_feedback_value(policy_suppression(*suppression_key, observation["observed_at"])),
+            self._policy_suppressions[suppression_key] = _freeze_feedback_value(
+                policy_suppression(*suppression_key, observation["observed_at"])
             )
         elif observation["outcome"] == FeedbackOutcome.ACCEPTED:
             self._policy_suppressions.pop(suppression_key, {})
@@ -2128,7 +2112,7 @@ class FeedbackStore:
                 observation["observed_at"],
             )
             exclusion_key = (exclusion["statement_id"], exclusion["generation"], exclusion["generation_available"])
-            self._stale_exclusions[exclusion_key] = cast(StaleExclusion, _freeze_feedback_value(exclusion))
+            self._stale_exclusions[exclusion_key] = _freeze_feedback_value(exclusion)
 
     def _enforce_capacity(self) -> None:
         while len(self._statement_records) > self._policy["max_statement_records"]:
@@ -2223,7 +2207,7 @@ class FeedbackStore:
                 created_at=max(observation["observed_at"] for observation in validated_observations),
             )
             candidate._receipts.record(receipt)
-            after = cast(FeedbackState, _PreparedFeedbackState(candidate.snapshot(), self, candidate))
+            after = _PreparedFeedbackState(candidate.snapshot(), self, candidate)
             result = _trusted_feedback_mutation_candidate(before, after, receipt, False)
             return result
 
@@ -2370,11 +2354,11 @@ class FeedbackStore:
             )
             receipt_snapshot = self._receipts.snapshot()
             receipt_values = sorted(
-                cast(list[dict[str, object]], receipt_snapshot["receipts"]),
-                key=lambda value: cast(int, value["sequence"]),
+                receipt_snapshot["receipts"],
+                key=lambda value: value["sequence"],
                 reverse=True,
             )
-            receipt_tombstones = cast(list[object], receipt_snapshot["tombstones"])
+            receipt_tombstones = receipt_snapshot["tombstones"]
             result = {
                 "schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
                 "policy_version": self._policy["policy_version"],
@@ -2387,13 +2371,13 @@ class FeedbackStore:
                 "receipt_tombstone_count": len(receipt_tombstones),
                 "receipts": [
                     {
-                        "diagnostic_id": _diagnostic_id(cast(str, value["request_id"])),
+                        "diagnostic_id": _diagnostic_id(value["request_id"]),
                         "sequence": value["sequence"],
                         "result_code": value["result_code"],
                         "completion_state": value["completion_state"],
-                        "observation_count": cast(Mapping[str, object], value["result"]).get("observation_count", 0),
-                        "outcomes": cast(Mapping[str, object], value["result"]).get("outcomes", {}),
-                        "lifecycle_status": cast(Mapping[str, object], value["result"]).get("lifecycle_status", ""),
+                        "observation_count": value["result"].get("observation_count", 0),
+                        "outcomes": value["result"].get("outcomes", {}),
+                        "lifecycle_status": value["result"].get("lifecycle_status", ""),
                     }
                     for value in receipt_values[:limit]
                 ],
