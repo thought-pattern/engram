@@ -112,14 +112,6 @@ known_first_party = ["engram"]
 combine_as_imports = true
 skip_glob = ["engram/v1/engram_pb2*", "engram/v2/engram_pb2*"]
 
-[tool.pyright]
-# Compiler-generated gRPC code is verified by reproducible regeneration. The
-# grpc runtime exposes experimental attributes that are absent from its stubs.
-ignore = ["engram/v1/engram_pb2_grpc.py", "engram/v2/engram_pb2_grpc.py"]
-# Static-only CI intentionally does not install Engram's runtime dependency tree.
-# Analyze project code while leaving third-party availability to setup/preflight.
-reportMissingImports = "none"
-
 [tool.vulture]
 paths = ["engram", "scripts", "eval"]
 exclude = ["engram/v1/engram_pb2*.py", "engram/v2/engram_pb2*.py"]

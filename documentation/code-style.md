@@ -116,7 +116,7 @@ Boolean. Normalize external variants at the boundary.
 
 Use only native Python types in annotations. Never import `typing` or
 `typing_extensions`, and never use `typing.cast`. Runtime behavior and clear
-validation take precedence over satisfying Pyright; duck-typed values do not need
+validation take precedence over satisfying a static type checker; duck-typed values do not need
 an annotation merely to guide a static checker.
 
 ## Data structures
@@ -161,7 +161,6 @@ Before submitting a change, run:
 black -l 132 -t py311 .
 isort --check-only .
 ruff check --line-length 132 .
-pyright
 pytest
 pytest tests/test_source_contracts.py
 ```

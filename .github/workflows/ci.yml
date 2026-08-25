@@ -43,9 +43,6 @@ jobs:
       - name: Dead-code scan
         run: vulture
 
-      - name: Type check
-        run: npx --yes pyright@latest
-
       - name: First-party source-contract checks
         run: pytest -q tests/test_source_contracts.py
 

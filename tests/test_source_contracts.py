@@ -1,4 +1,4 @@
-"""Focused executable checks for architecture rules not covered by Ruff or Pyright."""
+"""Focused executable checks for architecture rules not covered by Ruff."""
 
 import ast
 import json
