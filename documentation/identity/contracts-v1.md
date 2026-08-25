@@ -2,17 +2,19 @@
 
 ## Status and boundary
 
-`engram.identity` implements the pure identity foundation used by later exact indexes and accepted-response commits. It performs no persistence, graph access, model loading, resource acquisition, network access, or transport translation.
+`engram.identity` implements the pure identity foundation used by exact indexes
+and accepted-response commits.
 
-The contracts are immutable dataclasses with deterministic dictionary and compact JSON codecs. Runtime fields have one concrete type. Empty strings, tuples, and an empty `ScopeKey` represent absence; the codecs never generate Python `None` or JSON `null`, and their annotations do not use optional unions.
-
-Cross-artifact mappings and collision discovery belong to Section 2. Commit-time collision rejection and explicit supersession belong to Section 3. Contextual and graph-backed canonical resolution belongs to Section 8. Persistence and adapter translation belong to Section 15.
+The contracts are immutable dataclasses with deterministic dictionary and compact
+JSON codecs. Runtime fields have one concrete type; empty strings, tuples, and an
+empty `ScopeKey` represent absence.
 
 ## Contracts
 
 ### `ScopeKey`
 
-`ScopeKey` is the exact eligibility boundary. Namespace and context fingerprint are preserved as opaque caller values rather than parsed, normalized, or hashed.
+`ScopeKey` is the exact eligibility boundary. Namespace and context fingerprint are
+opaque caller values.
 
 ```json
 {
@@ -64,7 +66,7 @@ An `EntityReference` carries a required surface and a concrete canonical ID stri
 }
 ```
 
-Standalone construction uses the normalized request as the conservative canonical form. This intentionally preserves `when` versus `where`, positive versus negative, current versus historical, and count versus lookup distinctions even when their lexical terms are equal. Authoritative writers may supply a richer normalized canonical form and canonical IDs.
+Standalone construction uses the normalized request as its canonical form. This preserves `when` versus `where`, positive versus negative, current versus historical, and count versus lookup distinctions even when their lexical terms are equal. Authoritative writers may supply a richer normalized canonical form and canonical IDs.
 
 ### `ScopedRetrievalKey`
 
@@ -74,7 +76,8 @@ The immutable logical key is:
 (ScopeKey, normalization_version, normalized representation)
 ```
 
-Its schema-versioned JSON codec is suitable for fixtures and diagnostics. Section 2 consumes the value as an in-memory index key; it is not an authoritative persisted index record.
+Its schema-versioned JSON codec supports fixtures and diagnostics. Disposable
+indexes consume the value as an in-memory key.
 
 ### `RetrievalRepresentation`
 
@@ -89,7 +92,11 @@ Its schema-versioned JSON codec is suitable for fixtures and diagnostics. Sectio
 }
 ```
 
-The canonical representation is required. Aliases are non-executable data, never matcher `pattern_aliases`. Construction normalizes each value for comparison, removes aliases equivalent to the canonical representation, and retains the first spelling of each distinct alias. `bindings(scope)` emits one `RetrievalKeyBinding` per surviving representation with `canonical` or `alias` provenance and the original spelling.
+The canonical representation is required. Aliases are retrieval data separate from
+matcher `pattern_aliases`. Construction normalizes each value for comparison,
+removes aliases equivalent to the canonical representation, and retains the first
+spelling of each distinct alias. `bindings(scope)` emits one `RetrievalKeyBinding`
+per surviving representation with `canonical` or `alias` provenance.
 
 ## Bounds
 
@@ -115,9 +122,8 @@ Scope and contract fields reject control and surrogate characters. Raw request a
 
 ## Retrieval normalization version 1
 
-`normalize_retrieval_key` is separate from `engram.text.normalize`; changing identity behavior cannot silently alter AIML matching or legacy lexical retrieval.
-
-Version 1 was corrected during the Section 1 remediation on 2026-08-11. At that point the identity module, fixtures, and tracker were uncommitted worktree additions; no identity-bearing persistence schema, exact index, Python integration API, MCP field, or gRPC field existed. There was therefore no released or persisted version-1 keyspace to migrate. The corrected fixture below defines the first releasable version 1. Any later key-changing behavior requires a new normalization version.
+`normalize_retrieval_key` and `engram.text.normalize` have separate versioned
+behavior for identity and legacy retrieval.
 
 Version 1 performs these ordered operations:
 
@@ -130,7 +136,9 @@ Version 1 performs these ordered operations:
 7. remove terminal sentence periods and non-semantic quote apostrophes; and
 8. collapse whitespace.
 
-The function is deterministic and idempotent. Its golden fixture is [normalization-v1.json](normalization-v1.json). Any behavior change that can alter a retrieval key requires a new normalization version and new fixtures; version 1 data is never silently reinterpreted.
+The function is deterministic and idempotent. Its golden fixture is
+[normalization-v1.json](normalization-v1.json). Key-changing behavior requires a
+new normalization version and fixtures.
 
 ## Standalone extraction
 
@@ -139,26 +147,19 @@ The function is deterministic and idempotent. Its golden fixture is [normalizati
 - operators are classified before lexical filtering;
 - explicit negation, quantity, word-based or symbolic comparison, temporal, current/historical, and location cues become qualifiers;
 - title-cased surfaces, quoted values, versions, paths, symbols, qualified identifiers, and error codes become entity references with empty canonical IDs;
-- relation extraction scans supported predicates after the main auxiliary, ignores trailing version, time, and context tokens, and otherwise returns `RelationReference()` rather than using the final content token as a guess;
+- relation extraction scans supported predicates after the main auxiliary, ignores trailing version, time, and context tokens, and returns `RelationReference()` when unmatched;
 - lexical terms are normalized and deduplicated separately from identity fields; and
 - the normalized complete request remains the canonical form.
 
-The builder does not claim graph-backed entity identity, resolve ambiguous predicates, inherit conversation context, or rewrite accepted response text.
+Contextual resolution owns graph identity, ambiguous predicates, and conversation context.
 
 ## Authoritative input
 
-`QueryIdentity.from_dict` and `RetrievalRepresentation.from_dict` strictly decode JSON-compatible mappings. `validate_authoritative_identity` verifies supported versions and cross-contract normalization compatibility, then proves that the canonical representation produces a non-empty key in the supplied scope. It returns the same `QueryIdentity` object; it does not normalize, enrich, resolve, or otherwise rewrite authoritative fields.
+`QueryIdentity.from_dict` and `RetrievalRepresentation.from_dict` strictly decode JSON-compatible mappings. `validate_authoritative_identity` verifies supported versions and normalization compatibility and requires the canonical representation to produce a non-empty key in the supplied scope. It returns the supplied identity unchanged.
 
-Canonical IDs are syntax-validated but are not looked up in the graph. Existence, visibility, trust, and temporal eligibility are later integration concerns.
+Canonical IDs receive syntax validation. Contextual resolution and eligibility
+evaluate graph existence, visibility, trust, and temporal state.
 
 ## Verification
 
-Run the Section 1 suite with:
-
-```powershell
-python -m pytest -q tests/test_identity.py
-```
-
-The suite covers codecs, version rejection, UTF-8 bounds, concrete absence, fixture-driven and generated idempotence properties, scope and codec properties, representation deduplication and provenance, operator/qualifier extraction, symbolic comparison and technical-operator contrasts, conservative relations, authoritative preservation, dependency-free construction, and adversarial identity contrasts.
-
-The reproducible remediation benchmark is [remediation-benchmark-2026-08-11.json](remediation-benchmark-2026-08-11.json), generated by `scripts/benchmark_identity.py` without graph, model, network, or persistence access.
+`python -m pytest -q tests/test_identity.py` verifies the contract.

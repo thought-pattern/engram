@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -92,12 +93,13 @@ def test_runtime_override_is_reported_without_blocking_rebuildable_model_change(
     assert status["manifest"]["semantic_model_version"] == "semantic-r2"
 
 
-def test_explicit_file_migration_preserves_source_refuses_overwrite_and_reports_quarantine(tmp_path) -> None:
+def test_explicit_file_migration_preserves_source_refuses_overwrite_and_reports_quarantine(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
     engram = Engram()
     engram.store("Legacy response without identity", keyword_source="legacy response")
     source_state = legacy_state(engram)
-    source = tmp_path / "engram-v1.json"
-    output = tmp_path / "engram-v2.json"
+    source = Path("engram-v1.json")
+    output = Path("engram-v2.json")
     source.write_text(json.dumps(source_state, indent=2), encoding="utf-8")
     source_before = source.read_bytes()
 
@@ -107,6 +109,8 @@ def test_explicit_file_migration_preserves_source_refuses_overwrite_and_reports_
     assert source.read_bytes() == source_before
     assert report["source_version"] == 1
     assert report["output_version"] == PERSISTENCE_VERSION
+    assert report["source_path"] == "engram-v1.json"
+    assert report["output_path"] == "engram-v2.json"
     assert report["artifact_count"] == 0
     assert report["quarantine_count"] == 1
     assert report["quarantine_reasons"] == {"missing_identity": 1}

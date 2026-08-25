@@ -69,7 +69,6 @@ def fact_query_patterns(fact: dict) -> list[str]:
     obj = fact["obj"].upper()
     patterns = [subj]  # Direct query: "CATS"
 
-    # Question forms based on predicate
     if fact["predicate"] in ("are", "were"):
         patterns.append(f"WHAT ARE {subj}")
         patterns.append(f"WHAT ARE THE {subj}")
@@ -81,7 +80,6 @@ def fact_query_patterns(fact: dict) -> list[str]:
         patterns.append(f"WHO IS {subj}")
         patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
 
-    # Add "TELL ME ABOUT X" form
     patterns.append(f"TELL ME ABOUT {subj}")
     patterns.append(f"TELL ME ABOUT THE {subj}")
     patterns.append(f"WHAT DO YOU KNOW ABOUT {subj}")
@@ -107,12 +105,10 @@ def is_question(text: str) -> bool:
     Three detectors: a trailing question mark, a question-word lead
     (what/who/where/...), or an inverted copula ("Is it ...").
     """
-    # Ends with question mark
     if text.rstrip().endswith("?"):
         result = True
         return result
 
-    # Starts with question word
     first_word = text.split()[0].lower() if text.split() else ""
     if first_word in QUESTION_WORDS:
         result = True
@@ -128,7 +124,6 @@ def is_question(text: str) -> bool:
                 result = True
                 return result
 
-    # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
     result = len(words) >= 2 and words[0] in COPULAS
     return result
@@ -163,7 +158,6 @@ def _clean_subject(tokens: list[str]) -> str:
         result = ""
         return result
 
-    # Remove leading articles (a, an, the)
     while tokens and tokens[0].lower() in ("a", "an", "the"):
         tokens = tokens[1:]
 
@@ -180,7 +174,6 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     (e.g. "Your sentiment analysis should inform that tired is not nice"
     splitting at "is").
     """
-    # Find the copula
     copula_idx = -1
     copula = ""
 
@@ -202,13 +195,10 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
             result = {}
             return result
 
-    # Extract subject (everything before copula)
     subject_tokens = tokens[:copula_idx]
 
-    # Extract object (everything after copula)
     obj_tokens = tokens[copula_idx + 1 :]
 
-    # Filter out articles from subject start for cleaner patterns
     subject = _clean_subject(subject_tokens)
     obj = " ".join(obj_tokens).rstrip(".")
 
@@ -238,7 +228,7 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
             result = {}
             return result
 
-    normalized_original = original.rstrip(".") + "."  # Normalize punctuation
+    normalized_original = original.rstrip(".") + "."
     fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
     return fact
 
@@ -254,23 +244,19 @@ def extract_fact(text: str) -> dict:
     """
     _ensure_nltk_data()
 
-    # Clean and normalize
     text = text.strip()
     if not text:
         result = {}
         return result
 
-    # Skip questions
     if is_question(text):
         result = {}
         return result
 
-    # Skip commands
     if _is_command(text):
         result = {}
         return result
 
-    # Tokenize and tag
     tokens = word_tokenize(text)
     tagged = pos_tag(tokens)
 
@@ -278,7 +264,6 @@ def extract_fact(text: str) -> dict:
         result = {}
         return result
 
-    # Find copula and extract subject/object
     fact = _extract_copula_fact(tokens, tagged, text)
     return fact
 
@@ -323,14 +308,11 @@ def extract_entities(text: str) -> list[dict]:
 
     for subtree in tree:
         if hasattr(subtree, "label"):
-            # This is a named entity
             entity_text = " ".join(word for word, tag in subtree)
             label = subtree.label()
 
-            # Find position in original text
             start = text.find(entity_text, current_pos)
             if start == -1:
-                # Try case-insensitive search
                 start = text.lower().find(entity_text.lower(), current_pos)
             if start != -1:
                 end = start + len(entity_text)

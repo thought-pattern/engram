@@ -341,7 +341,6 @@ class Engram:
             "manifest": {},
         }
 
-        # Metrics
         self.query_count = 0
         self.hit_count = 0
         self.eviction_count = 0
@@ -1062,7 +1061,6 @@ class Engram:
             result = ""
             return result
 
-        # Extract entities from the input
         entities = extract_entities(text)
         if not entities:
             # Keyword fallback: match a canonical Entity whose primary label
@@ -1073,7 +1071,7 @@ class Engram:
                 result = ""
                 return result
             facts = []
-            for kw in keywords[:3]:  # Limit to top 3 keywords
+            for kw in keywords[:3]:
                 records = self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": kw})
                 facts.extend(graph_records_to_facts(records))
             if facts:
@@ -1092,7 +1090,6 @@ class Engram:
             facts.extend(graph_records_to_facts(records))
 
         if facts:
-            # Format facts as natural language
             formatted = format_graph_facts(facts)
             return formatted
         vector_facts = graph_records_to_facts(self.graph_vector_claims(text, limit=5))
@@ -1261,7 +1258,6 @@ class Engram:
         normalized = normalize(source)
         keywords = self._extract_keywords(normalized)
 
-        # Create statement
         stmt = statement(
             text=text,
             tier=tier,
@@ -1289,7 +1285,6 @@ class Engram:
                     self.pattern_matcher.add_pattern(registered_pattern, text, that=that or "", topic=topic or "")
                     self.pattern_to_statement[registered_pattern] = stmt["id"]
 
-            # Check capacity for DYNAMIC statements
             if tier == Tier.DYNAMIC:
                 dynamic_count = sum(1 for s in self.statements if s["tier"] == Tier.DYNAMIC)
                 while dynamic_count >= self.config["capacity"]:
@@ -1300,7 +1295,6 @@ class Engram:
                         break
                     dynamic_count -= 1
 
-            # Add statement
             self.statement_index[stmt["id"]] = len(self.statements)
             self.statements.append(stmt)
             for kw in keywords:
@@ -1826,12 +1820,10 @@ class Engram:
                 raise ValueError("session_id and user_id must identify the same context")
             session_id = attributed_user_id
 
-        # Apply contractions expansion if enabled
         processed_text = text
         if self.config["expand_contractions"]:
             processed_text = expand_contractions(text, self.substitution_maps["contractions"])
 
-        # Split into sentences
         sentences = split_sentences(processed_text)
         if not sentences:
             # No sentences found, treat as single input
@@ -1841,7 +1833,6 @@ class Engram:
             result = ()
             return result
 
-        # Get session if provided
         session = {}
         that = ""
         topic = ""
@@ -1850,8 +1841,8 @@ class Engram:
             session = sessions_mod.get_session(self, session_id, create_if_missing=True)
             if session:
                 with self.session_lock:
-                    that = session["previous_response"]  # Bot's last response (normalized)
-                    topic = session["predicates"].get("topic", "")  # Current topic
+                    that = session["previous_response"]
+                    topic = session["predicates"].get("topic", "")
                     active_topic = session.get("active_topic", "")
 
         # Input cleanup: correct typos toward the store's vocabulary before
@@ -1862,7 +1853,6 @@ class Engram:
             with self.keyword_lock:
                 vocabulary = set(self.keywords)
 
-        # Process each sentence
         responses: list[str] = []
         first_stmt = {}
         first_captured: list[str] = []
@@ -2002,7 +1992,6 @@ class Engram:
                         elif known_response and matched_pattern == "*":
                             final_response = known_response
                         else:
-                            # Process template if present
                             final_response = self._process_statement_template(
                                 selected,
                                 captured,
@@ -2028,16 +2017,13 @@ class Engram:
                             }
                         )
 
-                        # Track first match for return value
                         if not first_stmt:
                             first_stmt = selected
                             first_captured = captured
-                        # Update 'that' for next sentence (response becomes context)
                         that = final_response
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
-            # Try graph lookup before falling back
             graph_response = self.graph_lookup(text)
             if graph_response:
                 if session:
@@ -2047,7 +2033,6 @@ class Engram:
                 graph_result_tuple = ({}, [], graph_response)
                 return graph_result_tuple
 
-            # Use fallback response if configured
             if self.config["fallback_response"]:
                 if session:
                     with self.session_lock:
@@ -2204,7 +2189,6 @@ class Engram:
         if self.config["polish_responses"]:
             combined_response = polish_response(combined_response)
 
-        # Update session context with full input and combined response
         if session:
             with self.session_lock:
                 session_update_dialogue(
@@ -2257,7 +2241,6 @@ class Engram:
             graph_fn=self.graph_read_fn,
         )
 
-        # Add session context
         if session:
             with self.session_lock:
                 context["session_id"] = session["session_id"]
@@ -2266,7 +2249,6 @@ class Engram:
                 context["response_history"] = session["response_history"].copy()
                 context["that_history"] = [s.copy() for s in session["that_history"]]
 
-        # Set redirect callback
         def redirect_fn(pattern: str) -> str:
             with self.statement_lock:
                 result = self.pattern_matcher.match(pattern)
@@ -2289,7 +2271,6 @@ class Engram:
                         if triple_match and (not redirect_stmt or s["priority"] > redirect_stmt["priority"]):
                             redirect_stmt = s
                     if redirect_stmt:
-                        # Create new context for redirect
                         new_context = template_context(
                             stars=new_captured,
                             thatstars=new_thatstars,
@@ -2319,7 +2300,6 @@ class Engram:
 
         context["redirect_fn"] = redirect_fn
 
-        # Set learn callback
         def learn_fn(learn_data: dict) -> None:
             pattern = learn_data.get("pattern", "")
             template = learn_data["template"]
@@ -2340,14 +2320,10 @@ class Engram:
 
         context["learn_fn"] = learn_fn
 
-        # Process template (use response text if no explicit template)
         template_to_process = stmt["template"] or stmt["text"]
         response = self.template_processor.process(template_to_process, context)
 
-        # Update session predicates from context. Underscore-prefixed
-        # predicates (e.g. _mood, _kind) are template-local scratch: they
-        # never persist into the session, and any that leaked in previously
-        # are purged.
+        # Synchronize public predicates and remove template-local scratch keys.
         if session:
             with self.session_lock:
                 for name, value in context["predicates"].items():
@@ -2412,7 +2388,6 @@ class Engram:
         with self.statement_lock:
             for stmt in self.statements:
                 if stmt["pattern"] == subject_pattern:
-                    # Already know this - don't overwrite
                     result = False
                     return result
 

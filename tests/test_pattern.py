@@ -203,10 +203,13 @@ def test_zero_or_more_wildcards_caret_at_end():
 
 def test_zero_or_more_wildcards_hash_only_pattern():
     """# alone should match anything including empty."""
-    # Note: Empty input is edge case, typically won't happen
     result = match_pattern("#", "hello world")
     assert result["matched"] is True
     assert result["captured"] == ["hello world"]
+
+    empty_result = match_pattern("#", "")
+    assert empty_result["matched"] is True
+    assert empty_result["captured"] == [""]
 
 
 def test_zero_or_more_wildcards_caret_priority_over_hash():
@@ -292,8 +295,8 @@ def test_pattern_matcher_zero_wildcards_caret_vs_hash_priority():
     assert result[0] == "Caret match"
 
 
-def test_pattern_matcher_zero_wildcards_zero_vs_one_wildcard_priority():
-    """1+ wildcards should win when content matches."""
+def test_pattern_matcher_zero_wildcards_hash_has_priority_over_star():
+    """# should win over * when both patterns match."""
     pm = PatternMatcher()
     pm.add_pattern("HELLO #", "Zero match")
     pm.add_pattern("HELLO *", "One match")
@@ -302,8 +305,8 @@ def test_pattern_matcher_zero_wildcards_zero_vs_one_wildcard_priority():
     result = pm.match("hello")
     assert result[0] == "Zero match"
 
-    # For "hello world", * matches (requires content) - same priority
-    # Both match, but order may vary
+    result = pm.match("hello world")
+    assert result[0] == "Zero match"
 
 
 """Tests for PatternMatcher class."""

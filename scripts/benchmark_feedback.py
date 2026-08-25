@@ -37,7 +37,7 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "feedback" / "benchmark-2026-08-19.json"
+DEFAULT_OUTPUT = Path("documentation/feedback/benchmark-2026-08-19.json")
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 NOW_TEXT = "2026-08-16T12:00:00Z"
 POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")

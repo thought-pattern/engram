@@ -39,8 +39,8 @@ from engram.models import statement
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "indexes" / "benchmark-2026-08-19.json"
-BASELINE_INPUT = REPOSITORY / "documentation" / "baseline" / "benchmark-2026-08-11.json"
+DEFAULT_OUTPUT = Path("documentation/indexes/benchmark-2026-08-19.json")
+BASELINE_INPUT = Path("documentation/baseline/benchmark-2026-08-11.json")
 EXACT_CORPUS_SIZES = (10_000, 100_000)
 SUPPORT_FANOUTS = (1, 10, 100)
 FULL_PROPOSAL_CORPUS_SIZE = 5_000

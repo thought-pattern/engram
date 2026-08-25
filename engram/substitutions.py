@@ -68,17 +68,14 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     result = []
 
     for word in words:
-        # Strip punctuation for lookup
         prefix = ""
         suffix = ""
         core = word
 
-        # Extract leading punctuation
         while core and not core[0].isalnum():
             prefix += core[0]
             core = core[1:]
 
-        # Extract trailing punctuation
         while core and not core[-1].isalnum():
             suffix = core[-1] + suffix
             core = core[:-1]
@@ -87,11 +84,9 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
             result.append(word)
             continue
 
-        # Look up substitution (case-insensitive)
         lower_core = core.lower()
         if lower_core in subs:
             replacement = subs[lower_core]
-            # Preserve original case
             if core.isupper():
                 replacement = replacement.upper()
             elif core[0].isupper():
@@ -176,11 +171,9 @@ def split_sentences(text: str) -> list[str]:
         result = []
         return result
 
-    # Use NLTK's sentence tokenizer (ensure punkt is present locally first)
     _ensure_punkt()
     sentences = sent_tokenize(text)
 
-    # Strip whitespace and filter empty
     cleaned = [s.strip() for s in sentences if s.strip()]
     return cleaned
 
@@ -202,7 +195,6 @@ def normalize_for_matching(text: str, expand_contr: bool = True) -> str:
     if expand_contr:
         result = expand_contractions(result)
 
-    # Normalize whitespace
     result = " ".join(result.split())
 
     return result

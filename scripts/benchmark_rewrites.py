@@ -17,8 +17,8 @@ from engram.identity import build_scoped_retrieval_key, scope_key, scoped_retrie
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = REPOSITORY / "eval" / "section11-rewrite-v1.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "rewrite" / "benchmark-2026-08-20.json"
+DEFAULT_CORPUS = Path("eval/section11-rewrite-v1.json")
+DEFAULT_OUTPUT = Path("documentation/rewrite/benchmark-2026-08-20.json")
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -123,7 +123,7 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "corpus": {
-            "path": corpus_path.relative_to(REPOSITORY).as_posix(),
+            "path": corpus_path.as_posix(),
             "corpus_id": corpus["corpus_id"],
             "frozen_at": corpus["frozen_at"],
             "partition": corpus["provenance"],

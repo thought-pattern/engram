@@ -22,7 +22,6 @@ from uuid import uuid4
 from engram import persistence, sessions
 from engram.config import engram_config
 from engram.constants import (
-    DEFAULT_SEED_PATH,
     EMPTY_CONFIG,
     EMPTY_MAPPING,
     EMPTY_METADATA,
@@ -128,15 +127,6 @@ from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_
 from engram.rollout import apply_rollout, rollout_status, select_rollout
 from engram.telemetry import record_checkpoint, record_regulator_outcome, record_resolution
 from engram.text import normalize
-
-
-def resolve_seed_path(seed_path: str) -> Path:
-    """Resolve the bundled seed independently of an interface's working directory."""
-    candidate = Path(seed_path)
-    if seed_path == "data/seed.json" and not candidate.exists():
-        candidate = DEFAULT_SEED_PATH
-    result = candidate.resolve()
-    return result
 
 
 def _feedback_target(observations: tuple[object, ...], statement_id: str) -> FeedbackObservation:
@@ -404,7 +394,7 @@ class EngramCore:
         if clock != () and not callable(clock):
             raise InvalidRequestError("clock must be callable")
         self.engram = engram or Engram()
-        self.store_path = str(Path(store_path).resolve()) if store_path else ""
+        self.store_path = Path(store_path).as_posix() if store_path else ""
         self.checkpoint_on_mutation = checkpoint_on_mutation
         self.conversations: dict[str, ConversationRuntime] = {}
         self._resolution_requests: dict[str, dict[str, object]] = {}
@@ -875,12 +865,9 @@ class EngramCore:
             capability_readiness_fingerprint=canonical_fingerprint(readiness),
             policy_fingerprint=policy_fingerprint(self._resolution_orchestrator._fusion.policy),
         )
-        # Namespace epochs currently version only the authoritative accepted-
-        # response repository.  Lexical, pattern, graph, and vector knowledge
-        # have independent mutation authorities, so caching their misses could
-        # hide newly available evidence.  V1 is therefore exact-only until a
-        # shared knowledge-version contract is available.  Consulting another
-        # plan also invalidates an older exact-only record for this relationship.
+        # The knowledge epoch covers the accepted-response repository. Negative
+        # entries therefore apply to exact-only plans; other plans invalidate an
+        # exact-only entry for the same relationship.
         if configured != ("exact",):
             self._negative_resolutions.invalidate_for_key(key)
             result = key, False
@@ -2059,10 +2046,10 @@ def open_engram_core(
     """Load or create a core, optionally synchronizing a seed corpus."""
     if not isinstance(config, dict):
         raise InvalidRequestError("config must be an object")
-    resolved_store = str(Path(store_path).resolve()) if store_path else ""
-    if resolved_store and Path(resolved_store).exists():
+    selected_store = Path(store_path).as_posix() if store_path else ""
+    if selected_store and Path(selected_store).exists():
         try:
-            engram = persistence.load_engram(resolved_store, config=config)
+            engram = persistence.load_engram(selected_store, config=config)
         except Exception as error:
             raise PersistenceError("store load", error, state_changed=False) from error
     else:
@@ -2073,18 +2060,18 @@ def open_engram_core(
             raise InvalidRequestError(str(error)) from error
 
     if seed_path:
-        resolved_seed = resolve_seed_path(str(seed_path))
-        if not resolved_seed.exists():
-            raise ResourceNotFoundError(f"seed file not found: {resolved_seed}")
+        selected_seed = Path(seed_path)
+        if not selected_seed.exists():
+            raise ResourceNotFoundError(f"seed file not found: {selected_seed}")
         try:
-            seed_data = json.loads(resolved_seed.read_text(encoding="utf-8"))
+            seed_data = json.loads(selected_seed.read_text(encoding="utf-8"))
             engram.sync_corpus(seed_data.get("pairs", []))
         except (OSError, json.JSONDecodeError, ValueError) as error:
-            raise InvalidRequestError(f"invalid seed file {resolved_seed}: {error}") from error
+            raise InvalidRequestError(f"invalid seed file {selected_seed}: {error}") from error
 
     core = EngramCore(
         engram,
-        store_path=resolved_store,
+        store_path=selected_store,
         checkpoint_on_mutation=checkpoint_on_mutation,
     )
     if seed_path:

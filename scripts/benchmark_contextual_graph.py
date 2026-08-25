@@ -23,8 +23,8 @@ from engram.service import EngramCore
 from engram.spacy_setup import get_nlp
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_MANIFEST = REPOSITORY / "eval" / "section8-relation-followup-v1.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "contextual" / "benchmark-2026-08-20.json"
+DEFAULT_MANIFEST = Path("eval/section8-relation-followup-v1.json")
+DEFAULT_OUTPUT = Path("documentation/contextual/benchmark-2026-08-20.json")
 
 
 def _claim_row(claim_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:

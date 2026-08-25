@@ -51,7 +51,7 @@ def main() -> int:
     args = parse_args()
     if args.revision != DEFAULT_REVISION:
         raise SystemExit(f"semantic model revision is not approved: {args.revision}")
-    destination = Path(args.destination).resolve()
+    destination = Path(args.destination)
     manifest_path = destination.parent / f"{destination.name}.engram-model.json"
     expected_identity = {
         "schema_version": 1,
@@ -78,10 +78,10 @@ def main() -> int:
         manifest = {
             **expected_identity,
             "artifact_sha256": checksum,
-            "model_path": str(destination),
+            "model_path": destination.as_posix(),
         }
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps({**manifest, "manifest_path": str(manifest_path), "reused": True}, sort_keys=True))
+        print(json.dumps({**manifest, "manifest_path": manifest_path.as_posix(), "reused": True}, sort_keys=True))
         return 0
     destination.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as temporary_name:
@@ -100,7 +100,7 @@ def main() -> int:
         manifest = {
             **expected_identity,
             "artifact_sha256": checksum,
-            "model_path": str(destination),
+            "model_path": destination.as_posix(),
         }
         staged_manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         if destination.exists():
@@ -111,7 +111,7 @@ def main() -> int:
         except OSError:
             shutil.rmtree(destination)
             raise
-    print(json.dumps({**manifest, "manifest_path": str(manifest_path), "reused": False}, sort_keys=True))
+    print(json.dumps({**manifest, "manifest_path": manifest_path.as_posix(), "reused": False}, sort_keys=True))
     return 0
 
 

@@ -197,7 +197,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Minimum query count threshold (default: 10)",
     )
 
-    # coverage command (new)
     coverage_parser = subparsers.add_parser("coverage", help="Coverage analysis")
     coverage_parser.add_argument(
         "--gaps",
@@ -263,12 +262,6 @@ def create_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional JSON recovery transcript updated after each turn",
     )
-    interactive_parser.add_argument(
-        "--graph",
-        action="store_true",
-        help="Enable mock graph client for testing",
-    )
-
     return parser
 
 
@@ -304,7 +297,7 @@ def load_seed_pairs(path: str = "") -> list:
 
     Returns [] when the file does not exist.
     """
-    seed_file = Path(path) if path else Path(_REPO_ROOT) / "data" / "seed.json"
+    seed_file = Path(path or "data/seed.json")
     if not seed_file.exists():
         result = []
         return result
@@ -728,7 +721,6 @@ class InteractiveChat:
         self,
         core_or_engram,
         session_id: str = "",
-        enable_graph: bool = False,
         store_path: str = "",
         initial_bot_text: str = "",
         transcript_path: str = "",
@@ -751,10 +743,6 @@ class InteractiveChat:
         )
         self.runtime = self.core.get_conversation(self.session_id)
         self.session = sessions.get_session(self.engram, self.session_id, create_if_missing=True)
-
-        # Note: Graph support would require extending core.py to accept graph callbacks
-        if enable_graph:
-            print("Note: Graph client support is a future feature")
 
     def process_input(self, user_input: str) -> str:
         """Process user input through the tiered pipeline and return a response.
@@ -870,7 +858,6 @@ def cmd_interactive(args: argparse.Namespace) -> int:
     chat = InteractiveChat(
         core,
         session_id=args.session,
-        enable_graph=args.graph,
         store_path=args.store,
         initial_bot_text=args.initial_bot_text,
         transcript_path=args.transcript,
@@ -898,7 +885,6 @@ def main(argv=()) -> int:
         args.command = "interactive"
         # Set defaults for interactive mode arguments when no subcommand was used
         args.session = ""
-        args.graph = False
         args.initial_bot_text = ""
         args.transcript = ""
 

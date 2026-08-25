@@ -8,27 +8,23 @@ separate unified-resolution evidence API in `engram.v2`. The packaged
 through thin protobuf adapters, publishes the standard gRPC health service,
 and closes the core during graceful shutdown.
 
-There is no replication, load balancing, distributed locking, shared
-transaction service, or cross-instance consistency protocol. Deploy one
-server process with one JSON store.
+Deploy one server process with one JSON store.
 
-The v1 contract does not transport Knowledge Graph Claim records. The v2
-`ResolveEvidence` result carries the bounded Section 7 evidence package without
-changing any v1 message, field number, or RPC. When graph recall is enabled,
+The v1 contract carries proposal and conversation data. The v2
+`ResolveEvidence` result carries the bounded Claim evidence package. When graph recall is enabled,
 Engram reads the configured Memgraph instance directly. Its
 Schema 3.8 read subset understands Tapestry's half-open Claim times and excludes
-closed or retrieval-only (`generic_relation`) Claims. Consequently Phase A does
-not add protobuf fields or create a separate Engram graph in a Tapestry
-deployment.
+closed or retrieval-only (`generic_relation`) Claims. Tapestry deployments use
+the shared Memgraph schema.
 
 Schema 3.8 may also expose `research_leaf_proof_id` on a Claim as an
-application-owned proof receipt. Engram does not interpret or mutate it; recall
-continues to rely on the active canonical Claim and configured vector index.
+application-owned proof receipt. Engram retains it as opaque data; recall uses
+the active canonical Claim and configured vector index.
 
 The subset also indexes the canonical semantic fingerprint and carries Claim
 trust/ownership classification. These are graph properties read from the shared
-Memgraph schema; Engram remains read-only and never assigns identity, temporal
-bounds, trust, or ownership itself.
+Memgraph schema. Serving uses a read-only graph account; the graph supplies
+identity, temporal bounds, trust, and ownership.
 
 ## Vector-search boundary
 
@@ -37,19 +33,17 @@ configured local sentence-transformer and queries Memgraph's Claim-premise
 vector index. ANN results are intersected with the Claim identifiers already
 stored in each exactly scoped cached response. Vector similarity therefore
 helps find a previously verified response whose durable support is semantically
-related to the request; it never returns arbitrary Claim, Passage, proof, or KG
-text as an Engram answer. Keyword retrieval remains active and the two scores
-are merged before candidate selection.
+related to the request. Proposals remain scoped to stored responses. Keyword
+retrieval remains active and the two scores are merged before candidate selection.
 
 Engram's general read-only Cypher guard still rejects `CALL`. The sole exception
-is an internal, fixed `vector_search.search` query: callers cannot supply its
-Cypher or index name, the configured identifier is validated, the result limit
-is bounded, and inactive, closed, non-canonical, or retrieval-only Claims are
-excluded. The same ANN lookup is available as a fallback for conversational
+is an internal, fixed `vector_search.search` query with server-owned Cypher and
+index configuration, validated identifiers, bounded results, and active
+canonical Claims. The same ANN lookup is available as a fallback for conversational
 graph recall after exact canonical label, alias, and keyword lookup misses.
 
-The standalone server defaults to no graph access unless `--config-path` is
-supplied. With vectors enabled it loads and probes the local embedding model and
+The standalone server enables graph access through `--config-path`. With vectors
+enabled it loads and probes the local embedding model and
 the configured Memgraph vector index before publishing a healthy gRPC service;
 invalid graph, model, index, or dimension configuration fails startup.
 
@@ -87,10 +81,9 @@ The server accepts these deployment options:
 | `--tls-cert`, `--tls-key` | empty | PEM certificate/key pair for server TLS. |
 | `--log-level` | `INFO` | Server log level. |
 
-Store, seed, configuration, transcript/report locations, binding, and TLS are
-server configuration. Clients cannot submit filesystem paths through RPCs.
-Transcript and report filenames are stable SHA-256-derived names, so arbitrary
-caller-owned user labels cannot escape their configured directories.
+Store, seed, transcript/report locations, binding, and TLS come from server
+configuration. Stable SHA-256-derived transcript and report filenames keep
+caller-owned user labels within their configured directories.
 
 ## Process model
 
@@ -109,14 +102,13 @@ one EngramCore
      +-- one optional JSON store
 ```
 
-Concurrent RPC handlers all delegate to the same core. The core serializes
-state transitions with its application lock; the adapter does not reimplement
-chat, retrieval, learning, idempotency, or persistence logic.
+Concurrent RPC handlers delegate to the same core. The core serializes state
+transitions and owns chat, retrieval, learning, idempotency, and persistence.
 
 The v2 evidence adapter also connects the gRPC call lifecycle to
 `EngramCore.resolve_request`'s cooperative cancellation callback. A cancellation
-or expired deadline observed at a cooperative boundary does not cache a
-resolution result or negative miss, so the same request ID may be retried.
+or expired deadline at a cooperative boundary discards the transient resolution,
+permitting retry with the same request ID.
 
 ## Protocol and generated code
 
@@ -126,13 +118,13 @@ stubs, and service stubs are committed beside each source. RPC requests have
 explicit fields and v1 `Resolve` uses the `RegulatorOutcome` enum. Engram
 conversation, inspection, and cache results use
 `google.protobuf.Struct` because those JSON-ready diagnostic payloads are
-extensible application data rather than stable scalar records.
+extensible application data.
 
 The v2 `ResolutionResult` explicitly versions and names every top-level unified
 result field. Its `EvidencePackage` explicitly carries wire version, records,
 retained/omitted counts, truncation state, and reasons. Complex candidate,
 evidence, diagnostic, resolver, and budget records remain bounded core-owned
-structures rather than duplicated protobuf policy types.
+structures carried through `Struct` fields.
 
 Install the development dependencies and regenerate after changing the proto:
 
@@ -156,12 +148,12 @@ currently target `grpcio-tools` 1.83.0 and protobuf 7.35.1.
 | `StartConversation` | Start an isolated user runtime; an empty `user_id` becomes `"0"`. |
 | `Chat` | Submit one observed chatbot turn. |
 | `InspectConversation` | Return user context, learned knowledge, metrics, and core status. |
-| `FinishConversation` | Flush and write JSON/Markdown reports without stopping the user runtime. |
-| `StopConversation` | Flush and release one user runtime without stopping the server. |
+| `FinishConversation` | Flush and write JSON/Markdown reports while the user runtime remains active. |
+| `StopConversation` | Flush and release one user runtime while the server remains active. |
 | `AddFact` | Add a shared, unattributed fact with an opaque source label. |
 | `SetPredicate`, `GetPredicate` | Write/read a caller-owned value in one user context. |
-| `Propose` | Retrieve scoped response-cache candidates without recording a hit. |
-| `Resolve` | Commit one typed Regulator verdict; accepted retries cannot double-credit. |
+| `Propose` | Retrieve scoped response-cache candidates and record candidacy. |
+| `Resolve` | Commit one typed Regulator verdict with idempotent accepted credit. |
 | `LearnResponse` | Cache a non-`IDK` Actor answer with scope and metadata. |
 | `RetireResponse` | Retire one dynamic, patternless cached answer. |
 | `GetStatus` | Return lifecycle, readiness, durability, checkpoint, and conversation status. |
@@ -171,12 +163,12 @@ The separate `engram.v2.EngramEvidenceService` has one RPC:
 
 | RPC | Purpose |
 | --- | --- |
-| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Section 7 package when available. |
+| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Claim package when available. |
 
 `Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
 Tapestry contract documented in the
 [Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
-They do not require an active chatbot conversation.
+These RPCs operate at service scope outside the chatbot lifecycle.
 
 ## Python client example
 
@@ -231,8 +223,7 @@ Every typed failure supplies `engram-error-type` in trailing metadata.
 Persistence failures also supply `engram-operation` and
 `engram-state-changed`. The latter is `true` when the requested mutation was
 already applied to live memory before its checkpoint failed. Client details are
-the generic `Engram persistence failure`; driver, filesystem, path, and
-credential-bearing exception content is not returned.
+the generic `Engram persistence failure`; detailed exceptions remain in server logs.
 
 ## Health and readiness
 
@@ -245,36 +236,32 @@ store, closing core, closed core, or graceful shutdown reports `NOT_SERVING`.
 `durability`, `dirty`, `last_checkpoint_at`, a redacted exception-class
 `last_persistence_error`, `active_conversations`, `store_path`, and a bounded
 `telemetry` aggregate with fixed outcome, resolver, latency, resource, rebuild,
-durability, and Regulator keys. It stores no raw request or caller-controlled
-identifier labels. A bounded `components` object has
+durability, and Regulator keys. A bounded `components` object has
 `enabled` and `ready` Booleans for graph, vector, and spaCy. The component
-status omits endpoints, credentials, model paths, and index names.
+status contains fixed component identifiers.
 
 ## Persistence, retry, and deadlines
 
 With a configured store, successful durable mutations synchronously use the
 core's atomic checkpoint path. Proposals and idempotency records remain
-bounded, five-minute, process-local state and are never serialized.
+bounded, five-minute, process-local state.
 
-A checkpoint error does not roll back an in-memory mutation. While degraded,
-the core remains ready but standard health becomes `NOT_SERVING`. Correct the
+A checkpoint error leaves the in-memory mutation applied. While degraded, the
+core remains ready and standard health becomes `NOT_SERVING`. Correct the
 store and either call `Flush` or repeat the exact regulated-cache operation
-with the same `request_id`; its idempotency path retries persistence without
-applying or crediting the mutation twice.
+with the same `request_id`; its idempotency path retries persistence with one
+application and credit.
 
-A v1 client deadline or cancellation cannot claim rollback after handler
-execution has started. V2 resolution is cooperatively cancellable, but work
-inside a graph-driver call remains non-interruptible until the driver returns,
-and work already published is not rolled back. Chat calls are not idempotent,
-so inspect their user context before deciding whether to repeat an ambiguous
-timed-out turn. Regulated-cache calls should retain and reuse their logical
-`request_id`. The complete behavior matrix is in [the Section 15 concurrency
-contract](operations/section15-concurrency-idempotency-v1.md).
+A v1 handler may complete after a client deadline or cancellation. V2 resolution
+checks cooperative cancellation around graph calls; an executing driver call
+continues until the driver returns. Published work remains applied. Inspect user
+context before repeating an ambiguous chat turn. Regulated-cache calls retain and reuse their logical
+`request_id`. Recovery and ambiguous-outcome handling are described in the
+[deployment and rollback runbook](operations/deployment-and-rollback-v1.md).
 
 After restart, learned responses, facts, user contexts, statistics, and
 retirements come from the last completed checkpoint. Outstanding proposal IDs
-are expired; invoke the Actor again instead of assuming that an unresolved
-candidate was accepted.
+expire; the Actor handles unresolved requests again.
 
 ## Graceful shutdown
 
@@ -287,7 +274,7 @@ If the final checkpoint fails, the process logs the persistence failure and
 exits unsuccessfully. The core's `PersistenceError` still distinguishes
 whether live state differed from the last durable checkpoint. An application
 embedding `EngramGrpcServer` may correct the store and call `stop()` again to
-retry the final checkpoint; the already-stopped transport is not restarted.
+retry the final checkpoint. The transport remains stopped.
 
 ## Security and authority boundaries
 
@@ -296,9 +283,8 @@ retry the final checkpoint; the already-stopped transport is not restarted.
 - Protect the store, transcripts, and reports as application data. Engram
   creates service-owned artifact directories with owner-only permissions
   (`0700`) and writes stores, transcripts, and reports as owner-only files
-  (`0600`) on platforms that support POSIX modes. Deployment ACLs remain the
-  authoritative boundary on non-POSIX systems.
-- `source_label` and metadata are provenance, not authorization decisions.
+  (`0600`).
+- `source_label` and metadata record provenance; deployment policy supplies authorization.
 - Grant `AddFact`, `LearnResponse`, and `RetireResponse` only to callers that
   may change shared cache content.
 - Runtime graph access remains read-only. Graph schema setup remains the

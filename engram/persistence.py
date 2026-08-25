@@ -243,11 +243,7 @@ def _persistence_status(
 
 
 def _write_json_atomic(path, state: dict) -> None:
-    """Write JSON to path atomically via a temp file and rename.
-
-    A crash mid-write leaves the previous file intact instead of a truncated
-    store; os.replace is atomic on POSIX and Windows.
-    """
+    """Write JSON to path atomically via a temporary file and rename."""
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
@@ -716,8 +712,8 @@ def migrate_persistence_state(data: dict) -> dict:
 
 def migrate_persistence_file(source_path, output_path) -> PersistenceStatus:
     """Migrate one source file to a distinct new output and return a bounded report."""
-    source = Path(source_path).resolve()
-    output = Path(output_path).resolve()
+    source = Path(source_path)
+    output = Path(output_path)
     if source == output:
         raise InvalidRequestError("migration output must differ from the source path")
     if output.exists():
@@ -732,8 +728,8 @@ def migrate_persistence_file(source_path, output_path) -> PersistenceStatus:
     status = dict(instance.persistence_status)
     report: PersistenceStatus = {
         "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
-        "source_path": str(source),
-        "output_path": str(output),
+        "source_path": source.as_posix(),
+        "output_path": output.as_posix(),
         "source_version": data.get("version", LEGACY_PERSISTENCE_VERSION),
         "output_version": migrated["version"],
         "artifact_count": len(instance.response_repository.snapshot()["artifacts"]),
@@ -821,26 +817,21 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         config = stored_config
     instance = engram_class(config=config)
 
-    # Restore global counters
     instance.query_count = data.get("query_count", 0)
     instance.hit_count = data.get("hit_count", 0)
     instance.eviction_count = data.get("eviction_count", 0)
 
-    # Restore bot properties
     if "bot" in data:
         instance.bot_properties.update(data["bot"])
 
-    # Restore sets
     if "sets" in data:
         for name, words in data["sets"].items():
             instance.sets[name] = list(words)
 
-    # Restore maps
     if "maps" in data:
         for name, mapping in data["maps"].items():
             instance.maps[name] = dict(mapping)
 
-    # Restore substitutions
     if "substitutions" in data:
         subs = data["substitutions"]
         if "contractions" in subs:
@@ -854,14 +845,12 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         if "custom" in subs:
             instance.substitution_maps["custom"].update(subs["custom"])
 
-    # Restore statements
     for stmt_data in data.get("statements", []):
         stmt = statement_from_dict(stmt_data)
         if stmt["id"] in instance.statement_index:
             raise ValueError(f"duplicate statement id in persisted data: {stmt['id']}")
         instance.statements.append(stmt)
         instance.statement_index[stmt["id"]] = len(instance.statements) - 1
-        # Rebuild pattern matcher with context
         if stmt["pattern"]:
             for registered_pattern in [stmt["pattern"], *stmt["pattern_aliases"]]:
                 instance.pattern_matcher.add_pattern(
@@ -872,11 +861,9 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
                 )
                 instance.pattern_to_statement[registered_pattern] = stmt["id"]
 
-    # Restore keyword index
     for kw, entry_data in data.get("keywords", {}).items():
         instance.keywords[kw] = keyword_entry_from_dict(kw, entry_data)
 
-    # Restore sessions
     for sess_data in data.get("sessions", []):
         sess = session_from_dict(sess_data)
         instance.sessions[sess["session_id"]] = sess

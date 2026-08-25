@@ -595,7 +595,6 @@ def test_template_processor_learn_learn_callback():
 
     assert len(learned) == 1
     assert learned[0]["pattern"] == "THE SKY"
-    # Variables in templates are now resolved at learn time
     assert learned[0]["template"] == {"text": "blue"}
 
 

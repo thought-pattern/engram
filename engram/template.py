@@ -261,70 +261,56 @@ class TemplateProcessor:
     def _process_dict_template(self, template: dict, context: dict) -> str:
         """Process a dictionary template."""
 
-        # Text template
         if "text" in template:
             result = self._substitute_variables(str(template["text"]), context)
             return result
 
-        # Random selection
         if "random" in template:
             result = self._process_random(template["random"], context)
             return result
 
-        # Condition
         if "condition" in template:
             result = self._process_condition(template["condition"], context)
             return result
 
-        # Sequence
         if "sequence" in template:
             result = self._process_sequence(template["sequence"], context)
             return result
 
-        # Redirect (SRAI)
         if "redirect" in template:
             result = self._process_redirect(template["redirect"], context)
             return result
 
-        # Shorthand redirect
         if "sr" in template and template["sr"]:
-            # Redirect to first star capture
             if context["stars"]:
                 result = self._process_redirect(context["stars"][0], context)
                 return result
             result = ""
             return result
 
-        # Think (silent processing)
         if "think" in template:
             self._process_think(template["think"], context)
             result = ""
             return result
 
-        # Set variable
         if "set" in template:
             self._process_set(template["set"], context)
             result = ""
             return result
 
-        # Learn new category
         if "learn" in template:
             self._process_learn(template["learn"], context)
             result = ""
             return result
 
-        # Loop (returns to condition evaluation)
         if "loop" in template and template["loop"]:
-            # Loop is handled in condition processing
             result = ""
             return result
 
-        # Graph query
         if "graph_query" in template:
             result = self._process_graph_query(template["graph_query"], context)
             return result
 
-        # Triple query shorthand
         if "triple_query" in template:
             result = self._process_triple_query(template["triple_query"], context)
             return result
@@ -347,7 +333,6 @@ class TemplateProcessor:
         var_name = condition.get("var", condition.get("name", ""))
         var_value = context["predicates"].get(var_name, "")
 
-        # Existence check
         if "exists" in condition or "missing" in condition:
             if var_value:
                 result = self.process(condition.get("exists", ""), context)
@@ -356,7 +341,6 @@ class TemplateProcessor:
                 result = self.process(condition.get("missing", ""), context)
                 return result
 
-        # Pattern match check
         if "pattern" in condition:
             pattern = condition["pattern"]
             if re.match(pattern, var_value):
@@ -386,7 +370,6 @@ class TemplateProcessor:
                             return combined
                         return result
                 elif "default" in case or "then" in case:
-                    # Default case (no value specified)
                     result_template = case.get("default", case.get("then", case.get("template", "")))
                     result = self.process(result_template, context)
                     # Check for loop in default (same bound as above)
@@ -409,7 +392,6 @@ class TemplateProcessor:
             result = self.process(item, context)
             if result:
                 output_parts.append(result)
-        # Return all non-empty outputs joined
         output = " ".join(output_parts) if output_parts else ""
         return output
 
@@ -419,10 +401,8 @@ class TemplateProcessor:
             result = ""
             return result
 
-        # Substitute variables in the redirect pattern
         resolved_pattern = self._substitute_variables(pattern, context)
 
-        # Call redirect function if available
         if context["redirect_fn"]:
             self._srai_depth += 1
             try:
@@ -450,12 +430,10 @@ class TemplateProcessor:
     def _process_learn(self, learn_data: dict, context: dict) -> None:
         """Process learn element."""
         if context["learn_fn"]:
-            # Resolve variables in learn data
             resolved = {}
             if "pattern" in learn_data:
                 resolved["pattern"] = self._substitute_variables(learn_data["pattern"], context).upper()
             if "template" in learn_data:
-                # Resolve variables inside template
                 resolved["template"] = self._resolve_template_vars(learn_data["template"], context)
             if "that" in learn_data:
                 resolved["that"] = self._substitute_variables(learn_data["that"], context)
@@ -484,7 +462,6 @@ class TemplateProcessor:
             output = self.process(query_data.get("on_failure", ""), context)
             return output
 
-        # Resolve query and parameters
         query = self._substitute_variables(query_data.get("query", ""), context)
         if is_write_cypher(query):
             output = self.process(query_data.get("on_failure", ""), context)
@@ -503,32 +480,25 @@ class TemplateProcessor:
             output = self.process(query_data.get("on_empty", query_data.get("on_failure", "")), context)
             return output
 
-        # Format results
         format_type = query_data.get("format", "single")
 
         if format_type == "list":
-            # Format multiple results using item_template
             item_template = query_data.get("item_template", "{result}")
             join_str = query_data.get("join", ", ")
             items = []
             for record in records:
-                # Add record values to context for substitution
                 item_text = item_template
                 for key, value in record.items():
                     item_text = item_text.replace(f"{{{key}}}", str(value))
                 items.append(item_text)
             result_str = join_str.join(items)
         else:
-            # Single result - use first record
             record = graph_single(records) or {}
             result_str = str(record.get("result", ""))
 
-        # Substitute {result} in success template
         success_template = query_data.get("on_success", {"text": "{result}"})
         if isinstance(success_template, dict):
-            # Inject result into context for template processing
             context["predicates"]["_graph_result"] = result_str
-            # Process with result placeholder replaced
             template_copy = success_template.copy()
             if "text" in template_copy:
                 template_copy["text"] = template_copy["text"].replace("{result}", result_str)
@@ -597,7 +567,6 @@ class TemplateProcessor:
         # That history: {that} or {that:M} or {that:M:N}
         def that_sub(m):
             if not m.group(1):
-                # Get most recent bot response
                 if context["that_history"] and context["that_history"][0]:
                     result = context["that_history"][0][0]
                     return result
@@ -610,19 +579,17 @@ class TemplateProcessor:
 
         result = that_pattern.sub(that_sub, result)
 
-        # Simple variables
         for pattern, value in simple_variable_values(context).items():
             if pattern in result:
                 result = result.replace(pattern, value)
 
-        # Formatted date: {date:format}
         def date_format_sub(m):
             fmt = m.group(1)
             try:
                 formatted = datetime.now().strftime(fmt)
                 return formatted
             except ValueError:
-                original = m.group(0)  # Return original if invalid format
+                original = m.group(0)
                 return original
 
         result = date_format_pattern.sub(date_format_sub, result)
@@ -639,7 +606,6 @@ class TemplateProcessor:
             fn_name = m.group(1)
             content = m.group(2)
 
-            # Recursively substitute variables in content
             resolved = self._substitute_variables(content, context)
 
             if fn_name == "upper":
@@ -709,7 +675,6 @@ class TemplateProcessor:
                 return transformed
             return resolved
 
-        # Keep applying until no more transforms
         while True:
             transformed_text = transform_pattern.sub(transform, text)
             if transformed_text == text:

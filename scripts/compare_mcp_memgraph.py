@@ -21,7 +21,7 @@ from engram.core import Engram
 from engram.mcp_server import create_mcp_server
 from engram.service import EngramCore
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "contextual" / "mcp-memgraph-comparison-2026-08-20.json"
+DEFAULT_OUTPUT = Path("documentation/contextual/mcp-memgraph-comparison-2026-08-20.json")
 PROMPTS = (
     "Tell me about Sarah.",
     "Who is Sarah married to?",

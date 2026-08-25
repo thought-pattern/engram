@@ -24,15 +24,15 @@ from engram.repository import ArtifactRepository
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_FOUNDATION = REPOSITORY / "eval" / "release-gate-foundation-v1.json"
-DEFAULT_BASELINE = REPOSITORY / "documentation" / "evaluation" / "section16-performance-2026-08-23.json"
-DEFAULT_SEMANTIC = REPOSITORY / "documentation" / "evaluation" / "section16-semantic-2026-08-23.json"
-DEFAULT_CONTEXTUAL = REPOSITORY / "documentation" / "evaluation" / "section16-contextual-2026-08-23.json"
-DEFAULT_TEMPORAL = REPOSITORY / "documentation" / "evaluation" / "section16-temporal-2026-08-23.json"
-DEFAULT_COMPOSITION = REPOSITORY / "documentation" / "evaluation" / "section16-composition-2026-08-23.json"
-DEFAULT_EVIDENCE = REPOSITORY / "documentation" / "evaluation" / "section16-evidence-2026-08-23.json"
-DEFAULT_MCP = REPOSITORY / "documentation" / "evaluation" / "section16-mcp-conversation-1000-turns-2026-08-23.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "evaluation" / "section16-engineering-2026-08-23.json"
+DEFAULT_FOUNDATION = Path("eval/release-gate-foundation-v1.json")
+DEFAULT_BASELINE = Path("documentation/evaluation/section16-performance-2026-08-23.json")
+DEFAULT_SEMANTIC = Path("documentation/evaluation/section16-semantic-2026-08-23.json")
+DEFAULT_CONTEXTUAL = Path("documentation/evaluation/section16-contextual-2026-08-23.json")
+DEFAULT_TEMPORAL = Path("documentation/evaluation/section16-temporal-2026-08-23.json")
+DEFAULT_COMPOSITION = Path("documentation/evaluation/section16-composition-2026-08-23.json")
+DEFAULT_EVIDENCE = Path("documentation/evaluation/section16-evidence-2026-08-23.json")
+DEFAULT_MCP = Path("documentation/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json")
+DEFAULT_OUTPUT = Path("documentation/evaluation/section16-engineering-2026-08-23.json")
 DIRECT_RESPONSE = "Support is open from nine to five."
 DEFAULT_ARTIFACT_METADATA = {"approved": True}
 EMPTY_REQUIRED_METADATA: dict = {}
@@ -467,7 +467,7 @@ def run_quality_probes(
 def load_evidence(path: Path, current_digest: str) -> dict[str, object]:
     """Load one governed engineering artifact and summarize its currency."""
     if not path.exists():
-        return {"path": path.relative_to(REPOSITORY).as_posix(), "available": False, "current": False, "passed": False}
+        return {"path": path.as_posix(), "available": False, "current": False, "passed": False}
     data = json.loads(path.read_text(encoding="utf-8"))
     source = data.get("source", data.get("source_state", {}))
     digest = source.get("governed_source_sha256", "")
@@ -481,7 +481,7 @@ def load_evidence(path: Path, current_digest: str) -> dict[str, object]:
     if "all_gates_passed" in data:
         passed = data["all_gates_passed"]
     result = {
-        "path": path.relative_to(REPOSITORY).as_posix(),
+        "path": path.as_posix(),
         "available": True,
         "current": digest == current_digest,
         "passed": bool(passed),

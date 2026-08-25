@@ -41,7 +41,7 @@ WEAK_SCORE = 0.5  # calibrated keyword top-score at or below this is a weak retr
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
     engram = Engram(config=engram_config())
-    seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
+    seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)
     for pair in seed_data.get("pairs", []):
@@ -56,7 +56,7 @@ def build_seeded_engram() -> Engram:
 
 def load_corpus() -> list:
     """Load evaluation prompts from the corpus file."""
-    corpus_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json")
+    corpus_path = "eval/corpus.json"
     with open(corpus_path, encoding="utf-8") as f:
         data = json.load(f)
     result = data.get("prompts", [])

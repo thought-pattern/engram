@@ -2,11 +2,12 @@
 
 - Status: Accepted
 - Date: 2026-08-11
-- Applies from: Increment A
+- Applies from: Accepted-response identity and lifecycle
 
 ## Context
 
-The current learned-response path derives a set of lexical keywords and replaces an entry with the same scoped set. That erases identity-bearing words such as `when` and `where`. There is no exact or alias identity index, lifecycle is inferred from tier and physical presence, and retirement is allowed only for DYNAMIC patternless statements.
+Accepted responses need identity-preserving normalization, exact canonical and alias
+ownership, and explicit lifecycle transitions.
 
 ## Decision
 
@@ -19,17 +20,27 @@ Normalization version 1 (`n1`) is an identity-preserving algorithm:
 5. preserve symbolic comparisons and identity-bearing technical operators, while treating Unicode prose dashes and non-semantic edge punctuation as separators; and
 6. serialize the typed `QueryIdentity` fields and exact scope deterministically.
 
-The Section 1 remediation corrected normalization v1 before it was released, persisted, indexed, or exposed through Python, MCP, or gRPC integration fields. The remediated fixture is therefore the first releasable v1 keyspace rather than a migration to v2. It adds explicit adversarial cases for `<`, `>`, `<=`, `>=`, `==`, `!=`, `$`, `%`, `|`, `&`, and `*`; any subsequent key-changing behavior requires v2.
+The normalization-v1 fixture defines the released keyspace and includes cases for `<`, `>`, `<=`, `>=`, `==`, `!=`, `$`, `%`, `|`, `&`, and `*`. Any key-changing behavior requires v2.
 
-Canonical requests and retrieval aliases use the same explicit version. AIML `pattern_aliases` remain executable matcher data and are never used as retrieval aliases. Any behavior change that can alter an identity key requires a new normalization version; existing keys are not silently reinterpreted.
+Canonical requests and retrieval aliases use the same explicit version. AIML
+`pattern_aliases` remain separate executable matcher data. Key-changing behavior
+requires a new normalization version; existing keys retain their assigned version.
 
-A canonical or alias key may map to only one ACTIVE artifact in the same exact scope. A conflicting commit is rejected. Replacement requires explicit supersession naming the expected current statement ID and generation. Legacy collisions may coexist only in a quarantined, non-direct-answer state until repaired; they are never resolved by ordering or score.
+A canonical or alias key maps to one ACTIVE artifact in an exact scope. A conflicting
+commit is rejected. Replacement requires explicit supersession naming the expected
+statement ID and generation. Legacy collisions remain quarantined until repaired.
 
-Lifecycle is independent of eviction tier and has four persisted states: ACTIVE, SUPERSEDED, INVALIDATED, and RETIRED. All identity, artifact, lifecycle, and derived-index mutations occur under the core's re-entrant mutation lock and commit as one live-state transition. Supersession and other competing transitions use optimistic concurrency through expected statement ID and generation. A retry with the same request identity and payload returns the original result; a changed payload conflicts.
+Lifecycle and eviction tier are separate fields. Lifecycle has four persisted states:
+ACTIVE, SUPERSEDED, INVALIDATED, and RETIRED. All identity, artifact, lifecycle,
+and derived-index mutations occur under the core's re-entrant mutation lock and
+commit as one live-state transition. Supersession and competing transitions use
+optimistic concurrency through expected statement ID and generation. A retry with
+the same request identity and payload returns the original result; a changed payload
+conflicts.
 
 ## Consequences
 
-- `when`/`where`, current/historical, positive/negative, and similar pairs cannot replace each other merely because their lexical keywords match.
-- Migration must quarantine ambiguous legacy keys rather than guess.
-- Tier continues to control capacity eviction only; it no longer implies truth, eligibility, or lifecycle.
-- Increment A needs adversarial normalization fixtures and concurrent transition tests before direct exact lookup is enabled.
+- Identity preserves `when`/`where`, current/historical, positive/negative, and similar pairs.
+- Migration quarantines ambiguous legacy keys.
+- Tier controls capacity eviction; lifecycle controls truth and eligibility.
+- Adversarial normalization fixtures and concurrent transition tests verify direct exact lookup.

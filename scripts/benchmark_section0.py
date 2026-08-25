@@ -26,7 +26,7 @@ from engram.core import Engram
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "baseline" / "benchmark-2026-08-19.json"
+DEFAULT_OUTPUT = Path("documentation/baseline/benchmark-2026-08-19.json")
 PACKAGE_NAMES = (
     "grpcio",
     "grpcio-tools",

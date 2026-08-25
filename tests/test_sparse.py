@@ -76,7 +76,7 @@ def sparse_engine(*artifacts: CachedResponseArtifact) -> Engram:
 def test_sparse_document_has_versioned_weighted_fields_without_response_text_by_default() -> None:
     accepted = artifact(
         "technical",
-        "How do I fix ERR_CONN_RESET in libfoo v2.4.1 at C:\\api\\client.py?",
+        "How do I fix ERR_CONN_RESET in libfoo v2.4.1 at api/client.py?",
         "Keep this accepted answer out of the intent index.",
         aliases=("libfoo connection reset",),
     )
@@ -85,12 +85,12 @@ def test_sparse_document_has_versioned_weighted_fields_without_response_text_by_
 
     assert document["schema_version"] == 1
     assert tuple(document["fields"]) == tuple(SPARSE_FIELD_WEIGHTS)
-    assert document["fields"]["canonical"] == ("how do i fix err_conn_reset in libfoo v2.4.1 at c:\\api\\client.py?",)
+    assert document["fields"]["canonical"] == ("how do i fix err_conn_reset in libfoo v2.4.1 at api/client.py?",)
     assert document["fields"]["aliases"] == ("libfoo connection reset",)
     assert document["fields"]["response_text"] == ()
     assert "err_conn_reset" in document["technical_identifiers"]
     assert "v2.4.1" in document["technical_identifiers"]
-    assert "c:\\api\\client.py" in document["technical_identifiers"]
+    assert "api/client.py" in document["technical_identifiers"]
     assert SPARSE_FIELD_WEIGHTS == {
         "canonical": 3.0,
         "aliases": 2.5,
@@ -116,7 +116,7 @@ def test_sparse_response_text_is_an_explicit_low_weight_opt_in() -> None:
 
 
 def test_technical_tokenization_preserves_identifiers_and_exposes_language_components() -> None:
-    text = "ERR_CONN_RESET libfoo v2.4.1 C:\\api\\client.py std::vector C++ RFC-9110"
+    text = "ERR_CONN_RESET libfoo v2.4.1 api/client.py std::vector C++ RFC-9110"
 
     identifiers = technical_identifiers(text)
     tokens = sparse_tokens(text)
@@ -124,7 +124,7 @@ def test_technical_tokenization_preserves_identifiers_and_exposes_language_compo
     assert identifiers == (
         "err_conn_reset",
         "v2.4.1",
-        "c:\\api\\client.py",
+        "api/client.py",
         "std::vector",
         "c++",
         "rfc-9110",

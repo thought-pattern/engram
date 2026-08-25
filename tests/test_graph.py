@@ -379,7 +379,7 @@ def test_read_only_graph_wiring_is_write_cypher_refuses_procedures_and_imports()
     # LOAD CSV imports data -- both are refused on the recall-only path.
     assert is_write_cypher("CALL mg.load_all()")
     assert is_write_cypher("call db.labels() YIELD label RETURN label")
-    assert is_write_cypher("LOAD CSV FROM 'file:///x.csv' AS row RETURN row")
+    assert is_write_cypher("LOAD CSV FROM 'rows.csv' AS row RETURN row")
     # 'called'/'loading' as plain words in string literals do not trip the
     # whole-word guard.
     assert not is_write_cypher("MATCH (c:Claim) WHERE c.subject = 'so-called expert' RETURN c")

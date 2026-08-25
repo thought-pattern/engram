@@ -127,11 +127,11 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=REPOSITORY / "eval" / "section9-temporal-conflict-v1.json")
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section9-temporal-conflict-v1.json"))
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPOSITORY / "documentation" / "temporal" / "benchmark-2026-08-20.json",
+        default=Path("documentation/temporal/benchmark-2026-08-20.json"),
     )
     arguments = parser.parse_args()
     report = run(arguments.corpus)

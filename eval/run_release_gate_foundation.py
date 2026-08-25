@@ -33,10 +33,10 @@ from eval.run_section16_engineering import (
 )
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_MANIFEST = REPOSITORY / "eval" / "release-gate-foundation-v1.json"
-DEFAULT_CHAOS = REPOSITORY / "documentation" / "evaluation" / "section16-chaos-2026-08-23.json"
-DEFAULT_ENGINEERING = REPOSITORY / "documentation" / "evaluation" / "section16-engineering-2026-08-23.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "evaluation" / "foundation-2026-08-19.json"
+DEFAULT_MANIFEST = Path("eval/release-gate-foundation-v1.json")
+DEFAULT_CHAOS = Path("documentation/evaluation/section16-chaos-2026-08-23.json")
+DEFAULT_ENGINEERING = Path("documentation/evaluation/section16-engineering-2026-08-23.json")
+DEFAULT_OUTPUT = Path("documentation/evaluation/foundation-2026-08-19.json")
 PARTITION_NAMES = ("tuning", "release_gate", "final_test")
 WORKLOAD_FAMILIES = (
     "exact",
@@ -747,7 +747,7 @@ def main() -> int:
     source = benchmark_source_state()
     source_digest = require_text(source.get("governed_source_sha256"), "governed source digest")
     evidence = load_current_evidence(arguments, source_digest)
-    configuration_sha256 = file_sha256(REPOSITORY / "config.example.yml")
+    configuration_sha256 = file_sha256(Path("config.example.yml"))
     result = run_foundation(manifest, evidence, source, configuration_sha256)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")

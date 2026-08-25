@@ -358,14 +358,14 @@ def test_identity_extraction_symbolic_comparisons_are_typed_qualifiers(symbol: s
 
 def test_identity_extraction_entity_and_technical_identifier_extraction_is_surface_only() -> None:
     entities = extract_entities_and_identifiers(
-        r"Compare Ada Lovelace with PostgreSQL v16.2 at C:\Engram\config.yml after RFC 7231, error E-1234, and C++."
+        "Compare Ada Lovelace with PostgreSQL v16.2 at config/engram.yml after RFC 7231, error E-1234, and C++."
     )
     surfaces = [entity["surface"] for entity in entities]
 
     assert "Ada Lovelace" in surfaces
     assert "PostgreSQL" in surfaces
     assert "v16.2" in surfaces
-    assert r"C:\Engram\config.yml" in surfaces
+    assert "config/engram.yml" in surfaces
     assert "RFC 7231" in surfaces
     assert all(entity["canonical_id"] == "" for entity in entities)
 

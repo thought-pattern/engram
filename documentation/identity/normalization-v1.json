@@ -25,8 +25,8 @@
     },
     {
       "id": "paths",
-      "input": "Read /API/v1/Users and C:\\Engram\\config.yml.",
-      "expected": "read /api/v1/users and c:\\engram\\config.yml"
+      "input": "Read API/v1/Users and config/Engram.yml.",
+      "expected": "read api/v1/users and config/engram.yml"
     },
     {
       "id": "error-and-qualified-symbol",

@@ -52,24 +52,14 @@ def normalize(text: str) -> str:
         >>> normalize("What's the S&P 500 price?")
         'whats the sp 500 price'
     """
-    # Convert to lowercase
     result = text.lower()
 
-    # Remove punctuation except intra-word hyphens
-    # First, protect intra-word hyphens by replacing word-hyphen-word with placeholder
+    # Protect intra-word hyphens while removing other punctuation.
     placeholder = "\x00"
     result = re.sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
-
-    # Remove all non-alphanumeric except spaces and placeholder
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
-
-    # Restore protected hyphens
     result = result.replace(placeholder, "-")
-
-    # Collapse whitespace to single spaces
     result = re.sub(r"\s+", " ", result)
-
-    # Trim
     trimmed = result.strip()
     return trimmed
 
@@ -142,7 +132,6 @@ def extract_keywords(
 
     tokens = word_tokenize(text)
 
-    # Optional POS filtering
     if use_pos_filter:
         tagged = pos_tag(tokens)
         tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]

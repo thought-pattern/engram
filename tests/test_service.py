@@ -22,6 +22,13 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore, open_engram_core
 
 
+def test_core_preserves_relative_store_path() -> None:
+    core = EngramCore(store_path="state/engram.json", checkpoint_on_mutation=False)
+
+    assert core.store_path == "state/engram.json"
+    assert core.status()["store_path"] == "state/engram.json"
+
+
 def test_resolution_reuses_the_plan_built_for_negative_lookup(monkeypatch) -> None:
     core = EngramCore()
     original = core._resolver_registry.plan

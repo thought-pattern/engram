@@ -14,8 +14,8 @@ from engram.constants import QueryOperator
 from engram.rewrite import RewriteEngine, lint_rewrite_corpus, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CASES = REPOSITORY / "eval" / "section11-rewrite-v1.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "rewrite" / "lint-2026-08-20.json"
+DEFAULT_CASES = Path("eval/section11-rewrite-v1.json")
+DEFAULT_OUTPUT = Path("documentation/rewrite/lint-2026-08-20.json")
 
 
 def _cases(path: Path) -> list[dict[str, object]]:
@@ -74,7 +74,7 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
         "source_state": benchmark_source_state(),
         "inputs": {
             "rule_corpus": "engram/data/rewrite-rules-v1.json",
-            "regression_corpus": cases_path.relative_to(REPOSITORY).as_posix(),
+            "regression_corpus": cases_path.as_posix(),
             "rules": len(rules),
             "regression_cases": len(_cases(cases_path)),
         },

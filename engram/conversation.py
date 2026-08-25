@@ -192,7 +192,7 @@ class ConversationRuntime:
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
-        self.transcript_path = str(Path(transcript_path)) if transcript_path else ""
+        self.transcript_path = Path(transcript_path).as_posix() if transcript_path else ""
         self.started_at = _utc_now()
         self.turns: list[dict] = []
         self.lock = threading.RLock()
@@ -312,7 +312,7 @@ class ConversationRuntime:
 
     def write_report(self, output_prefix: str) -> dict:
         """Write JSON and Markdown reports and return their paths and summary."""
-        prefix = Path(output_prefix).resolve()
+        prefix = Path(output_prefix)
         json_path = prefix.with_suffix(".json")
         markdown_path = prefix.with_suffix(".md")
         report = self.report()
@@ -325,8 +325,8 @@ class ConversationRuntime:
             markdown_path.chmod(0o600)
         result = {
             "summary": report["summary"],
-            "json": str(json_path),
-            "markdown": str(markdown_path),
+            "json": json_path.as_posix(),
+            "markdown": markdown_path.as_posix(),
         }
         return result
 

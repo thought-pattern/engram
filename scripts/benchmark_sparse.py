@@ -35,8 +35,8 @@ from engram.repository import ArtifactRepository
 from engram.sparse import SparseIndexOwner, sparse_document_from_artifact, sparse_tokens
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = REPOSITORY / "eval" / "section12-sparse-v1.json"
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "sparse" / "benchmark-2026-08-21.json"
+DEFAULT_CORPUS = Path("eval/section12-sparse-v1.json")
+DEFAULT_OUTPUT = Path("documentation/sparse/benchmark-2026-08-21.json")
 SCALE_DOCUMENTS = 10_000
 SCALE_QUERY_SAMPLES = 200
 SCALE_BUILD_SAMPLES = 5
@@ -457,7 +457,7 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "corpus": {
-            "path": corpus_path.relative_to(REPOSITORY).as_posix(),
+            "path": corpus_path.as_posix(),
             "evaluation_role": corpus["evaluation_role"],
             "provenance": corpus["provenance"],
             "documents": len(artifacts),

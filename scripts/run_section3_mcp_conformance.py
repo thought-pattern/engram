@@ -32,7 +32,7 @@ from engram.constants import (
 from engram.mcp_server import create_mcp_server
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "mcp-conversation-1000-turns-2026-08-12.json"
+DEFAULT_OUTPUT = Path("documentation/artifacts/mcp-conversation-1000-turns-2026-08-12.json")
 SARAH_SUSHI_MESSAGES = (
     "Sushi is good.",
     "What's good?",
@@ -177,7 +177,7 @@ async def _run(
                 {
                     "user_id": user_id,
                     "initial_bot_text": ".",
-                    "seed_path": seed_path or str(REPOSITORY / "data" / "seed.json"),
+                    "seed_path": seed_path or "data/seed.json",
                     "config_path": config_path,
                     "random_seed": 315,
                     "random_seed_present": True,
@@ -303,7 +303,7 @@ async def _run(
         "conversation_profile": profile,
         "configuration": {
             "config_path_supplied": bool(config_path),
-            "seed_path": seed_path or str(REPOSITORY / "data" / "seed.json"),
+            "seed_path": seed_path or "data/seed.json",
             "graph_enabled": graph_status.get("enabled", False),
             "graph_ready": graph_status.get("ready", False),
             "memgraph_probe_every": memgraph_probe_every,

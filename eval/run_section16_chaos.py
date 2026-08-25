@@ -15,7 +15,7 @@ if str(REPOSITORY) not in sys.path:
 
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "evaluation" / "section16-chaos-2026-08-23.json"
+DEFAULT_OUTPUT = Path("documentation/evaluation/section16-chaos-2026-08-23.json")
 SCENARIOS = (
     {
         "id": "unavailable_graph",

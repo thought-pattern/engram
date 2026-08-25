@@ -21,8 +21,8 @@ from engram.constants import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_CORPUS = REPOSITORY / "eval" / "section14-utilities-v1.json"
-DEFAULT_OUTPUT_DIRECTORY = REPOSITORY / "documentation" / "utilities"
+DEFAULT_CORPUS = Path("eval/section14-utilities-v1.json")
+DEFAULT_OUTPUT_DIRECTORY = Path("documentation/utilities")
 THREAT_INPUTS = {
     "arithmetic_v1": "calculate __import__('os').system('echo bad')",
     "boolean_v1": "boolean __import__",
@@ -160,7 +160,7 @@ def fuzz_plugin(plugin_name: str, count: int) -> dict:
 
 
 def forbidden_execution_calls() -> list[dict]:
-    source_path = REPOSITORY / "engram" / "utilities.py"
+    source_path = Path("engram/utilities.py")
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
     forbidden = []
     for node in ast.walk(tree):
@@ -281,7 +281,7 @@ def main() -> int:
     summary = {
         "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
-        "corpus": {"path": str(args.corpus.relative_to(REPOSITORY)), "version": corpus["corpus_version"]},
+        "corpus": {"path": args.corpus.as_posix(), "version": corpus["corpus_version"]},
         "source_state": source_state,
         "fixed_registry": {
             "plugin_names": list(UTILITY_PLUGIN_NAMES),
@@ -308,7 +308,7 @@ def main() -> int:
     }
     summary_path = args.output_directory / "benchmark-2026-08-22.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"output": str(summary_path), "passed": overall_passed}, sort_keys=True))
+    print(json.dumps({"output": summary_path.as_posix(), "passed": overall_passed}, sort_keys=True))
     return 0 if overall_passed else 1
 
 

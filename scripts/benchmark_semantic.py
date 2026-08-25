@@ -94,9 +94,9 @@ def evaluate_rows(rows: list[dict]) -> dict:
 
 def main() -> int:
     args = parse_args()
-    corpus_path = Path(args.corpus).resolve()
-    manifest_path = Path(args.manifest).resolve()
-    output_path = Path(args.output).resolve()
+    corpus_path = Path(args.corpus)
+    manifest_path = Path(args.manifest)
+    output_path = Path(args.output)
     corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     model_path = Path(manifest["model_path"])
@@ -105,7 +105,7 @@ def main() -> int:
         raise SystemExit("model artifact checksum does not match manifest")
     semantic_settings = semantic_config(
         enabled=True,
-        model_path=str(model_path),
+        model_path=model_path.as_posix(),
         model_id=manifest["model_id"],
         model_version=manifest["model_version"],
         license_id=manifest["license_id"],
@@ -272,7 +272,7 @@ def main() -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "source_state": benchmark_source_state(),
         "corpus": {
-            "path": str(Path(args.corpus)),
+            "path": Path(args.corpus).as_posix(),
             "version": corpus["corpus_version"],
             "query_count": len(corpus["queries"]),
             "evaluation_role": corpus["evaluation_role"],
@@ -349,7 +349,7 @@ def main() -> int:
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"output": str(output_path), "gates": result["gates"]}, sort_keys=True))
+    print(json.dumps({"output": output_path.as_posix(), "gates": result["gates"]}, sort_keys=True))
     return 0 if result["gates"]["semantic"]["passed"] and result["gates"]["reranker"]["passed"] else 1
 
 

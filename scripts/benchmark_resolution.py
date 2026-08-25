@@ -37,7 +37,7 @@ from engram.resolution import (
 from engram.resolvers import ExactResolver, LexicalResolver, ResolverBudget, ResolverExecutor, ResolverRegistry, resolver_budget
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = REPOSITORY / "documentation" / "artifacts" / "section4-benchmark-2026-08-19.json"
+DEFAULT_OUTPUT = Path("documentation/artifacts/section4-benchmark-2026-08-19.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 

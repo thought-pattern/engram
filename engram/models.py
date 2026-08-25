@@ -101,7 +101,7 @@ def statement_to_dict(stmt: dict) -> dict:
         data["introduced_by_user_id"] = stmt["introduced_by_user_id"]
     if stmt["source_label"]:
         data["source_label"] = stmt["source_label"]
-    # Eviction tracking (always include for consistency)
+    # Hit and query counters are always serialized; last_hit is included when present.
     data["hit_count"] = stmt["hit_count"]
     data["query_count"] = stmt["query_count"]
     if stmt["last_hit"]:

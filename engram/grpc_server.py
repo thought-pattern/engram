@@ -140,8 +140,8 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     ) -> None:
         self.core = core
         self.health_servicer = health_servicer
-        self.transcript_directory = str(Path(transcript_directory).resolve()) if transcript_directory else ""
-        self.report_directory = str(Path(report_directory).resolve()) if report_directory else ""
+        self.transcript_directory = Path(transcript_directory).as_posix() if transcript_directory else ""
+        self.report_directory = Path(report_directory).as_posix() if report_directory else ""
         for directory in (self.transcript_directory, self.report_directory):
             if directory:
                 path = Path(directory)

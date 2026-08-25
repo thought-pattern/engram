@@ -47,7 +47,7 @@ LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
     engram = Engram(config=engram_config(learn_user_facts=True))
-    seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
+    seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)
     for pair in seed_data.get("pairs", []):
@@ -62,7 +62,7 @@ def build_seeded_engram() -> Engram:
 
 def load_turns(path: str) -> list:
     """Load conversation turns from a script file."""
-    script_path = path if path else os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversation.json")
+    script_path = path or "eval/conversation.json"
     with open(script_path, encoding="utf-8") as f:
         data = json.load(f)
     turns = data.get("turns", [])

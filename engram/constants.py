@@ -8,12 +8,10 @@ cycle.
 """
 
 import hashlib
-import os
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
-from pathlib import Path
 from types import MappingProxyType
 
 # =============================================================================
@@ -28,7 +26,6 @@ DEFAULT_USER_ID = "0"
 EMPTY_MAPPING = MappingProxyType({})
 EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
-DEFAULT_SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
 PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1_000
 REGULATOR_OUTCOMES = set(
@@ -2393,10 +2390,7 @@ class ResponseQuarantineReason(StrEnum):
 # NLTK data
 # =============================================================================
 
-# Local data directory: <repo root>/data/nltk_data
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_THIS_DIR)
-NLTK_DATA_DIR = os.path.join(_REPO_ROOT, "data", "nltk_data")
+NLTK_DATA_DIR = "data/nltk_data"
 
 # Required packages as (find_path, download_name) pairs. find_path is what
 # nltk.data.find expects; download_name is what nltk.download expects.
@@ -3001,8 +2995,6 @@ IDENTITY_ENTITY_EXCLUDED_WORDS = set(
 IDENTITY_TITLE_SEQUENCE_RE = re.compile(r"(?<![\w])(?:[A-Z][\w'’+#.-]*)(?:\s+(?:[A-Z][\w'’+#.-]*)){0,4}")
 IDENTITY_QUOTED_SPAN_RE = re.compile(r"[\"“]([^\"”]{1,512})[\"”]")
 IDENTITY_TECHNICAL_PATTERNS = (
-    re.compile(r"(?<!\w)[A-Za-z]:\\[^\s?*\"<>|]+"),
-    re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%+-]+/)*[A-Za-z0-9._~!$&'()*+,;=:@%+-]+"),
     re.compile(r"(?<!\w)(?:RFC|ISO|IEC|IEEE|ECMA|PEP)\s*[-:]?\s*\d+(?:[.-]\d+)*(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)v?\d+(?:\.\d+){1,}(?!\w)", re.IGNORECASE),
     re.compile(r"(?<!\w)[A-Z][A-Z0-9]+(?:[-_][A-Z0-9]+)+(?!\w)"),

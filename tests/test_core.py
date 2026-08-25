@@ -1695,7 +1695,7 @@ def test_sync_corpus_prune_prune_retires_entries_absent_from_corpus() -> None:
     assert counts["pruned"] == 1
     assert engram.pattern_query("keep me")[2] == "Kept."
     assert engram.pattern_query("drop me") == ()
-    # DYNAMIC learned content is never pruned
+    # Corpus pruning leaves DYNAMIC learned content unchanged.
     assert engram.get_statement(learned_id)
 
 
