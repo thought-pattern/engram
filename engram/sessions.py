@@ -6,7 +6,7 @@ retrieval, updates, expiration, and cleanup of user sessions.
 
 from datetime import UTC, datetime, timedelta
 
-from engram.constants import DEFAULT_USER_ID, SessionOverflow
+from engram.constants import DEFAULT_USER_ID, EARLIEST_UTC, SessionOverflow
 from engram.models import session, session_update_context
 
 
@@ -22,16 +22,16 @@ class SessionNotFoundError(Exception):
     pass
 
 
-def normalize_user_id(user_id: str | None = None) -> str:
+def normalize_user_id(user_id: str = "") -> str:
     """Return the caller-owned user label, defaulting missing labels to "0"."""
-    if user_id is None or user_id == "":
+    if user_id == "":
         return DEFAULT_USER_ID
     if not isinstance(user_id, str):
         raise ValueError("user_id must be a string")
     return user_id
 
 
-def create_session(engram, session_id=None, metadata=None) -> str:
+def create_session(engram, session_id: str = "", metadata=()) -> str:
     """Create a new session.
 
     Args:
@@ -58,7 +58,8 @@ def create_session(engram, session_id=None, metadata=None) -> str:
 
         sess = session(session_id=session_id, metadata=metadata)
         engram.sessions[sess["session_id"]] = sess
-        return sess["session_id"]
+        result = sess["session_id"]
+        return result
 
 
 def get_session(engram, session_id: str, create_if_missing: bool = True):
@@ -70,13 +71,13 @@ def get_session(engram, session_id: str, create_if_missing: bool = True):
         create_if_missing: If True, create session if not found (default: True).
 
     Returns:
-        Session object or None if not found and create_if_missing is False.
+        Session object or an empty dict if not found and create_if_missing is False.
     """
     with engram.session_lock:
-        session = engram.sessions.get(session_id)
-        if session is None and create_if_missing:
+        session = engram.sessions.get(session_id, {})
+        if not session and create_if_missing:
             create_session(engram, session_id=session_id)
-            session = engram.sessions.get(session_id)
+            session = engram.sessions.get(session_id, {})
         return session
 
 
@@ -93,8 +94,8 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
     """
 
     with engram.session_lock:
-        session = engram.sessions.get(session_id)
-        if session is None:
+        session = engram.sessions.get(session_id, {})
+        if not session:
             raise SessionNotFoundError(f"Session not found: {session_id}")
         session_update_context(session, previous_response)
 
@@ -112,11 +113,13 @@ def delete_session(engram, session_id: str) -> bool:
     with engram.session_lock:
         if session_id in engram.sessions:
             del engram.sessions[session_id]
-            return True
-        return False
+            result = True
+            return result
+        result = False
+        return result
 
 
-def expire_sessions(engram, inactive_threshold=None) -> int:
+def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:
     """Remove inactive sessions based on threshold.
 
     Args:
@@ -126,7 +129,7 @@ def expire_sessions(engram, inactive_threshold=None) -> int:
     Returns:
         Number of sessions removed.
     """
-    if inactive_threshold is None:
+    if not inactive_threshold:
         inactive_threshold = timedelta(seconds=engram.config["session_ttl_seconds"])
 
     cutoff = datetime.now(UTC) - inactive_threshold
@@ -143,7 +146,7 @@ def expire_sessions(engram, inactive_threshold=None) -> int:
     return removed
 
 
-def list_sessions(engram, active_since=None) -> list:
+def list_sessions(engram, active_since: datetime = EARLIEST_UTC) -> list:
     """List all sessions, optionally filtered by activity.
 
     Args:
@@ -154,9 +157,6 @@ def list_sessions(engram, active_since=None) -> list:
         List of matching sessions.
     """
     with engram.session_lock:
-        if active_since is None:
-            all_sessions = list(engram.sessions.values())
-            return all_sessions
         filtered = [s for s in engram.sessions.values() if s["last_active"] >= active_since]
         return filtered
 

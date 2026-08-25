@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from engram.constants import Tier
+from engram.contextual import compact_query_frame_from_dict, compact_query_frame_to_dict
 from engram.substitutions import split_sentences
 
 # =============================================================================
@@ -19,15 +20,15 @@ from engram.substitutions import split_sentences
 def statement(
     text: str,
     tier: Tier = Tier.DYNAMIC,
-    keywords=None,
-    statement_id=None,
+    keywords=(),
+    statement_id: str = "",
     pattern: str = "",
-    pattern_aliases=None,
+    pattern_aliases=(),
     that: str = "",
     topic: str = "",
-    template=None,
+    template=(),
     priority: int = 0,
-    introduced_by_user_id: str | None = None,
+    introduced_by_user_id: str = "",
     source_label: str = "",
 ) -> dict:
     """Build a Statement dict (atomic unit of storage, a pattern-template pair).
@@ -39,12 +40,12 @@ def statement(
         "text": text,  # Response text or template
         "tier": tier,
         "created_at": datetime.now(UTC),
-        "keywords": keywords or [],
+        "keywords": list(keywords or ()),
         "pattern": pattern,  # AIML-style pattern for matching
-        "pattern_aliases": list(pattern_aliases or []),  # Alternate patterns resolving to this statement
+        "pattern_aliases": list(pattern_aliases or ()),  # Alternate patterns resolving to this statement
         "that": that,  # Pattern to match bot's previous response
         "topic": topic,  # Topic scope constraint
-        "template": template or {},  # Structured template (JSON), {} if none
+        "template": dict(template or ()),  # Structured template (JSON), {} when absent
         "priority": priority,  # Override default priority (higher = preferred)
         "introduced_by_user_id": introduced_by_user_id,
         "source_label": source_label,
@@ -58,7 +59,8 @@ def statement(
 def statement_hit_rate(stmt: dict) -> float:
     """Calculate hit rate (hits/queries), default 0.5 when undefined."""
     if stmt["query_count"] == 0:
-        return 0.5
+        result = 0.5
+        return result
     rate = stmt["hit_count"] / stmt["query_count"]
     return rate
 
@@ -84,7 +86,7 @@ def statement_to_dict(stmt: dict) -> dict:
         "keywords": stmt["keywords"],
         "pattern": stmt["pattern"],
     }
-    # Only include optional fields if set
+    # Only include absent-capable fields when they carry a concrete value.
     if stmt["that"]:
         data["that"] = stmt["that"]
     if stmt["pattern_aliases"]:
@@ -95,11 +97,11 @@ def statement_to_dict(stmt: dict) -> dict:
         data["template"] = stmt["template"]
     if stmt["priority"] != 0:
         data["priority"] = stmt["priority"]
-    if stmt["introduced_by_user_id"] is not None:
+    if stmt["introduced_by_user_id"]:
         data["introduced_by_user_id"] = stmt["introduced_by_user_id"]
     if stmt["source_label"]:
         data["source_label"] = stmt["source_label"]
-    # Eviction tracking (always include for consistency)
+    # Hit and query counters are always serialized; last_hit is included when present.
     data["hit_count"] = stmt["hit_count"]
     data["query_count"] = stmt["query_count"]
     if stmt["last_hit"]:
@@ -115,17 +117,17 @@ def statement_from_dict(data: dict) -> dict:
         "text": data["text"],
         "tier": Tier(data["tier"]),
         "created_at": datetime.fromisoformat(data["created_at"]),
-        "keywords": data.get("keywords", []),
-        "pattern": data.get("pattern", ""),
-        "pattern_aliases": data.get("pattern_aliases", []),
-        "that": data.get("that", ""),
-        "topic": data.get("topic", ""),
-        "template": data.get("template", {}),
-        "priority": data.get("priority", 0),
-        "introduced_by_user_id": data.get("introduced_by_user_id"),
-        "source_label": data.get("source_label", ""),
-        "hit_count": data.get("hit_count", 0),
-        "query_count": data.get("query_count", 0),
+        "keywords": list(data.get("keywords") or ()),
+        "pattern": data.get("pattern") or "",
+        "pattern_aliases": list(data.get("pattern_aliases") or ()),
+        "that": data.get("that") or "",
+        "topic": data.get("topic") or "",
+        "template": dict(data.get("template") or ()),
+        "priority": data.get("priority") or 0,
+        "introduced_by_user_id": data.get("introduced_by_user_id") or "",
+        "source_label": data.get("source_label") or "",
+        "hit_count": data.get("hit_count") or 0,
+        "query_count": data.get("query_count") or 0,
         "last_hit": datetime.fromisoformat(last_hit_raw) if last_hit_raw else "",
     }
     return stmt
@@ -138,14 +140,14 @@ def statement_from_dict(data: dict) -> dict:
 
 def keyword_entry(
     keyword: str,
-    statement_ids=None,
+    statement_ids=(),
     query_count: int = 0,
     hit_count: int = 0,
 ) -> dict:
     """Build a keyword index entry dict with retrieval statistics."""
     entry = {
         "keyword": keyword,
-        "statement_ids": set(statement_ids) if statement_ids is not None else set(),
+        "statement_ids": set(statement_ids or ()),
         "query_count": query_count,
         "hit_count": hit_count,
     }
@@ -155,7 +157,8 @@ def keyword_entry(
 def keyword_entry_hit_rate(entry: dict) -> float:
     """Calculate hit rate, defaulting to 0.5 when undefined."""
     if entry["query_count"] == 0:
-        return 0.5
+        result = 0.5
+        return result
     rate = entry["hit_count"] / entry["query_count"]
     return rate
 
@@ -174,9 +177,9 @@ def keyword_entry_from_dict(keyword: str, data: dict) -> dict:
     """Deserialize a keyword entry from a dictionary."""
     entry = {
         "keyword": keyword,
-        "statement_ids": set(data.get("statement_ids", [])),
-        "query_count": data.get("query_count", 0),
-        "hit_count": data.get("hit_count", 0),
+        "statement_ids": set(data.get("statement_ids") or ()),
+        "query_count": data.get("query_count") or 0,
+        "hit_count": data.get("hit_count") or 0,
     }
     return entry
 
@@ -187,8 +190,8 @@ def keyword_entry_from_dict(keyword: str, data: dict) -> dict:
 
 
 def session(
-    session_id=None,
-    metadata=None,
+    session_id: str = "",
+    metadata=(),
     history_size: int = 10,
 ) -> dict:
     """Build an independent conversation-context Session dict.
@@ -202,12 +205,14 @@ def session(
         "previous_response": "",  # Bot's most recent response (for that-matching and query expansion)
         "created_at": now,
         "last_active": now,
-        "metadata": metadata or {},
+        "metadata": dict(metadata or ()),
         "predicates": {},
         "active_topic": "",
         "entities": [],
         "dialogue_act_history": [],
         "last_fact_admissions": [],
+        "previous_query_frame": {},
+        "query_frame_turn": 0,
         "input_history": [],
         "response_history": [],
         "that_history": [],
@@ -219,7 +224,7 @@ def session(
 def session_update_context(
     session: dict,
     previous_response: str,
-    user_input=None,
+    user_input: str = "",
 ) -> None:
     """Update the session's context after a turn.
 
@@ -264,8 +269,8 @@ def session_update_dialogue(
     session: dict,
     dialogue_act: str,
     active_topic: str = "",
-    entities: list[dict] | None = None,
-    fact_admissions: list[dict] | None = None,
+    entities=(),
+    fact_admissions=(),
 ) -> None:
     """Update per-user discourse state independently of response history."""
     session.setdefault("active_topic", "")
@@ -274,13 +279,13 @@ def session_update_dialogue(
     session.setdefault("last_fact_admissions", [])
 
     session["active_topic"] = active_topic
-    session["last_fact_admissions"] = list(fact_admissions or [])
+    session["last_fact_admissions"] = list(fact_admissions or ())
     if dialogue_act:
         session["dialogue_act_history"].insert(0, dialogue_act)
         if len(session["dialogue_act_history"]) > session["history_size"]:
             session["dialogue_act_history"].pop()
 
-    for entity in entities or []:
+    for entity in entities or ():
         entity_text = str(entity.get("text", "")).strip()
         if not entity_text:
             continue
@@ -314,6 +319,15 @@ def session_clear_predicates(session: dict) -> None:
 
 def session_to_dict(session: dict) -> dict:
     """Serialize a session to a JSON-ready dictionary."""
+    previous_query_frame = session.get("previous_query_frame", {})
+    if not isinstance(previous_query_frame, dict):
+        raise ValueError("session previous_query_frame must be an object")
+    query_frame_turn = session.get("query_frame_turn", 0)
+    if isinstance(query_frame_turn, bool) or not isinstance(query_frame_turn, int) or not 0 <= query_frame_turn <= 1_000_000:
+        raise ValueError("session query_frame_turn must be an integer from 0 through 1000000")
+    serialized_query_frame = compact_query_frame_to_dict(previous_query_frame) if previous_query_frame else {}
+    if previous_query_frame and previous_query_frame["source_turn"] != query_frame_turn:
+        raise ValueError("session query frame source_turn must match query_frame_turn")
     data = {
         "session_id": session["session_id"],
         "previous_response": session["previous_response"],
@@ -325,6 +339,8 @@ def session_to_dict(session: dict) -> dict:
         "entities": session.get("entities", []),
         "dialogue_act_history": session.get("dialogue_act_history", []),
         "last_fact_admissions": session.get("last_fact_admissions", []),
+        "previous_query_frame": serialized_query_frame,
+        "query_frame_turn": query_frame_turn,
         "input_history": session["input_history"],
         "response_history": session["response_history"],
         "that_history": session["that_history"],
@@ -335,21 +351,32 @@ def session_to_dict(session: dict) -> dict:
 
 def session_from_dict(data: dict) -> dict:
     """Deserialize a session from a dictionary."""
+    previous_query_frame = data.get("previous_query_frame", {})
+    query_frame_turn = data.get("query_frame_turn", 0)
+    if not isinstance(previous_query_frame, dict):
+        raise ValueError("session previous_query_frame must be an object")
+    if isinstance(query_frame_turn, bool) or not isinstance(query_frame_turn, int) or not 0 <= query_frame_turn <= 1_000_000:
+        raise ValueError("session query_frame_turn must be an integer from 0 through 1000000")
+    decoded_query_frame = compact_query_frame_from_dict(previous_query_frame) if previous_query_frame else {}
+    if decoded_query_frame and decoded_query_frame["source_turn"] != query_frame_turn:
+        raise ValueError("session query frame source_turn must match query_frame_turn")
     sess = {
         "session_id": data["session_id"],
-        "previous_response": data.get("previous_response", ""),
+        "previous_response": data.get("previous_response") or "",
         "created_at": datetime.fromisoformat(data["created_at"]),
         "last_active": datetime.fromisoformat(data["last_active"]),
-        "metadata": data.get("metadata", {}),
-        "predicates": data.get("predicates", {}),
-        "active_topic": data.get("active_topic", ""),
-        "entities": data.get("entities", []),
-        "dialogue_act_history": data.get("dialogue_act_history", []),
-        "last_fact_admissions": data.get("last_fact_admissions", []),
-        "input_history": data.get("input_history", []),
-        "response_history": data.get("response_history", []),
-        "that_history": data.get("that_history", []),
-        "history_size": data.get("history_size", 10),
+        "metadata": dict(data.get("metadata") or ()),
+        "predicates": dict(data.get("predicates") or ()),
+        "active_topic": data.get("active_topic") or "",
+        "entities": list(data.get("entities") or ()),
+        "dialogue_act_history": list(data.get("dialogue_act_history") or ()),
+        "last_fact_admissions": list(data.get("last_fact_admissions") or ()),
+        "previous_query_frame": decoded_query_frame,
+        "query_frame_turn": query_frame_turn,
+        "input_history": list(data.get("input_history") or ()),
+        "response_history": list(data.get("response_history") or ()),
+        "that_history": list(data.get("that_history") or ()),
+        "history_size": data.get("history_size") or 10,
     }
     return sess
 

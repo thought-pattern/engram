@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "corpus_version": "section13-semantic-v1",
+  "frozen_at": "2026-08-22T00:00:00Z",
+  "evaluation_role": "repository-visible engineering holdout; not a Section 16 release partition",
+  "section16_release_eligible": false,
+  "documents": [
+    {"statement_id": "sushi", "canonical": "Where can I find a good sushi restaurant?", "aliases": ["recommend a place for sushi", "best Japanese rolls nearby"], "response": "Sushi response prose is not an embedding input."},
+    {"statement_id": "cats", "canonical": "Why do cats purr when they are content?", "aliases": ["feline purring explanation", "happy kitten rumbling sound"], "response": "Cat response prose is not an embedding input."},
+    {"statement_id": "dogs", "canonical": "How much daily exercise does a dog need?", "aliases": ["canine walking requirements", "keeping a puppy physically active"], "response": "Dog response prose is not an embedding input."},
+    {"statement_id": "python-generator", "canonical": "How do Python generators yield values lazily?", "aliases": ["iterate without building the whole list", "lazy Python iterator with yield"], "response": "Generator response prose is not an embedding input."},
+    {"statement_id": "oauth-refresh", "canonical": "How should an OAuth access token be refreshed?", "aliases": ["renew expired API credentials", "use a refresh token for authorization"], "response": "OAuth response prose is not an embedding input."},
+    {"statement_id": "tls-certificate", "canonical": "How do I renew an expired TLS certificate?", "aliases": ["replace an HTTPS certificate before expiry", "website encryption credential renewal"], "response": "TLS response prose is not an embedding input."},
+    {"statement_id": "git-reset", "canonical": "How can I undo the latest Git commit but keep my changes?", "aliases": ["move HEAD back without discarding the working tree", "retract a commit and preserve edits"], "response": "Git response prose is not an embedding input."},
+    {"statement_id": "sql-index", "canonical": "When should I add an index to a SQL database table?", "aliases": ["speed up repeated database lookups", "improve slow relational queries with an index"], "response": "SQL response prose is not an embedding input."},
+    {"statement_id": "refunds", "canonical": "What is the refund policy for a returned purchase?", "aliases": ["get money back after returning an item", "reimbursement rules for unwanted orders"], "response": "Refund response prose is not an embedding input."},
+    {"statement_id": "shipping", "canonical": "How long does international shipping usually take?", "aliases": ["delivery time for an overseas parcel", "when will a package sent abroad arrive"], "response": "Shipping response prose is not an embedding input."},
+    {"statement_id": "paris", "canonical": "What is the capital city of France?", "aliases": ["French national capital", "which city is France governed from"], "response": "Paris response prose is not an embedding input."},
+    {"statement_id": "photosynthesis", "canonical": "How do plants convert sunlight into chemical energy?", "aliases": ["explain photosynthesis", "leaves making food from light"], "response": "Photosynthesis response prose is not an embedding input."}
+  ],
+  "queries": [
+    {"query_id": "train-01", "partition": "train", "text": "I want a restaurant serving raw fish and rice", "expected_statement_id": "sushi"},
+    {"query_id": "train-02", "partition": "train", "text": "what causes a relaxed feline to make that rumbling noise", "expected_statement_id": "cats"},
+    {"query_id": "train-03", "partition": "train", "text": "recommended physical activity for a canine companion", "expected_statement_id": "dogs"},
+    {"query_id": "train-04", "partition": "train", "text": "produce sequence items on demand instead of allocating them all", "expected_statement_id": "python-generator"},
+    {"query_id": "train-05", "partition": "train", "text": "my API bearer credential expired; how do I renew it", "expected_statement_id": "oauth-refresh"},
+    {"query_id": "train-06", "partition": "train", "text": "the browser says my secure site credential has expired", "expected_statement_id": "tls-certificate"},
+    {"query_id": "train-07", "partition": "train", "text": "retract my last source control revision without losing edits", "expected_statement_id": "git-reset"},
+    {"query_id": "train-08", "partition": "train", "text": "make frequently repeated relational lookups faster", "expected_statement_id": "sql-index"},
+    {"query_id": "train-09", "partition": "train", "text": "can I be reimbursed after sending an order back", "expected_statement_id": "refunds"},
+    {"query_id": "train-10", "partition": "train", "text": "explain quantum entanglement between photons", "expected_statement_id": ""},
+
+    {"query_id": "calibration-01", "partition": "calibration", "text": "suggest somewhere to eat Japanese rice rolls", "expected_statement_id": "sushi"},
+    {"query_id": "calibration-02", "partition": "calibration", "text": "why does my kitten vibrate while resting", "expected_statement_id": "cats"},
+    {"query_id": "calibration-03", "partition": "calibration", "text": "how often should a puppy be taken for a walk", "expected_statement_id": "dogs"},
+    {"query_id": "calibration-04", "partition": "calibration", "text": "Python iteration that computes each element only when requested", "expected_statement_id": "python-generator"},
+    {"query_id": "calibration-05", "partition": "calibration", "text": "obtain a new access credential from an authorization refresh credential", "expected_statement_id": "oauth-refresh"},
+    {"query_id": "calibration-06", "partition": "calibration", "text": "rotate the certificate used by my encrypted web server", "expected_statement_id": "tls-certificate"},
+    {"query_id": "calibration-07", "partition": "calibration", "text": "cancel the previous commit while leaving files modified", "expected_statement_id": "git-reset"},
+    {"query_id": "calibration-08", "partition": "calibration", "text": "database reads are slow and need a lookup structure", "expected_statement_id": "sql-index"},
+    {"query_id": "calibration-09", "partition": "calibration", "text": "estimated arrival for a parcel crossing national borders", "expected_statement_id": "shipping"},
+    {"query_id": "calibration-10", "partition": "calibration", "text": "how is a violin tuned for an orchestra", "expected_statement_id": ""},
+
+    {"query_id": "engineering-holdout-01", "partition": "engineering_holdout", "text": "where should we dine on nigiri tonight", "expected_statement_id": "sushi"},
+    {"query_id": "engineering-holdout-02", "partition": "engineering_holdout", "text": "reason for the low motor-like sound from a pleased house feline", "expected_statement_id": "cats"},
+    {"query_id": "engineering-holdout-03", "partition": "engineering_holdout", "text": "daily movement needs of a pet canine", "expected_statement_id": "dogs"},
+    {"query_id": "engineering-holdout-04", "partition": "engineering_holdout", "text": "write a memory-efficient iterator in Python", "expected_statement_id": "python-generator"},
+    {"query_id": "engineering-holdout-05", "partition": "engineering_holdout", "text": "renew authorization after the short-lived bearer credential ends", "expected_statement_id": "oauth-refresh"},
+    {"query_id": "engineering-holdout-06", "partition": "engineering_holdout", "text": "preserve uncommitted work while removing the most recent Git revision", "expected_statement_id": "git-reset"},
+    {"query_id": "engineering-holdout-07", "partition": "engineering_holdout", "text": "how quickly should an overseas delivery reach me", "expected_statement_id": "shipping"},
+    {"query_id": "engineering-holdout-08", "partition": "engineering_holdout", "text": "what city serves as the seat of the French government", "expected_statement_id": "paris"},
+    {"query_id": "engineering-holdout-09", "partition": "engineering_holdout", "text": "how vegetation stores energy captured from daylight", "expected_statement_id": "photosynthesis"},
+    {"query_id": "engineering-holdout-10", "partition": "engineering_holdout", "text": "repair a bicycle wheel with a broken spoke", "expected_statement_id": ""}
+  ],
+  "gates": {
+    "semantic": {"engineering_holdout_recall_at_1_min": 0.75, "engineering_holdout_recall_delta_vs_sparse_min": 0.10, "engineering_holdout_false_answer_rate_max": 0.10, "peak_memory_mib_max": 768.0},
+    "reranker": {"engineering_holdout_recall_delta_min": 0.0, "engineering_holdout_false_answer_delta_max": 0.0, "peak_memory_mib_max": 16.0}
+  }
+}

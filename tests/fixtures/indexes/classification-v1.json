@@ -1,0 +1,131 @@
+{
+  "artifact_schema_version": 1,
+  "cases": [
+    {
+      "name": "legacy-missing-identity",
+      "projections": [
+        {
+          "direct_answer_eligible": false,
+          "exclusion_reason": "missing_identity",
+          "generation": 1,
+          "normalization_version": 1,
+          "retrieval_keys": [],
+          "schema_version": 1,
+          "statement_id": "legacy-1",
+          "support_claim_ids": [
+            "claim-legacy"
+          ]
+        }
+      ],
+      "expected_collision_count": 0,
+      "expected_direct_lookup": "MISS",
+      "expected_issue_reasons": [
+        "missing_identity"
+      ],
+      "lookup_representation": "legacy response text is never a key"
+    },
+    {
+      "name": "canonical-alias-cross-artifact-collision",
+      "projections": [
+        {
+          "direct_answer_eligible": true,
+          "exclusion_reason": "",
+          "generation": 1,
+          "normalization_version": 1,
+          "retrieval_keys": [
+            {
+              "key": {
+                "normalization_version": 1,
+                "normalized_key": "shared key",
+                "schema_version": 1,
+                "scope": {
+                  "context_fingerprint": "fixture-v1",
+                  "namespace": "test",
+                  "schema_version": 1
+                }
+              },
+              "provenance": "canonical",
+              "representation": "Shared key"
+            }
+          ],
+          "schema_version": 1,
+          "statement_id": "answer-a",
+          "support_claim_ids": []
+        },
+        {
+          "direct_answer_eligible": true,
+          "exclusion_reason": "",
+          "generation": 1,
+          "normalization_version": 1,
+          "retrieval_keys": [
+            {
+              "key": {
+                "normalization_version": 1,
+                "normalized_key": "shared key",
+                "schema_version": 1,
+                "scope": {
+                  "context_fingerprint": "fixture-v1",
+                  "namespace": "test",
+                  "schema_version": 1
+                }
+              },
+              "provenance": "alias",
+              "representation": "shared key"
+            }
+          ],
+          "schema_version": 1,
+          "statement_id": "answer-b",
+          "support_claim_ids": []
+        }
+      ],
+      "expected_collision_count": 1,
+      "expected_direct_lookup": "COLLISION",
+      "expected_issue_reasons": [
+        "cross_artifact_collision"
+      ],
+      "lookup_representation": "shared key"
+    },
+    {
+      "name": "unsupported-projection-schema",
+      "projections": [
+        {
+          "direct_answer_eligible": false,
+          "exclusion_reason": "missing_identity",
+          "generation": 1,
+          "normalization_version": 1,
+          "retrieval_keys": [],
+          "schema_version": 99,
+          "statement_id": "future-schema",
+          "support_claim_ids": []
+        }
+      ],
+      "expected_collision_count": 0,
+      "expected_direct_lookup": "MISS",
+      "expected_issue_reasons": [
+        "unsupported_schema_version"
+      ],
+      "lookup_representation": "future schema"
+    },
+    {
+      "name": "malformed-support",
+      "projections": [
+        {
+          "direct_answer_eligible": false,
+          "exclusion_reason": "malformed_support",
+          "generation": 1,
+          "normalization_version": 1,
+          "retrieval_keys": [],
+          "schema_version": 1,
+          "statement_id": "bad-support",
+          "support_claim_ids": "claim-not-an-array"
+        }
+      ],
+      "expected_collision_count": 0,
+      "expected_direct_lookup": "MISS",
+      "expected_issue_reasons": [
+        "malformed_support"
+      ],
+      "lookup_representation": "bad support"
+    }
+  ]
+}

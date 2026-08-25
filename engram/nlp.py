@@ -69,7 +69,6 @@ def fact_query_patterns(fact: dict) -> list[str]:
     obj = fact["obj"].upper()
     patterns = [subj]  # Direct query: "CATS"
 
-    # Question forms based on predicate
     if fact["predicate"] in ("are", "were"):
         patterns.append(f"WHAT ARE {subj}")
         patterns.append(f"WHAT ARE THE {subj}")
@@ -81,7 +80,6 @@ def fact_query_patterns(fact: dict) -> list[str]:
         patterns.append(f"WHO IS {subj}")
         patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
 
-    # Add "TELL ME ABOUT X" form
     patterns.append(f"TELL ME ABOUT {subj}")
     patterns.append(f"TELL ME ABOUT THE {subj}")
     patterns.append(f"WHAT DO YOU KNOW ABOUT {subj}")
@@ -107,14 +105,14 @@ def is_question(text: str) -> bool:
     Three detectors: a trailing question mark, a question-word lead
     (what/who/where/...), or an inverted copula ("Is it ...").
     """
-    # Ends with question mark
     if text.rstrip().endswith("?"):
-        return True
+        result = True
+        return result
 
-    # Starts with question word
     first_word = text.split()[0].lower() if text.split() else ""
     if first_word in QUESTION_WORDS:
-        return True
+        result = True
+        return result
 
     # Starts with a typo'd question word: a leading token that is not a real
     # word but sits one edit from a question word ("waht", "whta") reads as a
@@ -123,11 +121,12 @@ def is_question(text: str) -> bool:
     if first_word and not is_known_word(first_word):
         for question_word in QUESTION_WORDS:
             if edit_distance(first_word, question_word, transpositions=True) <= 1:
-                return True
+                result = True
+                return result
 
-    # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
-    return len(words) >= 2 and words[0] in COPULAS
+    result = len(words) >= 2 and words[0] in COPULAS
+    return result
 
 
 def input_kind(text: str) -> str:
@@ -156,9 +155,9 @@ def _is_command(text: str) -> bool:
 def _clean_subject(tokens: list[str]) -> str:
     """Clean subject tokens for use as pattern."""
     if not tokens:
-        return ""
+        result = ""
+        return result
 
-    # Remove leading articles (a, an, the)
     while tokens and tokens[0].lower() in ("a", "an", "the"):
         tokens = tokens[1:]
 
@@ -175,7 +174,6 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
     (e.g. "Your sentiment analysis should inform that tired is not nice"
     splitting at "is").
     """
-    # Find the copula
     copula_idx = -1
     copula = ""
 
@@ -186,48 +184,51 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
             break
 
     if copula_idx <= 0:
-        return {}
+        result = {}
+        return result
 
     # Guardrail: a verb or modal before the copula means the copula belongs to
     # an embedded clause, not "subject is object".
     for index, (_, pos) in enumerate(tagged[:copula_idx]):
         noun_like_ing_subject = index == 0 and copula_idx == 1 and pos == "VBG"
         if (pos.startswith("VB") and not noun_like_ing_subject) or pos == "MD":
-            return {}
+            result = {}
+            return result
 
-    # Extract subject (everything before copula)
     subject_tokens = tokens[:copula_idx]
 
-    # Extract object (everything after copula)
     obj_tokens = tokens[copula_idx + 1 :]
 
-    # Filter out articles from subject start for cleaner patterns
     subject = _clean_subject(subject_tokens)
     obj = " ".join(obj_tokens).rstrip(".")
 
     if not subject or not obj:
-        return {}
+        result = {}
+        return result
 
     subject_words = subject.split()
 
     # Guardrail: long subjects are clauses, not names of things.
     if len(subject_words) > MAX_FACT_SUBJECT_TOKENS:
-        return {}
+        result = {}
+        return result
 
     # Guardrail: a pronoun or possessive anywhere in the subject means it is
     # conversational reference, not the name of a thing -- "you all",
     # "lol that", "sorry my typing", or a bare "that".
     for word in subject_words:
         if word.lower() in PRONOUNS or word.lower() in POSSESSIVE_PRONOUNS:
-            return {}
+            result = {}
+            return result
 
     # Guardrail: a possessive in the object ("waht is your name") marks a
     # personal exchange, not a world fact worth retrieval patterns.
     for word in obj.split():
         if word.lower() in POSSESSIVE_PRONOUNS:
-            return {}
+            result = {}
+            return result
 
-    normalized_original = original.rstrip(".") + "."  # Normalize punctuation
+    normalized_original = original.rstrip(".") + "."
     fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
     return fact
 
@@ -239,34 +240,30 @@ def extract_fact(text: str) -> dict:
         text: Input text to analyze.
 
     Returns:
-        ExtractedFact if a fact was extracted, None otherwise.
+        ExtractedFact if a fact was extracted, otherwise an empty dict.
     """
     _ensure_nltk_data()
 
-    # Clean and normalize
     text = text.strip()
     if not text:
-        return {}
+        result = {}
+        return result
 
-    # Skip questions
     if is_question(text):
-        return {}
+        result = {}
+        return result
 
-    # Skip commands
     if _is_command(text):
-        return {}
+        result = {}
+        return result
 
-    # Tokenize and tag
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        return {}
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     if len(tokens) < 3:
-        return {}
+        result = {}
+        return result
 
-    # Find copula and extract subject/object
     fact = _extract_copula_fact(tokens, tagged, text)
     return fact
 
@@ -299,47 +296,41 @@ def extract_entities(text: str) -> list[dict]:
     _ensure_nltk_data()
 
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-        tree = ne_chunk(tagged)
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
+    tree = ne_chunk(tagged)
 
-        entities = []
-        current_pos = 0
+    entities = []
+    current_pos = 0
 
-        for subtree in tree:
-            if hasattr(subtree, "label"):
-                # This is a named entity
-                entity_text = " ".join(word for word, tag in subtree)
-                label = subtree.label()
+    for subtree in tree:
+        if hasattr(subtree, "label"):
+            entity_text = " ".join(word for word, tag in subtree)
+            label = subtree.label()
 
-                # Find position in original text
-                start = text.find(entity_text, current_pos)
-                if start == -1:
-                    # Try case-insensitive search
-                    start = text.lower().find(entity_text.lower(), current_pos)
-                if start != -1:
-                    end = start + len(entity_text)
-                    current_pos = end
-                else:
-                    start = current_pos
-                    end = current_pos + len(entity_text)
+            start = text.find(entity_text, current_pos)
+            if start == -1:
+                start = text.lower().find(entity_text.lower(), current_pos)
+            if start != -1:
+                end = start + len(entity_text)
+                current_pos = end
+            else:
+                start = current_pos
+                end = current_pos + len(entity_text)
 
-                entities.append(
-                    extracted_entity(
-                        text=entity_text,
-                        label=label,
-                        start=start,
-                        end=end,
-                    )
+            entities.append(
+                extracted_entity(
+                    text=entity_text,
+                    label=label,
+                    start=start,
+                    end=end,
                 )
+            )
 
-        return entities
-
-    except Exception:
-        return []
+    return entities
 
 
 def extract_entities_by_type(text: str) -> dict[str, list[str]]:

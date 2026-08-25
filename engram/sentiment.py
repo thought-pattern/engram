@@ -20,7 +20,8 @@ from engram.nltk_data import ensure_resource
 def _get_analyzer():
     """Build and cache the VADER analyzer, or return falsy if unavailable."""
     if not ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
-        return ()
+        result = ()
+        return result
     analyzer = SentimentIntensityAnalyzer()
     return analyzer
 

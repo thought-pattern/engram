@@ -20,19 +20,19 @@ def _ensure_punkt() -> None:
 
 
 def substitution_maps(
-    contractions=None,
-    person=None,
-    person2=None,
-    gender=None,
-    custom=None,
+    contractions=DEFAULT_CONTRACTIONS,
+    person=DEFAULT_PERSON,
+    person2=DEFAULT_PERSON2,
+    gender=DEFAULT_GENDER,
+    custom=(),
 ) -> dict:
     """Build a container dict holding all substitution maps."""
     maps = {
-        "contractions": contractions if contractions is not None else DEFAULT_CONTRACTIONS.copy(),
-        "person": person if person is not None else DEFAULT_PERSON.copy(),
-        "person2": person2 if person2 is not None else DEFAULT_PERSON2.copy(),
-        "gender": gender if gender is not None else DEFAULT_GENDER.copy(),
-        "custom": custom if custom is not None else {},
+        "contractions": dict(contractions),
+        "person": dict(person),
+        "person2": dict(person2),
+        "gender": dict(gender),
+        "custom": dict(custom or ()),
     }
     return maps
 
@@ -68,17 +68,14 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     result = []
 
     for word in words:
-        # Strip punctuation for lookup
         prefix = ""
         suffix = ""
         core = word
 
-        # Extract leading punctuation
         while core and not core[0].isalnum():
             prefix += core[0]
             core = core[1:]
 
-        # Extract trailing punctuation
         while core and not core[-1].isalnum():
             suffix = core[-1] + suffix
             core = core[:-1]
@@ -87,11 +84,9 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
             result.append(word)
             continue
 
-        # Look up substitution (case-insensitive)
         lower_core = core.lower()
         if lower_core in subs:
             replacement = subs[lower_core]
-            # Preserve original case
             if core.isupper():
                 replacement = replacement.upper()
             elif core[0].isupper():
@@ -104,66 +99,58 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     return substituted
 
 
-def expand_contractions(text: str, contractions=None) -> str:
+def expand_contractions(text: str, contractions=DEFAULT_CONTRACTIONS) -> str:
     """Expand contractions in text.
 
     Args:
         text: Input text.
-        contractions: Optional custom contractions map. Uses defaults if None.
+        contractions: Custom contractions map; defaults to the standard map.
 
     Returns:
         Text with contractions expanded.
     """
-    if contractions is None:
-        contractions = DEFAULT_CONTRACTIONS
     expanded = apply_substitutions(text, contractions)
     return expanded
 
 
-def apply_person(text: str, person_map=None) -> str:
+def apply_person(text: str, person_map=DEFAULT_PERSON) -> str:
     """Apply person substitution (I/me -> you).
 
     Args:
         text: Input text.
-        person_map: Optional custom person map. Uses defaults if None.
+        person_map: Custom person map; defaults to the standard map.
 
     Returns:
         Text with person substitutions applied.
     """
-    if person_map is None:
-        person_map = DEFAULT_PERSON
     substituted = apply_substitutions(text, person_map)
     return substituted
 
 
-def apply_person2(text: str, person2_map=None) -> str:
+def apply_person2(text: str, person2_map=DEFAULT_PERSON2) -> str:
     """Apply person2 substitution (you -> I/me).
 
     Args:
         text: Input text.
-        person2_map: Optional custom person2 map. Uses defaults if None.
+        person2_map: Custom person2 map; defaults to the standard map.
 
     Returns:
         Text with person2 substitutions applied.
     """
-    if person2_map is None:
-        person2_map = DEFAULT_PERSON2
     substituted = apply_substitutions(text, person2_map)
     return substituted
 
 
-def apply_gender(text: str, gender_map=None) -> str:
+def apply_gender(text: str, gender_map=DEFAULT_GENDER) -> str:
     """Apply gender substitution (gendered pronouns -> singular they/them).
 
     Args:
         text: Input text.
-        gender_map: Optional custom gender map. Uses defaults if None.
+        gender_map: Custom gender map; defaults to the standard map.
 
     Returns:
         Text with gender substitutions applied.
     """
-    if gender_map is None:
-        gender_map = DEFAULT_GENDER
     substituted = apply_substitutions(text, gender_map)
     return substituted
 
@@ -181,13 +168,12 @@ def split_sentences(text: str) -> list[str]:
         List of sentences (stripped of leading/trailing whitespace).
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
-    # Use NLTK's sentence tokenizer (ensure punkt is present locally first)
     _ensure_punkt()
     sentences = sent_tokenize(text)
 
-    # Strip whitespace and filter empty
     cleaned = [s.strip() for s in sentences if s.strip()]
     return cleaned
 
@@ -209,7 +195,6 @@ def normalize_for_matching(text: str, expand_contr: bool = True) -> str:
     if expand_contr:
         result = expand_contractions(result)
 
-    # Normalize whitespace
     result = " ".join(result.split())
 
     return result

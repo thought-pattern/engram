@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "section8-relation-followup-v1",
+  "authored_at": "2026-08-20T16:00:00Z",
+  "partitions": {
+    "development": [
+      {
+        "id": "dev-direct-place",
+        "category": "direct_relation",
+        "turns": [
+          {
+            "text": "Where was Ada Lovelace born?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "London",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "dev-paraphrase-preposition",
+        "category": "paraphrase",
+        "turns": [
+          {
+            "text": "Where did Ada Lovelace work at the Admiralty?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "Bletchley Park",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "dev-entity-ambiguity",
+        "category": "entity_ambiguity",
+        "turns": [
+          {
+            "text": "Where was Springfield located?",
+            "expected_outcome": "MISS",
+            "response_contains": "",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "dev-predicate-ambiguity",
+        "category": "predicate_ambiguity",
+        "turns": [
+          {
+            "text": "What did Ada Lovelace design?",
+            "expected_outcome": "MISS",
+            "response_contains": "",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "dev-technical-relation",
+        "category": "technical_relation",
+        "turns": [
+          {
+            "text": "Which standard supersedes RFC 7231?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "RFC 9110",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "dev-elliptical-operator",
+        "category": "elliptical_followup",
+        "turns": [
+          {
+            "text": "When was Ada Lovelace born?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "1815",
+            "inheritance_fields": []
+          },
+          {
+            "text": "And where?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "London",
+            "inheritance_fields": [
+              "relation",
+              "subjects"
+            ]
+          }
+        ]
+      }
+    ],
+    "held_out": [
+      {
+        "id": "held-alias-place",
+        "category": "alias",
+        "turns": [
+          {
+            "text": "Where was Augusta Ada King born?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "London",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "held-verb-lemma",
+        "category": "paraphrase",
+        "turns": [
+          {
+            "text": "Where did Ada Lovelace serve at the Admiralty?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "Bletchley Park",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "held-explicit-technical-reference",
+        "category": "explicit_reference",
+        "turns": [
+          {
+            "text": "What supersedes RFC 7231?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "RFC 9110",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "held-elliptical-replacement",
+        "category": "elliptical_replacement",
+        "turns": [
+          {
+            "text": "Where was Ada Lovelace born?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "London",
+            "inheritance_fields": []
+          },
+          {
+            "text": "What about Grace Hopper?",
+            "expected_outcome": "MISS",
+            "response_contains": "",
+            "inheritance_fields": [
+              "qualifiers",
+              "relation"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "held-self-contained-reset",
+        "category": "context_reset",
+        "turns": [
+          {
+            "text": "Where was Ada Lovelace born?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "London",
+            "inheritance_fields": []
+          },
+          {
+            "text": "Where is London?",
+            "expected_outcome": "MISS",
+            "response_contains": "",
+            "inheritance_fields": []
+          }
+        ]
+      },
+      {
+        "id": "held-unknown-object-type",
+        "category": "unknown_type",
+        "turns": [
+          {
+            "text": "What did Ada Lovelace use?",
+            "expected_outcome": "EVIDENCE",
+            "response_contains": "",
+            "inheritance_fields": []
+          }
+        ]
+      }
+    ]
+  }
+}
