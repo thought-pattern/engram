@@ -1,7 +1,5 @@
 # Graph retrieval contracts
 
-**Status:** Current implemented behavior
-
 Graph retrieval is optional and read-only. It enriches a resolution request with
 canonical identity and retrieves bounded Claim evidence through fixed parameterized
 capabilities with typed identity and relation inputs.
