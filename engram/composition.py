@@ -651,9 +651,7 @@ def execute_composition_plan(
                 query_limit = min(sentinel_limit, remaining)
                 try:
                     raw_rows = query(state["entity_id"], step["predicate_id"], query_limit)
-                except Exception as error:
-                    if isinstance(error, (KeyboardInterrupt, SystemExit)):
-                        raise
+                except Exception:
                     branch_failed = True
                     reasons.add(CompositionReason.DEPENDENCY_FAILED)
                     if state["path"]:

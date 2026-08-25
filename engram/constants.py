@@ -740,6 +740,10 @@ LEXICAL_RESOLVER_NAME = "lexical"
 LEXICAL_RESOLVER_COST_CLASS = CostClass.CHEAP
 SPARSE_RESOLVER_NAME = "sparse"
 SPARSE_RESOLVER_COST_CLASS = CostClass.CHEAP
+SPARSE_DOCUMENT_SCHEMA_VERSION = 1
+SPARSE_INDEX_SCHEMA_VERSION = 1
+SPARSE_INDEX_VERSION = 1
+SPARSE_TOKENIZER_VERSION = 1
 UTILITY_RESOLVER_NAME = "utility"
 UTILITY_RESOLVER_COST_CLASS = CostClass.CHEAP
 UTILITY_CONTRACT_VERSION = "utility-plugin-v1"
@@ -773,10 +777,48 @@ APPROVED_SEMANTIC_LICENSE_ID = "apache-2.0"
 APPROVED_SEMANTIC_ARTIFACT_SHA256 = "ff12d37a18ee862cd4a5b8476466bc84f06d0801da9b749023eed74251cefcb8"
 APPROVED_SEMANTIC_BACKEND = "native"
 APPROVED_SEMANTIC_DIMENSION = 384
+SEMANTIC_RECORD_SCHEMA_VERSION = 1
+SEMANTIC_INDEX_SCHEMA_VERSION = 1
+SEMANTIC_INDEX_VERSION = 1
+SEMANTIC_ARTIFACT_HASH_VERSION = 1
 STRUCTURED_GRAPH_RESOLVER_NAME = "structured_graph"
 STRUCTURED_GRAPH_RESOLVER_COST_CLASS = CostClass.STANDARD
 SUPPORT_SEMANTIC_RESOLVER_NAME = "support_semantic"
 SUPPORT_SEMANTIC_RESOLVER_COST_CLASS = CostClass.EXPENSIVE
+OPERATIONAL_TELEMETRY_SCHEMA_VERSION = 1
+OPERATIONAL_RESOLVER_NAMES = (
+    EXACT_RESOLVER_NAME,
+    UTILITY_RESOLVER_NAME,
+    PATTERN_RESOLVER_NAME,
+    LEXICAL_RESOLVER_NAME,
+    SPARSE_RESOLVER_NAME,
+    STANDALONE_SEMANTIC_RESOLVER_NAME,
+    STRUCTURED_GRAPH_RESOLVER_NAME,
+    SUPPORT_SEMANTIC_RESOLVER_NAME,
+    "other",
+)
+OPERATIONAL_RESOLVER_STATES = ("completed", "unavailable", "skipped", "exhausted", "failed")
+OPERATIONAL_RESOLUTION_OUTCOMES = ("ANSWER", "EVIDENCE", "MISS")
+OPERATIONAL_RESOURCE_DIMENSIONS = (
+    "resolvers",
+    "candidates",
+    "graph_rows",
+    "vector_results",
+    "evidence",
+    "evidence_bytes",
+    "output_bytes",
+    "diagnostic_bytes",
+    "working_memory_bytes",
+)
+OPERATIONAL_EXHAUSTION_DIMENSIONS = (*OPERATIONAL_RESOURCE_DIMENSIONS, "other")
+OPERATIONAL_LATENCY_BUCKETS = (
+    (1_000_000, "le_1_ms"),
+    (10_000_000, "le_10_ms"),
+    (100_000_000, "le_100_ms"),
+    (1_000_000_000, "le_1_s"),
+    (10_000_000_000, "le_10_s"),
+)
+OPERATIONAL_REBUILD_KINDS = ("primary", "sparse", "semantic")
 MAX_REASON_CODE_BYTES = 96
 MAX_FEATURES = 64
 MAX_TRACE_STEPS = 32
@@ -1610,6 +1652,16 @@ class ResolutionOutcome(StrEnum):
     ANSWER = "ANSWER"
     EVIDENCE = "EVIDENCE"
     MISS = "MISS"
+
+
+class RolloutMode(StrEnum):
+    """Namespace-selectable unified-resolution rollout modes."""
+
+    DISABLED = "disabled"
+    SHADOW = "shadow"
+    EVIDENCE_ONLY = "evidence_only"
+    REGULATED_DIRECT_ANSWER = "regulated_direct_answer"
+    ROLLBACK = "rollback"
 
 
 class LifecycleMutationReason(StrEnum):
@@ -2804,6 +2856,32 @@ WILDCARD_TOKENS = {"*", "_", "#", "^"}
 
 # Version constant for persistence format
 PERSISTENCE_VERSION = 2
+PERSISTENCE_MANIFEST_SCHEMA_VERSION = 1
+PERSISTENCE_STATUS_SCHEMA_VERSION = 1
+PERSISTENCE_MANIFEST_FIELDS = set(
+    {
+        "schema_version",
+        "persistence_version",
+        "response_state_schema_version",
+        "feedback_state_schema_version",
+        "identity_schema_version",
+        "retrieval_normalization_version",
+        "index_state_schema_version",
+        "sparse_index_schema_version",
+        "sparse_index_version",
+        "semantic_index_schema_version",
+        "semantic_index_version",
+        "fusion_policy_schema_version",
+        "fusion_policy_version",
+        "feedback_policy_schema_version",
+        "feedback_policy_version",
+        "semantic_model_id",
+        "semantic_model_version",
+        "semantic_normalization_version",
+        "reranker_model_version",
+        "graph_vector_model_id",
+    }
+)
 
 
 # =============================================================================

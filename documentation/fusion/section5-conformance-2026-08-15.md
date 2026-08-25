@@ -4,7 +4,7 @@
 
 All ten Section 5 implementation tasks meet their conformance exit conditions after the 15 August working-memory remediation. Candidate fusion is versioned, deterministic, bounded, current-state-aware, integrated into transport-neutral resolution, and fail-soft. Fusion receives only the memory allowance remaining after resolver execution, returns a conservative deterministic working-set estimate, and contributes that estimate to complete resolution consumption. The initial `fusion-v1.0.0` policy is explicitly hand-authored and unfitted; its stable fingerprint is `1f9d19acaedc277b4916bc366e74dc8c03d921e335acd21ac7fc2f1b449d963c`.
 
-Unit tests, regression cases, and deterministic acceptance fixtures were used only to prove contracts and invariants. They were not used to select weights, thresholds, source-count rules, support requirements, or the ambiguity margin. Independent empirical calibration, repeated-run statistics for nondeterministic producers, release-gate evaluation, final testing, and release approval remain owned by Section 16.
+Unit tests, regression cases, and deterministic acceptance fixtures were used only to prove contracts and invariants. They were not used to select weights, thresholds, source-count rules, support requirements, or the ambiguity margin. Project-partition empirical calibration, repeated-run statistics for nondeterministic producers, release-gate evaluation, final testing, and release approval are owned by Section 16.
 
 ## Task evidence
 
@@ -64,6 +64,6 @@ Unified resolution remains transport-neutral and Section 15 still owns its wire 
 - Section 9 owns semantic graph conflict, trust, temporal, and visibility policy.
 - Sections 12–14 own optional resolver implementations and their raw feature producers.
 - Section 15 owns adapter exposure, configuration, telemetry, deployment, and rollback.
-- Section 16 owns independently labeled partitions, empirical policy calibration, repeated-run analysis for nondeterministic behavior, numerical release gates, final-test execution, and release approval.
+- Section 16 owns project-owned disjoint partitions, empirical policy calibration, repeated-run analysis for nondeterministic behavior, numerical release gates, final-test execution, and release approval.
 
 No residual item prevents Section 5 implementation completion, and no release-quality claim is made.

@@ -464,6 +464,29 @@ def test_negative_hit_honors_zero_diagnostic_budget() -> None:
     assert "diagnostic_bytes" in hit["budget"]["exhausted_dimensions"]
 
 
+@pytest.mark.parametrize("failing_hook", ("checkpoint", "telemetry"))
+def test_negative_hit_does_not_hide_publication_failures(monkeypatch, failing_hook: str) -> None:
+    engine = Engram()
+    engine.namespace_epochs.initialize("tenant-a", 1)
+    core = EngramCore(engine, clock=lambda: NOW)
+    core.resolve_request("Unknown concept", "publication-prime", namespace="tenant-a", configured_resolvers=("exact",))
+
+    def fail_publication(*_args, **_kwargs):
+        raise RuntimeError("injected publication failure")
+
+    def reject_resolver_fallback(*_args, **_kwargs):
+        raise AssertionError("negative hit unexpectedly fell through to resolvers")
+
+    if failing_hook == "checkpoint":
+        monkeypatch.setattr(core, "_checkpoint", fail_publication)
+    else:
+        monkeypatch.setattr(core, "_record_resolution_telemetry", fail_publication)
+    monkeypatch.setattr(core._resolution_orchestrator, "_resolve_with_plan", reject_resolver_fallback)
+
+    with pytest.raises(RuntimeError, match="injected publication failure"):
+        core.resolve_request("Unknown concept", "publication-hit", namespace="tenant-a", configured_resolvers=("exact",))
+
+
 def test_negative_owner_abstains_without_epoch_and_fails_open() -> None:
     core = EngramCore(Engram(), clock=lambda: NOW)
     first = core.resolve_request("Unknown concept", "no-epoch-1", namespace="tenant-a", configured_resolvers=("exact",))

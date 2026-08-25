@@ -271,12 +271,8 @@ def extract_fact(text: str) -> dict:
         return result
 
     # Tokenize and tag
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        result = {}
-        return result
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     if len(tokens) < 3:
         result = {}
@@ -318,46 +314,41 @@ def extract_entities(text: str) -> list[dict]:
         result = []
         return result
 
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-        tree = ne_chunk(tagged)
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
+    tree = ne_chunk(tagged)
 
-        entities = []
-        current_pos = 0
+    entities = []
+    current_pos = 0
 
-        for subtree in tree:
-            if hasattr(subtree, "label"):
-                # This is a named entity
-                entity_text = " ".join(word for word, tag in subtree)
-                label = subtree.label()
+    for subtree in tree:
+        if hasattr(subtree, "label"):
+            # This is a named entity
+            entity_text = " ".join(word for word, tag in subtree)
+            label = subtree.label()
 
-                # Find position in original text
-                start = text.find(entity_text, current_pos)
-                if start == -1:
-                    # Try case-insensitive search
-                    start = text.lower().find(entity_text.lower(), current_pos)
-                if start != -1:
-                    end = start + len(entity_text)
-                    current_pos = end
-                else:
-                    start = current_pos
-                    end = current_pos + len(entity_text)
+            # Find position in original text
+            start = text.find(entity_text, current_pos)
+            if start == -1:
+                # Try case-insensitive search
+                start = text.lower().find(entity_text.lower(), current_pos)
+            if start != -1:
+                end = start + len(entity_text)
+                current_pos = end
+            else:
+                start = current_pos
+                end = current_pos + len(entity_text)
 
-                entities.append(
-                    extracted_entity(
-                        text=entity_text,
-                        label=label,
-                        start=start,
-                        end=end,
-                    )
+            entities.append(
+                extracted_entity(
+                    text=entity_text,
+                    label=label,
+                    start=start,
+                    end=end,
                 )
+            )
 
-        return entities
-
-    except Exception:
-        result = []
-        return result
+    return entities
 
 
 def extract_entities_by_type(text: str) -> dict[str, list[str]]:

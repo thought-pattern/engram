@@ -17,8 +17,8 @@ Section 9 implements temporal interpretation, shared bitemporal Claim eligibilit
 | MemGraph-enabled conversation | [1,000-turn MCP artifact](section9-mcp-sarah-sushi-memgraph-enabled-1000-turns-2026-08-20.json) |
 
 The corpus passes all 12 repository-visible engineering cases. Its legacy
-`held_out` key does not represent independent custody and cannot support a release
-decision. The report includes per-case and aggregate durations plus governed source
+`held_out` key identifies engineering regression data and is not one of the
+Section 16 project release partitions. The report includes per-case and aggregate durations plus governed source
 metadata; timing does not affect component conformance.
 
 At this report's original capture, the focused Section 9 suite passed 125 tests and

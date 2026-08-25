@@ -1,0 +1,697 @@
+{
+  "completed_turns": 1000,
+  "configuration": {
+    "config_path_supplied": true,
+    "graph_enabled": true,
+    "graph_ready": true,
+    "memgraph_probe_every": 200,
+    "reranker_enabled": true,
+    "reranker_model_version": "transparent-logistic-v1",
+    "reranker_ready": true,
+    "retrieval_rewrites_enabled": true,
+    "seed_path": "eval/section11-mcp-seed.json",
+    "semantic_enabled": true,
+    "semantic_model_version": "826711e54e001c83835913827a843d8dd0a1def9",
+    "semantic_ready": true,
+    "semantic_record_count": 0,
+    "sparse_enabled": true,
+    "sparse_ready": true,
+    "utility_contract_version": "utility-plugin-v1",
+    "utility_enabled": true,
+    "utility_plugins": {
+      "arithmetic_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "boolean_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "date_time_v1": {
+        "enabled": true,
+        "ready": true,
+        "timezone_database_version": "2026.3",
+        "version": "1.0.0"
+      },
+      "identifier_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "set_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "unit_conversion_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "version_v1": {
+        "enabled": true,
+        "ready": true,
+        "version": "1.0.0"
+      }
+    },
+    "utility_ready": true
+  },
+  "conversation_profile": "sarah-preferences",
+  "duration_seconds": 31.227743,
+  "engram_version": "1.1.11",
+  "evaluated_turns": 1000,
+  "finished_at": "2026-08-25T04:14:31.704393+00:00",
+  "first_turn": {
+    "response_present": true,
+    "source": "pattern",
+    "turn": 1
+  },
+  "gate": "EGR-315 MCP long-conversation conformance",
+  "inspect": {
+    "history_size": 10,
+    "telemetry": {
+      "durability": {
+        "checkpoint_attempts": 0,
+        "checkpoint_failures": 0,
+        "checkpoint_successes": 0,
+        "current_state": "disabled",
+        "latency": {
+          "buckets": {
+            "gt_10_s": 0,
+            "le_100_ms": 0,
+            "le_10_ms": 0,
+            "le_10_s": 0,
+            "le_1_ms": 0,
+            "le_1_s": 0
+          },
+          "max_ns": 0,
+          "observations": 0,
+          "total_ns": 0
+        },
+        "recovered_after_state": 0
+      },
+      "legacy_cache": {
+        "evictions": 0,
+        "hits": 0,
+        "queries": 1000
+      },
+      "rebuilds": {
+        "primary": {
+          "attempts": 0,
+          "dry_runs": 0,
+          "failures": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "successes": 0
+        },
+        "semantic": {
+          "attempts": 0,
+          "dry_runs": 0,
+          "failures": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "successes": 0
+        },
+        "sparse": {
+          "attempts": 0,
+          "dry_runs": 0,
+          "failures": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "successes": 0
+        }
+      },
+      "regulated_cache": {
+        "accepted": 0,
+        "idempotent_retries": 0,
+        "learned_created": 0,
+        "misses": 0,
+        "pending_proposals": 0,
+        "proposals": 0,
+        "retained_proposals": 0,
+        "retired": 0
+      },
+      "regulator_outcomes": {
+        "accepted": 0,
+        "rejected_context": 0,
+        "rejected_policy": 0,
+        "rejected_quality": 0,
+        "rejected_stale": 0
+      },
+      "resolution": {
+        "budget_exhaustion": {
+          "candidates": 0,
+          "diagnostic_bytes": 0,
+          "evidence": 0,
+          "evidence_bytes": 0,
+          "graph_rows": 0,
+          "other": 0,
+          "output_bytes": 0,
+          "resolvers": 0,
+          "vector_results": 0,
+          "working_memory_bytes": 0
+        },
+        "executions": 0,
+        "latency": {
+          "buckets": {
+            "gt_10_s": 0,
+            "le_100_ms": 0,
+            "le_10_ms": 0,
+            "le_10_s": 0,
+            "le_1_ms": 0,
+            "le_1_s": 0
+          },
+          "max_ns": 0,
+          "observations": 0,
+          "total_ns": 0
+        },
+        "outcomes": {
+          "ANSWER": 0,
+          "EVIDENCE": 0,
+          "MISS": 0
+        },
+        "replays": 0,
+        "requests": 0,
+        "resources": {
+          "candidates": {
+            "max": 0,
+            "total": 0
+          },
+          "diagnostic_bytes": {
+            "max": 0,
+            "total": 0
+          },
+          "evidence": {
+            "max": 0,
+            "total": 0
+          },
+          "evidence_bytes": {
+            "max": 0,
+            "total": 0
+          },
+          "graph_rows": {
+            "max": 0,
+            "total": 0
+          },
+          "output_bytes": {
+            "max": 0,
+            "total": 0
+          },
+          "resolvers": {
+            "max": 0,
+            "total": 0
+          },
+          "vector_results": {
+            "max": 0,
+            "total": 0
+          },
+          "working_memory_bytes": {
+            "max": 0,
+            "total": 0
+          }
+        }
+      },
+      "resolvers": {
+        "exact": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "lexical": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "other": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "pattern": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "sparse": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "standalone_semantic": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "structured_graph": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "support_semantic": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        },
+        "utility": {
+          "candidate_contributions": 0,
+          "evidence_contributions": 0,
+          "invocations": 0,
+          "latency": {
+            "buckets": {
+              "gt_10_s": 0,
+              "le_100_ms": 0,
+              "le_10_ms": 0,
+              "le_10_s": 0,
+              "le_1_ms": 0,
+              "le_1_s": 0
+            },
+            "max_ns": 0,
+            "observations": 0,
+            "total_ns": 0
+          },
+          "selected_contributions": 0,
+          "states": {
+            "completed": 0,
+            "exhausted": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unavailable": 0
+          }
+        }
+      },
+      "schema_version": 1
+    },
+    "turn_count": 1000,
+    "user_id": "Sarah"
+  },
+  "last_turn": {
+    "response_present": true,
+    "source": "graph",
+    "turn": 1000
+  },
+  "mcp_tool_calls": 1003,
+  "minimum_required_turns": 1000,
+  "passed": true,
+  "profile_definition": {
+    "dislikes": [
+      "dogs"
+    ],
+    "likes": [
+      "sushi",
+      "cats"
+    ],
+    "user_id": "Sarah"
+  },
+  "python": "3.12.2",
+  "requested_turns": 1000,
+  "server": {
+    "name": "Engram",
+    "version": "1.1.11"
+  },
+  "source_state": {
+    "base_commit": "e22b976d7fb0481a986eb204211239d0a9e5fb08",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/persistence-v2.md",
+      "documentation/code-style.md",
+      "documentation/composition/section10-conformance-2026-08-20.md",
+      "documentation/contextual/section8-conformance-2026-08-20.md",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/decisions/0006-section12-fielded-bm25.md",
+      "documentation/evaluation/foundation-2026-08-19.json",
+      "documentation/evaluation/foundation-v1.md",
+      "documentation/evaluation/qualification-v1.md",
+      "documentation/evaluation/section16-chaos-2026-08-23.json",
+      "documentation/evaluation/section16-composition-2026-08-23.json",
+      "documentation/evaluation/section16-contextual-2026-08-23.json",
+      "documentation/evaluation/section16-engineering-2026-08-23.json",
+      "documentation/evaluation/section16-evidence-2026-08-23.json",
+      "documentation/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/evaluation/section16-performance-2026-08-23.json",
+      "documentation/evaluation/section16-release-evidence-2026-08-23.md",
+      "documentation/evaluation/section16-rollout-v1.md",
+      "documentation/evaluation/section16-semantic-2026-08-23.json",
+      "documentation/evaluation/section16-temporal-2026-08-23.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/feedback/section6-conformance-2026-08-16.md",
+      "documentation/fusion/contracts-v1.md",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/grpc-integration.md",
+      "documentation/mcp-integration.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/operations/persistence-schema-management-v1.md",
+      "documentation/operations/section15-concurrency-idempotency-v1.md",
+      "documentation/operations/section15-conformance-2026-08-23.md",
+      "documentation/operations/section15-interface-contracts-v1.md",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23-failed-default-seed.json",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/operations/section15-operational-telemetry-v1.md",
+      "documentation/operations/security-privacy-review-2026-08-20.md",
+      "documentation/python-api.md",
+      "documentation/rewrite/benchmark-2026-08-20.json",
+      "documentation/rewrite/provenance-and-licensing-2026-08-20.md",
+      "documentation/rewrite/section11-conformance-2026-08-20.md",
+      "documentation/semantic/benchmark-2026-08-22.json",
+      "documentation/semantic/contracts-v1.md",
+      "documentation/semantic/section13-conformance-2026-08-22.md",
+      "documentation/sparse/contracts-v1.md",
+      "documentation/sparse/provenance-and-licensing-2026-08-21.md",
+      "documentation/sparse/section12-conformance-2026-08-21.md",
+      "documentation/temporal/contracts-v1.md",
+      "documentation/temporal/section9-conformance-2026-08-20.md",
+      "documentation/temporal/unit-test-value-audit-2026-08-20.md",
+      "documentation/utilities/section14-conformance-2026-08-22.md",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/conversation.py",
+      "engram/core.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/nlp.py",
+      "engram/persistence.py",
+      "engram/rollout.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sparse.py",
+      "engram/telemetry.py",
+      "engram/template.py",
+      "engram/v2/",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_release_gate_foundation.py",
+      "eval/run_section16_chaos.py",
+      "eval/run_section16_engineering.py",
+      "eval/section11-rewrite-v1.json",
+      "eval/section13-semantic-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_rewrites.py",
+      "scripts/benchmark_semantic.py",
+      "scripts/migrate_persistence.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_feedback.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nlp.py",
+      "tests/test_persistence_management.py",
+      "tests/test_rollout.py",
+      "tests/test_section16_evaluation.py",
+      "tests/test_security_privacy.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_telemetry.py"
+    ],
+    "governed_source_sha256": "db62f0330841aa011252d379ac1addd1e6c56d729344ac27789fc0375acc1aac",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "sources": {
+    "graph": 5,
+    "pattern": 995
+  },
+  "started_at": "2026-08-25T04:14:00.476455+00:00",
+  "stop_summary": {
+    "catch_all_turns": 0,
+    "exchanges": 1000,
+    "learned_statements": 0,
+    "learned_unique_texts": 0,
+    "sources": {
+      "graph": 5,
+      "pattern": 995
+    }
+  },
+  "transport": "official MCP Client against repository MCPServer",
+  "turn_evaluation": {
+    "check_names": [
+      "active_topic_string",
+      "captured_list",
+      "context_changes_object",
+      "dialogue_act_string",
+      "elapsed_nonnegative",
+      "entities_list",
+      "exact_fields",
+      "fact_admissions_list",
+      "input_continuity",
+      "learned_statements_list",
+      "memgraph_source_when_asked",
+      "pattern_string",
+      "response_nonempty",
+      "sarah_preference_continuity",
+      "score_finite",
+      "source_nonempty",
+      "turn_sequence",
+      "user_continuity"
+    ],
+    "checks_per_turn": 17,
+    "detailed_evaluation_sha256": "bdffdaa66a93b1ed8d7eb9476ad63a31b62d17442af2cdecf65e33d13fe72b47",
+    "failed_turns": [],
+    "failure_counts": {},
+    "first_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 462.2267,
+      "passed": true,
+      "profile_check": "sarah_preference_continuity",
+      "profile_passed": true,
+      "response_bytes": 18,
+      "response_sha256": "a7f037c7f53da374d71dc49b6fe06ebfe250c60388fb1a74d2f1c5afbd9a9315",
+      "source": "pattern",
+      "turn": 1
+    },
+    "last_evaluation": {
+      "failed_checks": [],
+      "latency_ms": 3489.079,
+      "passed": true,
+      "profile_check": "memgraph_source_when_asked",
+      "profile_passed": true,
+      "response_bytes": 81,
+      "response_sha256": "5ff40a8fcde86e3c4c314be5ecedaa871ba5e144fd278bac4081b6e71d755e47",
+      "source": "graph",
+      "turn": 1000
+    },
+    "observation_sequence_sha256": "c044634d86fd892cd24f0b31c25e710bc94e1687c1ed967379e1bbef12967375",
+    "pass_runs": [
+      {
+        "bit": "1",
+        "turns": 1000
+      }
+    ],
+    "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
+    "passed_turns": 1000,
+    "response_sequence_sha256": "104c9d321cb45870fe9a876d5b81a6710db9d2862b342cab3e5d79a186f0ce19"
+  },
+  "turn_latency_ms": {
+    "maximum": 5168.0507,
+    "minimum": 1.8757,
+    "p50": 3.1559,
+    "p95": 6.538
+  }
+}

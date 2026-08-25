@@ -1,8 +1,10 @@
 """Network-level contract tests for the single-instance gRPC adapter."""
 
+import logging
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,12 +16,14 @@ from google.protobuf import empty_pb2, json_format, struct_pb2
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
 from engram import grpc_server as grpc_server_module, service as service_module
-from engram.constants import Tier
+from engram.constants import MAX_REQUEST_BYTES, Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, PersistenceError
 from engram.grpc_server import SERVICE_NAME, create_grpc_server
+from engram.mcp_server import MCPConversationService
 from engram.service import EngramCore, open_engram_core
 from engram.v1 import engram_pb2, engram_pb2_grpc
+from engram.v2 import engram_pb2 as evidence_pb2, engram_pb2_grpc as evidence_pb2_grpc
 
 
 def _core(store_path="") -> EngramCore:
@@ -92,6 +96,44 @@ def test_section7_keeps_current_grpc_v1_as_proposal_resolution_only() -> None:
         "EvidencePackage",
         "ResolutionResult",
     }.intersection(engram_pb2.DESCRIPTOR.message_types_by_name)
+
+
+def test_section15_exposes_unified_resolution_only_through_the_v2_evidence_service() -> None:
+    service = evidence_pb2.DESCRIPTOR.services_by_name["EngramEvidenceService"]
+    resolve = service.methods_by_name["ResolveEvidence"]
+
+    assert tuple(method.name for method in service.methods) == ("ResolveEvidence",)
+    assert resolve.input_type.full_name == "engram.v2.ResolveEvidenceRequest"
+    assert resolve.output_type.full_name == "engram.v2.ResolutionResult"
+    assert tuple((field.name, field.number) for field in resolve.input_type.fields) == (
+        ("request", 1),
+        ("request_id", 2),
+        ("user_id", 3),
+        ("namespace", 4),
+        ("context_fingerprint", 5),
+        ("identity", 6),
+        ("required_metadata", 7),
+        ("required_source_label", 8),
+        ("budget", 9),
+        ("configured_resolvers", 10),
+        ("accept_exact", 11),
+    )
+    assert tuple((field.name, field.number) for field in resolve.output_type.fields) == (
+        ("schema_version", 1),
+        ("outcome", 2),
+        ("selected_candidate", 3),
+        ("selected_candidate_available", 4),
+        ("response_candidates", 5),
+        ("evidence", 6),
+        ("confidence", 7),
+        ("confidence_available", 8),
+        ("reason_codes", 9),
+        ("frame_diagnostics", 10),
+        ("resolver_results", 11),
+        ("budget", 12),
+        ("evidence_package_available", 13),
+        ("evidence_package", 14),
+    )
 
 
 def test_conversation_fact_predicate_report_and_health_protocol(tmp_path) -> None:
@@ -212,6 +254,206 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
         assert _health_status(channel) == health_pb2.HealthCheckResponse.NOT_SERVING
 
 
+def test_v2_evidence_service_delegates_unified_resolution_to_the_shared_core() -> None:
+    core = _core()
+    with _running_server(core) as (_, channel, v1_stub):
+        v1_stub.LearnResponse(
+            engram_pb2.LearnResponseRequest(
+                request="What is served through v2?",
+                response="The transport-neutral result.",
+                request_id="learn-v2-evidence",
+            )
+        )
+        stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
+
+        result = stub.ResolveEvidence(
+            evidence_pb2.ResolveEvidenceRequest(
+                request="What is served through v2?",
+                request_id="resolve-v2-evidence",
+                user_id="Alice",
+                configured_resolvers=("exact",),
+                accept_exact=True,
+            )
+        )
+
+        assert result.schema_version == 1
+        assert result.outcome == "ANSWER"
+        assert result.selected_candidate_available is True
+        assert _as_dict(result.selected_candidate)["response"] == "The transport-neutral result."
+        assert len(result.response_candidates) == 1
+        assert result.evidence_package_available is False
+        assert result.evidence_package.wire_version == 2
+        assert result.evidence_package.retained_count == 0
+        assert result.evidence_package.records == []
+
+
+def test_v2_evidence_service_enforces_the_shared_request_bound() -> None:
+    core = _core()
+    with _running_server(core) as (_, channel, _):
+        stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
+
+        with pytest.raises(grpc.RpcError) as failure:
+            stub.ResolveEvidence(
+                evidence_pb2.ResolveEvidenceRequest(
+                    request="x" * (MAX_REQUEST_BYTES + 1),
+                    request_id="oversized-v2-request",
+                )
+            )
+
+        assert failure.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+        assert _trailing_metadata(failure.value)["engram-error-type"] == "InvalidRequestError"
+        assert core._resolution_requests == {}
+
+
+def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -> None:
+    secret = "private-request-and-credential-content"
+    core = _core()
+
+    def fail(_text, source_label=""):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(core, "add_fact", fail)
+    with (
+        caplog.at_level(logging.ERROR, logger="engram.grpc_server"),
+        _running_server(core) as (_, _, stub),
+        pytest.raises(grpc.RpcError) as failure,
+    ):
+        stub.AddFact(engram_pb2.AddFactRequest(text="trigger failure"))
+
+    assert failure.value.code() == grpc.StatusCode.INTERNAL
+    assert failure.value.details() == "internal Engram failure"
+    assert secret not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and_grpc() -> None:
+    mcp = MCPConversationService()
+    mcp.start(seed_path="")
+    core = cast(EngramCore, mcp.core)
+    created = core.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
+    mcp_replay = mcp.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
+
+    with _running_server(core) as (_, _, stub):
+        grpc_replay = _as_dict(
+            stub.LearnResponse(
+                engram_pb2.LearnResponseRequest(
+                    request="What is shared?",
+                    response="One shared result.",
+                    request_id="cross-adapter-learn",
+                )
+            )
+        )
+        with pytest.raises(grpc.RpcError) as conflicting:
+            stub.LearnResponse(
+                engram_pb2.LearnResponseRequest(
+                    request="What is shared?",
+                    response="A conflicting result.",
+                    request_id="cross-adapter-learn",
+                )
+            )
+
+        assert created["idempotent"] is False
+        assert mcp_replay["idempotent"] is True
+        assert grpc_replay["idempotent"] is True
+        assert grpc_replay["statement_id"] == created["statement_id"]
+        assert conflicting.value.code() == grpc.StatusCode.ABORTED
+        assert len(core.engram.response_repository.snapshot()["artifacts"]) == 1
+
+
+def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adapter_visibility() -> None:
+    mcp = MCPConversationService()
+    mcp.start(seed_path="")
+    core = cast(EngramCore, mcp.core)
+    learned = core.learn_response("What is concurrent?", "One accepted result.", "concurrent-learn")
+    proposal = core.propose("What is concurrent?", "concurrent-proposal")
+
+    with _running_server(core) as (_, _, stub):
+        barrier = threading.Barrier(7)
+
+        def python_resolve() -> dict:
+            barrier.wait()
+            return core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+
+        def mcp_resolve() -> dict:
+            barrier.wait()
+            return mcp.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+
+        def grpc_resolve() -> dict:
+            barrier.wait()
+            result = stub.Resolve(
+                engram_pb2.ResolveRequest(
+                    proposal_id=proposal["proposal_id"],
+                    outcome=engram_pb2.REGULATOR_OUTCOME_ACCEPTED,
+                    statement_id=learned["statement_id"],
+                )
+            )
+            return _as_dict(result)
+
+        operations = (python_resolve, mcp_resolve, grpc_resolve, python_resolve, mcp_resolve, grpc_resolve)
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = [executor.submit(operation) for operation in operations]
+            barrier.wait()
+            results = [future.result(timeout=10) for future in futures]
+
+        python_view = core.inspect_conversation("0")["session"]
+        mcp_view = mcp.inspect()["session"]
+        grpc_view = _as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]
+
+        assert sum(result["idempotent"] is False for result in results) == 1
+        assert sum(result["idempotent"] is True for result in results) == 5
+        assert core.engram.get_statement(learned["statement_id"])["hit_count"] == 1
+        assert python_view["previous_response"] == mcp_view["previous_response"] == grpc_view["previous_response"]
+        assert core.engram.response_repository.check()["consistent"] is True
+
+
+@pytest.mark.parametrize("mode", ["cancel", "deadline"])
+def test_v2_resolution_propagates_cancellation_without_caching_partial_work(monkeypatch, mode) -> None:
+    core = _core()
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    original = core._resolution_orchestrator._resolve_with_plan
+
+    def delayed(frame, request_id, plan, accept_exact=False, cooperative_check=()):
+        del frame, request_id, plan, accept_exact
+        entered.set()
+        assert release.wait(timeout=5)
+        try:
+            for _ in range(500):
+                cooperative_check()
+                time.sleep(0.01)
+            raise AssertionError("transport cancellation did not reach the cooperative check")
+        finally:
+            completed.set()
+
+    monkeypatch.setattr(core._resolution_orchestrator, "_resolve_with_plan", delayed)
+    request = evidence_pb2.ResolveEvidenceRequest(
+        request="Uncached cancellation request",
+        request_id=f"v2-{mode}",
+        configured_resolvers=("exact",),
+    )
+    with _running_server(core) as (_, channel, _):
+        stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
+        call = stub.ResolveEvidence.future(request, timeout=5 if mode == "cancel" else 0.05)
+        assert entered.wait(timeout=5)
+        if mode == "cancel":
+            assert call.cancel() is True
+            with pytest.raises(grpc.FutureCancelledError):
+                call.result(timeout=5)
+            assert call.code() == grpc.StatusCode.CANCELLED
+        else:
+            with pytest.raises(grpc.RpcError) as stopped:
+                call.result(timeout=5)
+            assert stopped.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+        release.set()
+        assert completed.wait(timeout=5)
+        assert request.request_id not in core._resolution_requests
+
+        monkeypatch.setattr(core._resolution_orchestrator, "_resolve_with_plan", original)
+        retry = stub.ResolveEvidence(request, timeout=5)
+        assert retry.outcome == "MISS"
+
+
 def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monkeypatch) -> None:
     store = tmp_path / "engram.json"
     core = _core(store)
@@ -232,7 +474,10 @@ def test_checkpoint_failure_exposes_metadata_and_health_recovers(tmp_path, monke
             stub.LearnResponse(request)
 
         metadata = _trailing_metadata(failed.value)
+        details = cast(str, failed.value.details())
         assert failed.value.code() == grpc.StatusCode.UNAVAILABLE
+        assert details == "Engram persistence failure"
+        assert "disk unavailable" not in details
         assert metadata["engram-error-type"] == "PersistenceError"
         assert metadata["engram-operation"] == "store checkpoint"
         assert metadata["engram-state-changed"] == "false"
@@ -395,19 +640,20 @@ def test_grpc_main_refuses_to_serve_after_required_component_preflight_failure(m
 
 def test_committed_generated_stubs_match_the_proto(tmp_path) -> None:
     repository = Path(__file__).resolve().parent.parent
-    command = [
-        sys.executable,
-        "-m",
-        "grpc_tools.protoc",
-        f"-I{repository}",
-        f"--python_out={tmp_path}",
-        f"--pyi_out={tmp_path}",
-        f"--grpc_python_out={tmp_path}",
-        str(repository / "engram" / "v1" / "engram.proto"),
-    ]
-    subprocess.run(command, check=True, cwd=repository, capture_output=True, text=True)
+    for version in ("v1", "v2"):
+        command = [
+            sys.executable,
+            "-m",
+            "grpc_tools.protoc",
+            f"-I{repository}",
+            f"--python_out={tmp_path}",
+            f"--pyi_out={tmp_path}",
+            f"--grpc_python_out={tmp_path}",
+            str(repository / "engram" / version / "engram.proto"),
+        ]
+        subprocess.run(command, check=True, cwd=repository, capture_output=True, text=True)
 
-    for filename in ("engram_pb2.py", "engram_pb2.pyi", "engram_pb2_grpc.py"):
-        committed = repository / "engram" / "v1" / filename
-        regenerated = tmp_path / "engram" / "v1" / filename
-        assert regenerated.read_bytes() == committed.read_bytes(), f"regenerate {filename} from engram.proto"
+        for filename in ("engram_pb2.py", "engram_pb2.pyi", "engram_pb2_grpc.py"):
+            committed = repository / "engram" / version / filename
+            regenerated = tmp_path / "engram" / version / filename
+            assert regenerated.read_bytes() == committed.read_bytes(), f"regenerate {version}/{filename} from engram.proto"

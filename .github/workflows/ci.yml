@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  static-analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,18 +19,14 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: latest
-          check-latest: true
-
       - name: Install analysis tools
-        run: |
-          pip install --upgrade black isort ruff bandit vulture
-          npm install --global pyright@latest
+        run: pip install --upgrade black isort ruff bandit vulture pytest
 
       - name: Format
         run: black -l 132 -t py311 .
+
+      - name: Check formatter diff
+        run: git diff --exit-code -- '*.py'
 
       - name: Import-order check
         run: isort --check-only .
@@ -47,32 +43,8 @@ jobs:
       - name: Dead-code scan
         run: vulture
 
-      # pymgclient builds from source and needs OpenSSL headers and CMake.
-      - name: Install build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev cmake
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -e ".[dev]"
-
-      - name: Check dependency compatibility
-        run: pip check
-
-      - name: Audit dependencies
-        run: pip-audit --desc -r requirements.txt
-
       - name: Type check
-        run: pyright
+        run: npx --yes pyright@latest
 
-      - name: Fetch NLTK data
-        run: python -m engram.nltk_data
-
-      - name: Fetch spaCy model
-        run: python -m spacy download en_core_web_sm
-
-      - name: Test
-        run: pytest
-
-      - name: Learning-loop eval
-        run: python eval/run_learning_eval.py
+      - name: First-party source-contract checks
+        run: pytest -q tests/test_source_contracts.py

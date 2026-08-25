@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from engram import metrics, pipeline, sessions
-from engram.constants import CONVERSATION_REPORT_VERSION, Tier
+from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.text import normalize
 
 
@@ -176,6 +176,12 @@ class ConversationRuntime:
     ) -> None:
         if not isinstance(initial_bot_text, str):
             raise ValueError("initial_bot_text must be a string")
+        try:
+            initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError("initial_bot_text must contain valid Unicode") from error
+        if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
+            raise ValueError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
         if not isinstance(random_seed, int) or isinstance(random_seed, bool):
             raise ValueError("random_seed must be an integer")
         if not isinstance(random_seed_present, bool):
@@ -201,6 +207,12 @@ class ConversationRuntime:
         """Submit exactly one message and return the complete observable turn."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be one non-empty string")
+        try:
+            text_bytes = len(text.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError("text must contain valid Unicode") from error
+        if text_bytes > MAX_REQUEST_BYTES:
+            raise ValueError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
             session = self.engram.sessions[self.user_id]

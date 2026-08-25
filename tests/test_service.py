@@ -576,7 +576,7 @@ def test_checkpoint_failure_reports_degraded_state_and_recovers(tmp_path, monkey
     assert degraded["healthy"] is False
     assert degraded["durability"] == "degraded"
     assert degraded["dirty"] is False
-    assert "disk unavailable" in degraded["last_persistence_error"]
+    assert degraded["last_persistence_error"] == "OSError"
 
     monkeypatch.setattr(service_module.persistence, "save_response_state", real_save)
     retry = core.learn_response("What is cached?", "A durable answer.", "learn-degraded")

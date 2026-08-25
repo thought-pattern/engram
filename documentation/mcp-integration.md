@@ -8,6 +8,16 @@ The ten tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, report generation, and a two-phase propose/resolve cache
 interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the human CLI.
+Section 15 freezes the ten names, their complete input schemas and defaults,
+their absence of declared output schemas, and their tool descriptions. Unified
+Section 7 evidence is exposed through the separate gRPC v2 service; it does not
+add or alter an MCP tool.
+
+MCP tool calls remain synchronous at this boundary. If a client abandons its
+wait, already-started mutation work may complete; retry the same request ID to
+recover the receipt outcome. MCP does not infer rollback or create a second
+cancellation or transaction mechanism. The shared behavior is recorded in [the
+Section 15 concurrency contract](operations/section15-concurrency-idempotency-v1.md).
 
 This document covers:
 
@@ -178,8 +188,11 @@ All other tools require an active conversation established by `engram_start`.
 
 `engram_inspect` includes `core_status`, the transport-neutral lifecycle and
 durability snapshot. Its fields include `state`, `ready`, `healthy`,
-`durability`, `dirty`, the last checkpoint/error information, and the number
-of active conversations. The bounded `components` object reports `enabled` and
+`durability`, `dirty`, the last checkpoint/error-class information, and the number
+of active conversations. `telemetry` is the shared fixed-cardinality process
+aggregate for outcome, resolver contribution/state, latency, budget/resource,
+rebuild, durability, and fixed Regulator outcomes; it retains no raw request or
+identifier labels. The bounded `components` object reports `enabled` and
 `ready` Booleans for graph, vector, and spaCy without exposing endpoints,
 credentials, model paths, or index names.
 
@@ -274,11 +287,11 @@ this section provide the separate speculative proposal and explicit Regulator
 decision boundary.
 
 Section 11 retrieval rewrites do not add an MCP tool or change these payloads.
-They operate inside the transport-neutral unified resolution boundary; exposing
-that newer boundary through MCP remains Section 15 adapter work. The MCP
-long-conversation conformance run therefore verifies startup and legacy adapter
-non-regression with rewrites enabled, while focused transport-neutral tests
-verify rewritten exact retrieval and AIML separation.
+They operate inside the transport-neutral unified resolution boundary. The MCP
+long-conversation conformance run therefore verifies startup and adapter
+non-regression with rewrites enabled, while focused transport-neutral and gRPC
+v2 tests verify unified resolution, evidence packaging, rewritten exact
+retrieval, and AIML separation.
 
 ### `engram_propose`
 

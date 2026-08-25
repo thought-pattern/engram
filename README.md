@@ -670,6 +670,14 @@ continue while the graph-bound request remains outstanding, while same-user cont
 and retry identity stay serialized. Shutdown and supervisor behavior are documented
 in the [deployment runbook](documentation/operations/deployment-and-rollback-v1.md).
 
+Unified resolution also honors the policy-versioned `rollout` configuration by
+exact namespace: `disabled`, `shadow`, `evidence_only`,
+`regulated_direct_answer`, or exact-only `rollback`. The default preserves the
+existing regulated direct-answer behavior. See the
+[Section 16 rollout contract](documentation/evaluation/section16-rollout-v1.md).
+The [source-bound Section 16 release packet](documentation/evaluation/section16-release-evidence-2026-08-23.md)
+approves the qualified `regulated_direct_answer` configuration for staged rollout.
+
 Candidate observations and external verdicts use durable replayable receipts,
 bounded aged aggregates, exact scope/generation/policy partitions, and no
 implicit conversion of Engram selection into acceptance. Only completed
@@ -696,10 +704,12 @@ engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
 python -m engram.grpc_server --bind 127.0.0.1:50051
 ```
 
-The versioned source contract and committed Python stubs live in
-`engram/v1`. See [gRPC integration](documentation/grpc-integration.md) for the
-complete RPC list, Python client example, status mapping, deployment options,
-retry semantics, and shutdown contract.
+The unchanged service contract and committed Python stubs live in `engram/v1`.
+The separate `engram/v2` evidence service exposes transport-neutral unified
+resolution without changing v1. See
+[gRPC integration](documentation/grpc-integration.md) for the complete RPC
+lists, Python client examples, status mapping, deployment options, retry
+semantics, and shutdown contract.
 
 Scripted or adaptive soak runners can use `ConversationTurnPlanner` to reserve
 the final turn for a farewell, preserve planned messages when adaptive replies

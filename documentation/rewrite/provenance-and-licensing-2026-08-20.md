@@ -9,4 +9,4 @@ Historical chatbot systems informed only the high-level taxonomy already named b
 
 Every rule declares `Engram project` as author, an independently authored origin, the repository Apache-2.0 license, and its authoring date. The corpus contains no response prose and grants no response authority. The only runtime template field is the bounded inherited `{subject}` retrieval value; no AIML tags or executable expressions are accepted.
 
-The repository-visible evaluation corpus is also Apache-2.0 and is an engineering holdout, not protected Section 16 release data. It was frozen separately from the production corpus and is not loaded by the runtime. No external model, network resource, downloaded corpus, or runtime license is involved.
+The repository-visible evaluation corpus is also Apache-2.0 and is an engineering holdout, not a Section 16 release partition. It was frozen separately from the production corpus and is not loaded by the runtime. No external model, network resource, downloaded corpus, or runtime license is involved.

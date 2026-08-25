@@ -7,7 +7,7 @@ arithmetic, Boolean logic, sets, date/time, unit conversion, SemVer comparison,
 and identifier validation. Every plugin independently passed conformance,
 held-out, determinism, property, resource-rejection, fuzz, latency, security, and
 unified-resolution integration checks. All seven are promoted for opt-in component
-use and remain disabled by default; Section 16 owns protected rollout authority.
+use and remain disabled by default; Section 16 owns project rollout authority.
 
 ## Task evidence
 

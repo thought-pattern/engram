@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package engram.v2;
+
+import "google/protobuf/struct.proto";
+
+// The v2 service exposes transport-neutral unified resolution without changing
+// the existing engram.v1 proposal-resolution service.
+service EngramEvidenceService {
+  rpc ResolveEvidence(ResolveEvidenceRequest) returns (ResolutionResult);
+}
+
+message ResolveEvidenceRequest {
+  string request = 1;
+  string request_id = 2;
+  string user_id = 3;
+  string namespace = 4;
+  string context_fingerprint = 5;
+  google.protobuf.Struct identity = 6;
+  google.protobuf.Struct required_metadata = 7;
+  string required_source_label = 8;
+  google.protobuf.Struct budget = 9;
+  repeated string configured_resolvers = 10;
+  bool accept_exact = 11;
+}
+
+message EvidencePackage {
+  uint32 wire_version = 1;
+  repeated google.protobuf.Struct records = 2;
+  uint32 retained_count = 3;
+  uint32 omitted_count = 4;
+  bool truncated = 5;
+  repeated string truncation_reasons = 6;
+}
+
+message ResolutionResult {
+  uint32 schema_version = 1;
+  string outcome = 2;
+  google.protobuf.Struct selected_candidate = 3;
+  bool selected_candidate_available = 4;
+  repeated google.protobuf.Struct response_candidates = 5;
+  repeated google.protobuf.Struct evidence = 6;
+  double confidence = 7;
+  bool confidence_available = 8;
+  repeated string reason_codes = 9;
+  google.protobuf.Struct frame_diagnostics = 10;
+  repeated google.protobuf.Struct resolver_results = 11;
+  google.protobuf.Struct budget = 12;
+  bool evidence_package_available = 13;
+  EvidencePackage evidence_package = 14;
+}

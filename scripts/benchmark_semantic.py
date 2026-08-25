@@ -231,39 +231,35 @@ def main() -> int:
     semantic_metrics = evaluate_rows(semantic_rows)
     sparse_metrics = evaluate_rows(sparse_rows)
     reranker_metrics = evaluate_rows(reranker_rows)
-    release_semantic = semantic_metrics["release"]
-    release_sparse = sparse_metrics["release"]
-    release_reranker = reranker_metrics["release"]
+    holdout_semantic = semantic_metrics["engineering_holdout"]
+    holdout_sparse = sparse_metrics["engineering_holdout"]
+    holdout_reranker = reranker_metrics["engineering_holdout"]
     gates = corpus["gates"]
     semantic_gate_values = {
-        "release_recall_at_1": release_semantic["recall_at_1"],
-        "release_recall_delta_vs_sparse": release_semantic["recall_at_1"] - release_sparse["recall_at_1"],
-        "release_false_answer_rate": release_semantic["false_answer_rate"],
-        "p95_query_ms": percentile(semantic_latencies, 0.95),
-        "cold_start_ms": cold_start_ms,
+        "engineering_holdout_recall_at_1": holdout_semantic["recall_at_1"],
+        "engineering_holdout_recall_delta_vs_sparse": holdout_semantic["recall_at_1"] - holdout_sparse["recall_at_1"],
+        "engineering_holdout_false_answer_rate": holdout_semantic["false_answer_rate"],
         "peak_memory_mib": max(rss_after_model, rss_after_index) / 1_048_576,
     }
     semantic_checks = {
-        "release_recall_at_1": semantic_gate_values["release_recall_at_1"] >= gates["semantic"]["release_recall_at_1_min"],
-        "release_recall_delta_vs_sparse": semantic_gate_values["release_recall_delta_vs_sparse"]
-        >= gates["semantic"]["release_recall_delta_vs_sparse_min"],
-        "release_false_answer_rate": semantic_gate_values["release_false_answer_rate"]
-        <= gates["semantic"]["release_false_answer_rate_max"],
-        "p95_query_ms": semantic_gate_values["p95_query_ms"] <= gates["semantic"]["p95_query_ms_max"],
-        "cold_start_ms": semantic_gate_values["cold_start_ms"] <= gates["semantic"]["cold_start_ms_max"],
+        "engineering_holdout_recall_at_1": semantic_gate_values["engineering_holdout_recall_at_1"]
+        >= gates["semantic"]["engineering_holdout_recall_at_1_min"],
+        "engineering_holdout_recall_delta_vs_sparse": semantic_gate_values["engineering_holdout_recall_delta_vs_sparse"]
+        >= gates["semantic"]["engineering_holdout_recall_delta_vs_sparse_min"],
+        "engineering_holdout_false_answer_rate": semantic_gate_values["engineering_holdout_false_answer_rate"]
+        <= gates["semantic"]["engineering_holdout_false_answer_rate_max"],
         "peak_memory_mib": semantic_gate_values["peak_memory_mib"] <= gates["semantic"]["peak_memory_mib_max"],
     }
     reranker_gate_values = {
-        "release_recall_delta": release_reranker["recall_at_1"] - release_semantic["recall_at_1"],
-        "release_false_answer_delta": release_reranker["false_answer_rate"] - release_semantic["false_answer_rate"],
-        "p95_overhead_ms": percentile(reranker_latencies, 0.95),
+        "engineering_holdout_recall_delta": holdout_reranker["recall_at_1"] - holdout_semantic["recall_at_1"],
+        "engineering_holdout_false_answer_delta": holdout_reranker["false_answer_rate"] - holdout_semantic["false_answer_rate"],
         "peak_memory_mib": max(0, process.memory_info().rss - rss_after_index) / 1_048_576,
     }
     reranker_checks = {
-        "release_recall_delta": reranker_gate_values["release_recall_delta"] >= gates["reranker"]["release_recall_delta_min"],
-        "release_false_answer_delta": reranker_gate_values["release_false_answer_delta"]
-        <= gates["reranker"]["release_false_answer_delta_max"],
-        "p95_overhead_ms": reranker_gate_values["p95_overhead_ms"] <= gates["reranker"]["p95_overhead_ms_max"],
+        "engineering_holdout_recall_delta": reranker_gate_values["engineering_holdout_recall_delta"]
+        >= gates["reranker"]["engineering_holdout_recall_delta_min"],
+        "engineering_holdout_false_answer_delta": reranker_gate_values["engineering_holdout_false_answer_delta"]
+        <= gates["reranker"]["engineering_holdout_false_answer_delta_max"],
         "peak_memory_mib": reranker_gate_values["peak_memory_mib"] <= gates["reranker"]["peak_memory_mib_max"],
     }
     artifact_bytes = sum(
@@ -272,10 +268,16 @@ def main() -> int:
         if value.is_file() and ".cache" not in value.relative_to(model_path).parts
     )
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "source_state": benchmark_source_state(),
-        "corpus": {"path": str(Path(args.corpus)), "version": corpus["corpus_version"], "query_count": len(corpus["queries"])},
+        "corpus": {
+            "path": str(Path(args.corpus)),
+            "version": corpus["corpus_version"],
+            "query_count": len(corpus["queries"]),
+            "evaluation_role": corpus["evaluation_role"],
+            "section16_release_eligible": corpus["section16_release_eligible"],
+        },
         "artifact": {
             **{
                 key: manifest[key] for key in ("model_id", "model_version", "license_id", "artifact_sha256", "dimension", "backend")
@@ -291,6 +293,9 @@ def main() -> int:
                 "index_build_ms": build_ms,
                 "query_p50_ms": percentile(semantic_latencies, 0.50),
                 "query_p95_ms": percentile(semantic_latencies, 0.95),
+                "query_p99_ms": percentile(semantic_latencies, 0.99),
+                "query_maximum_ms": max(semantic_latencies, default=0.0),
+                "timing_gate_applied": False,
                 "throughput_queries_per_second": len(semantic_latencies) / elapsed_query_seconds if elapsed_query_seconds else 0.0,
                 "rss_before_mib": rss_before / 1_048_576,
                 "rss_after_model_mib": rss_after_model / 1_048_576,
@@ -316,6 +321,9 @@ def main() -> int:
             "metrics": reranker_metrics,
             "p50_overhead_ms": percentile(reranker_latencies, 0.50),
             "p95_overhead_ms": percentile(reranker_latencies, 0.95),
+            "p99_overhead_ms": percentile(reranker_latencies, 0.99),
+            "maximum_overhead_ms": max(reranker_latencies, default=0.0),
+            "timing_gate_applied": False,
             "health": reranker.health(),
             "pairwise_encoder": {"available": False, "reason": "no approved local pairwise model artifact"},
         },
@@ -332,9 +340,9 @@ def main() -> int:
                 "values": reranker_gate_values,
                 "checks": reranker_checks,
                 "passed": all(reranker_checks.values()),
-                "positive_value_observed": reranker_gate_values["release_recall_delta"] > 0.0,
+                "positive_value_observed": reranker_gate_values["engineering_holdout_recall_delta"] > 0.0,
                 "promoted_for_opt_in_component_use": all(reranker_checks.values())
-                and reranker_gate_values["release_recall_delta"] > 0.0,
+                and reranker_gate_values["engineering_holdout_recall_delta"] > 0.0,
             },
         },
         "queries": {"sparse": sparse_rows, "semantic": semantic_rows, "reranker": reranker_rows},

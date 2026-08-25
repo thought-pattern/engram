@@ -1,18 +1,21 @@
 """Focused executable checks for architecture rules not covered by Ruff or Pyright."""
 
 import ast
+import json
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 PACKAGE = REPOSITORY / "engram"
-GENERATED = PACKAGE / "v1"
+GENERATED_DIRECTORIES = (PACKAGE / "v1", PACKAGE / "v2")
+FIRST_PARTY_ROOTS = ("engram", "scripts", "eval")
+FIRST_PARTY_DIRECTORIES = tuple(REPOSITORY / name for name in FIRST_PARTY_ROOTS)
 
 
 def _modules() -> tuple[tuple[Path, ast.Module], ...]:
     result = tuple(
         (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
         for path in sorted(PACKAGE.rglob("*.py"))
-        if GENERATED not in path.parents
+        if not any(directory in path.parents for directory in GENERATED_DIRECTORIES)
     )
     return result
 
@@ -57,6 +60,22 @@ def _uses_union(annotation: ast.expr) -> bool:
     return result
 
 
+def _first_party_module_exists(name: str) -> bool:
+    parts = name.split(".")
+    path = REPOSITORY.joinpath(*parts)
+    result = path.is_dir() or path.with_suffix(".py").is_file()
+    return result
+
+
+def _first_party_source_modules() -> tuple[tuple[Path, ast.Module], ...]:
+    result = tuple(
+        (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        for directory in FIRST_PARTY_DIRECTORIES
+        for path in sorted(directory.rglob("*.py"))
+    )
+    return result
+
+
 def test_production_imports_remain_eager_and_module_scoped() -> None:
     violations = []
     for path, tree in _modules():
@@ -91,3 +110,63 @@ def test_production_avoids_rigid_dictionary_typing_and_unneeded_frozen_sets() ->
             if name in prohibited:
                 violations.append(f"{path.relative_to(REPOSITORY)}:{getattr(node, 'lineno', 0)}: {name}")
     assert violations == []
+
+
+def test_first_party_imports_resolve_to_repository_modules() -> None:
+    violations = []
+    for path, tree in _first_party_source_modules():
+        for node in ast.walk(tree):
+            imported_modules = []
+            if isinstance(node, ast.Import):
+                imported_modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported_modules.append(node.module)
+                module_path = REPOSITORY.joinpath(*node.module.split("."))
+                if module_path.is_dir():
+                    imported_modules.extend(f"{node.module}.{alias.name}" for alias in node.names if alias.name != "*")
+            for name in imported_modules:
+                if name.split(".", 1)[0] in FIRST_PARTY_ROOTS and not _first_party_module_exists(name):
+                    violations.append(f"{path.relative_to(REPOSITORY)}:{getattr(node, 'lineno', 0)}: {name}")
+    assert violations == []
+
+
+def test_section13_visible_data_remains_engineering_only() -> None:
+    corpus_path = REPOSITORY / "eval" / "section13-semantic-v1.json"
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    partitions = {query["partition"] for query in corpus["queries"]}
+
+    assert corpus["evaluation_role"] == "repository-visible engineering holdout; not a Section 16 release partition"
+    assert corpus["section16_release_eligible"] is False
+    assert partitions == {"train", "calibration", "engineering_holdout"}
+    assert partitions.isdisjoint({"release", "release_gate", "final_test"})
+
+
+def test_section13_timing_is_observed_without_a_gate() -> None:
+    corpus_path = REPOSITORY / "eval" / "section13-semantic-v1.json"
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+
+    for component in ("semantic", "reranker"):
+        gate_names = corpus["gates"][component]
+        assert all("_ms_" not in name and "latency" not in name for name in gate_names)
+
+
+def test_section16_timing_is_observed_without_a_gate() -> None:
+    manifest_path = REPOSITORY / "eval" / "release-gate-foundation-v1.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    gates = manifest["numerical_gates"]
+
+    assert gates["turn_length_reporting"] == {
+        "metrics": ["p50_ms", "p95_ms", "p99_ms", "max_ms"],
+        "pass_fail": False,
+    }
+    assert all("latency" not in name and "startup" not in name for name in gates)
+
+
+def test_release_gate_authority_remains_with_section16() -> None:
+    decision = (REPOSITORY / "documentation" / "decisions" / "0004-evaluation-time-epoch-and-release-gates.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "approved_project_qualification" in decision
+    assert "project-owned, versioned, and disjoint" in decision
+    assert "The first release gates are" not in decision

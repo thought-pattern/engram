@@ -493,13 +493,9 @@ class TemplateProcessor:
         for key, value in query_data.get("params", {}).items():
             params[key] = self._substitute_variables(str(value), context)
 
-        # Execute query. The graph layer raises on a query-level failure and
-        # degrades to an empty list when unreachable; either way recall falls
-        # through to on_empty / on_failure rather than surfacing an error.
-        try:
-            records = context["graph_fn"](query, params)
-        except Exception:
-            records = []
+        # Expected graph unavailability is normalized by the graph owner. A
+        # callback defect remains visible to its caller.
+        records = context["graph_fn"](query, params)
         if not records:
             records = []
 
@@ -563,10 +559,7 @@ class TemplateProcessor:
             result = ""
             return result
 
-        try:
-            records = context["graph_fn"](query, params)
-        except Exception:
-            records = []
+        records = context["graph_fn"](query, params)
         if records and graph_single(records):
             value = str(graph_single(records).get("result", ""))
             return value

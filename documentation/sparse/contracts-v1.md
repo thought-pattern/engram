@@ -136,5 +136,5 @@ The [synthetic benchmark corpus](../../eval/section12-sparse-v1.json) and
 and record relevance, p50/p95 latency, startup build, memory, persisted bytes, and
 write amplification. The [decision record](../decisions/0006-section12-fielded-bm25.md)
 and [license inventory](provenance-and-licensing-2026-08-21.md) complete the engine
-selection evidence. These are repository-visible engineering fixtures; they are
-not independent release evidence.
+selection evidence. These are repository-visible engineering fixtures, not
+Section 16 release partitions.

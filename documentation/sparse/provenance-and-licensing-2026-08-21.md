@@ -31,8 +31,8 @@ the selected resolver does not import or invoke it.
 `eval/section12-sparse-v1.json` contains 28 synthetic documents and 28 synthetic
 queries authored for EGR-1202 on 2026-08-21. The cases are purpose-built technical
 and long-tail contrasts; they are not copied user data, production traffic, an
-external benchmark, or a protected Section 16 partition.
+external benchmark, or a Section 16 release partition.
 
 The corpus is repository-visible engineering holdout evidence. It may establish
 Section 12 component promotion, but it cannot authorize release or be represented
-as independent final evaluation.
+as the Section 16 final test.

@@ -26,11 +26,25 @@ from engram.constants import (
     EMPTY_CONFIG,
     EMPTY_MAPPING,
     EMPTY_METADATA,
+    MAX_ARTIFACT_ID_BYTES,
+    MAX_CALLER_ID_BYTES,
+    MAX_CONTEXT_FINGERPRINT_BYTES,
+    MAX_FEEDBACK_REASON_BYTES,
+    MAX_METADATA_KEY_BYTES,
+    MAX_METADATA_STRING_BYTES,
+    MAX_NAMESPACE_BYTES,
+    MAX_REASON_CODE_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_REQUEST_ID_BYTES,
+    MAX_RESPONSE_BYTES,
+    MAX_SIGNATURE_INPUT_BYTES,
+    MAX_SOURCE_LABEL_BYTES,
     MAX_TRANSIENT_RECORDS,
     PROPOSAL_TTL_SECONDS,
     REGULATOR_OUTCOMES,
     CoreState,
     DurabilityState,
+    RolloutMode,
     Tier,
 )
 from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
@@ -111,6 +125,8 @@ from engram.resolvers import (
 )
 from engram.responses import AcceptedResponseService, LifecycleMutationReason
 from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_rewrite_corpus
+from engram.rollout import apply_rollout, rollout_status, select_rollout
+from engram.telemetry import record_checkpoint, record_regulator_outcome, record_resolution
 from engram.text import normalize
 
 
@@ -146,25 +162,43 @@ def feedback_mutation_request_id(kind: str, request_id: str) -> str:
     return result
 
 
-def require_service_text(value: str, name: str) -> None:
+def require_service_text(value: str, name: str, maximum_bytes: int) -> None:
     """Require a nonempty service-boundary string."""
     if not isinstance(value, str) or not value.strip():
         raise InvalidRequestError(f"{name} must be a non-empty string")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
+    if size > maximum_bytes:
+        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
 
 
-def require_service_string(value: str, name: str) -> None:
+def require_service_string(value: str, name: str, maximum_bytes: int) -> None:
     """Require a concrete service-boundary string, including an empty string."""
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
+    if size > maximum_bytes:
+        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
 
 
 def service_request_signature(**values) -> str:
     """Return deterministic JSON for an idempotent service request."""
     try:
         result = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-        return result
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("metadata and request values must be JSON-compatible") from error
+    try:
+        encoded = result.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise InvalidRequestError("metadata and request values must contain valid Unicode") from error
+    if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
+        raise InvalidRequestError(f"service request exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
+    return result
 
 
 def accounting_request_id(kind: str, external_id: str) -> str:
@@ -232,6 +266,7 @@ def normalize_service_user_id(user_id: str) -> str:
     """Normalize a service user identity and translate boundary errors."""
     try:
         result = sessions.normalize_user_id(user_id)
+        require_service_text(result, "user_id", MAX_CALLER_ID_BYTES)
         return result
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
@@ -286,29 +321,24 @@ def negative_resolution_admissible(value: ResolutionResult, plan) -> bool:
     return result
 
 
-def negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
-    """Build an exactly accounted MISS result for a negative-cache hit."""
+def bounded_miss_result(
+    frame: QueryFrame,
+    started_ns: int,
+    reason_codes: tuple[str, ...],
+    diagnostics: dict[str, object],
+) -> ResolutionResult:
+    """Build an exactly accounted resolver-free MISS result."""
     current_ns = time.monotonic_ns()
     elapsed_ns = max(0, current_ns - started_ns)
     exhausted = set()
-    diagnostics = {
+    selected_diagnostics = {
         "diagnostic_id": frame["diagnostic_id"],
-        "negative_resolution": {
-            "hit": True,
-            "reason": "insufficient_knowledge",
-            "memory_only": True,
-        },
-        "accounting": {
-            "candidate_count": 0,
-            "accepted_present": False,
-            "candidacy_applied": False,
-            "success_applied": False,
-            "idempotent": False,
-        },
+        **diagnostics,
+        "accounting": {"candidate_count": 0, "accepted_present": False, "success_applied": False},
     }
-    diagnostic_bytes = len(json.dumps(diagnostics, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    diagnostic_bytes = len(json.dumps(selected_diagnostics, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     if diagnostic_bytes > frame["budget"]["max_diagnostic_bytes"]:
-        diagnostics = {}
+        selected_diagnostics = {}
         diagnostic_bytes = 0
         exhausted.add("diagnostic_bytes")
     consumption = budget_consumption(
@@ -326,8 +356,8 @@ def negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
             evidence=(),
             confidence=0.0,
             confidence_available=False,
-            reason_codes=("negative_resolution_hit", "insufficient_knowledge"),
-            frame_diagnostics=diagnostics,
+            reason_codes=reason_codes,
+            frame_diagnostics=selected_diagnostics,
             resolver_results=(),
             budget=consumption,
         )
@@ -345,6 +375,17 @@ def negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
             return result
         consumption = updated
     raise InvalidRequestError("negative resolution budget accounting did not converge")
+
+
+def negative_hit_result(frame: QueryFrame, started_ns: int) -> ResolutionResult:
+    """Build an exactly accounted MISS result for a negative-cache hit."""
+    result = bounded_miss_result(
+        frame,
+        started_ns,
+        ("negative_resolution_hit", "insufficient_knowledge"),
+        {"negative_resolution": {"hit": True, "reason": "insufficient_knowledge", "memory_only": True}},
+    )
+    return result
 
 
 class EngramCore:
@@ -516,7 +557,8 @@ class EngramCore:
     def status(self) -> dict:
         """Return transport-neutral lifecycle and durability readiness."""
         with self.lock:
-            accepting_requests = self._state == CoreState.RUNNING
+            persistence_status = deepcopy(self.engram.persistence_status)
+            accepting_requests = self._state == CoreState.RUNNING and persistence_status["ready"] is True
             durability_healthy = self._durability != DurabilityState.DEGRADED
             self._component_status = self.engram.component_status_snapshot()
             result = {
@@ -529,9 +571,86 @@ class EngramCore:
                 "last_persistence_error": self._last_persistence_error,
                 "active_conversations": len(self.conversations),
                 "store_path": str(self.store_path) if self.store_path else "",
+                "persistence": persistence_status,
                 "components": deepcopy(self._component_status),
+                "rollout": rollout_status(self.engram.config),
+                "telemetry": self.operational_telemetry(),
             }
             return result
+
+    def _cache_resolution(
+        self,
+        request_id: str,
+        signature: str,
+        result: ResolutionResult,
+        frame: QueryFrame,
+        candidate_statement_ids: tuple[str, ...],
+        candidacy_observations: tuple[FeedbackObservation, ...],
+    ) -> ResolutionResult:
+        """Retain one public resolution result and its feedback references."""
+        public_result = validate_resolution_result(result)
+        record: dict[str, object] = {
+            "signature": signature,
+            "result": public_result,
+            "frame": frame,
+            "candidate_statement_ids": candidate_statement_ids,
+            "candidacy_observations": candidacy_observations,
+            "candidacy_applied": not candidacy_observations,
+        }
+        self._resolution_requests[request_id] = record
+        if candidacy_observations:
+            self._ensure_resolution_candidacy(request_id, record)
+        while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
+            evicted_request_id = next(iter(self._resolution_requests))
+            self._resolution_requests.pop(evicted_request_id)
+            self._resolution_accounting.discard(evicted_request_id)
+        result_copy = validate_resolution_result(public_result)
+        return result_copy
+
+    def operational_telemetry(self) -> dict:
+        """Return fixed-cardinality process metrics without request-scoped values."""
+        with self.lock:
+            result = self.engram.operational_telemetry_snapshot()
+            result["durability"]["current_state"] = self._durability.value
+            result["legacy_cache"] = {
+                "queries": self.engram.query_count,
+                "hits": self.engram.hit_count,
+                "evictions": self.engram.eviction_count,
+            }
+            result["regulated_cache"] = {
+                "proposals": self.regulated_metrics["proposals"],
+                "misses": self.regulated_metrics["misses"],
+                "accepted": self.regulated_metrics["accepted"],
+                "learned_created": self.regulated_metrics["learned_created"],
+                "retired": self.regulated_metrics["retired"],
+                "idempotent_retries": self.regulated_metrics["idempotent_retries"],
+                "pending_proposals": sum(1 for record in self.proposals.values() if not record["resolution"]),
+                "retained_proposals": len(self.proposals),
+            }
+            return result
+
+    def _record_resolution_telemetry(self, result: ResolutionResult, *, replayed: bool) -> None:
+        with self.engram.count_lock:
+            record_resolution(self.engram.operational_metrics, result, replayed=replayed)
+
+    def _record_regulator_telemetry(self, outcome: str) -> None:
+        with self.engram.count_lock:
+            record_regulator_outcome(self.engram.operational_metrics, outcome)
+
+    def _record_checkpoint_telemetry(
+        self,
+        started_ns: int,
+        *,
+        succeeded: bool,
+        recovered_after_state: bool = False,
+    ) -> None:
+        with self.engram.count_lock:
+            record_checkpoint(
+                self.engram.operational_metrics,
+                time.monotonic_ns() - started_ns,
+                succeeded=succeeded,
+                recovered_after_state=recovered_after_state,
+            )
 
     def _candidate_generation(self, statement_id: str, resolution: ResolutionResult) -> tuple[int, bool]:
         artifact = self.engram.response_repository.snapshot()["artifacts"].get(statement_id)
@@ -602,6 +721,7 @@ class EngramCore:
         durable = False
         if not candidate["replayed"]:
             if self.store_path and self.checkpoint_on_mutation:
+                checkpoint_started_ns = time.monotonic_ns()
                 try:
                     persistence.save_feedback_state(self.engram, candidate["after"], self.store_path)
                 except Exception as error:
@@ -614,17 +734,26 @@ class EngramCore:
                             recovered_signature = feedback_state_signature(recovered)
                     if recovered_signature == feedback_state_signature(candidate["after"]):
                         durable = True
+                        self._record_checkpoint_telemetry(
+                            checkpoint_started_ns,
+                            succeeded=False,
+                            recovered_after_state=True,
+                        )
                     elif recovered_signature == feedback_state_signature(candidate["before"]):
                         # The durable file is conclusively still the validated
                         # before-state.  Live state was not published, so this
                         # is retryable without declaring divergent durability.
                         self._durability = DurabilityState.HEALTHY
-                        self._last_persistence_error = str(error)
+                        self._last_persistence_error = type(error).__name__
+                        self._record_checkpoint_telemetry(checkpoint_started_ns, succeeded=False)
                         raise PersistenceError("feedback checkpoint", error, state_changed=False) from error
                     else:
                         self._durability = DurabilityState.DEGRADED
-                        self._last_persistence_error = str(error)
+                        self._last_persistence_error = type(error).__name__
+                        self._record_checkpoint_telemetry(checkpoint_started_ns, succeeded=False)
                         raise PersistenceError("feedback checkpoint", error, state_changed=False) from error
+                else:
+                    self._record_checkpoint_telemetry(checkpoint_started_ns, succeeded=True)
                 durable = True
                 self._durability = DurabilityState.HEALTHY
                 self._last_checkpoint_at = canonical_utc(self._clock())
@@ -776,14 +905,14 @@ class EngramCore:
         cancellation_check: object = (),
     ) -> ResolutionResult:
         """Run one transport-neutral bounded resolution pipeline."""
-        require_service_text(request, "request")
-        require_service_text(request_id, "request_id")
+        require_service_text(request, "request", MAX_REQUEST_BYTES)
+        require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
         normalized_user_id = normalize_service_user_id(user_id)
         with self._resolution_slot(request_id, normalized_user_id), self.lock:
             self._require_running()
-            require_service_string(namespace, "namespace")
-            require_service_string(context_fingerprint, "context_fingerprint")
-            require_service_string(required_source_label, "required_source_label")
+            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
+            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
+            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
             if not isinstance(identity, Mapping):
                 raise InvalidRequestError("identity must be an object")
             if not isinstance(budget, Mapping):
@@ -818,6 +947,8 @@ class EngramCore:
                 selected_cancellation_check()
 
             check_cancellation()
+            rollout = select_rollout(self.engram.config, namespace)
+            rollout_mode = cast(RolloutMode, rollout["mode"])
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
             signature_budget.pop("started_ns")
             signature = service_request_signature(
@@ -831,6 +962,8 @@ class EngramCore:
                 budget=signature_budget,
                 configured_resolvers=list(configured_resolvers),
                 accept_exact=accept_exact,
+                rollout_policy_version=rollout["policy_version"],
+                rollout_mode=rollout_mode.value,
             )
             if request_id in self._resolution_requests:
                 check_cancellation()
@@ -844,6 +977,7 @@ class EngramCore:
                     prior_result = validate_resolution_result(prior_result)
                 except InvalidRequestError as error:
                     raise LifecycleError("resolution request cache is malformed") from error
+                self._record_resolution_telemetry(prior_result, replayed=True)
                 return prior_result
             scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
             frame = self._query_frame_builder.build(
@@ -889,81 +1023,90 @@ class EngramCore:
                 self._checkpoint()
 
             negative_started_ns = time.monotonic_ns()
-            plan = self._resolver_registry.plan(frame, configured_resolvers)
+            if rollout_mode == RolloutMode.DISABLED:
+                disabled_result = bounded_miss_result(
+                    frame,
+                    negative_started_ns,
+                    ("rollout_disabled",),
+                    {
+                        "rollout": {
+                            "policy_version": rollout["policy_version"],
+                            "mode": rollout_mode.value,
+                            "namespace_override": rollout["namespace_override"],
+                        }
+                    },
+                )
+                public_result = self._cache_resolution(request_id, signature, disabled_result, frame, (), ())
+                remember_contextual_frame()
+                self._record_resolution_telemetry(public_result, replayed=False)
+                return public_result
+
+            selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
+            plan = self._resolver_registry.plan(frame, selected_resolvers)
             negative_key = empty_negative_resolution()["key"]
             negative_key_available = False
+            negative_hit = False
+            negative_result: object = {}
             try:
                 check_cancellation()
                 negative_key, negative_key_available = self._negative_key(frame, plan)
+                if rollout_mode == RolloutMode.SHADOW:
+                    negative_key_available = False
                 if negative_key_available:
                     negative_lookup = self._negative_resolutions.lookup(
                         negative_key,
                         frame["eligibility_context"]["evaluation_time"],
                     )
                     if negative_lookup["hit"]:
-                        result = negative_hit_result(frame, negative_started_ns)
-                        cached_result = result
-                        self._resolution_requests[request_id] = {
-                            "signature": signature,
-                            "result": cached_result,
-                            "frame": frame,
-                            "candidate_statement_ids": (),
-                            "candidacy_observations": (),
-                            "candidacy_applied": True,
-                        }
-                        while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
-                            evicted_request_id = next(iter(self._resolution_requests))
-                            self._resolution_requests.pop(evicted_request_id)
-                            self._resolution_accounting.discard(evicted_request_id)
-                        remember_contextual_frame()
-                        public_result = validate_resolution_result(result)
-                        return public_result
+                        negative_result = negative_hit_result(frame, negative_started_ns)
+                        negative_hit = True
             except ResolutionCancelledError:
                 raise
             except Exception:
-                # Negative resolution is an optimization and always fails open.
+                # Negative-cache ownership and lookup are optional optimizations.
                 negative_key_available = False
-            result, finalization = self._resolution_orchestrator._resolve_with_plan(
+                negative_hit = False
+            if negative_hit:
+                public_result = apply_rollout(validate_resolution_result(negative_result), rollout)
+                public_result = self._cache_resolution(request_id, signature, public_result, frame, (), ())
+                remember_contextual_frame()
+                self._record_resolution_telemetry(public_result, replayed=False)
+                return public_result
+            raw_result, finalization = self._resolution_orchestrator._resolve_with_plan(
                 frame,
                 request_id,
                 plan,
-                accept_exact=accept_exact,
+                accept_exact=accept_exact and rollout_mode == RolloutMode.REGULATED_DIRECT_ANSWER,
                 cooperative_check=selected_cancellation_check,
             )
-            if negative_key_available and negative_resolution_admissible(result, plan):
+            if negative_key_available and negative_resolution_admissible(raw_result, plan):
                 with contextlib.suppress(Exception):
                     self._negative_resolutions.admit(
                         negative_key,
                         frame["eligibility_context"]["evaluation_time"],
                     )
+            result = apply_rollout(raw_result, rollout)
+            candidate_statement_ids = finalization["candidate_statement_ids"] if rollout_mode != RolloutMode.SHADOW else ()
             candidacy_observations = self._feedback_observations(
                 frame,
                 result,
-                finalization["candidate_statement_ids"],
+                candidate_statement_ids,
                 reference_kind=FeedbackReferenceKind.RESOLUTION_REQUEST,
                 reference_id=request_id,
                 kind=FeedbackObservationKind.CANDIDACY,
                 outcome=FeedbackOutcome.CANDIDATE,
                 observed_at=frame["eligibility_context"]["evaluation_time"],
             )
-            cached_result = result
-            record: dict[str, object] = {
-                "signature": signature,
-                "result": cached_result,
-                "frame": frame,
-                "candidate_statement_ids": finalization["candidate_statement_ids"],
-                "candidacy_observations": candidacy_observations,
-                "candidacy_applied": not candidacy_observations,
-            }
-            self._resolution_requests[request_id] = record
-            if candidacy_observations:
-                self._ensure_resolution_candidacy(request_id, record)
-            while len(self._resolution_requests) > MAX_TRANSIENT_RECORDS:
-                evicted_request_id = next(iter(self._resolution_requests))
-                self._resolution_requests.pop(evicted_request_id)
-                self._resolution_accounting.discard(evicted_request_id)
+            public_result = self._cache_resolution(
+                request_id,
+                signature,
+                result,
+                frame,
+                candidate_statement_ids,
+                candidacy_observations,
+            )
             remember_contextual_frame()
-            public_result = validate_resolution_result(result)
+            self._record_resolution_telemetry(public_result, replayed=False)
             return public_result
 
     def record_resolution_feedback(
@@ -978,10 +1121,10 @@ class EngramCore:
 
         with self.lock:
             self._require_running()
-            require_service_text(resolution_request_id, "resolution_request_id")
-            require_service_text(feedback_request_id, "feedback_request_id")
-            require_service_text(statement_id, "statement_id")
-            require_service_string(reason, "reason")
+            require_service_text(resolution_request_id, "resolution_request_id", MAX_REQUEST_ID_BYTES)
+            require_service_text(feedback_request_id, "feedback_request_id", MAX_REQUEST_ID_BYTES)
+            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
+            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
             try:
                 verdict = FeedbackOutcome(outcome)
             except (TypeError, ValueError) as error:
@@ -1056,6 +1199,8 @@ class EngramCore:
                     "reason": reason,
                 }
             )
+            if not result["idempotent"]:
+                self._record_regulator_telemetry(verdict.value)
             return result
 
     def inspect_feedback_learning(self, limit: int = 64) -> dict[str, object]:
@@ -1150,6 +1295,8 @@ class EngramCore:
         """Add one unattributed shared fact without changing user context."""
         with self.lock:
             self._require_running()
+            require_service_text(text, "text", MAX_RESPONSE_BYTES)
+            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
             try:
                 statement_id = self.engram.add_fact(text, source_label=source_label)
             except ValueError as error:
@@ -1188,8 +1335,8 @@ class EngramCore:
         """Set one caller-owned predicate on a user context."""
         with self.lock:
             self._require_running()
-            require_service_text(name, "name")
-            require_service_string(value, "value")
+            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
+            require_service_string(value, "value", MAX_METADATA_STRING_BYTES)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
@@ -1201,6 +1348,8 @@ class EngramCore:
         """Read one caller-owned predicate from a user context."""
         with self.lock:
             self._require_running()
+            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
+            require_service_string(default, "default", MAX_METADATA_STRING_BYTES)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
             if not session:
@@ -1273,11 +1422,11 @@ class EngramCore:
         with self.lock:
             self._require_running()
             self._cleanup_transient()
-            require_service_text(request, "request")
-            require_service_text(request_id, "request_id")
-            require_service_string(namespace, "namespace")
-            require_service_string(context_fingerprint, "context_fingerprint")
-            require_service_string(required_source_label, "required_source_label")
+            require_service_text(request, "request", MAX_REQUEST_BYTES)
+            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
+            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
+            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
                 raise InvalidRequestError("limit must be an integer from 1 through 10")
             if not isinstance(required_metadata, dict):
@@ -1490,10 +1639,10 @@ class EngramCore:
         with self.lock:
             self._require_running()
             self._cleanup_transient()
-            require_service_text(proposal_id, "proposal_id")
-            require_service_string(outcome, "outcome")
-            require_service_string(statement_id, "statement_id")
-            require_service_string(reason, "reason")
+            require_service_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES)
+            require_service_string(outcome, "outcome", MAX_REASON_CODE_BYTES)
+            require_service_string(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
+            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
             if outcome not in REGULATOR_OUTCOMES:
                 supported = ", ".join(sorted(REGULATOR_OUTCOMES))
                 raise InvalidRequestError(f"outcome must be one of: {supported}")
@@ -1589,6 +1738,7 @@ class EngramCore:
                 self._dirty = True
             else:
                 self.regulated_metrics["rejections"][outcome] += 1
+            self._record_regulator_telemetry(outcome)
 
             resolution = {
                 "proposal_id": proposal_id,
@@ -1631,12 +1781,12 @@ class EngramCore:
         with self.lock:
             self._require_running()
             self._cleanup_transient()
-            require_service_text(request, "request")
-            require_service_text(response, "response")
-            require_service_text(request_id, "request_id")
-            require_service_string(namespace, "namespace")
-            require_service_string(context_fingerprint, "context_fingerprint")
-            require_service_string(source_label, "source_label")
+            require_service_text(request, "request", MAX_REQUEST_BYTES)
+            require_service_text(response, "response", MAX_RESPONSE_BYTES)
+            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
+            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
+            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
             if normalize(response) == "idk":
                 raise InvalidRequestError("IDK is not a cacheable response")
             if not isinstance(metadata, dict):
@@ -1701,9 +1851,9 @@ class EngramCore:
         with self.lock:
             self._require_running()
             self._cleanup_transient()
-            require_service_text(statement_id, "statement_id")
-            require_service_text(reason, "reason")
-            require_service_text(request_id, "request_id")
+            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
+            require_service_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
+            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
             response_artifacts = self.engram.response_repository.snapshot()["artifacts"]
             if statement_id in response_artifacts:
                 previous = self.retire_requests.get(request_id, {})
@@ -1821,6 +1971,7 @@ class EngramCore:
             self._flush_store()
 
     def _checkpoint_response_state(self, state: CoordinatedResponseState) -> None:
+        started_ns = time.monotonic_ns()
         try:
             store_path = Path(self.store_path)
             store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1829,12 +1980,14 @@ class EngramCore:
             persistence.save_response_state(self.engram, state, store_path)
         except Exception as error:
             self._durability = DurabilityState.DEGRADED
-            self._last_persistence_error = str(error)
+            self._last_persistence_error = type(error).__name__
+            self._record_checkpoint_telemetry(started_ns, succeeded=False)
             raise CheckpointFailureError(CheckpointFailureKind.INDETERMINATE, str(error)) from error
         self._durability = DurabilityState.HEALTHY
         self._dirty = False
         self._last_checkpoint_at = datetime.now(UTC).isoformat()
         self._last_persistence_error = ""
+        self._record_checkpoint_telemetry(started_ns, succeeded=True)
 
     def _recover_response_state(self) -> CoordinatedResponseState:
         result = persistence.load_coordinated_response_state(self.store_path, config=self.engram.config)
@@ -1846,6 +1999,7 @@ class EngramCore:
             self._dirty = False
             result = False
             return result
+        started_ns = time.monotonic_ns()
         try:
             store_path = Path(self.store_path)
             store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1854,12 +2008,14 @@ class EngramCore:
             persistence.save(self.engram, store_path)
         except Exception as error:
             self._durability = DurabilityState.DEGRADED
-            self._last_persistence_error = str(error)
+            self._last_persistence_error = type(error).__name__
+            self._record_checkpoint_telemetry(started_ns, succeeded=False)
             raise PersistenceError("store checkpoint", error, state_changed=self._dirty) from error
         self._durability = DurabilityState.HEALTHY
         self._dirty = False
         self._last_checkpoint_at = datetime.now(UTC).isoformat()
         self._last_persistence_error = ""
+        self._record_checkpoint_telemetry(started_ns, succeeded=True)
         result = True
         return result
 

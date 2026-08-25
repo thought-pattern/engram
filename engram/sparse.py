@@ -19,14 +19,16 @@ from typing import cast
 
 from engram.artifacts import CachedResponseArtifact, validate_cached_response_artifact
 from engram.config import SparseConfig, sparse_config
-from engram.constants import DEFAULT_STOPWORDS
+from engram.constants import (
+    DEFAULT_STOPWORDS,
+    SPARSE_DOCUMENT_SCHEMA_VERSION,
+    SPARSE_INDEX_SCHEMA_VERSION,
+    SPARSE_INDEX_VERSION,
+    SPARSE_TOKENIZER_VERSION,
+)
 from engram.errors import InvalidRequestError
 from engram.identity import ScopeKey, validate_scope_key
 
-SPARSE_DOCUMENT_SCHEMA_VERSION = 1
-SPARSE_INDEX_SCHEMA_VERSION = 1
-SPARSE_INDEX_VERSION = 1
-SPARSE_TOKENIZER_VERSION = 1
 MAX_SPARSE_FIELDS = 7
 MAX_SPARSE_FIELD_TEXTS = 65
 MAX_SPARSE_TOKENS_PER_FIELD = 2_048

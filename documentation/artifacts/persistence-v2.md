@@ -7,6 +7,8 @@ Authority: ADR 0001, ADR 0003, and Section 3 of `ENGRAM-DEVELOPMENT.md`
 
 Engram persistence version is `2`. The loader continues to accept version `1`, including an omitted version that historically meant v1. Existing configuration, counters, bot state, sets, maps, substitutions, general statements, keyword statistics, and sessions remain in their established top-level fields.
 
+New v2 writes also carry the bounded cross-feature `manifest` defined by [EGR-1505 schema management](../operations/persistence-schema-management-v1.md). Pre-manifest v2 files remain readable and are reported as requiring an explicit operator migration; startup never rewrites them implicitly.
+
 Version 2 adds the exact required `response_state` object:
 
 | Field | Authority |
@@ -47,7 +49,7 @@ Classification is deterministic:
 - malformed scope, aliases, support, provenance, metadata, or artifact field → `malformed_identity`, legacy statement retained and exact-unindexed; or
 - multiple recovered artifacts owning one scoped canonical or alias key → each receives `ambiguous_identity`; artifacts remain inspectable, but the index retains every owner and contextual lookup returns COLLISION rather than a winner.
 
-Migration never derives identity from response text, pattern text, or lexical keywords. `migrate_persistence_state` copies its input, produces v2 for v1, validates v2, and returns an exact copy when invoked again on v2.
+Migration never derives identity from response text, pattern text, or lexical keywords. `migrate_persistence_state` copies its input, produces v2 for v1, adds the current manifest to pre-manifest v2, validates current v2, and returns an exact copy when invoked again on current v2.
 
 ## Recovery procedure
 
@@ -55,14 +57,14 @@ Section 3 supplies the pure transformation and validation. The Section 15 operat
 
 1. stop writers and retain the original v1 file unchanged;
 2. parse and load v1, failing before output on structural corruption;
-3. run `migrate_persistence_state` and write v2 atomically to a distinct output or a backed-up target;
+3. run `python scripts/migrate_persistence.py SOURCE OUTPUT` to validate and atomically write a distinct v2 candidate;
 4. load that v2 output and require repository consistency before readiness;
 5. inspect every quarantine record;
 6. repair missing identity through an authoritative recommit, repair malformed fields explicitly, and resolve ambiguous keys through explicit supersession or an authoritative scope/alias correction;
 7. rerun migration/load to prove idempotence and index rebuild; and
 8. preserve v1 until adapter validation and rollback exercise complete.
 
-The v2 writer does not offer automatic downgrade. A v1 binary cannot safely represent artifacts, lifecycle, epochs, receipts, or quarantine. Section 15 must document downgrade constraints and select a compatible backup rather than stripping those fields.
+The v2 writer does not offer automatic downgrade. A v1 binary cannot safely represent artifacts, lifecycle, epochs, receipts, feedback, or quarantine. Select a compatible backup rather than stripping those fields; the complete constraint is documented in the Section 15 schema-management contract.
 
 ## Failure behavior
 

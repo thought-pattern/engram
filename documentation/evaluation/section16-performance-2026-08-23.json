@@ -1,0 +1,499 @@
+{
+  "artifact_schema_version": 1,
+  "captured_at": "2026-08-25T03:59:21.063415+00:00",
+  "environment": {
+    "logical_cpu_count": 6,
+    "packages": {
+      "grpcio": "1.83.0",
+      "grpcio-tools": "1.83.0",
+      "nltk": "3.10.2",
+      "protobuf": "7.35.1",
+      "pymgclient": "1.6.0",
+      "sentence-transformers": "5.7.0",
+      "spacy": "3.8.15"
+    },
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "python": "3.12.2"
+  },
+  "lexical": [
+    {
+      "corpus_size": 100,
+      "idempotent_retry": {
+        "iterations": 30,
+        "maximum_ms": 0.1374,
+        "minimum_ms": 0.0652,
+        "p50_ms": 0.0702,
+        "p95_ms": 0.1038,
+        "p99_ms": 0.1374
+      },
+      "memory": {
+        "current_bytes": 1976363,
+        "peak_bytes": 3863454
+      },
+      "persistence": {
+        "atomic_save": {
+          "iterations": 10,
+          "maximum_ms": 26.28,
+          "minimum_ms": 20.3653,
+          "p50_ms": 22.958,
+          "p95_ms": 26.28,
+          "p99_ms": 26.28
+        },
+        "load": {
+          "iterations": 10,
+          "maximum_ms": 261.9568,
+          "minimum_ms": 231.5206,
+          "p50_ms": 238.9977,
+          "p95_ms": 261.9568,
+          "p99_ms": 261.9568
+        },
+        "serialize": {
+          "iterations": 10,
+          "maximum_ms": 17.0123,
+          "minimum_ms": 15.0324,
+          "p50_ms": 16.2362,
+          "p95_ms": 17.0123,
+          "p99_ms": 17.0123
+        },
+        "serialized_bytes": 66530
+      },
+      "repeated_request": {
+        "all_candidates_stable": true,
+        "expected_statement_id": "stmt_0fc9e3b173b8",
+        "retry_marked_idempotent": true
+      },
+      "unique_request_proposal": {
+        "iterations": 30,
+        "maximum_ms": 9.4221,
+        "minimum_ms": 4.3688,
+        "p50_ms": 5.8588,
+        "p95_ms": 8.3074,
+        "p99_ms": 9.4221
+      }
+    },
+    {
+      "corpus_size": 1000,
+      "idempotent_retry": {
+        "iterations": 30,
+        "maximum_ms": 0.1234,
+        "minimum_ms": 0.0577,
+        "p50_ms": 0.0593,
+        "p95_ms": 0.074,
+        "p99_ms": 0.1234
+      },
+      "memory": {
+        "current_bytes": 1866054,
+        "peak_bytes": 2147820
+      },
+      "persistence": {
+        "atomic_save": {
+          "iterations": 10,
+          "maximum_ms": 59.9366,
+          "minimum_ms": 49.7397,
+          "p50_ms": 52.2939,
+          "p95_ms": 59.9366,
+          "p99_ms": 59.9366
+        },
+        "load": {
+          "iterations": 10,
+          "maximum_ms": 1842.293,
+          "minimum_ms": 1529.2878,
+          "p50_ms": 1563.2171,
+          "p95_ms": 1842.293,
+          "p99_ms": 1842.293
+        },
+        "serialize": {
+          "iterations": 10,
+          "maximum_ms": 41.7138,
+          "minimum_ms": 34.3294,
+          "p50_ms": 38.4936,
+          "p95_ms": 41.7138,
+          "p99_ms": 41.7138
+        },
+        "serialized_bytes": 296931
+      },
+      "repeated_request": {
+        "all_candidates_stable": true,
+        "expected_statement_id": "stmt_172e1a92afb5",
+        "retry_marked_idempotent": true
+      },
+      "unique_request_proposal": {
+        "iterations": 30,
+        "maximum_ms": 8.8272,
+        "minimum_ms": 4.2354,
+        "p50_ms": 6.1522,
+        "p95_ms": 8.2371,
+        "p99_ms": 8.8272
+      }
+    },
+    {
+      "corpus_size": 5000,
+      "idempotent_retry": {
+        "iterations": 30,
+        "maximum_ms": 0.094,
+        "minimum_ms": 0.0561,
+        "p50_ms": 0.0581,
+        "p95_ms": 0.0788,
+        "p99_ms": 0.094
+      },
+      "memory": {
+        "current_bytes": 7468625,
+        "peak_bytes": 9168732
+      },
+      "persistence": {
+        "atomic_save": {
+          "iterations": 10,
+          "maximum_ms": 342.7569,
+          "minimum_ms": 166.3277,
+          "p50_ms": 167.8738,
+          "p95_ms": 342.7569,
+          "p99_ms": 342.7569
+        },
+        "load": {
+          "iterations": 10,
+          "maximum_ms": 7032.6243,
+          "minimum_ms": 4963.0744,
+          "p50_ms": 5638.7497,
+          "p95_ms": 7032.6243,
+          "p99_ms": 7032.6243
+        },
+        "serialize": {
+          "iterations": 10,
+          "maximum_ms": 223.0811,
+          "minimum_ms": 129.4503,
+          "p50_ms": 136.8742,
+          "p95_ms": 223.0811,
+          "p99_ms": 223.0811
+        },
+        "serialized_bytes": 1324930
+      },
+      "repeated_request": {
+        "all_candidates_stable": true,
+        "expected_statement_id": "stmt_09b2e03d97f5",
+        "retry_marked_idempotent": true
+      },
+      "unique_request_proposal": {
+        "iterations": 30,
+        "maximum_ms": 8.5718,
+        "minimum_ms": 4.6136,
+        "p50_ms": 6.098,
+        "p95_ms": 8.5103,
+        "p99_ms": 8.5718
+      }
+    }
+  ],
+  "method": {
+    "clock": "time.perf_counter_ns",
+    "corpus_sizes": [
+      100,
+      1000,
+      5000
+    ],
+    "external_services": "none; vector results and embeddings are deterministic synthetic fixtures",
+    "iterations": 30,
+    "latency_unit": "milliseconds",
+    "memory": "tracemalloc current and peak bytes during isolated corpus construction",
+    "percentiles": "nearest observed rank over per-call samples",
+    "support_fanouts": [
+      1,
+      10,
+      100
+    ]
+  },
+  "source": {
+    "base_commit": "e22b976d7fb0481a986eb204211239d0a9e5fb08",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/persistence-v2.md",
+      "documentation/code-style.md",
+      "documentation/composition/section10-conformance-2026-08-20.md",
+      "documentation/contextual/section8-conformance-2026-08-20.md",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/decisions/0006-section12-fielded-bm25.md",
+      "documentation/evaluation/foundation-2026-08-19.json",
+      "documentation/evaluation/foundation-v1.md",
+      "documentation/evaluation/qualification-v1.md",
+      "documentation/evaluation/section16-chaos-2026-08-23.json",
+      "documentation/evaluation/section16-composition-2026-08-23.json",
+      "documentation/evaluation/section16-contextual-2026-08-23.json",
+      "documentation/evaluation/section16-engineering-2026-08-23.json",
+      "documentation/evaluation/section16-evidence-2026-08-23.json",
+      "documentation/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/evaluation/section16-performance-2026-08-23.json",
+      "documentation/evaluation/section16-release-evidence-2026-08-23.md",
+      "documentation/evaluation/section16-rollout-v1.md",
+      "documentation/evaluation/section16-semantic-2026-08-23.json",
+      "documentation/evaluation/section16-temporal-2026-08-23.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/feedback/section6-conformance-2026-08-16.md",
+      "documentation/fusion/contracts-v1.md",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/grpc-integration.md",
+      "documentation/mcp-integration.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/operations/persistence-schema-management-v1.md",
+      "documentation/operations/section15-concurrency-idempotency-v1.md",
+      "documentation/operations/section15-conformance-2026-08-23.md",
+      "documentation/operations/section15-interface-contracts-v1.md",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23-failed-default-seed.json",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/operations/section15-operational-telemetry-v1.md",
+      "documentation/operations/security-privacy-review-2026-08-20.md",
+      "documentation/python-api.md",
+      "documentation/rewrite/benchmark-2026-08-20.json",
+      "documentation/rewrite/provenance-and-licensing-2026-08-20.md",
+      "documentation/rewrite/section11-conformance-2026-08-20.md",
+      "documentation/semantic/benchmark-2026-08-22.json",
+      "documentation/semantic/contracts-v1.md",
+      "documentation/semantic/section13-conformance-2026-08-22.md",
+      "documentation/sparse/contracts-v1.md",
+      "documentation/sparse/provenance-and-licensing-2026-08-21.md",
+      "documentation/sparse/section12-conformance-2026-08-21.md",
+      "documentation/temporal/contracts-v1.md",
+      "documentation/temporal/section9-conformance-2026-08-20.md",
+      "documentation/temporal/unit-test-value-audit-2026-08-20.md",
+      "documentation/utilities/section14-conformance-2026-08-22.md",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/conversation.py",
+      "engram/core.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/nlp.py",
+      "engram/persistence.py",
+      "engram/rollout.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sparse.py",
+      "engram/telemetry.py",
+      "engram/template.py",
+      "engram/v2/",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_release_gate_foundation.py",
+      "eval/run_section16_chaos.py",
+      "eval/run_section16_engineering.py",
+      "eval/section11-rewrite-v1.json",
+      "eval/section13-semantic-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_rewrites.py",
+      "scripts/benchmark_semantic.py",
+      "scripts/migrate_persistence.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_feedback.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nlp.py",
+      "tests/test_persistence_management.py",
+      "tests/test_rollout.py",
+      "tests/test_section16_evaluation.py",
+      "tests/test_security_privacy.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_telemetry.py"
+    ],
+    "governed_source_sha256": "db62f0330841aa011252d379ac1addd1e6c56d729344ac27789fc0375acc1aac",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  },
+  "startup": {
+    "cold_process_import_and_construction": {
+      "iterations": 5,
+      "maximum_ms": 40704.5813,
+      "minimum_ms": 22019.8784,
+      "p50_ms": 22165.5567,
+      "p95_ms": 40704.5813,
+      "p99_ms": 40704.5813
+    },
+    "mode": "offline graph-disabled startup",
+    "warm_process_core_construction": {
+      "iterations": 30,
+      "maximum_ms": 4.9874,
+      "minimum_ms": 1.4554,
+      "p50_ms": 1.986,
+      "p95_ms": 4.5686,
+      "p99_ms": 4.9874
+    }
+  },
+  "support_vector": [
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 100,
+      "memory": {
+        "current_bytes": 321278,
+        "peak_bytes": 328762
+      },
+      "observed_candidate_count": 1,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 8.6586,
+        "minimum_ms": 4.5231,
+        "p50_ms": 5.601,
+        "p95_ms": 7.5572,
+        "p99_ms": 8.6586
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 1
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 100,
+      "memory": {
+        "current_bytes": 309166,
+        "peak_bytes": 316858
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 14.7949,
+        "minimum_ms": 11.4741,
+        "p50_ms": 13.3417,
+        "p95_ms": 14.5044,
+        "p99_ms": 14.7949
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 10
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 100,
+      "memory": {
+        "current_bytes": 308408,
+        "peak_bytes": 313998
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 20.2627,
+        "minimum_ms": 14.3432,
+        "p50_ms": 17.1207,
+        "p95_ms": 19.1358,
+        "p99_ms": 20.2627
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 100
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 1000,
+      "memory": {
+        "current_bytes": 2695269,
+        "peak_bytes": 3003092
+      },
+      "observed_candidate_count": 1,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 7.3094,
+        "minimum_ms": 4.3604,
+        "p50_ms": 5.5073,
+        "p95_ms": 6.9669,
+        "p99_ms": 7.3094
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 1
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 1000,
+      "memory": {
+        "current_bytes": 2374605,
+        "peak_bytes": 2682780
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 16.1414,
+        "minimum_ms": 10.6539,
+        "p50_ms": 13.3289,
+        "p95_ms": 15.2215,
+        "p99_ms": 16.1414
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 10
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 1000,
+      "memory": {
+        "current_bytes": 2370934,
+        "peak_bytes": 2680150
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 19.4535,
+        "minimum_ms": 14.5669,
+        "p50_ms": 17.044,
+        "p95_ms": 18.8399,
+        "p99_ms": 19.4535
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 100
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 5000,
+      "memory": {
+        "current_bytes": 10690024,
+        "peak_bytes": 12494865
+      },
+      "observed_candidate_count": 1,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 15.2482,
+        "minimum_ms": 5.6322,
+        "p50_ms": 8.2778,
+        "p95_ms": 14.0291,
+        "p99_ms": 15.2482
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 1
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 5000,
+      "memory": {
+        "current_bytes": 10915533,
+        "peak_bytes": 12721074
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 18.0121,
+        "minimum_ms": 12.2798,
+        "p50_ms": 14.6941,
+        "p95_ms": 17.1208,
+        "p99_ms": 18.0121
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 10
+    },
+    {
+      "candidate_count_stable": true,
+      "corpus_size": 5000,
+      "memory": {
+        "current_bytes": 10890155,
+        "peak_bytes": 12696025
+      },
+      "observed_candidate_count": 10,
+      "proposal": {
+        "iterations": 30,
+        "maximum_ms": 63.1746,
+        "minimum_ms": 19.5032,
+        "p50_ms": 25.0247,
+        "p95_ms": 44.2678,
+        "p99_ms": 63.1746
+      },
+      "returned_candidate_limit": 10,
+      "support_fanout": 100
+    }
+  ]
+}

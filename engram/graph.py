@@ -672,10 +672,10 @@ class MemGraphConnection:
         except Exception as err:
             self.available = False
             logger.warning(
-                "MemGraph unavailable at %s:%d: %s -- graph queries will return empty results",
+                "MemGraph unavailable at %s:%d (%s) -- graph queries will return empty results",
                 self.host,
                 self.port,
-                err,
+                type(err).__name__,
             )
             result = ()
             return result
@@ -742,13 +742,13 @@ class MemGraphConnection:
             except Exception as err:
                 err_str = str(err).lower()
                 if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                    logger.debug("Query failed (expected): %s: %s", type(err).__name__, err)
+                    logger.debug("Query failed as expected (%s)", type(err).__name__)
                 else:
-                    logger.error("Query failed: %s: %s", type(err).__name__, err)
+                    logger.error("Query failed (%s)", type(err).__name__)
                     if is_connection_error(err):
                         self.conn = ()
                         self.available = False
-                raise RuntimeError(f"Query failed: {err}") from err
+                raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
     def vector_search_claims(
         self,

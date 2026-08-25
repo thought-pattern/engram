@@ -155,7 +155,7 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         "verdicts": verdicts,
         "passed": all(verdicts.values()),
         "cases": results,
-        "release_authority": "component engineering promotion only; Section 16 protected release authority remains unprovisioned",
+        "release_authority": "component engineering promotion only; Section 16 project qualification owns release authority",
     }
 
 

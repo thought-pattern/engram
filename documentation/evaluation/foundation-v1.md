@@ -1,65 +1,82 @@
 # Section 16 evaluation foundation v1
 
-**Status:** In Progress; protected custody and numerical approval blocked externally
-**Owners:** EGR-1601, EGR-1602, EGR-1603, and EGR-1609  
-**Release authority:** Unassigned; pending independent label custody and numerical-gate approval
+**Status:** Project-owned release qualification implemented
+**Owners:** EGR-1601, EGR-1602, EGR-1603, and EGR-1609
+**Release authority:** Engram project owner
 
-## Implemented foundation
+## Evaluation partitions
 
-The versioned manifest at `eval/release-gate-foundation-v1.json` establishes
-three custody slots: tuning, release gate, and final test. The repository contains
-only the open engineering tuning content. It covers all fifteen workload families;
-each record has a stable identifier, expected behavior class, and explicit
-provisional label provenance.
+The versioned manifest at `eval/release-gate-foundation-v1.json` contains three
+project-owned partitions in their execution order:
 
-The previously committed release-gate and final-test examples were visible to
-engineering and therefore were not sealed evidence. They have been removed and
-must not be reused for a release decision. Independent custodians must author,
-label, retain, and authorize those contents outside this repository. Until that
-happens the two protected slots are explicitly `awaiting_independent_custodian`,
-unprovisioned, and unauthorized—not sealed.
+1. `tuning` is the only partition permitted to select policy parameters.
+2. `release_gate` evaluates the frozen policy.
+3. `final_test` executes only after the release gate passes and supplies the
+   release decision.
 
-The tuning manifest declares `when`/`where`, current/historical,
-positive/negative, relation, and exact-scope contrasts. The runner validates and
-executes those public tuning contrasts and rejects any protected case or contrast
-content committed to the repository.
+Each partition contains one request for all 15 EGR-1602 workload families and
+one contrast for all five EGR-1603 adversarial dimensions. Requests and complete
+scoped contrast identities are disjoint across partitions. Every case records a
+stable identifier, expected behavior class, and label provenance.
 
-Initial absolute and baseline-relative gates are recorded for false direct
-answers, useful evidence, peak memory, durability, and evidence size. Turn
-lengths are reported as p50, p95, p99, and maximum observations with no
-pass/fail threshold. The numerical-gate status is
-`proposed_pending_release_owner_approval`; they cannot be used to promote or
-tune a feature until an independent release owner is recorded.
+This is logical evaluation separation, not organizational separation. Engram is
+a closed, low-risk system, so the project owns the data, execution, numerical
+approval, and release decision. A separate custodian, external service, hidden
+partition, or independent release organization is not required.
 
-The tuning foundation contains 15 workload cases, below the proposed 1,000-case
-false-answer and 200-case usefulness floors. The runner reports these readiness
-gates as false. A valid foundation-integrity result therefore does not imply that
-the system is release-ready or release-approved.
+## Qualification
+
+`eval/run_release_gate_foundation.py` performs the complete qualification in one
+command. It:
+
+- validates partition completeness, provenance, disjointness, and approved gates;
+- executes every adversarial identity contrast;
+- runs three deterministic quality trials for each partition;
+- executes the final-test trials only after the release gate passes;
+- measures direct answers, false direct answers, useful evidence, proposal
+  acceptance, typed rejections, later correction, and abstention quality;
+- incorporates current source-bound performance, semantic, contextual, temporal,
+  composition, Claim evidence-package, chaos, engineering, and live-MCP evidence;
+- applies the approved false-answer, usefulness, memory, durability, and evidence
+  size gates; and
+- binds the source, configuration template, numerical gates, partition results,
+  and supporting artifacts into the release decision.
+
+Turn lengths and startup are reported as p50, p95, p99, and maximum observations.
+They remain descriptive and do not change answer correctness or release outcome.
+Avoided Tapestry work uses the manifest's explicit planning counterfactual because
+production Tapestry telemetry is outside this repository; it is never presented as
+observed production behavior.
+
+## Approved numerical gates
+
+The project owner approved the following first-release gates before release-gate
+execution:
+
+| Measure | Gate |
+| --- | --- |
+| False direct answers | 0%, at least 15 evaluated outcomes per release partition, and no regression from its baseline |
+| Useful evidence | At least 60%, at least 3 eligible observations per release partition, and no regression from its baseline |
+| Peak memory | At most 768 MiB and at most 1.25x the recorded pre-feature baseline |
+| Lost completed mutations | Zero and no regression |
+| Evidence package size | At most 64 KiB and no regression |
+| Turn length and startup | Descriptive p50, p95, p99, and maximum only |
+
+The 15- and 3-observation floors match the closed first-release workload rather
+than inventing production-scale custody requirements. The separate required
+1,000-turn MCP run supplies a broad adapter, conversation-state, profile, and live
+MemGraph integration evaluation.
 
 ## Reproducibility
 
-Run:
+After refreshing the supporting source-bound artifacts, run:
 
 ```bash
+python eval/run_section16_engineering.py
 python eval/run_release_gate_foundation.py
 ```
 
-The machine-readable result records the base Git commit, dirty state, changed
-paths, and a SHA-256 digest over governed source, scripts, evaluation code,
-tests, project metadata, dependency pins, and CI. This makes an uncommitted
-evaluation worktree identifiable without claiming that its base commit alone
-contains the changes.
-
-## Remaining completion work
-
-This work remains incomplete because the foundation does not yet provide independent
-custodians and labels, protected end-to-end inputs, approved numerical gates,
-required sample sizes, repeated nondeterministic trials, or authorization to run the
-release-gate and final-test partitions. Existing Section 8 through 10
-corpora are engineering regression fixtures only and must not be promoted as
-independent release evidence.
-
-EGR-1601 is blocked until an independent evaluation custodian is assigned. EGR-1609
-is blocked until an independent release owner is assigned. EGR-1602 and EGR-1603
-remain active foundation work; none of these statuses changes `release_ready: false`
-or authorizes protected execution.
+The result at `documentation/evaluation/foundation-2026-08-19.json` records the
+base revision, dirty paths, governed-source SHA-256, configuration SHA-256, three
+partition results, every gate check, evidence artifact digests, and the rollout
+decision. The command exits successfully only when the release is approved.

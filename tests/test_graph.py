@@ -224,6 +224,24 @@ def test_template_graph_operations_graph_query_no_client():
     assert result == "Graph not available."
 
 
+def test_template_graph_operations_graph_query_callback_failure_is_visible():
+    def graph_fn(_query, _params):
+        raise RuntimeError("injected graph callback failure")
+
+    processor = TemplateProcessor()
+    ctx = template_context(graph_fn=graph_fn)
+    template = {
+        "graph_query": {
+            "query": "MATCH (n) RETURN n",
+            "on_empty": {"text": "Nothing known."},
+            "on_failure": {"text": "Graph not available."},
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="injected graph callback failure"):
+        processor.process(template, ctx)
+
+
 def test_template_graph_operations_authoring_template_operations_are_not_supported():
     calls = []
 
@@ -292,6 +310,18 @@ def test_template_graph_operations_triple_query_subject():
 
     result = processor.process(template, ctx)
     assert result == "Paris"
+
+
+def test_template_graph_operations_triple_query_callback_failure_is_visible():
+    def graph_fn(_query, _params):
+        raise RuntimeError("injected triple callback failure")
+
+    processor = TemplateProcessor()
+    ctx = template_context(graph_fn=graph_fn)
+    template = {"triple_query": {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "?"}}
+
+    with pytest.raises(RuntimeError, match="injected triple callback failure"):
+        processor.process(template, ctx)
 
 
 def test_template_graph_operations_graph_query_list_format():

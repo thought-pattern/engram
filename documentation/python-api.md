@@ -48,6 +48,15 @@ remain outstanding, while optional graph I/O isolation keeps unrelated local req
 and status available. The [deployment runbook](operations/deployment-and-rollback-v1.md)
 defines graph disablement and supervisor-stop handling.
 
+`resolve_request` also applies the process configuration's exact namespace rollout
+selection. The policy version and selected mode participate in retry identity.
+`disabled` returns a resolver-free `MISS`; `shadow` suppresses candidate output and
+accepted-success credit; `evidence_only` downgrades an answer to `EVIDENCE`;
+`rollback` executes exact-only retrieval and returns no direct answer; and
+`regulated_direct_answer` preserves the behavior described by `accept_exact`.
+`core.status()["rollout"]` reports the policy version, default mode, override count,
+and fixed per-mode counts without namespace labels.
+
 ## Result access
 
 The exact fields and outcome invariants remain frozen by the
@@ -89,6 +98,16 @@ No lower-level Python call is removed or reinterpreted in v1, so no deprecation
 warning is required. A future incompatible Python shape requires an explicit
 new API/version and a documented migration period rather than changing this
 mapping in place.
+
+## Operational telemetry
+
+`EngramCore.operational_telemetry()` returns the fixed-cardinality schema-version 1
+process aggregate. `core.status()["telemetry"]` returns the same information alongside
+readiness. It includes outcomes, fixed resolver contributions and states, observed
+latency buckets, budget/resource consumption, rebuilds, durability, and fixed
+Regulator outcomes. It contains no request text or request-, user-, namespace-,
+context-, statement-, or Claim-derived keys. See the
+[Section 15 telemetry contract](operations/section15-operational-telemetry-v1.md).
 
 ## Verification
 

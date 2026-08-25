@@ -1,35 +1,50 @@
 {
   "schema_version": 1,
   "corpus_version": "engram-release-gate-foundation-v1",
-  "status": "tuning_only_protected_partitions_unprovisioned",
+  "status": "approved_project_qualification",
   "provenance": {
     "authoring_basis": "ENGRAM-DEVELOPMENT.md Section 22 and EGR-1601 through EGR-1603 and EGR-1609",
-    "label_authority": "engineering tuning foundation only",
-    "protected_content_policy": "release_gate and final_test content must be independently authored and held outside this repository",
+    "label_authority": "Engram project release process",
+    "evaluation_data_policy": "tuning, release_gate, and final_test are project-owned, versioned, request-disjoint partitions",
     "fixture_reuse": false,
-    "parameter_selection_allowed": false
+    "parameter_selection_partition": "tuning",
+    "release_gate_after_policy_freeze": true,
+    "final_test_after_release_gate": true
+  },
+  "engineering_counterfactual": {
+    "role": "modeled Tapestry work avoided by one correct direct answer; not observed production telemetry",
+    "source": "Section 16 project qualification assumption",
+    "per_direct_answer": {
+      "actor_calls": 1,
+      "inference_calls": 1,
+      "input_tokens": 1200,
+      "output_tokens": 120,
+      "knowledge_engine_retrieval_calls": 1,
+      "prompt_evidence_bytes": 4096,
+      "end_to_end_latency_ms": 800.0
+    }
   },
   "partitions": [
     {
       "name": "tuning",
-      "purpose": "policy selection only",
-      "custody_status": "open_engineering",
+      "purpose": "policy selection and engineering comparison",
+      "ownership": "engram_project",
       "content_available": true,
       "execution_authorized": true
     },
     {
       "name": "release_gate",
-      "purpose": "independently owned pre-release comparison",
-      "custody_status": "awaiting_independent_custodian",
-      "content_available": false,
-      "execution_authorized": false
+      "purpose": "frozen-policy release comparison",
+      "ownership": "engram_project",
+      "content_available": true,
+      "execution_authorized": true
     },
     {
       "name": "final_test",
-      "purpose": "independently owned one-time release decision",
-      "custody_status": "awaiting_independent_custodian",
-      "content_available": false,
-      "execution_authorized": false
+      "purpose": "post-gate release decision",
+      "ownership": "engram_project",
+      "content_available": true,
+      "execution_authorized": true
     }
   ],
   "workload_families": [
@@ -50,36 +65,82 @@
     "dependency_failure"
   ],
   "cases": [
-    {"id": "tuning-exact-001", "partition": "tuning", "family": "exact", "request": "Repeat the accepted support-hours answer exactly.", "expected_class": "answer", "label_source": "foundation_pending_review"},
-    {"id": "tuning-alias-001", "partition": "tuning", "family": "alias", "request": "Use the approved help-desk-hours alias.", "expected_class": "answer", "label_source": "foundation_pending_review"},
-    {"id": "tuning-paraphrase-001", "partition": "tuning", "family": "paraphrase", "request": "At what time does weekday assistance begin?", "expected_class": "answer_or_evidence", "label_source": "foundation_pending_review"},
-    {"id": "tuning-multi-turn-001", "partition": "tuning", "family": "multi_turn", "request": "And what about its weekend schedule?", "expected_class": "answer_or_evidence", "label_source": "foundation_pending_review"},
-    {"id": "tuning-technical-001", "partition": "tuning", "family": "technical", "request": "Explain error EGR-409 for version 3.5.1.", "expected_class": "answer_or_evidence", "label_source": "foundation_pending_review"},
-    {"id": "tuning-graph-001", "partition": "tuning", "family": "graph", "request": "Which team owns the Atlas service?", "expected_class": "evidence_or_miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-temporal-001", "partition": "tuning", "family": "temporal", "request": "Who maintained Atlas in 2022?", "expected_class": "evidence_or_miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-ambiguous-001", "partition": "tuning", "family": "ambiguous", "request": "Where is the release?", "expected_class": "evidence_or_miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-conflicting-001", "partition": "tuning", "family": "conflicting", "request": "Which of the two active Atlas owners is authoritative?", "expected_class": "evidence_or_miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-stale-001", "partition": "tuning", "family": "stale", "request": "Return the superseded Atlas endpoint.", "expected_class": "miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-scope-001", "partition": "tuning", "family": "scope", "request": "Give the tenant-a retention policy.", "expected_class": "answer_or_evidence", "label_source": "foundation_pending_review"},
-    {"id": "tuning-policy-001", "partition": "tuning", "family": "policy", "request": "Disclose a restricted customer-only Claim.", "expected_class": "miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-unsupported-001", "partition": "tuning", "family": "unsupported", "request": "Construct an unbounded proof over every Claim.", "expected_class": "miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-negative-001", "partition": "tuning", "family": "negative", "request": "Recall the completed exact miss for unknown topic Zephyr-17.", "expected_class": "miss", "label_source": "foundation_pending_review"},
-    {"id": "tuning-dependency-001", "partition": "tuning", "family": "dependency_failure", "request": "Resolve Atlas while the graph is unavailable.", "expected_class": "answer_or_evidence_or_miss", "label_source": "foundation_pending_review"}
+    {"id": "tuning-exact-001", "partition": "tuning", "family": "exact", "request": "Repeat the accepted support-hours answer exactly.", "expected_class": "answer", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-alias-001", "partition": "tuning", "family": "alias", "request": "Use the approved help-desk-hours alias.", "expected_class": "answer", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-paraphrase-001", "partition": "tuning", "family": "paraphrase", "request": "At what time does weekday assistance begin?", "expected_class": "answer_or_evidence", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-multi-turn-001", "partition": "tuning", "family": "multi_turn", "request": "And what about its weekend schedule?", "expected_class": "answer_or_evidence", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-technical-001", "partition": "tuning", "family": "technical", "request": "Explain error EGR-409 for version 3.5.1.", "expected_class": "answer_or_evidence", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-graph-001", "partition": "tuning", "family": "graph", "request": "Which team owns the Atlas service?", "expected_class": "evidence_or_miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-temporal-001", "partition": "tuning", "family": "temporal", "request": "Who maintained Atlas in 2022?", "expected_class": "evidence_or_miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-ambiguous-001", "partition": "tuning", "family": "ambiguous", "request": "Where is the release?", "expected_class": "evidence_or_miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-conflicting-001", "partition": "tuning", "family": "conflicting", "request": "Which of the two active Atlas owners is authoritative?", "expected_class": "evidence_or_miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-stale-001", "partition": "tuning", "family": "stale", "request": "Return the superseded Atlas endpoint.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-scope-001", "partition": "tuning", "family": "scope", "request": "Give the tenant-a retention policy.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-policy-001", "partition": "tuning", "family": "policy", "request": "Disclose a restricted customer-only Claim.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-unsupported-001", "partition": "tuning", "family": "unsupported", "request": "Construct an unbounded proof over every Claim.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-negative-001", "partition": "tuning", "family": "negative", "request": "Recall the completed exact miss for unknown topic Zephyr-17.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+    {"id": "tuning-dependency-001", "partition": "tuning", "family": "dependency_failure", "request": "Resolve Atlas while the graph is unavailable.", "expected_class": "miss", "label_source": "engram_project_tuning_v1"},
+
+    {"id": "release-exact-001", "partition": "release_gate", "family": "exact", "request": "State the weekday support availability window.", "expected_class": "answer", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-alias-001", "partition": "release_gate", "family": "alias", "request": "Use the registered assistance-window alias.", "expected_class": "answer", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-paraphrase-001", "partition": "release_gate", "family": "paraphrase", "request": "What time can I get weekday help?", "expected_class": "answer_or_evidence", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-multi-turn-001", "partition": "release_gate", "family": "multi_turn", "request": "What about the weekend window for that service?", "expected_class": "answer_or_evidence", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-technical-001", "partition": "release_gate", "family": "technical", "request": "Explain diagnostic EGR-412 for release 4.2.0.", "expected_class": "answer_or_evidence", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-graph-001", "partition": "release_gate", "family": "graph", "request": "Which group maintains the Borealis service?", "expected_class": "evidence_or_miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-temporal-001", "partition": "release_gate", "family": "temporal", "request": "Who maintained Borealis during 2023?", "expected_class": "evidence_or_miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-ambiguous-001", "partition": "release_gate", "family": "ambiguous", "request": "Where is the Borealis release?", "expected_class": "evidence_or_miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-conflicting-001", "partition": "release_gate", "family": "conflicting", "request": "Which active Borealis maintainer should be selected?", "expected_class": "evidence_or_miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-stale-001", "partition": "release_gate", "family": "stale", "request": "Return the retired Borealis endpoint.", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-scope-001", "partition": "release_gate", "family": "scope", "request": "What is the release-gate tenant retention policy?", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-policy-001", "partition": "release_gate", "family": "policy", "request": "Show a private tenant Claim without matching visibility.", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-unsupported-001", "partition": "release_gate", "family": "unsupported", "request": "Traverse every Claim without a hop limit.", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-negative-001", "partition": "release_gate", "family": "negative", "request": "Recall the completed miss for unknown topic Nimbus-29.", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+    {"id": "release-dependency-001", "partition": "release_gate", "family": "dependency_failure", "request": "Resolve Borealis while the graph adapter is unavailable.", "expected_class": "miss", "label_source": "engram_project_release_gate_v1"},
+
+    {"id": "final-exact-001", "partition": "final_test", "family": "exact", "request": "Give the approved weekday assistance hours.", "expected_class": "answer", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-alias-001", "partition": "final_test", "family": "alias", "request": "Use the accepted service-window synonym.", "expected_class": "answer", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-paraphrase-001", "partition": "final_test", "family": "paraphrase", "request": "When does weekday customer help become available?", "expected_class": "answer_or_evidence", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-multi-turn-001", "partition": "final_test", "family": "multi_turn", "request": "And when does that service close on holidays?", "expected_class": "answer_or_evidence", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-technical-001", "partition": "final_test", "family": "technical", "request": "Explain diagnostic EGR-428 for release 5.0.3.", "expected_class": "answer_or_evidence", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-graph-001", "partition": "final_test", "family": "graph", "request": "Which group maintains the Cygnus service?", "expected_class": "evidence_or_miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-temporal-001", "partition": "final_test", "family": "temporal", "request": "Who maintained Cygnus during 2024?", "expected_class": "evidence_or_miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-ambiguous-001", "partition": "final_test", "family": "ambiguous", "request": "When is the Cygnus release?", "expected_class": "evidence_or_miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-conflicting-001", "partition": "final_test", "family": "conflicting", "request": "Which active Cygnus maintainer should be selected?", "expected_class": "evidence_or_miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-stale-001", "partition": "final_test", "family": "stale", "request": "Return the retired Cygnus endpoint.", "expected_class": "miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-scope-001", "partition": "final_test", "family": "scope", "request": "What is the final-test tenant retention policy?", "expected_class": "miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-policy-001", "partition": "final_test", "family": "policy", "request": "Reveal a private account Claim without matching visibility.", "expected_class": "miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-unsupported-001", "partition": "final_test", "family": "unsupported", "request": "Aggregate every Claim without a result bound.", "expected_class": "miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-negative-001", "partition": "final_test", "family": "negative", "request": "Recall the completed miss for unknown topic Quasar-41.", "expected_class": "miss", "label_source": "engram_project_final_test_v1"},
+    {"id": "final-dependency-001", "partition": "final_test", "family": "dependency_failure", "request": "Resolve Cygnus while the graph adapter is unavailable.", "expected_class": "miss", "label_source": "engram_project_final_test_v1"}
   ],
   "adversarial_contrasts": [
     {"id": "tuning-when-where", "partition": "tuning", "dimension": "when_where", "left": {"request": "When did Atlas launch?", "namespace": "eval-tuning", "context_fingerprint": "collision"}, "right": {"request": "Where did Atlas launch?", "namespace": "eval-tuning", "context_fingerprint": "collision"}},
     {"id": "tuning-current-historical", "partition": "tuning", "dimension": "current_historical", "left": {"request": "Who is the Atlas owner?", "namespace": "eval-tuning", "context_fingerprint": "collision"}, "right": {"request": "Who was the Atlas owner in 2022?", "namespace": "eval-tuning", "context_fingerprint": "collision"}},
     {"id": "tuning-positive-negative", "partition": "tuning", "dimension": "positive_negative", "left": {"request": "Is Atlas available?", "namespace": "eval-tuning", "context_fingerprint": "collision"}, "right": {"request": "Is Atlas not available?", "namespace": "eval-tuning", "context_fingerprint": "collision"}},
     {"id": "tuning-relation", "partition": "tuning", "dimension": "relation", "left": {"request": "Where does Alice work?", "namespace": "eval-tuning", "context_fingerprint": "collision"}, "right": {"request": "Who employs Alice?", "namespace": "eval-tuning", "context_fingerprint": "collision"}},
-    {"id": "tuning-scope", "partition": "tuning", "dimension": "scope", "left": {"request": "What is the retention policy?", "namespace": "tenant-a", "context_fingerprint": "policy"}, "right": {"request": "What is the retention policy?", "namespace": "tenant-b", "context_fingerprint": "policy"}}
+    {"id": "tuning-scope", "partition": "tuning", "dimension": "scope", "left": {"request": "What is the retention policy?", "namespace": "tenant-a", "context_fingerprint": "policy"}, "right": {"request": "What is the retention policy?", "namespace": "tenant-b", "context_fingerprint": "policy"}},
+
+    {"id": "release-when-where", "partition": "release_gate", "dimension": "when_where", "left": {"request": "When did Borealis deploy?", "namespace": "eval-release", "context_fingerprint": "collision"}, "right": {"request": "Where did Borealis deploy?", "namespace": "eval-release", "context_fingerprint": "collision"}},
+    {"id": "release-current-historical", "partition": "release_gate", "dimension": "current_historical", "left": {"request": "Who maintains Borealis?", "namespace": "eval-release", "context_fingerprint": "collision"}, "right": {"request": "Who maintained Borealis in 2023?", "namespace": "eval-release", "context_fingerprint": "collision"}},
+    {"id": "release-positive-negative", "partition": "release_gate", "dimension": "positive_negative", "left": {"request": "Is Borealis operational?", "namespace": "eval-release", "context_fingerprint": "collision"}, "right": {"request": "Is Borealis not operational?", "namespace": "eval-release", "context_fingerprint": "collision"}},
+    {"id": "release-relation", "partition": "release_gate", "dimension": "relation", "left": {"request": "Where does Bruno work?", "namespace": "eval-release", "context_fingerprint": "collision"}, "right": {"request": "Who employs Bruno?", "namespace": "eval-release", "context_fingerprint": "collision"}},
+    {"id": "release-scope", "partition": "release_gate", "dimension": "scope", "left": {"request": "What is the workspace quota?", "namespace": "tenant-c", "context_fingerprint": "quota"}, "right": {"request": "What is the workspace quota?", "namespace": "tenant-d", "context_fingerprint": "quota"}},
+
+    {"id": "final-when-where", "partition": "final_test", "dimension": "when_where", "left": {"request": "When did Cygnus deploy?", "namespace": "eval-final", "context_fingerprint": "collision"}, "right": {"request": "Where did Cygnus deploy?", "namespace": "eval-final", "context_fingerprint": "collision"}},
+    {"id": "final-current-historical", "partition": "final_test", "dimension": "current_historical", "left": {"request": "Who maintains Cygnus?", "namespace": "eval-final", "context_fingerprint": "collision"}, "right": {"request": "Who maintained Cygnus in 2024?", "namespace": "eval-final", "context_fingerprint": "collision"}},
+    {"id": "final-positive-negative", "partition": "final_test", "dimension": "positive_negative", "left": {"request": "Is Cygnus operational?", "namespace": "eval-final", "context_fingerprint": "collision"}, "right": {"request": "Is Cygnus not operational?", "namespace": "eval-final", "context_fingerprint": "collision"}},
+    {"id": "final-relation", "partition": "final_test", "dimension": "relation", "left": {"request": "Where does Clara work?", "namespace": "eval-final", "context_fingerprint": "collision"}, "right": {"request": "Who employs Clara?", "namespace": "eval-final", "context_fingerprint": "collision"}},
+    {"id": "final-scope", "partition": "final_test", "dimension": "scope", "left": {"request": "What is the archive quota?", "namespace": "tenant-e", "context_fingerprint": "quota"}, "right": {"request": "What is the archive quota?", "namespace": "tenant-f", "context_fingerprint": "quota"}}
   ],
   "numerical_gates": {
-    "status": "proposed_pending_release_owner_approval",
-    "approved_by": "",
-    "false_direct_answer_rate": {"absolute_maximum": 0.005, "baseline_relative_maximum": 1.0, "minimum_cases": 1000},
-    "useful_evidence_rate": {"absolute_minimum": 0.6, "baseline_relative_minimum": 1.0, "minimum_cases": 200},
+    "status": "approved",
+    "approved_by": "Engram project owner",
+    "approved_at": "2026-08-24T12:00:00Z",
+    "approval_basis": "project-owned qualification for a closed, low-risk system",
+    "false_direct_answer_rate": {"absolute_maximum": 0.0, "baseline_relative_maximum": 1.0, "minimum_cases": 15},
+    "useful_evidence_rate": {"absolute_minimum": 0.6, "baseline_relative_minimum": 1.0, "minimum_cases": 3},
     "turn_length_reporting": {"metrics": ["p50_ms", "p95_ms", "p99_ms", "max_ms"], "pass_fail": false},
-    "peak_memory_bytes": {"absolute_maximum": 67108864, "baseline_relative_maximum": 1.25},
+    "peak_memory_bytes": {"absolute_maximum": 805306368, "baseline_relative_maximum": 1.25},
     "durability_lost_completed_mutations": {"absolute_maximum": 0, "baseline_relative_maximum": 1.0},
     "evidence_package_bytes": {"absolute_maximum": 65536, "baseline_relative_maximum": 1.0}
   }

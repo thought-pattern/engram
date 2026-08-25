@@ -157,11 +157,6 @@ async def _run(
     config_path: str = "",
     seed_path: str = "",
     memgraph_probe_every: int = 0,
-    retrieval_rewrites_enabled: bool = False,
-    sparse_enabled: bool = False,
-    semantic_enabled: bool = False,
-    reranker_enabled: bool = False,
-    utility_enabled: bool = False,
 ) -> dict:
     server = create_mcp_server()
     latencies_ms = []
@@ -280,13 +275,21 @@ async def _run(
     observation_sequence_bytes = json.dumps(observation_sequence, sort_keys=True, separators=(",", ":")).encode("utf-8")
     components = inspected.get("core_status", {}).get("components", {})
     graph_status = components.get("graph", {}) if isinstance(components, dict) else {}
+    sparse_status = components.get("sparse", {}) if isinstance(components, dict) else {}
     semantic_status = components.get("semantic", {}) if isinstance(components, dict) else {}
     reranker_status = components.get("reranker", {}) if isinstance(components, dict) else {}
     utility_status = components.get("utility", {}) if isinstance(components, dict) else {}
+    sparse_active = sparse_status.get("enabled") is True
+    semantic_active = semantic_status.get("enabled") is True
+    reranker_active = reranker_status.get("enabled") is True
+    utility_active = utility_status.get("enabled") is True
+    configured_values = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) if config_path else {}
+    retrieval_rewrites_active = configured_values.get("retrieval_rewrites_enabled") is True
     optional_components_ready = (
-        (not semantic_enabled or semantic_status.get("ready") is True)
-        and (not reranker_enabled or reranker_status.get("ready") is True)
-        and (not utility_enabled or utility_status.get("ready") is True)
+        (not sparse_active or sparse_status.get("ready") is True)
+        and (not semantic_active or semantic_status.get("ready") is True)
+        and (not reranker_active or reranker_status.get("ready") is True)
+        and (not utility_active or utility_status.get("ready") is True)
     )
     run_result = {
         "gate": gate,
@@ -304,16 +307,17 @@ async def _run(
             "graph_enabled": graph_status.get("enabled", False),
             "graph_ready": graph_status.get("ready", False),
             "memgraph_probe_every": memgraph_probe_every,
-            "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
-            "sparse_enabled": sparse_enabled,
-            "semantic_enabled": semantic_enabled,
+            "retrieval_rewrites_enabled": retrieval_rewrites_active,
+            "sparse_enabled": sparse_active,
+            "sparse_ready": sparse_status.get("ready", False),
+            "semantic_enabled": semantic_active,
             "semantic_ready": semantic_status.get("ready", False),
             "semantic_model_version": semantic_status.get("artifact_identity", {}).get("model_version", ""),
             "semantic_record_count": semantic_status.get("record_count", 0),
-            "reranker_enabled": reranker_enabled,
+            "reranker_enabled": reranker_active,
             "reranker_ready": reranker_status.get("ready", False),
             "reranker_model_version": reranker_status.get("model_version", ""),
-            "utility_enabled": utility_enabled,
+            "utility_enabled": utility_active,
             "utility_ready": utility_status.get("ready", False),
             "utility_contract_version": utility_status.get("contract_version", ""),
             "utility_plugins": utility_status.get("plugins", {}),
@@ -359,6 +363,7 @@ async def _run(
             "user_id": inspected.get("user_id"),
             "turn_count": inspected.get("turn_count"),
             "history_size": inspected.get("session", {}).get("history_size"),
+            "telemetry": inspected.get("core_status", {}).get("telemetry", {}),
         },
         "profile_definition": (
             {"user_id": "Sarah", "likes": ["sushi", "cats"], "dislikes": ["dogs"]} if profile == "sarah-preferences" else {}
@@ -471,11 +476,6 @@ def main(argv: Sequence[str] = ()) -> int:
                 selected_config,
                 args.seed,
                 args.memgraph_probe_every,
-                args.enable_rewrites,
-                args.enable_sparse,
-                args.enable_semantic,
-                args.enable_reranker,
-                args.enable_utility,
             )
         )
     result_text = json.dumps(result, indent=2, sort_keys=True) + "\n"

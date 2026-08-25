@@ -5,7 +5,7 @@
   "provenance": {
     "authoring": "Authored independently from historical ALICE/AIML source and response corpora.",
     "license": "Apache-2.0",
-    "partition": "Repository-visible engineering holdout; excluded from rule authoring inputs and not Section 16 protected release data."
+    "partition": "Repository-visible engineering holdout; excluded from rule authoring inputs and separate from the Section 16 project release partitions."
   },
   "gates": {
     "minimum_recall_gain": 0.25,

@@ -8,8 +8,10 @@ import contextlib
 import copy
 import json
 import os
+from collections import Counter
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 
 from engram.artifacts import (
     CachedResponseArtifact,
@@ -23,12 +25,27 @@ from engram.artifacts import (
 from engram.config import config_from_dict, config_to_dict, engram_config
 from engram.constants import (
     EMPTY_CONFIG,
+    FEEDBACK_POLICY_SCHEMA_VERSION,
+    FEEDBACK_POLICY_VERSION,
+    FEEDBACK_STATE_SCHEMA_VERSION,
+    FUSION_POLICY_SCHEMA_VERSION,
+    FUSION_POLICY_VERSION,
+    IDENTITY_SCHEMA_VERSION,
+    INDEX_STATE_SCHEMA_VERSION,
     LEGACY_PERSISTENCE_VERSION,
     MAX_QUARANTINE_DETAIL_BYTES,
     MAX_QUARANTINE_RECORDS,
+    PERSISTENCE_MANIFEST_FIELDS,
+    PERSISTENCE_MANIFEST_SCHEMA_VERSION,
+    PERSISTENCE_STATUS_SCHEMA_VERSION,
     PERSISTENCE_VERSION,
     RESPONSE_QUARANTINE_RECORD_FIELDS,
     RESPONSE_STATE_SCHEMA_VERSION,
+    RETRIEVAL_NORMALIZATION_VERSION,
+    SEMANTIC_INDEX_SCHEMA_VERSION,
+    SEMANTIC_INDEX_VERSION,
+    SPARSE_INDEX_SCHEMA_VERSION,
+    SPARSE_INDEX_VERSION,
     ResponseQuarantineReason,
 )
 from engram.coordination import (
@@ -74,6 +91,8 @@ def _bounded_quarantine_text(value: object, name: str, allow_empty: bool) -> str
 
 
 ResponseQuarantineRecord = dict
+PersistenceManifest = dict
+PersistenceStatus = dict
 
 
 def response_quarantine_record(
@@ -150,6 +169,77 @@ def validate_response_quarantine_records(value: object) -> tuple[ResponseQuarant
     records = tuple(validate_response_quarantine_record(record) for record in value)
     ordered = tuple(sorted(records, key=response_quarantine_record_key))
     return ordered
+
+
+def persistence_manifest(config: dict) -> PersistenceManifest:
+    """Return the bounded cross-feature version manifest for one runtime config."""
+    semantic = config.get("semantic") or {}
+    reranker = config.get("reranker") or {}
+    graph = config.get("graph") or {}
+    result: PersistenceManifest = {
+        "schema_version": PERSISTENCE_MANIFEST_SCHEMA_VERSION,
+        "persistence_version": PERSISTENCE_VERSION,
+        "response_state_schema_version": RESPONSE_STATE_SCHEMA_VERSION,
+        "feedback_state_schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "retrieval_normalization_version": RETRIEVAL_NORMALIZATION_VERSION,
+        "index_state_schema_version": INDEX_STATE_SCHEMA_VERSION,
+        "sparse_index_schema_version": SPARSE_INDEX_SCHEMA_VERSION,
+        "sparse_index_version": SPARSE_INDEX_VERSION,
+        "semantic_index_schema_version": SEMANTIC_INDEX_SCHEMA_VERSION,
+        "semantic_index_version": SEMANTIC_INDEX_VERSION,
+        "fusion_policy_schema_version": FUSION_POLICY_SCHEMA_VERSION,
+        "fusion_policy_version": FUSION_POLICY_VERSION,
+        "feedback_policy_schema_version": FEEDBACK_POLICY_SCHEMA_VERSION,
+        "feedback_policy_version": FEEDBACK_POLICY_VERSION,
+        "semantic_model_id": semantic.get("model_id", ""),
+        "semantic_model_version": semantic.get("model_version", ""),
+        "semantic_normalization_version": semantic.get("normalization_version", 0),
+        "reranker_model_version": reranker.get("model_version", ""),
+        "graph_vector_model_id": graph.get("vector_model", ""),
+    }
+    return result
+
+
+def _validated_persistence_manifest(value: object, config: dict) -> PersistenceManifest:
+    if not isinstance(value, Mapping) or set(value) != PERSISTENCE_MANIFEST_FIELDS:
+        raise InvalidRequestError("persistence manifest fields are malformed")
+    expected = persistence_manifest(config)
+    mismatched = [
+        name
+        for name in sorted(PERSISTENCE_MANIFEST_FIELDS)
+        if type(value[name]) is not type(expected[name]) or value[name] != expected[name]
+    ]
+    if mismatched:
+        raise InvalidRequestError(f"persistence manifest is incompatible: {', '.join(mismatched)}")
+    result = dict(value)
+    return result
+
+
+def _persistence_status(
+    instance,
+    source_version: int,
+    source_manifest: PersistenceManifest,
+    manifest_present: bool,
+) -> PersistenceStatus:
+    quarantine = validate_response_quarantine_records(instance.response_quarantine)
+    reason_counts = Counter(record["reason"].value for record in quarantine)
+    active_manifest = persistence_manifest(instance.config)
+    result: PersistenceStatus = {
+        "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
+        "ready": True,
+        "source_available": True,
+        "source_version": source_version,
+        "current_version": PERSISTENCE_VERSION,
+        "migration_required": source_version != PERSISTENCE_VERSION or not manifest_present,
+        "manifest_present": manifest_present,
+        "runtime_manifest_matches_source": bool(source_manifest) and source_manifest == active_manifest,
+        "quarantine_count": len(quarantine),
+        "quarantine_reasons": dict(sorted(reason_counts.items())),
+        "derived_state_rebuilt": True,
+        "manifest": active_manifest,
+    }
+    return result
 
 
 def _write_json_atomic(path, state: dict) -> None:
@@ -320,6 +410,7 @@ def to_dict(engram) -> dict:
     with engram.statement_lock, engram.keyword_lock, engram.session_lock:
         state = {
             "version": PERSISTENCE_VERSION,
+            "manifest": persistence_manifest(engram.config),
             # Full configuration, so weights, eviction policy, and feature
             # flags survive a save/load cycle. The top-level "capacity" key is
             # kept alongside for files read by older loaders.
@@ -613,14 +704,45 @@ def migrate_persistence_state(data: dict) -> dict:
         raise InvalidRequestError("persisted state must be an object")
     version = data.get("version", LEGACY_PERSISTENCE_VERSION)
     if version == PERSISTENCE_VERSION:
-        load_engram_from_dict(copy.deepcopy(data))
-        migrated = copy.deepcopy(data)
+        instance = load_engram_from_dict(copy.deepcopy(data))
+        migrated = copy.deepcopy(data) if "manifest" in data else to_dict(instance)
         return migrated
     if version != LEGACY_PERSISTENCE_VERSION:
         raise InvalidRequestError(f"Unsupported persistence version: {version}")
     instance = load_engram_from_dict(copy.deepcopy(data))
     migrated = to_dict(instance)
     return migrated
+
+
+def migrate_persistence_file(source_path, output_path) -> PersistenceStatus:
+    """Migrate one source file to a distinct new output and return a bounded report."""
+    source = Path(source_path).resolve()
+    output = Path(output_path).resolve()
+    if source == output:
+        raise InvalidRequestError("migration output must differ from the source path")
+    if output.exists():
+        raise InvalidRequestError("migration output already exists")
+    with source.open(encoding="utf-8") as stream:
+        data = json.load(stream)
+    migrated = migrate_persistence_state(data)
+    if migrate_persistence_state(migrated) != migrated:
+        raise InvalidRequestError("persistence migration is not idempotent")
+    instance = load_engram_from_dict(migrated)
+    _write_json_atomic(output, migrated)
+    status = dict(instance.persistence_status)
+    report: PersistenceStatus = {
+        "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
+        "source_path": str(source),
+        "output_path": str(output),
+        "source_version": data.get("version", LEGACY_PERSISTENCE_VERSION),
+        "output_version": migrated["version"],
+        "artifact_count": len(instance.response_repository.snapshot()["artifacts"]),
+        "quarantine_count": status["quarantine_count"],
+        "quarantine_reasons": status["quarantine_reasons"],
+        "manifest": migrated["manifest"],
+        "idempotent": True,
+    }
+    return report
 
 
 def load_engram(path, config: dict = EMPTY_CONFIG, engram_class=()):
@@ -686,10 +808,17 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
 
     # Create instance with config: an explicit override wins, then the config
     # stored with the state, then defaults (older files carried only capacity).
-    if not config and "config" in data:
-        config = config_from_dict(data["config"])
+    manifest_present = version == PERSISTENCE_VERSION and "manifest" in data
+    stored_config: dict = {}
+    if not config or manifest_present:
+        stored_config = (
+            config_from_dict(data["config"]) if "config" in data else engram_config(capacity=data.get("capacity", 10000))
+        )
+    source_manifest: PersistenceManifest = {}
+    if manifest_present:
+        source_manifest = _validated_persistence_manifest(data["manifest"], stored_config)
     if not config:
-        config = engram_config(capacity=data.get("capacity", 10000))
+        config = stored_config
     instance = engram_class(config=config)
 
     # Restore global counters
@@ -773,4 +902,5 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
     instance.rebuild_indexes(apply=True)
     instance.synchronize_sparse_index(instance.response_repository.snapshot())
     instance.synchronize_semantic_index(instance.response_repository.snapshot())
+    instance.persistence_status = _persistence_status(instance, version, source_manifest, manifest_present)
     return instance

@@ -10,17 +10,19 @@ from typing import cast
 
 import yaml
 
-from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, SessionOverflow
+from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, RolloutMode, SessionOverflow
 from engram.utilities import UtilityConfig, utility_config
 
 SparseConfig = dict
 SemanticConfig = dict
 RerankerConfig = dict
+RolloutConfig = dict
 
 
 EMPTY_SPARSE_CONFIG = cast(SparseConfig, EMPTY_CONFIG)
 EMPTY_SEMANTIC_CONFIG = cast(SemanticConfig, EMPTY_CONFIG)
 EMPTY_RERANKER_CONFIG = cast(RerankerConfig, EMPTY_CONFIG)
+EMPTY_ROLLOUT_CONFIG = cast(RolloutConfig, EMPTY_CONFIG)
 EMPTY_UTILITY_CONFIG = cast(UtilityConfig, EMPTY_CONFIG)
 
 
@@ -246,6 +248,37 @@ def reranker_config(
     return result
 
 
+def rollout_config(
+    policy_version: str = "rollout-v1",
+    default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
+    namespaces: dict = EMPTY_CONFIG,
+) -> RolloutConfig:
+    """Build the small namespace rollout policy used by unified resolution."""
+    if not isinstance(policy_version, str) or not policy_version.strip():
+        raise ValueError("rollout policy_version must be a non-empty string")
+    if not isinstance(default_mode, RolloutMode):
+        try:
+            default_mode = RolloutMode(default_mode)
+        except (TypeError, ValueError) as error:
+            raise ValueError("rollout default_mode is invalid") from error
+    if not isinstance(namespaces, dict):
+        raise ValueError("rollout namespaces must be an object")
+    selected_namespaces = {}
+    for namespace, mode in namespaces.items():
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError("rollout namespace keys must be non-empty strings")
+        try:
+            selected_namespaces[namespace] = mode if isinstance(mode, RolloutMode) else RolloutMode(mode)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from error
+    result: RolloutConfig = {
+        "policy_version": policy_version.strip(),
+        "default_mode": default_mode,
+        "namespaces": selected_namespaces,
+    }
+    return result
+
+
 def engram_config(
     # Capacity settings
     capacity: int = 10000,
@@ -289,6 +322,7 @@ def engram_config(
     # Rebuildable local standalone semantic retrieval and optional reranking
     semantic: SemanticConfig = EMPTY_SEMANTIC_CONFIG,
     reranker: RerankerConfig = EMPTY_RERANKER_CONFIG,
+    rollout: RolloutConfig = EMPTY_ROLLOUT_CONFIG,
     # Allow-listed deterministic utility operations
     utility: UtilityConfig = EMPTY_UTILITY_CONFIG,
 ) -> dict:
@@ -301,6 +335,8 @@ def engram_config(
         raise ValueError("semantic config must be an object")
     if not isinstance(reranker, dict):
         raise ValueError("reranker config must be an object")
+    if not isinstance(rollout, dict):
+        raise ValueError("rollout config must be an object")
     if not isinstance(utility, dict):
         raise ValueError("utility config must be an object")
     if capacity < 1:
@@ -362,6 +398,7 @@ def engram_config(
         "sparse": sparse_config(**sparse) if sparse else sparse_config(),
         "semantic": semantic_config(**semantic) if semantic else semantic_config(),
         "reranker": reranker_config(**reranker) if reranker else reranker_config(),
+        "rollout": rollout_config(**rollout) if rollout else rollout_config(),
         "utility": utility_config(**utility) if utility else utility_config(),
     }
     return config
@@ -383,6 +420,12 @@ def config_to_dict(config: dict) -> dict:
     data["sparse"] = dict(config.get("sparse") or sparse_config())
     data["semantic"] = dict(config.get("semantic") or semantic_config())
     data["reranker"] = dict(config.get("reranker") or reranker_config())
+    rollout = config.get("rollout") or rollout_config()
+    data["rollout"] = {
+        "policy_version": rollout["policy_version"],
+        "default_mode": rollout["default_mode"].value,
+        "namespaces": {namespace: mode.value for namespace, mode in rollout["namespaces"].items()},
+    }
     data["utility"] = dict(config.get("utility") or utility_config())
     data["utility"]["plugins"] = list(data["utility"]["plugins"])
     return data
@@ -432,6 +475,13 @@ def config_from_dict(data: dict) -> dict:
             raise ValueError("serialized reranker config must be an object")
         elif params["reranker"]:
             params["reranker"] = reranker_config(**params["reranker"])
+    if "rollout" in params:
+        if isinstance(params["rollout"], NoneType):
+            params["rollout"] = {}
+        elif not isinstance(params["rollout"], dict):
+            raise ValueError("serialized rollout config must be an object")
+        elif params["rollout"]:
+            params["rollout"] = rollout_config(**params["rollout"])
     if "utility" in params:
         if isinstance(params["utility"], NoneType):
             params["utility"] = {}
@@ -529,6 +579,15 @@ def load_config(path: str = "config.yml") -> dict:
                 f"(expected: {', '.join(sorted(reranker_keys))})"
             )
         data["reranker"] = reranker_config(**data["reranker"])
+    if "rollout" in data and data["rollout"]:
+        rollout_keys = set(rollout_config())
+        unknown_rollout = set(data["rollout"]) - rollout_keys
+        if unknown_rollout:
+            raise ValueError(
+                f"Unknown rollout config key(s) in {path}: {', '.join(sorted(unknown_rollout))} "
+                f"(expected: {', '.join(sorted(rollout_keys))})"
+            )
+        data["rollout"] = rollout_config(**data["rollout"])
     if "utility" in data and data["utility"]:
         utility_keys = set(utility_config())
         unknown_utility = set(data["utility"]) - utility_keys

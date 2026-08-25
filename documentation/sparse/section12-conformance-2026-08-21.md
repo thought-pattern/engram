@@ -9,8 +9,8 @@ integrates through the common resolver/fusion/budget contracts, and passed every
 declared engineering promotion gate.
 
 This is component promotion, not release approval. The corpus and results are
-repository-visible engineering evidence; Section 16 still owns protected
-evaluation, rollout, and release authority.
+repository-visible engineering evidence; Section 16 owns project evaluation,
+rollout, and release authority.
 
 ## Task evidence
 

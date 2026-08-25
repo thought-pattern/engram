@@ -19,7 +19,7 @@ The original PASS claim did not exercise `config.yml`; the MCP runner omitted `c
 | EGR-807 one-hop plan | Strict `OneHopQueryPlan` with one allow-listed template and bounded rows | Extra fields, ambiguous identities, unsupported templates, arbitrary Cypher/procedure inputs, and obsolete timeout fields cannot compile. |
 | EGR-808 execution and filtering | Fixed parameterized graph capability, existing `ClaimProjection`, current Section 7 evaluator, by-ID revalidation, resolver lease | Fixture checks pass; live canonical entity and Predicate lookup select Sarah and `married_to`, and the fixed one-hop query returns Abraham in 53.1550 ms. |
 | EGR-809 phrase and evidence | Deterministic single-result phrase, Claim evidence features/reasons, and fusion authority revalidation | The configured live core completes as `EVIDENCE`, retains one Claim and `Sarah — married to: Abraham.`, and reports 8,071.1110 ms without time-based suppression. |
-| EGR-810 benchmark | Versioned engineering regression corpus and reproducible runner | All 15 turns pass, covering both ambiguity classes, paraphrases, technical/explicit references, elliptical replacement, reset, and unknown type. The repository-visible split is not independent release evidence. |
+| EGR-810 benchmark | Versioned engineering regression corpus and reproducible runner | All 15 turns pass, covering both ambiguity classes, paraphrases, technical/explicit references, elliptical replacement, reset, and unknown type. The repository-visible split is not a Section 16 release partition. |
 
 The executable contract is [Contextual relation contracts v2](contracts-v2.md). The engineering corpus is [`eval/section8-relation-followup-v1.json`](../../eval/section8-relation-followup-v1.json), and its source-bound machine-readable result is [benchmark-2026-08-20.json](benchmark-2026-08-20.json). The legacy `held_out` key is an engineering regression split only; Section 16 must supply independently held content.
 
@@ -54,4 +54,4 @@ The live review corrected four integration defects: invalid MemGraph `MATCH` pla
 
 ## Deferred ownership
 
-Sections 9 and 10 subsequently supplied temporal/conflict and bounded multi-hop component behavior. Section 15 owns remaining adapter and operational integration. Section 16 owns independent custody, release-scale calibration, and approval. None of those release outcomes is claimed by this report.
+Sections 9 and 10 subsequently supplied temporal/conflict and bounded multi-hop component behavior. Section 15 owns remaining adapter and operational integration. Section 16 owns the disjoint project release partitions, release-scale calibration, and approval. None of those release outcomes is claimed by this report.

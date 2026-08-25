@@ -40,7 +40,7 @@ Keep imports at module scope, immediately after the module docstring. Group them
 3. Third-party imports.
 4. Engram imports.
 
-Generated protobuf and gRPC modules under `engram/v1/` are compiler output. Regenerate them from `engram.proto`; do not edit or reformat them by hand.
+Generated protobuf and gRPC modules under `engram/v1/` and `engram/v2/` are compiler output. Regenerate them from the corresponding `engram.proto`; do not edit or reformat them by hand.
 
 ## Constants
 
@@ -79,7 +79,7 @@ Do not generate, store, or return `None` as an absence value. Use the falsey val
 
 Validate the concrete type before copying or normalizing a supplied value. A falsey value of the wrong type is malformed input, not an omission: for example, a mapping field accepts `{}` but rejects `[]`, `()`, `""`, `0`, and `False`. Legacy persistence loaders may translate a specifically documented historical `null` to the current concrete empty value, but new public calls remain strict.
 
-Procedures may retain `-> None` because that annotation describes a side-effect-only function rather than an absent data value. Compiler-generated files under `engram/v1/` are exempt from the absence rule and remain byte-for-byte reproducible from `engram.proto`.
+Procedures may retain `-> None` because that annotation describes a side-effect-only function rather than an absent data value. Compiler-generated files under `engram/v1/` and `engram/v2/` are exempt from the absence rule and remain byte-for-byte reproducible from their `engram.proto` sources.
 
 ## Type annotations
 
@@ -112,7 +112,7 @@ black -l 132 -t py311 .
 Before submitting a change, run:
 
 ```bash
-black --check -l 132 -t py311 .
+black -l 132 -t py311 .
 isort --check-only .
 ruff check --line-length 132 .
 pyright

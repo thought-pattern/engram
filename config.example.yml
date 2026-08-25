@@ -81,6 +81,14 @@ reranker:
   max_input_bytes: 65536
   max_model_time_ms: 25
 
+# --- Namespace rollout ---
+# The default preserves normal regulated answers. Exact namespace overrides may
+# use: disabled, shadow, evidence_only, regulated_direct_answer, or rollback.
+rollout:
+  policy_version: rollout-v1
+  default_mode: regulated_direct_answer
+  namespaces: {}
+
 # --- Deterministic utility resolver (optional, local) ---
 # Only these compiled-in plugins can run. Requests must use the documented
 # command grammars; Python expressions, imports, and third-party plugins are

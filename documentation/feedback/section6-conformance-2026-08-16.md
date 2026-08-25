@@ -4,7 +4,7 @@
 
 All fifteen Section 6 tasks meet their exit conditions after the findings review. External Regulator observations are strictly targeted, durable, idempotent, conflict-detecting, bounded, aged, and isolated by statement lineage, exact relationship, contract, and fusion-policy partitions. Stale and policy outcomes cannot bypass Section 3 lifecycle authority or Section 5 hard eligibility. Because the current namespace epoch versions accepted-response knowledge only, a completed knowledge miss is reusable solely for an exact-only resolver plan through an exact, memory-only negative key with available epoch and fully ready/completed resolver state; the optimization fails open.
 
-The hand-authored `feedback-history-v1.0.0` formula, five-sample floor, priors, daily buckets, 30-day half-life, capacities, and negative TTL were specified before the conformance and benchmark results. No coefficient, prior, sample floor, TTL, threshold, or admission reason was learned from unit tests, synthetic fixtures, or benchmark samples. Independent calibration and release-quality evaluation remain Section 16 work.
+The hand-authored `feedback-history-v1.0.0` formula, five-sample floor, priors, daily buckets, 30-day half-life, capacities, and negative TTL were specified before the conformance and benchmark results. No coefficient, prior, sample floor, TTL, threshold, or admission reason was learned from unit tests, synthetic fixtures, or benchmark samples. Project-partition calibration and release-quality evaluation are Section 16 work.
 
 ## Task evidence
 
@@ -72,6 +72,6 @@ Section 15 still owns feedback/inspection adapter exposure. This MCP run is a cr
 
 - Section 7 owns response-less Claim evidence handoff and usefulness.
 - Section 15 owns MCP/gRPC exposure, authorization, redaction, cross-feature configuration and migration orchestration, operational metrics, dashboards, deployment, and rollback.
-- Section 16 owns independently labeled evaluation, empirical calibration, numerical release gates, final release testing, and approval.
+- Section 16 owns project-owned disjoint evaluation, empirical calibration, numerical release gates, final release testing, and approval.
 
 No residual item prevents Section 6 implementation completion, and no release-quality claim is made.

@@ -4,7 +4,7 @@
 
 Section 10's bounded composition implementation is complete at the transport-neutral core boundary. It supplies the closed algebra and typed plan, conservative compilation, deterministic one/two-hop execution through fixed graph capabilities, safe Boolean and aggregate semantics, version-2 multi-hop Claim evidence, resource and rejection coverage, a versioned engineering regression corpus, and configured live MemGraph evidence.
 
-This is not a release approval. Section 16 retains independent calibration and release authority.
+This is not a release approval. Section 16 retains project calibration and release authority.
 
 ## Requirement evidence
 
@@ -27,7 +27,7 @@ The vertical test found three defects that lower-level success tests did not: in
 
 ## Engineering regression evaluation
 
-[The versioned corpus](../../eval/section10-composition-v1.json) has six development and nine legacy `held_out` engineering cases. Both splits are visible in this repository and are ineligible as independent release evidence. [The reproducible runner](../../scripts/benchmark_composition.py) measures the complete plan/Claim/execution operation for each case and records governed source metadata.
+[The versioned corpus](../../eval/section10-composition-v1.json) has six development and nine legacy `held_out` engineering cases. Both splits are visible in this repository and are not Section 16 release partitions. [The reproducible runner](../../scripts/benchmark_composition.py) measures the complete plan/Claim/execution operation for each case and records governed source metadata.
 
 [The recorded result](benchmark-2026-08-20.json) passes 15/15 engineering cases, reports the legacy split accuracy as 1.0, records zero unbounded execution and useful evidence on every abstention, and binds to governed source state. `timing_gate` is explicitly false; durations are descriptive only.
 

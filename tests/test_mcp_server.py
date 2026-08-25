@@ -2,8 +2,9 @@
 
 import asyncio
 import json
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import cast
 
 import pytest
@@ -347,6 +348,37 @@ def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
     assert _runtime(service).engram.get_statement(learned["statement_id"])["hit_count"] == 1
 
 
+def test_abandoned_mcp_wait_does_not_claim_to_cancel_started_mutation(tmp_path, monkeypatch) -> None:
+    service = MCPConversationService()
+    service.start(seed_path=str(_seed_file(tmp_path)))
+    core = cast(EngramCore, service.core)
+    entered = threading.Event()
+    release = threading.Event()
+    original = core.learn_response
+
+    def delayed(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(core, "learn_response", delayed)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(service.learn_response, "What timed out?", "The mutation completed.", "mcp-abandoned")
+        assert entered.wait(timeout=5)
+        with pytest.raises(FutureTimeoutError):
+            future.result(timeout=0.01)
+        release.set()
+        created = future.result(timeout=5)
+
+    monkeypatch.setattr(core, "learn_response", original)
+    replay = service.learn_response("What timed out?", "The mutation completed.", "mcp-abandoned")
+
+    assert created["idempotent"] is False
+    assert replay["idempotent"] is True
+    assert replay["statement_id"] == created["statement_id"]
+    assert len(core.engram.response_repository.snapshot()["artifacts"]) == 1
+
+
 def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
     service = MCPConversationService()
     service.start(seed_path=str(_seed_file(tmp_path)))
@@ -424,6 +456,108 @@ def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
                 "engram_learn_response",
                 "engram_retire_response",
             ]
+            expected_contracts = {
+                "engram_start": {
+                    "description": "Start one persistent Engram conversation for subsequent tool calls.",
+                    "properties": {
+                        "user_id": ("string", "0"),
+                        "initial_bot_text": ("string", ""),
+                        "seed_path": ("string", "data/seed.json"),
+                        "store_path": ("string", ""),
+                        "config_path": ("string", ""),
+                        "transcript_path": ("string", ""),
+                        "random_seed": ("integer", 0),
+                        "random_seed_present": ("boolean", False),
+                    },
+                    "required": (),
+                },
+                "engram_send": {
+                    "description": "Send exactly one message after observing Engram's previous reply.",
+                    "properties": {"text": ("string", ())},
+                    "required": ("text",),
+                },
+                "engram_inspect": {
+                    "description": "Inspect the active user context, learned facts, and metrics.",
+                    "properties": {},
+                    "required": (),
+                },
+                "engram_add_fact": {
+                    "description": "Add one unattributed shared fact without changing conversation context.",
+                    "properties": {"text": ("string", ()), "source_label": ("string", "")},
+                    "required": ("text",),
+                },
+                "engram_finish": {
+                    "description": "Write complete JSON and Markdown transcripts without stopping.",
+                    "properties": {"output_prefix": ("string", "engram-mcp-transcript")},
+                    "required": (),
+                },
+                "engram_stop": {
+                    "description": "Persist configured state and release the active conversation.",
+                    "properties": {},
+                    "required": (),
+                },
+                "engram_propose": {
+                    "description": "Retrieve scoped candidates without recording a successful hit.",
+                    "properties": {
+                        "request": ("string", ()),
+                        "request_id": ("string", ()),
+                        "user_id": ("string", "0"),
+                        "namespace": ("string", ""),
+                        "context_fingerprint": ("string", ""),
+                        "limit": ("integer", 1),
+                        "required_metadata": ("object", {}),
+                        "required_source_label": ("string", ""),
+                    },
+                    "required": ("request", "request_id"),
+                },
+                "engram_resolve": {
+                    "description": "Commit one accepted or rejected Regulator verdict.",
+                    "properties": {
+                        "proposal_id": ("string", ()),
+                        "outcome": ("string", ()),
+                        "statement_id": ("string", ""),
+                        "reason": ("string", ""),
+                    },
+                    "required": ("outcome", "proposal_id"),
+                },
+                "engram_learn_response": {
+                    "description": "Cache one non-IDK Actor response with scope and provenance.",
+                    "properties": {
+                        "request": ("string", ()),
+                        "response": ("string", ()),
+                        "request_id": ("string", ()),
+                        "user_id": ("string", "0"),
+                        "namespace": ("string", ""),
+                        "context_fingerprint": ("string", ""),
+                        "source_label": ("string", "tapestry:actor"),
+                        "metadata": ("object", {}),
+                    },
+                    "required": ("request", "request_id", "response"),
+                },
+                "engram_retire_response": {
+                    "description": "Retire one globally stale dynamic response-cache entry.",
+                    "properties": {
+                        "statement_id": ("string", ()),
+                        "reason": ("string", ()),
+                        "request_id": ("string", ()),
+                    },
+                    "required": ("reason", "request_id", "statement_id"),
+                },
+            }
+            actual_contracts = {}
+            for tool in listed.tools:
+                value = tool.model_dump()
+                schema = value["input_schema"]
+                actual_contracts[tool.name] = {
+                    "description": tool.description,
+                    "properties": {
+                        name: (definition["type"], definition.get("default", ()))
+                        for name, definition in schema["properties"].items()
+                    },
+                    "required": tuple(sorted(schema.get("required", ()))),
+                }
+                assert value["output_schema"] is None
+            assert actual_contracts == expected_contracts
 
             started = _tool_json(
                 await client.call_tool(

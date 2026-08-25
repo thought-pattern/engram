@@ -2,17 +2,20 @@
 
 ## Status and scope
 
-Engram provides a versioned unary gRPC API in `engram.v1`. The packaged
-`engram-grpc` process creates exactly one `EngramCore`, exposes it through a
-thin protobuf adapter, publishes the standard gRPC health service, and closes
-the core during graceful shutdown.
+Engram provides the unchanged proposal/conversation API in `engram.v1` and a
+separate unified-resolution evidence API in `engram.v2`. The packaged
+`engram-grpc` process creates exactly one `EngramCore`, exposes both services
+through thin protobuf adapters, publishes the standard gRPC health service,
+and closes the core during graceful shutdown.
 
 There is no replication, load balancing, distributed locking, shared
 transaction service, or cross-instance consistency protocol. Deploy one
 server process with one JSON store.
 
-The gRPC contract does not transport Knowledge Graph Claim records. When graph
-recall is enabled, Engram reads the configured Memgraph instance directly. Its
+The v1 contract does not transport Knowledge Graph Claim records. The v2
+`ResolveEvidence` result carries the bounded Section 7 evidence package without
+changing any v1 message, field number, or RPC. When graph recall is enabled,
+Engram reads the configured Memgraph instance directly. Its
 Schema 3.8 read subset understands Tapestry's half-open Claim times and excludes
 closed or retrieval-only (`generic_relation`) Claims. Consequently Phase A does
 not add protobuf fields or create a separate Engram graph in a Tapestry
@@ -110,14 +113,26 @@ Concurrent RPC handlers all delegate to the same core. The core serializes
 state transitions with its application lock; the adapter does not reimplement
 chat, retrieval, learning, idempotency, or persistence logic.
 
+The v2 evidence adapter also connects the gRPC call lifecycle to
+`EngramCore.resolve_request`'s cooperative cancellation callback. A cancellation
+or expired deadline observed at a cooperative boundary does not cache a
+resolution result or negative miss, so the same request ID may be retried.
+
 ## Protocol and generated code
 
-The source contract is [engram.proto](../engram/v1/engram.proto). Generated
-Python messages, type stubs, and service stubs are committed beside it. RPC
-requests have explicit fields and `Resolve` uses the `RegulatorOutcome` enum.
-Engram conversation, inspection, and cache results use
+The source contracts are [v1/engram.proto](../engram/v1/engram.proto) and
+[v2/engram.proto](../engram/v2/engram.proto). Generated Python messages, type
+stubs, and service stubs are committed beside each source. RPC requests have
+explicit fields and v1 `Resolve` uses the `RegulatorOutcome` enum. Engram
+conversation, inspection, and cache results use
 `google.protobuf.Struct` because those JSON-ready diagnostic payloads are
 extensible application data rather than stable scalar records.
+
+The v2 `ResolutionResult` explicitly versions and names every top-level unified
+result field. Its `EvidencePackage` explicitly carries wire version, records,
+retained/omitted counts, truncation state, and reasons. Complex candidate,
+evidence, diagnostic, resolver, and budget records remain bounded core-owned
+structures rather than duplicated protobuf policy types.
 
 Install the development dependencies and regenerate after changing the proto:
 
@@ -125,6 +140,8 @@ Install the development dependencies and regenerate after changing the proto:
 python -m pip install -e ".[dev]"
 python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
   --grpc_python_out=. engram/v1/engram.proto
+python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
+  --grpc_python_out=. engram/v2/engram.proto
 ```
 
 The test suite regenerates the files in a temporary directory and compares
@@ -150,6 +167,12 @@ currently target `grpcio-tools` 1.83.0 and protobuf 7.35.1.
 | `GetStatus` | Return lifecycle, readiness, durability, checkpoint, and conversation status. |
 | `Flush` | Explicitly checkpoint the configured store. |
 
+The separate `engram.v2.EngramEvidenceService` has one RPC:
+
+| RPC | Purpose |
+| --- | --- |
+| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Section 7 package when available. |
+
 `Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
 Tapestry contract documented in the
 [Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
@@ -162,6 +185,8 @@ import grpc
 from google.protobuf.json_format import MessageToDict
 
 from engram.v1 import engram_pb2, engram_pb2_grpc
+from engram.v2 import engram_pb2 as evidence_pb2
+from engram.v2 import engram_pb2_grpc as evidence_pb2_grpc
 
 with grpc.insecure_channel("127.0.0.1:50051") as channel:
     stub = engram_pb2_grpc.EngramServiceStub(channel)
@@ -171,6 +196,17 @@ with grpc.insecure_channel("127.0.0.1:50051") as channel:
         timeout=5,
     )
     print(MessageToDict(turn, preserving_proto_field_name=True)["response"])
+
+    evidence_stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
+    result = evidence_stub.ResolveEvidence(
+        evidence_pb2.ResolveEvidenceRequest(
+            request="What evidence is available?",
+            request_id="resolve-1",
+            user_id="Alice",
+        ),
+        timeout=5,
+    )
+    print(result.outcome, result.evidence_package.retained_count)
 ```
 
 Use `grpc.secure_channel` with matching client credentials when the server is
@@ -194,18 +230,23 @@ Core failures map consistently at the transport boundary:
 Every typed failure supplies `engram-error-type` in trailing metadata.
 Persistence failures also supply `engram-operation` and
 `engram-state-changed`. The latter is `true` when the requested mutation was
-already applied to live memory before its checkpoint failed.
+already applied to live memory before its checkpoint failed. Client details are
+the generic `Engram persistence failure`; driver, filesystem, path, and
+credential-bearing exception content is not returned.
 
 ## Health and readiness
 
-The server registers `grpc.health.v1.Health` for both the aggregate empty
-service name and `engram.v1.EngramService`. It reports `SERVING` only while the
-core is both ready and healthy. A degraded store, closing core, closed core, or
-graceful shutdown reports `NOT_SERVING`.
+The server registers `grpc.health.v1.Health` for the aggregate empty service
+name, `engram.v1.EngramService`, and `engram.v2.EngramEvidenceService`. It
+reports `SERVING` only while the core is both ready and healthy. A degraded
+store, closing core, closed core, or graceful shutdown reports `NOT_SERVING`.
 
 `GetStatus` provides the detailed source data: `state`, `ready`, `healthy`,
-`durability`, `dirty`, `last_checkpoint_at`, `last_persistence_error`,
-`active_conversations`, `store_path`, and a bounded `components` object with
+`durability`, `dirty`, `last_checkpoint_at`, a redacted exception-class
+`last_persistence_error`, `active_conversations`, `store_path`, and a bounded
+`telemetry` aggregate with fixed outcome, resolver, latency, resource, rebuild,
+durability, and Regulator keys. It stores no raw request or caller-controlled
+identifier labels. A bounded `components` object has
 `enabled` and `ready` Booleans for graph, vector, and spaCy. The component
 status omits endpoints, credentials, model paths, and index names.
 
@@ -221,10 +262,14 @@ store and either call `Flush` or repeat the exact regulated-cache operation
 with the same `request_id`; its idempotency path retries persistence without
 applying or crediting the mutation twice.
 
-A client deadline or cancellation also cannot claim rollback after handler
-execution has started. Chat calls are not idempotent, so inspect their user
-context before deciding whether to repeat an ambiguous timed-out turn.
-Regulated-cache calls should retain and reuse their logical `request_id`.
+A v1 client deadline or cancellation cannot claim rollback after handler
+execution has started. V2 resolution is cooperatively cancellable, but work
+inside a graph-driver call remains non-interruptible until the driver returns,
+and work already published is not rolled back. Chat calls are not idempotent,
+so inspect their user context before deciding whether to repeat an ambiguous
+timed-out turn. Regulated-cache calls should retain and reuse their logical
+`request_id`. The complete behavior matrix is in [the Section 15 concurrency
+contract](operations/section15-concurrency-idempotency-v1.md).
 
 After restart, learned responses, facts, user contexts, statistics, and
 retirements come from the last completed checkpoint. Outstanding proposal IDs

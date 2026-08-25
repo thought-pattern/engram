@@ -60,4 +60,4 @@ This MCP run is adapter/startup/non-regression evidence because the current MCP 
 
 ## Release custody
 
-This evidence promotes the optional component only. The evaluation corpus is repository-visible engineering data, not an independently controlled Section 16 protected partition. No numerical release owner has approved the pending Section 16 gates, so `release_ready` and `release_approved` remain false. The feature therefore remains disabled by default.
+This evidence promotes the optional component only. The evaluation corpus is repository-visible engineering data and is separate from the project-owned Section 16 release partitions. Section 16 owns the numerical gates and final rollout decision. The feature remains disabled by default until that qualification is complete.

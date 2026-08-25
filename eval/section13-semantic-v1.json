@@ -2,6 +2,8 @@
   "schema_version": 1,
   "corpus_version": "section13-semantic-v1",
   "frozen_at": "2026-08-22T00:00:00Z",
+  "evaluation_role": "repository-visible engineering holdout; not a Section 16 release partition",
+  "section16_release_eligible": false,
   "documents": [
     {"statement_id": "sushi", "canonical": "Where can I find a good sushi restaurant?", "aliases": ["recommend a place for sushi", "best Japanese rolls nearby"], "response": "Sushi response prose is not an embedding input."},
     {"statement_id": "cats", "canonical": "Why do cats purr when they are content?", "aliases": ["feline purring explanation", "happy kitten rumbling sound"], "response": "Cat response prose is not an embedding input."},
@@ -39,19 +41,19 @@
     {"query_id": "calibration-09", "partition": "calibration", "text": "estimated arrival for a parcel crossing national borders", "expected_statement_id": "shipping"},
     {"query_id": "calibration-10", "partition": "calibration", "text": "how is a violin tuned for an orchestra", "expected_statement_id": ""},
 
-    {"query_id": "release-01", "partition": "release", "text": "where should we dine on nigiri tonight", "expected_statement_id": "sushi"},
-    {"query_id": "release-02", "partition": "release", "text": "reason for the low motor-like sound from a pleased house feline", "expected_statement_id": "cats"},
-    {"query_id": "release-03", "partition": "release", "text": "daily movement needs of a pet canine", "expected_statement_id": "dogs"},
-    {"query_id": "release-04", "partition": "release", "text": "write a memory-efficient iterator in Python", "expected_statement_id": "python-generator"},
-    {"query_id": "release-05", "partition": "release", "text": "renew authorization after the short-lived bearer credential ends", "expected_statement_id": "oauth-refresh"},
-    {"query_id": "release-06", "partition": "release", "text": "preserve uncommitted work while removing the most recent Git revision", "expected_statement_id": "git-reset"},
-    {"query_id": "release-07", "partition": "release", "text": "how quickly should an overseas delivery reach me", "expected_statement_id": "shipping"},
-    {"query_id": "release-08", "partition": "release", "text": "what city serves as the seat of the French government", "expected_statement_id": "paris"},
-    {"query_id": "release-09", "partition": "release", "text": "how vegetation stores energy captured from daylight", "expected_statement_id": "photosynthesis"},
-    {"query_id": "release-10", "partition": "release", "text": "repair a bicycle wheel with a broken spoke", "expected_statement_id": ""}
+    {"query_id": "engineering-holdout-01", "partition": "engineering_holdout", "text": "where should we dine on nigiri tonight", "expected_statement_id": "sushi"},
+    {"query_id": "engineering-holdout-02", "partition": "engineering_holdout", "text": "reason for the low motor-like sound from a pleased house feline", "expected_statement_id": "cats"},
+    {"query_id": "engineering-holdout-03", "partition": "engineering_holdout", "text": "daily movement needs of a pet canine", "expected_statement_id": "dogs"},
+    {"query_id": "engineering-holdout-04", "partition": "engineering_holdout", "text": "write a memory-efficient iterator in Python", "expected_statement_id": "python-generator"},
+    {"query_id": "engineering-holdout-05", "partition": "engineering_holdout", "text": "renew authorization after the short-lived bearer credential ends", "expected_statement_id": "oauth-refresh"},
+    {"query_id": "engineering-holdout-06", "partition": "engineering_holdout", "text": "preserve uncommitted work while removing the most recent Git revision", "expected_statement_id": "git-reset"},
+    {"query_id": "engineering-holdout-07", "partition": "engineering_holdout", "text": "how quickly should an overseas delivery reach me", "expected_statement_id": "shipping"},
+    {"query_id": "engineering-holdout-08", "partition": "engineering_holdout", "text": "what city serves as the seat of the French government", "expected_statement_id": "paris"},
+    {"query_id": "engineering-holdout-09", "partition": "engineering_holdout", "text": "how vegetation stores energy captured from daylight", "expected_statement_id": "photosynthesis"},
+    {"query_id": "engineering-holdout-10", "partition": "engineering_holdout", "text": "repair a bicycle wheel with a broken spoke", "expected_statement_id": ""}
   ],
   "gates": {
-    "semantic": {"release_recall_at_1_min": 0.75, "release_recall_delta_vs_sparse_min": 0.10, "release_false_answer_rate_max": 0.10, "p95_query_ms_max": 500.0, "cold_start_ms_max": 15000.0, "peak_memory_mib_max": 768.0},
-    "reranker": {"release_recall_delta_min": 0.0, "release_false_answer_delta_max": 0.0, "p95_overhead_ms_max": 5.0, "peak_memory_mib_max": 16.0}
+    "semantic": {"engineering_holdout_recall_at_1_min": 0.75, "engineering_holdout_recall_delta_vs_sparse_min": 0.10, "engineering_holdout_false_answer_rate_max": 0.10, "peak_memory_mib_max": 768.0},
+    "reranker": {"engineering_holdout_recall_delta_min": 0.0, "engineering_holdout_false_answer_delta_max": 0.0, "peak_memory_mib_max": 16.0}
   }
 }

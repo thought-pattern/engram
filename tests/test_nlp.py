@@ -1,7 +1,10 @@
 """Tests for NLP fact extraction."""
 
+import pytest
+
+from engram import nlp
 from engram.config import engram_config
-from engram.nlp import extract_fact, extracted_fact, fact_query_patterns
+from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns
 
 """Tests for FactExtractor."""
 
@@ -292,3 +295,15 @@ def test_typo_question_detection_typo_questions_never_learned_as_facts():
 
 def test_typo_question_detection_real_word_subjects_still_learn():
     assert extract_fact("The cow is a farm animal")["subject"] == "cow"
+
+
+@pytest.mark.parametrize("extractor", (extract_fact, extract_entities))
+def test_nlp_extraction_does_not_hide_dependency_failures(monkeypatch, extractor):
+    def fail_tokenization(_text):
+        raise RuntimeError("injected tokenizer failure")
+
+    monkeypatch.setattr(nlp, "_ensure_nltk_data", lambda: None)
+    monkeypatch.setattr(nlp, "word_tokenize", fail_tokenization)
+
+    with pytest.raises(RuntimeError, match="injected tokenizer failure"):
+        extractor("Paris is in France")

@@ -125,4 +125,4 @@ rebuilt if re-enabled; authoritative artifacts and the sparse index do not
 change. A model identity change similarly requires restart and a clean rebuild.
 
 The repository-visible engineering gate evaluates the two components
-independently. Passing does not grant protected Section 16 release authority.
+separately. Passing does not grant Section 16 release authority.

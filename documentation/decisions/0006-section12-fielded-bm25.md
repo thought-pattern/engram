@@ -17,7 +17,7 @@ The repository-visible engineering benchmark compares the existing IDF overlap,
 unfielded BM25, SQLite FTS5, and a fielded BM25 implementation. Its 28 synthetic
 queries cover phrases, proximity, prefixes, character trigrams, symbols, versions,
 paths, error codes, identifier boundaries, technical identifiers, and negative
-queries. The comparison is component evidence, not a protected Section 16 release
+queries. The comparison is component evidence, not a Section 16 release
 partition.
 
 ## Decision

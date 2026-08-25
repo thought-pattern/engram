@@ -4,6 +4,7 @@ import heapq
 import logging
 import random
 import threading
+import time
 from collections.abc import Mapping
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -34,6 +35,8 @@ from engram.constants import (
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
     MAX_STRUCTURED_CLAIM_PROJECTION_TERMS,
+    PERSISTENCE_STATUS_SCHEMA_VERSION,
+    PERSISTENCE_VERSION,
     REPETITION_ESCAPE_RESPONSE,
     REPETITION_FEEDBACK_MARKERS,
     REPETITION_HISTORY_SIZE,
@@ -114,6 +117,7 @@ from engram.semantic import SemanticIndexCheckReport, SemanticIndexState, Semant
 from engram.spacy_setup import get_nlp
 from engram.sparse import SparseIndexCheckReport, SparseIndexOwner, SparseIndexState, SparseSearchResult
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
+from engram.telemetry import operational_telemetry, record_rebuild, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
     correct_spelling,
@@ -322,11 +326,26 @@ class Engram:
         self.mutation_receipts = MutationReceiptLedger()
         self.feedback_store = FeedbackStore()
         self.response_quarantine: tuple[object, ...] = ()
+        self.persistence_status = {
+            "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
+            "ready": True,
+            "source_available": False,
+            "source_version": 0,
+            "current_version": PERSISTENCE_VERSION,
+            "migration_required": False,
+            "manifest_present": False,
+            "runtime_manifest_matches_source": False,
+            "quarantine_count": 0,
+            "quarantine_reasons": {},
+            "derived_state_rebuilt": False,
+            "manifest": {},
+        }
 
         # Metrics
         self.query_count = 0
         self.hit_count = 0
         self.eviction_count = 0
+        self.operational_metrics = operational_telemetry()
 
         # Graph tooling is optional even when configured. Construction records
         # its readiness, but an unavailable graph must not prevent the local
@@ -419,6 +438,29 @@ class Engram:
         result["utility"] = self.utility_registry.health()
         return result
 
+    def operational_telemetry_snapshot(self) -> dict:
+        """Return isolated fixed-cardinality process telemetry."""
+        with self.count_lock:
+            result = telemetry_snapshot(self.operational_metrics)
+            return result
+
+    def _record_rebuild_telemetry(
+        self,
+        kind: str,
+        started_ns: int,
+        *,
+        succeeded: bool,
+        applied: bool = True,
+    ) -> None:
+        with self.count_lock:
+            record_rebuild(
+                self.operational_metrics,
+                kind,
+                time.monotonic_ns() - started_ns,
+                succeeded=succeeded,
+                applied=applied,
+            )
+
     def graph_query(self, cypher: str, params=()) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
 
@@ -447,7 +489,7 @@ class Engram:
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
         except RuntimeError as err:
-            logger.debug("Graph query failed: %s", err)
+            logger.debug("Graph query failed (%s)", type(err).__name__)
             result = []
             return result
 
@@ -521,7 +563,7 @@ class Engram:
             result = rows if isinstance(rows, list) else []
             return result
         except Exception as err:
-            logger.warning("Vector graph recall unavailable; using keyword fallback: %s", err)
+            logger.warning("Vector graph recall unavailable; using keyword fallback (%s)", type(err).__name__)
             result = []
             return result
 
@@ -658,7 +700,13 @@ class Engram:
         """Alias current-statement repair with rebuild-oriented wording."""
         if not isinstance(apply, bool):
             raise ValueError("index rebuild apply must be a boolean")
-        result = self.repair_indexes(dry_run=not apply)
+        started_ns = time.monotonic_ns()
+        try:
+            result = self.repair_indexes(dry_run=not apply)
+        except Exception:
+            self._record_rebuild_telemetry("primary", started_ns, succeeded=False, applied=apply)
+            raise
+        self._record_rebuild_telemetry("primary", started_ns, succeeded=True, applied=apply)
         return result
 
     def sparse_index_snapshot(self) -> SparseIndexState:
@@ -669,14 +717,17 @@ class Engram:
     def rebuild_sparse_index(self) -> SparseIndexState:
         """Atomically rebuild sparse retrieval from authoritative artifacts."""
         repository = self.response_repository.snapshot()
+        started_ns = time.monotonic_ns()
         try:
             result = self._sparse_index_owner.rebuild(
                 repository["artifacts"].values(),
                 repository["state_generation"],
             )
+            self._record_rebuild_telemetry("sparse", started_ns, succeeded=True)
             return result
         except Exception as error:
             self._sparse_index_owner.mark_unavailable(error)
+            self._record_rebuild_telemetry("sparse", started_ns, succeeded=False)
             raise
 
     def synchronize_sparse_index(
@@ -685,6 +736,7 @@ class Engram:
         changed_statement_ids: tuple[str, ...] = (),
     ) -> bool:
         """Publish a repository-derived sparse generation without affecting mutation success."""
+        rebuild_started_ns = time.monotonic_ns() if not changed_statement_ids else 0
         try:
             artifacts = repository_state["artifacts"]
             generation = repository_state["state_generation"]
@@ -694,10 +746,13 @@ class Engram:
                 self._sparse_index_owner.synchronize(artifacts, generation, changed_statement_ids)
             else:
                 self._sparse_index_owner.rebuild(artifacts.values(), generation)
+                self._record_rebuild_telemetry("sparse", rebuild_started_ns, succeeded=True)
             result = True
             return result
         except Exception as error:
             self._sparse_index_owner.mark_unavailable(error)
+            if rebuild_started_ns:
+                self._record_rebuild_telemetry("sparse", rebuild_started_ns, succeeded=False)
             logger.warning("Sparse index synchronization failed: %s", type(error).__name__)
             result = False
             return result
@@ -735,13 +790,17 @@ class Engram:
     def rebuild_semantic_index(self) -> SemanticIndexState:
         """Atomically rebuild standalone embeddings from authoritative artifacts."""
         repository = self.response_repository.snapshot()
+        started_ns = time.monotonic_ns()
         try:
-            return self._semantic_index_owner.rebuild(
+            result = self._semantic_index_owner.rebuild(
                 repository["artifacts"].values(),
                 repository["state_generation"],
             )
+            self._record_rebuild_telemetry("semantic", started_ns, succeeded=True)
+            return result
         except Exception as error:
             self._semantic_index_owner.mark_unavailable(error)
+            self._record_rebuild_telemetry("semantic", started_ns, succeeded=False)
             raise
 
     def synchronize_semantic_index(
@@ -752,6 +811,7 @@ class Engram:
         """Publish a repository-derived embedding generation without affecting mutation success."""
         if not self._semantic_index_owner.enabled:
             return True
+        rebuild_started_ns = time.monotonic_ns() if not changed_statement_ids else 0
         try:
             artifacts = repository_state["artifacts"]
             generation = repository_state["state_generation"]
@@ -761,9 +821,12 @@ class Engram:
                 self._semantic_index_owner.synchronize(artifacts, generation, changed_statement_ids)
             else:
                 self._semantic_index_owner.rebuild(artifacts.values(), generation)
+                self._record_rebuild_telemetry("semantic", rebuild_started_ns, succeeded=True)
             return True
         except Exception as error:
             self._semantic_index_owner.mark_unavailable(error)
+            if rebuild_started_ns:
+                self._record_rebuild_telemetry("semantic", rebuild_started_ns, succeeded=False)
             logger.warning("Standalone semantic index synchronization failed: %s", type(error).__name__)
             return False
 

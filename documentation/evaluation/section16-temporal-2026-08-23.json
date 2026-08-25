@@ -1,0 +1,346 @@
+{
+  "case_count": 12,
+  "cases": [
+    {
+      "elapsed_ms": 0.4518,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_unique",
+        "selected_claim_id": "claim:active"
+      },
+      "id": "current-unique",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_unique",
+        "selected_claim_id": "claim:active"
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.3216,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_trust_unavailable",
+        "selected_claim_id": ""
+      },
+      "id": "current-missing-trust",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_trust_unavailable",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.5516,
+      "expected": {
+        "conflict_claim_ids": [
+          "claim:active",
+          "claim:paused"
+        ],
+        "direct_answer": false,
+        "reason": "relation_conflict_single_value",
+        "selected_claim_id": ""
+      },
+      "id": "single-valued-conflict",
+      "observed": {
+        "conflict_claim_ids": [
+          "claim:active",
+          "claim:paused"
+        ],
+        "direct_answer": false,
+        "reason": "relation_conflict_single_value",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.4824,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_valid_multi_value",
+        "selected_claim_id": ""
+      },
+      "id": "valid-multi-value",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_valid_multi_value",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.7605,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_cardinality_unknown",
+        "selected_claim_id": ""
+      },
+      "id": "unknown-cardinality",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_cardinality_unknown",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.5419,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_latest",
+        "selected_claim_id": "claim:latest"
+      },
+      "id": "latest-selection",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_latest",
+        "selected_claim_id": "claim:latest"
+      },
+      "passed": true,
+      "split": "development"
+    },
+    {
+      "elapsed_ms": 0.4832,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_temporal_bounds_open",
+        "selected_claim_id": ""
+      },
+      "id": "historical-open-bound",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_temporal_bounds_open",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "held_out"
+    },
+    {
+      "elapsed_ms": 0.5069,
+      "expected": {
+        "conflict_claim_ids": [
+          "claim:first",
+          "claim:second"
+        ],
+        "direct_answer": false,
+        "reason": "relation_latest_tie",
+        "selected_claim_id": ""
+      },
+      "id": "latest-distinct-tie",
+      "observed": {
+        "conflict_claim_ids": [
+          "claim:first",
+          "claim:second"
+        ],
+        "direct_answer": false,
+        "reason": "relation_latest_tie",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "held_out"
+    },
+    {
+      "elapsed_ms": 0.2596,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_latest_bound_unavailable",
+        "selected_claim_id": ""
+      },
+      "id": "latest-missing-lower-bound",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_latest_bound_unavailable",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "held_out"
+    },
+    {
+      "elapsed_ms": 0.47,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_trust_version_incomparable",
+        "selected_claim_id": ""
+      },
+      "id": "trust-version-mismatch",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_trust_version_incomparable",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "held_out"
+    },
+    {
+      "elapsed_ms": 0.5798,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_bounded_multiple_periods",
+        "selected_claim_id": ""
+      },
+      "id": "bounded-successive-values",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": false,
+        "reason": "relation_bounded_multiple_periods",
+        "selected_claim_id": ""
+      },
+      "passed": true,
+      "split": "held_out"
+    },
+    {
+      "elapsed_ms": 0.5103,
+      "expected": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_latest",
+        "selected_claim_id": "claim:newer-system"
+      },
+      "id": "system-time-latest",
+      "observed": {
+        "conflict_claim_ids": [],
+        "direct_answer": true,
+        "reason": "relation_selected_latest",
+        "selected_claim_id": "claim:newer-system"
+      },
+      "passed": true,
+      "split": "held_out"
+    }
+  ],
+  "corpus": "section9-temporal-conflict-v1",
+  "duration_ms": {
+    "maximum": 0.7605,
+    "median": 0.49505,
+    "p95": 0.5798
+  },
+  "generated_at": "2026-08-25T04:03:30.097285Z",
+  "passed": true,
+  "passed_count": 12,
+  "schema_version": 1,
+  "source": {
+    "base_commit": "e22b976d7fb0481a986eb204211239d0a9e5fb08",
+    "branch": "graph",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      "ENGRAM-DEVELOPMENT.md",
+      "ENGRAM-PROJECT-TRACKING.md",
+      "README.md",
+      "config.example.yml",
+      "documentation/artifacts/persistence-v2.md",
+      "documentation/code-style.md",
+      "documentation/composition/section10-conformance-2026-08-20.md",
+      "documentation/contextual/section8-conformance-2026-08-20.md",
+      "documentation/decisions/0004-evaluation-time-epoch-and-release-gates.md",
+      "documentation/decisions/0006-section12-fielded-bm25.md",
+      "documentation/evaluation/foundation-2026-08-19.json",
+      "documentation/evaluation/foundation-v1.md",
+      "documentation/evaluation/qualification-v1.md",
+      "documentation/evaluation/section16-chaos-2026-08-23.json",
+      "documentation/evaluation/section16-composition-2026-08-23.json",
+      "documentation/evaluation/section16-contextual-2026-08-23.json",
+      "documentation/evaluation/section16-engineering-2026-08-23.json",
+      "documentation/evaluation/section16-evidence-2026-08-23.json",
+      "documentation/evaluation/section16-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/evaluation/section16-performance-2026-08-23.json",
+      "documentation/evaluation/section16-release-evidence-2026-08-23.md",
+      "documentation/evaluation/section16-rollout-v1.md",
+      "documentation/evaluation/section16-semantic-2026-08-23.json",
+      "documentation/evaluation/section16-temporal-2026-08-23.json",
+      "documentation/evidence/contracts-v1.md",
+      "documentation/feedback/section6-conformance-2026-08-16.md",
+      "documentation/fusion/contracts-v1.md",
+      "documentation/fusion/section5-conformance-2026-08-15.md",
+      "documentation/grpc-integration.md",
+      "documentation/mcp-integration.md",
+      "documentation/operations/deployment-and-rollback-v1.md",
+      "documentation/operations/persistence-schema-management-v1.md",
+      "documentation/operations/section15-concurrency-idempotency-v1.md",
+      "documentation/operations/section15-conformance-2026-08-23.md",
+      "documentation/operations/section15-interface-contracts-v1.md",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23-failed-default-seed.json",
+      "documentation/operations/section15-mcp-conversation-1000-turns-2026-08-23.json",
+      "documentation/operations/section15-operational-telemetry-v1.md",
+      "documentation/operations/security-privacy-review-2026-08-20.md",
+      "documentation/python-api.md",
+      "documentation/rewrite/benchmark-2026-08-20.json",
+      "documentation/rewrite/provenance-and-licensing-2026-08-20.md",
+      "documentation/rewrite/section11-conformance-2026-08-20.md",
+      "documentation/semantic/benchmark-2026-08-22.json",
+      "documentation/semantic/contracts-v1.md",
+      "documentation/semantic/section13-conformance-2026-08-22.md",
+      "documentation/sparse/contracts-v1.md",
+      "documentation/sparse/provenance-and-licensing-2026-08-21.md",
+      "documentation/sparse/section12-conformance-2026-08-21.md",
+      "documentation/temporal/contracts-v1.md",
+      "documentation/temporal/section9-conformance-2026-08-20.md",
+      "documentation/temporal/unit-test-value-audit-2026-08-20.md",
+      "documentation/utilities/section14-conformance-2026-08-22.md",
+      "engram/composition.py",
+      "engram/config.py",
+      "engram/constants.py",
+      "engram/conversation.py",
+      "engram/core.py",
+      "engram/graph.py",
+      "engram/grpc_server.py",
+      "engram/nlp.py",
+      "engram/persistence.py",
+      "engram/rollout.py",
+      "engram/semantic.py",
+      "engram/service.py",
+      "engram/sparse.py",
+      "engram/telemetry.py",
+      "engram/template.py",
+      "engram/v2/",
+      "eval/release-gate-foundation-v1.json",
+      "eval/run_release_gate_foundation.py",
+      "eval/run_section16_chaos.py",
+      "eval/run_section16_engineering.py",
+      "eval/section11-rewrite-v1.json",
+      "eval/section13-semantic-v1.json",
+      "pyproject.toml",
+      "scripts/benchmark_rewrites.py",
+      "scripts/benchmark_semantic.py",
+      "scripts/migrate_persistence.py",
+      "scripts/run_section3_mcp_conformance.py",
+      "tests/test_evaluation_foundation.py",
+      "tests/test_feedback.py",
+      "tests/test_graph.py",
+      "tests/test_grpc_server.py",
+      "tests/test_mcp_server.py",
+      "tests/test_nlp.py",
+      "tests/test_persistence_management.py",
+      "tests/test_rollout.py",
+      "tests/test_section16_evaluation.py",
+      "tests/test_security_privacy.py",
+      "tests/test_service.py",
+      "tests/test_source_contracts.py",
+      "tests/test_telemetry.py"
+    ],
+    "governed_source_sha256": "db62f0330841aa011252d379ac1addd1e6c56d729344ac27789fc0375acc1aac",
+    "repository": "https://github.com/thought-pattern/engram.git",
+    "working_tree_dirty": true
+  }
+}
