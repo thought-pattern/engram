@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
+from pathlib import Path
 from types import MappingProxyType
 
 # =============================================================================
@@ -2390,7 +2391,7 @@ class ResponseQuarantineReason(StrEnum):
 # NLTK data
 # =============================================================================
 
-NLTK_DATA_DIR = "data/nltk_data"
+NLTK_DATA_DIR = str(Path(__file__).resolve().parent.parent / "data" / "nltk_data")
 
 # Required packages as (find_path, download_name) pairs. find_path is what
 # nltk.data.find expects; download_name is what nltk.download expects.

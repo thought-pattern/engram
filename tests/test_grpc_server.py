@@ -189,6 +189,45 @@ def test_conversation_fact_predicate_report_and_health_protocol(tmp_path) -> Non
     assert store.is_file()
 
 
+def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
+    core = _core()
+    with _running_server(core) as (_, _, stub):
+        explicit = _as_dict(
+            stub.StartConversation(
+                engram_pb2.StartConversationRequest(
+                    user_id="0",
+                    initial_bot_text="Explicit zero context.",
+                )
+            )
+        )
+
+        with pytest.raises(grpc.RpcError) as absent:
+            stub.StopConversation(engram_pb2.UserRequest(user_id=""))
+        assert absent.value.code() == grpc.StatusCode.NOT_FOUND
+        assert explicit["user_id"] == "0"
+
+        first_start = _as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
+        first_session_id = core.get_conversation("").session_id
+        first_turn = _as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
+        first_stop = _as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="")))
+
+        second_start = _as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
+        second_session_id = core.get_conversation("").session_id
+        second_turn = _as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
+
+        assert first_start["user_id"] == second_start["user_id"] == ""
+        assert first_turn["user_id"] == second_turn["user_id"] == ""
+        assert first_stop["user_id"] == ""
+        assert first_session_id != second_session_id
+        assert first_session_id not in core.engram.sessions
+        assert first_turn["context_changes"]["previous_response"]["before"] == ""
+        assert second_turn["context_changes"]["previous_response"]["before"] == ""
+        assert (
+            _as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]["previous_response"]
+            == "Explicit zero context."
+        )
+
+
 def test_regulated_cache_protocol_and_error_mapping() -> None:
     core = _core()
     with _running_server(core) as (_, channel, stub):
