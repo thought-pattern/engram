@@ -1,0 +1,14 @@
+{
+  "pairs": [
+    {"pattern": "I LIKE SUSHI", "response": "Sarah likes sushi."},
+    {"pattern": "I LIKE CATS", "response": "Sarah likes cats."},
+    {"pattern": "I DISLIKE DOGS", "response": "Sarah dislikes dogs."},
+    {"pattern": "WHAT FOOD DO I LIKE", "response": "You like sushi."},
+    {"pattern": "WHAT ANIMALS DO I LIKE", "response": "You like cats."},
+    {"pattern": "WHAT ANIMALS DO I DISLIKE", "response": "You dislike dogs."},
+    {"pattern": "PLEASE REMIND ME WHAT FOOD I LIKE", "response": "You like sushi."},
+    {"pattern": "TELL ME WHICH ANIMALS I LIKE", "response": "You like cats."},
+    {"pattern": "TELL ME WHICH ANIMALS I DISLIKE", "response": "You dislike dogs."},
+    {"pattern": "WHAT PREFERENCES DID I SHARE", "response": "You like sushi and cats, and you dislike dogs."}
+  ]
+}

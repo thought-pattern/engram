@@ -12,24 +12,19 @@ Install once after dependencies:
 
 from functools import lru_cache
 
-from spacy import load as spacy_load
-from spacy.cli import download
+import spacy
 
 from engram.constants import MODEL_NAME
 
 
 def _load(model_name: str, disable):
-    """Load a spaCy model, downloading once if absent. Returns () on failure."""
+    """Load a pre-provisioned spaCy model. Returns () when it is absent."""
     try:
-        nlp = spacy_load(model_name, disable=list(disable))
+        nlp = spacy.load(model_name, disable=list(disable))
         return nlp
     except OSError:
-        download(model_name)
-    try:
-        nlp = spacy_load(model_name, disable=list(disable))
-        return nlp
-    except OSError:
-        return ()
+        result = ()
+        return result
 
 
 @lru_cache(maxsize=4)

@@ -1,7 +1,8 @@
 """Text processing for ENGRAM."""
 
+import re
 from functools import lru_cache
-from re import UNICODE as re_UNICODE, finditer as re_finditer, sub as re_sub
+from threading import Lock
 
 from nltk.corpus import wordnet, words
 from nltk.metrics.distance import edit_distance
@@ -23,8 +24,11 @@ from engram.constants import (
     SPELL_LONG_TOKEN_LENGTH,
     SUBJECT_PRONOUNS,
 )
+from engram.lexical import select_lexical_terms
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
+
+_wordnet_reader_lock = Lock()
 
 
 @lru_cache(maxsize=4096)
@@ -47,24 +51,14 @@ def normalize(text: str) -> str:
         >>> normalize("What's the S&P 500 price?")
         'whats the sp 500 price'
     """
-    # Convert to lowercase
     result = text.lower()
 
-    # Remove punctuation except intra-word hyphens
-    # First, protect intra-word hyphens by replacing word-hyphen-word with placeholder
+    # Protect intra-word hyphens while removing other punctuation.
     placeholder = "\x00"
-    result = re_sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
-
-    # Remove all non-alphanumeric except spaces and placeholder
+    result = re.sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
-
-    # Restore protected hyphens
     result = result.replace(placeholder, "-")
-
-    # Collapse whitespace to single spaces
-    result = re_sub(r"\s+", " ", result)
-
-    # Trim
+    result = re.sub(r"\s+", " ", result)
     trimmed = result.strip()
     return trimmed
 
@@ -80,7 +74,7 @@ def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
     if not captures or not source_text:
         return captures
 
-    source_matches = list(re_finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re_UNICODE))
+    source_matches = list(re.finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re.UNICODE))
     source_words = [normalize(match.group(0)) for match in source_matches]
     restored: list[str] = []
     search_start = 0
@@ -132,42 +126,17 @@ def extract_keywords(
         ['whats', 'capital', 'france']
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
-    # Tokenize using NLTK
-    try:
-        tokens = word_tokenize(text)
-    except Exception:
-        # Fallback to simple split if NLTK fails
-        tokens = text.split()
+    tokens = word_tokenize(text)
 
-    # Optional POS filtering
     if use_pos_filter:
-        try:
-            tagged = pos_tag(tokens)
-            tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]
-        except Exception:
-            pass  # Fall through to regular filtering
+        tagged = pos_tag(tokens)
+        tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]
 
-    seen: set[str] = set()
-    keywords: list[str] = []
-
-    for token in tokens:
-        # Normalize to lowercase
-        word = token.lower()
-
-        # Skip if not alphanumeric, is stopword, or already seen
-        if not word.isalnum():
-            continue
-        if word in stopwords:
-            continue
-        if word in seen:
-            continue
-
-        keywords.append(word)
-        seen.add(word)
-
-    return keywords
+    result = select_lexical_terms(tokens, stopwords)
+    return result
 
 
 def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
@@ -187,7 +156,8 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
         deduplicated with order preserved.
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     nlp = get_nlp()
     if not nlp:
@@ -198,11 +168,10 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     seen: set[str] = set()
     keywords: list = []
 
-    def add(word: str) -> bool:
+    def add(word: str) -> None:
         if word and word not in stopwords and word not in seen:
             seen.add(word)
             keywords.append(word)
-        return False
 
     # Single content-word lemmas (nouns, verbs, adjectives, adverbs).
     for token in doc:
@@ -219,12 +188,11 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
 
 
 @lru_cache(maxsize=1)
-def _ensure_tagger() -> bool:
-    """Ensure the POS tagger data is available, fetching into the local data dir."""
+def _ensure_tagger() -> None:
+    """Check the locally provisioned POS tagger data used after startup preflight."""
 
     ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
     ensure_resource("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
-    return False
 
 
 def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
@@ -244,14 +212,12 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
         is unavailable or nothing qualifies.
     """
     if not text or not text.strip():
-        return []
+        result = []
+        return result
 
     _ensure_tagger()
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        return []
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     seen: set[str] = set()
     terms: list[str] = []
@@ -479,9 +445,11 @@ def is_known_word(word: str) -> bool:
     """
     lowered = word.lower()
     if lowered in _known_words():
-        return True
+        result = True
+        return result
     if lemmatize_word(lowered, "v") in _known_words():
-        return True
+        result = True
+        return result
     known = lemmatize_word(lowered, "n") in _known_words()
     return known
 
@@ -571,11 +539,8 @@ def first_clause(text: str) -> str:
         return text
 
     _ensure_tagger()
-    try:
-        tokens = word_tokenize(text)
-        tagged = pos_tag(tokens)
-    except Exception:
-        return text
+    tokens = word_tokenize(text)
+    tagged = pos_tag(tokens)
 
     for i in range(1, len(tagged) - 1):
         word, _ = tagged[i]
@@ -641,12 +606,11 @@ def extract_name(text: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _ensure_wordnet() -> bool:
+def _ensure_wordnet() -> None:
     """Ensure WordNet data is available, fetching into the local data dir."""
 
     ensure_resource("corpora/wordnet", "wordnet")
     ensure_resource("corpora/omw-1.4", "omw-1.4")
-    return False
 
 
 @lru_cache(maxsize=4096)
@@ -663,11 +627,13 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
         caller from mutating the cached value.
     """
 
-    _ensure_wordnet()
-
     synonyms = {word.lower()}
-    try:
-        for syn in wordnet.synsets(word):
+    # NLTK's shared reader opens and closes its zipped corpus around each read;
+    # concurrent access can trip its internal file-handle assertion.
+    with _wordnet_reader_lock:
+        _ensure_wordnet()
+        wordnet_reader = wordnet
+        for syn in wordnet_reader.synsets(word):
             for lemma in syn.lemmas():
                 name = lemma.name().lower().replace("_", " ")
                 if name != word.lower():
@@ -675,8 +641,6 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
                     if len(synonyms) >= max_synonyms + 1:
                         capped = tuple(synonyms)
                         return capped
-    except Exception:
-        pass
 
     result = tuple(synonyms)
     return result

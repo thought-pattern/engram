@@ -6,82 +6,87 @@ an additive orchestration layer for clients that also need a transcript,
 turn-level diagnostics, inspection, and report generation.
 """
 
+import contextlib
+import json
+import os
+import random
+import threading
+import time
 from collections import Counter, deque
-from contextlib import suppress as contextlib_suppress
 from datetime import UTC, datetime
-from json import dumps as json_dumps
-from os import replace as os_replace
 from pathlib import Path
-from random import getstate as random_getstate, seed as random_seed_2, setstate as random_setstate
-from threading import RLock as threading_RLock
-from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import Tier
+from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.text import normalize
-
-_DEFAULT_ARGUMENT_LIST = []
-
-CONVERSATION_REPORT_VERSION = 1
 
 
 def _utc_now() -> str:
-    _return_value = datetime.now(UTC).isoformat()
-    return _return_value
+    result = datetime.now(UTC).isoformat()
+    return result
 
 
-def _atomic_write_json(path: Path, data: dict) -> bool:
+def _atomic_write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with contextlib_suppress(OSError):
+    with contextlib.suppress(OSError):
         path.parent.chmod(0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json_dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    with contextlib_suppress(OSError):
+    temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    with contextlib.suppress(OSError):
         temporary.chmod(0o600)
-    os_replace(temporary, path)
-    with contextlib_suppress(OSError):
+    os.replace(temporary, path)
+    with contextlib.suppress(OSError):
         path.chmod(0o600)
-    return False
 
 
 def statement_view(statement: dict) -> dict:
     """Return the statement fields useful to conversation adapters."""
-    _return_value = {
-        "id": statement.get("id", ""),
-        "text": statement.get("text", ""),
-        "pattern": statement.get("pattern", ""),
+    result = {
+        "id": statement["id"],
+        "text": statement["text"],
+        "pattern": statement["pattern"],
         "pattern_aliases": list(statement.get("pattern_aliases", [])),
-        "introduced_by_user_id": statement.get("introduced_by_user_id", ""),
+        "introduced_by_user_id": statement.get("introduced_by_user_id") or "",
         "source_label": statement.get("source_label", ""),
     }
-    return _return_value
+    return result
 
 
 def session_view(session: dict) -> dict:
     """Return a JSON-ready snapshot of one user conversation context."""
-    _return_value = {
-        "session_id": session.get("session_id", ""),
-        "previous_response": session.get("previous_response", ""),
-        "predicates": dict(session.get("predicates", {})),
+    result = {
+        "session_id": session["session_id"],
+        "previous_response": session["previous_response"],
+        "predicates": dict(session["predicates"]),
         "active_topic": session.get("active_topic", ""),
         "entities": list(session.get("entities", [])),
         "dialogue_act_history": list(session.get("dialogue_act_history", [])),
         "last_fact_admissions": list(session.get("last_fact_admissions", [])),
-        "input_history": list(session.get("input_history", [])),
-        "response_history": list(session.get("response_history", [])),
-        "history_size": session.get("history_size", 0),
+        "input_history": list(session["input_history"]),
+        "response_history": list(session["response_history"]),
+        "history_size": session["history_size"],
     }
-    return _return_value
+    return result
 
 
 def _predicate_changes(before: dict, after: dict) -> dict:
     changes = {}
     for name in sorted(set(before) | set(after)):
-        old_value = before.get(name, False)
-        new_value = after.get(name, False)
+        old_value = before.get(name, "")
+        new_value = after.get(name, "")
         if old_value != new_value:
             changes[name] = {"before": old_value, "after": new_value}
     return changes
+
+
+def conversation_message_key(message: str) -> str:
+    """Return the meaningful normalized identity of one planned message."""
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("conversation messages must be non-empty strings")
+    key = normalize(message)
+    if not key:
+        raise ValueError("conversation messages must contain meaningful text")
+    return key
 
 
 class ConversationTurnPlanner:
@@ -98,10 +103,8 @@ class ConversationTurnPlanner:
         planned_messages: list[str],
         total_turns: int,
         farewell: str,
-        allowed_repeats: list[str] = _DEFAULT_ARGUMENT_LIST,
+        allowed_repeats=(),
     ) -> None:
-        if allowed_repeats is _DEFAULT_ARGUMENT_LIST:
-            allowed_repeats = _DEFAULT_ARGUMENT_LIST.copy()
         if not isinstance(total_turns, int) or total_turns < 1:
             raise ValueError("total_turns must be a positive integer")
         if len(planned_messages) > total_turns - 1:
@@ -112,41 +115,30 @@ class ConversationTurnPlanner:
         self._farewell = farewell
         self._sent_keys: set[str] = set()
         self._sent_messages: list[str] = []
-        self._allowed_repeat_keys = {self._message_key(message) for message in allowed_repeats or []}
+        self._allowed_repeat_keys = {conversation_message_key(message) for message in allowed_repeats or ()}
 
-        planned_keys = [self._message_key(message) for message in planned_messages]
-        farewell_key = self._message_key(farewell)
+        planned_keys = [conversation_message_key(message) for message in planned_messages]
+        farewell_key = conversation_message_key(farewell)
         seen: set[str] = set()
         for key in [*planned_keys, farewell_key]:
             if key in seen and key not in self._allowed_repeat_keys:
                 raise ValueError("conversation plan contains an unapproved repeated input")
             seen.add(key)
 
-    @staticmethod
-    def _message_key(message: str) -> str:
-        if not isinstance(message, str) or not message.strip():
-            raise ValueError("conversation messages must be non-empty strings")
-        key = normalize(message)
-        if not key:
-            raise ValueError("conversation messages must contain meaningful text")
-        return key
-
     @property
     def turn_count(self) -> int:
         """Return how many messages the planner has issued."""
-        _return_value = len(self._sent_messages)
-        return _return_value
+        result = len(self._sent_messages)
+        return result
 
     @property
     def remaining_turns(self) -> int:
         """Return the unissued portion of the fixed turn budget."""
-        _return_value = self.total_turns - self.turn_count
-        return _return_value
+        result = self.total_turns - self.turn_count
+        return result
 
     def next_message(self, adaptive_message: str = "") -> str:
         """Issue the next unique message while preserving plan and farewell."""
-        if adaptive_message is None:
-            adaptive_message = ""
         remaining = self.remaining_turns
         if remaining <= 0:
             raise StopIteration
@@ -155,14 +147,14 @@ class ConversationTurnPlanner:
             if self._planned:
                 raise RuntimeError("planned messages remain at the reserved farewell turn")
             candidate = self._farewell
-        elif adaptive_message != "" and remaining > len(self._planned) + 1:
+        elif adaptive_message and remaining > len(self._planned) + 1:
             candidate = adaptive_message
         elif self._planned:
             candidate = self._planned.popleft()
         else:
             raise RuntimeError("conversation plan exhausted before the reserved farewell")
 
-        key = self._message_key(candidate)
+        key = conversation_message_key(candidate)
         if key in self._sent_keys and key not in self._allowed_repeat_keys:
             raise ValueError("conversation driver attempted an unapproved repeated input")
         self._sent_keys.add(key)
@@ -178,22 +170,32 @@ class ConversationRuntime:
         engram,
         user_id: str = "0",
         initial_bot_text: str = "",
-        random_seed: int = None,
-        transcript_path: object = None,
+        random_seed: int = 0,
+        random_seed_present: bool = False,
+        transcript_path: str = "",
     ) -> None:
         if not isinstance(initial_bot_text, str):
             raise ValueError("initial_bot_text must be a string")
-        if random_seed is not None and not isinstance(random_seed, int):
-            raise ValueError("random_seed must be an integer or None")
+        try:
+            initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError("initial_bot_text must contain valid Unicode") from error
+        if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
+            raise ValueError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
+        if not isinstance(random_seed, int) or isinstance(random_seed, bool):
+            raise ValueError("random_seed must be an integer")
+        if not isinstance(random_seed_present, bool):
+            raise ValueError("random_seed_present must be a boolean")
 
         self.engram = engram
         self.user_id = sessions.normalize_user_id(user_id)
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
-        self.transcript_path = Path(transcript_path) if transcript_path else None
+        self.random_seed_present = random_seed_present or bool(random_seed)
+        self.transcript_path = Path(transcript_path).as_posix() if transcript_path else ""
         self.started_at = _utc_now()
         self.turns: list[dict] = []
-        self.lock = threading_RLock()
+        self.lock = threading.RLock()
 
         sessions.get_session(engram, self.user_id, create_if_missing=True)
         if initial_bot_text:
@@ -205,43 +207,47 @@ class ConversationRuntime:
         """Submit exactly one message and return the complete observable turn."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be one non-empty string")
+        try:
+            text_bytes = len(text.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError("text must contain valid Unicode") from error
+        if text_bytes > MAX_REQUEST_BYTES:
+            raise ValueError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
-            session = self.engram.sessions.get(self.user_id, False)
-            predicates_before = dict(session.get("predicates", {}))
-            previous_response_before = session.get("previous_response", "")
-            dynamic_ids_before = {
-                statement.get("id", "") for statement in self.engram.statements if statement.get("tier", "") == Tier.DYNAMIC
-            }
+            session = self.engram.sessions[self.user_id]
+            predicates_before = dict(session["predicates"])
+            previous_response_before = session["previous_response"]
+            dynamic_ids_before = {statement["id"] for statement in self.engram.statements if statement["tier"] == Tier.DYNAMIC}
 
             turn_number = len(self.turns) + 1
-            random_state = None
-            if self.random_seed is not None:
-                random_state = random_getstate()
-                random_seed_2(self.random_seed + turn_number)
-            started = time_perf_counter()
+            random_state = ()
+            if self.random_seed_present:
+                random_state = random.getstate()
+                random.seed(self.random_seed + turn_number)
+            started = time.perf_counter()
             try:
                 result = pipeline.chat(self.engram, text, user_id=self.user_id)
             finally:
-                if random_state is not None:
-                    random_setstate(random_state)
-            elapsed = time_perf_counter() - started
+                if random_state:
+                    random.setstate(random_state)
+            elapsed = time.perf_counter() - started
 
-            session = self.engram.sessions.get(self.user_id, False)
+            session = self.engram.sessions[self.user_id]
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
-                if statement.get("tier", "") == Tier.DYNAMIC and statement.get("id", "") not in dynamic_ids_before
+                if statement["tier"] == Tier.DYNAMIC and statement["id"] not in dynamic_ids_before
             ]
             event = {
                 "turn": turn_number,
                 "input": text,
-                "response": result.get("response", ""),
-                "user_id": result.get("user_id", ""),
-                "source": result.get("source", ""),
-                "score": round(result.get("score", 0.0), 3),
-                "pattern": result.get("pattern", ""),
-                "captured": result.get("captured", False),
+                "response": result["response"],
+                "user_id": result["user_id"],
+                "source": result["source"],
+                "score": round(result["score"], 3),
+                "pattern": result["pattern"],
+                "captured": result["captured"],
                 "dialogue_act": result.get("dialogue_act", ""),
                 "active_topic": result.get("active_topic", ""),
                 "entities": result.get("entities", []),
@@ -250,100 +256,96 @@ class ConversationRuntime:
                 "context_changes": {
                     "previous_response": {
                         "before": previous_response_before,
-                        "after": session.get("previous_response", ""),
+                        "after": session["previous_response"],
                     },
-                    "predicates": _predicate_changes(predicates_before, session.get("predicates", [])),
+                    "predicates": _predicate_changes(predicates_before, session["predicates"]),
                 },
                 "learned_statements": learned,
             }
             self.turns.append(event)
             self._persist()
             return event
-        return {}
 
     def inspect(self) -> dict:
         """Return conversation context, learned knowledge, and current metrics."""
         with self.lock:
-            learned = [
-                statement_view(statement) for statement in self.engram.statements if statement.get("tier", "") == Tier.DYNAMIC
-            ]
-            _return_value = {
+            learned = [statement_view(statement) for statement in self.engram.statements if statement["tier"] == Tier.DYNAMIC]
+            result = {
                 "user_id": self.user_id,
                 "turn_count": len(self.turns),
                 "initial_bot_text": self.initial_bot_text,
-                "session": session_view(self.engram.sessions.get(self.user_id, False)),
+                "session": session_view(self.engram.sessions[self.user_id]),
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
-                "learned_unique_texts": sorted({statement.get("text", "") for statement in learned}),
-                "latest_turn": self.turns[-1] if self.turns else False,
+                "learned_unique_texts": sorted({statement["text"] for statement in learned}),
+                "latest_turn": self.turns[-1] if self.turns else {},
             }
-            return _return_value
-        return {}
+            return result
 
     def report(self) -> dict:
         """Build the complete machine-readable conversation report."""
         with self.lock:
             snapshot = self.inspect()
-            sources = Counter(turn.get("source", "") for turn in self.turns)
-            _return_value = {
+            sources = Counter(turn["source"] for turn in self.turns)
+            result = {
                 "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
                 "finished_at": _utc_now(),
                 "user_id": self.user_id,
                 "initial_bot_text": self.initial_bot_text,
                 "random_seed": self.random_seed,
+                "random_seed_present": self.random_seed_present,
                 "summary": {
                     "exchanges": len(self.turns),
                     "sources": dict(sources),
-                    "catch_all_turns": sum(turn.get("pattern", "") == "*" for turn in self.turns),
-                    "learned_statements": len(snapshot.get("learned_dynamic", [])),
-                    "learned_unique_texts": len(snapshot.get("learned_unique_texts", [])),
+                    "catch_all_turns": sum(turn["pattern"] == "*" for turn in self.turns),
+                    "learned_statements": len(snapshot["learned_dynamic"]),
+                    "learned_unique_texts": len(snapshot["learned_unique_texts"]),
                 },
                 "metrics_baseline": self.metrics_baseline,
-                "metrics_final": snapshot.get("metrics", []),
-                "session": snapshot.get("session", False),
-                "learned_dynamic": snapshot.get("learned_dynamic", False),
+                "metrics_final": snapshot["metrics"],
+                "session": snapshot["session"],
+                "learned_dynamic": snapshot["learned_dynamic"],
                 "turns": list(self.turns),
             }
-            return _return_value
-        return {}
+            return result
 
-    def write_report(self, output_prefix: object) -> dict:
+    def write_report(self, output_prefix: str) -> dict:
         """Write JSON and Markdown reports and return their paths and summary."""
-        prefix = Path(output_prefix).resolve()
+        prefix = Path(output_prefix)
         json_path = prefix.with_suffix(".json")
         markdown_path = prefix.with_suffix(".md")
         report = self.report()
         _atomic_write_json(json_path, report)
         markdown_path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib_suppress(OSError):
+        with contextlib.suppress(OSError):
             markdown_path.parent.chmod(0o700)
         markdown_path.write_text(render_markdown(report), encoding="utf-8")
-        with contextlib_suppress(OSError):
+        with contextlib.suppress(OSError):
             markdown_path.chmod(0o600)
-        _return_value = {
-            "summary": report.get("summary", False),
-            "json": str(json_path),
-            "markdown": str(markdown_path),
+        result = {
+            "summary": report["summary"],
+            "json": json_path.as_posix(),
+            "markdown": markdown_path.as_posix(),
         }
-        return _return_value
+        return result
 
-    def _persist(self) -> bool:
-        if self.transcript_path == "":
-            return False
+    def _persist(self) -> None:
+        if not self.transcript_path:
+            return
         _atomic_write_json(
-            self.transcript_path,
+            Path(self.transcript_path),
             {
                 "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
                 "user_id": self.user_id,
                 "initial_bot_text": self.initial_bot_text,
                 "random_seed": self.random_seed,
+                "random_seed_present": self.random_seed_present,
                 "metrics_baseline": self.metrics_baseline,
                 "turns": self.turns,
             },
         )
-        return False
 
 
 def render_markdown(report: dict) -> str:
@@ -351,26 +353,26 @@ def render_markdown(report: dict) -> str:
     lines = [
         "# Engram Conversation",
         "",
-        f"User context: `{report.get('user_id', '')}`  ",
-        f"Initial Engram utterance: `{report.get('initial_bot_text', '')}`  ",
-        f"Exchanges: `{report.get('summary', {}).get('exchanges', [])}`",
+        f"User context: `{report['user_id']}`  ",
+        f"Initial Engram utterance: `{report['initial_bot_text']}`  ",
+        f"Exchanges: `{report['summary']['exchanges']}`",
         "",
     ]
-    for turn in report.get("turns", []):
+    for turn in report["turns"]:
         lines.extend(
             [
-                f"## Exchange {turn.get('turn', False)}",
+                f"## Exchange {turn['turn']}",
                 "",
-                f"**Interlocutor:** {turn.get('input', '')}",
+                f"**Interlocutor:** {turn['input']}",
                 "",
-                f"**Engram:** {turn.get('response', '') or '[no response]'}",
+                f"**Engram:** {turn['response'] or '[no response]'}",
                 "",
                 (
-                    f"_source={turn.get('source', '')}; pattern={turn.get('pattern', '') or '[none]'}; "
-                    f"score={turn.get('score', 0.0):.3f}; seconds={turn.get('elapsed_seconds', 0.0):.3f}_"
+                    f"_source={turn['source']}; pattern={turn['pattern'] or '[none]'}; "
+                    f"score={turn['score']:.3f}; seconds={turn['elapsed_seconds']:.3f}_"
                 ),
                 "",
             ]
         )
-    _return_value = "\n".join(lines)
-    return _return_value
+    result = "\n".join(lines)
+    return result

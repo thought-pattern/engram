@@ -1,27 +1,27 @@
 """Command line interface for ENGRAM."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
+import argparse
+import json
+import sys
 from datetime import timedelta
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, load as json_load, loads as json_loads
 from pathlib import Path
-from sys import exit as sys_exit, path as sys_path, stderr as sys_stderr
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from engram import metrics, sessions
 from engram.config import load_config
-from engram.constants import NULL_DATETIME, EvictionPolicy, Tier
+from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
 from engram.errors import EngramCoreError
-from engram.service import EngramCore
+from engram.service import EngramCore, open_engram_core
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys_path:
-    sys_path.insert(0, str(_REPO_ROOT))
 
-
-def create_parser() -> argparse_ArgumentParser:
+def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
-    parser = argparse_ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="engram",
         description="Keyword-indexed statement store with hit-rate tracking",
     )
@@ -42,18 +42,19 @@ def create_parser() -> argparse_ArgumentParser:
     parser.add_argument(
         "--capacity",
         type=int,
-        default=False,
+        default=0,
         help="Override maximum DYNAMIC statements (default: from config)",
     )
     parser.add_argument(
         "--eviction",
         type=str,
         choices=["fifo", "lru", "lfu", "hit_rate"],
-        default=False,
+        default="",
         help="Override eviction policy (default: from config)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    parser.set_defaults(command="")
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new engram store")
@@ -71,6 +72,7 @@ def create_parser() -> argparse_ArgumentParser:
         "--pattern",
         "-p",
         type=str,
+        default="",
         help="Pattern to match (default: extracted from text)",
     )
     store_parser.add_argument(
@@ -101,6 +103,7 @@ def create_parser() -> argparse_ArgumentParser:
     query_parser.add_argument(
         "--session",
         type=str,
+        default="",
         help="Session ID for context expansion",
     )
     query_parser.add_argument(
@@ -112,9 +115,10 @@ def create_parser() -> argparse_ArgumentParser:
     # session commands
     session_parser = subparsers.add_parser("session", help="Session management")
     session_sub = session_parser.add_subparsers(dest="session_command")
+    session_parser.set_defaults(session_command="")
 
     session_create = session_sub.add_parser("create", help="Create a new session")
-    session_create.add_argument("--id", type=str, help="Session ID (generated if omitted)")
+    session_create.add_argument("--id", type=str, default="", help="Session ID (generated if omitted)")
 
     session_sub.add_parser("list", help="List sessions")
 
@@ -193,7 +197,6 @@ def create_parser() -> argparse_ArgumentParser:
         help="Minimum query count threshold (default: 10)",
     )
 
-    # coverage command (new)
     coverage_parser = subparsers.add_parser("coverage", help="Coverage analysis")
     coverage_parser.add_argument(
         "--gaps",
@@ -218,6 +221,7 @@ def create_parser() -> argparse_ArgumentParser:
         "--output",
         "-o",
         type=str,
+        default="",
         help="Output file (default: stdout)",
     )
     export_parser.add_argument(
@@ -243,6 +247,7 @@ def create_parser() -> argparse_ArgumentParser:
         "--user-id",
         dest="session",
         type=str,
+        default="",
         help="Caller-owned user/session label (created if absent)",
     )
     interactive_parser.add_argument(
@@ -257,40 +262,34 @@ def create_parser() -> argparse_ArgumentParser:
         default="",
         help="Optional JSON recovery transcript updated after each turn",
     )
-    interactive_parser.add_argument(
-        "--graph",
-        action="store_true",
-        help="Enable mock graph client for testing",
-    )
-
     return parser
 
 
 def get_eviction_policy(name: str) -> EvictionPolicy:
     """Convert string to EvictionPolicy enum."""
-    _return_value = {
+    result = {
         "fifo": EvictionPolicy.FIFO,
         "lru": EvictionPolicy.LRU,
         "lfu": EvictionPolicy.LFU,
         "hit_rate": EvictionPolicy.HIT_RATE,
-    }.get(name, "")
-    return _return_value
+    }[name]
+    return result
 
 
-def resolve_config(args: argparse_Namespace) -> dict:
+def resolve_config(args: argparse.Namespace) -> dict:
     """Build the EngramConfig from the config file, applying CLI flag overrides."""
     config = load_config(args.config)
-    if args.capacity is not None:
+    if args.capacity:
         config["capacity"] = args.capacity
-    if args.eviction is not None:
+    if args.eviction:
         config["eviction_policy"] = get_eviction_policy(args.eviction)
     return config
 
 
-def load_core_instance(args: argparse_Namespace) -> EngramCore:
+def load_core_instance(args: argparse.Namespace) -> EngramCore:
     """Load the shared core using the CLI's resolved configuration."""
-    _return_value = EngramCore.open(config=args.engram_config, store_path=args.store)
-    return _return_value
+    result = open_engram_core(config=args.engram_config, store_path=args.store)
+    return result
 
 
 def load_seed_pairs(path: str = "") -> list:
@@ -298,33 +297,36 @@ def load_seed_pairs(path: str = "") -> list:
 
     Returns [] when the file does not exist.
     """
-    seed_file = Path(path) if path else Path(_REPO_ROOT) / "data" / "seed.json"
+    seed_file = Path(path or "data/seed.json")
     if not seed_file.exists():
-        return []
+        result = []
+        return result
     with open(seed_file, encoding="utf-8") as f:
-        seed_data = json_load(f)
+        seed_data = json.load(f)
     pairs = seed_data.get("pairs", [])
     return pairs
 
 
-def cmd_init(args: argparse_Namespace) -> int:
+def cmd_init(args: argparse.Namespace) -> int:
     """Initialize a new engram store, seeded from the bundled corpus."""
     path = Path(args.store)
     if path.exists() and not args.force:
-        print(f"Store already exists: {args.store}", file=sys_stderr)
-        print("Use --force to overwrite", file=sys_stderr)
-        return 1
+        print(f"Store already exists: {args.store}", file=sys.stderr)
+        print("Use --force to overwrite", file=sys.stderr)
+        result = 1
+        return result
 
     core = EngramCore(Engram(config=args.engram_config), store_path=args.store)
     engram = core.engram
     pairs = load_seed_pairs()
     counts = engram.sync_corpus(pairs)
     core.flush()
-    print(f"Initialized engram store: {args.store} ({counts.get('added', False)} seed statements)")
-    return 0
+    print(f"Initialized engram store: {args.store} ({counts['added']} seed statements)")
+    result = 0
+    return result
 
 
-def cmd_sync_seed(args: argparse_Namespace) -> int:
+def cmd_sync_seed(args: argparse.Namespace) -> int:
     """Upsert the seed corpus into an existing store.
 
     Refreshes stale STATIC templates in place (preserving ids and hit
@@ -338,44 +340,44 @@ def cmd_sync_seed(args: argparse_Namespace) -> int:
     pairs = load_seed_pairs(args.file)
     if not pairs:
         source = args.file or "data/seed.json"
-        print(f"No seed pairs found: {source}", file=sys_stderr)
-        return 1
+        print(f"No seed pairs found: {source}", file=sys.stderr)
+        result = 1
+        return result
 
     counts = engram.sync_corpus(pairs, prune=args.prune)
     core.flush()
-    summary = (
-        f"Seed sync: {counts.get('added', False)} added, {counts.get('updated', False)} updated, "
-        f"{counts.get('unchanged', False)} unchanged"
-    )
+    summary = f"Seed sync: {counts['added']} added, {counts['updated']} updated, {counts['unchanged']} unchanged"
     if args.prune:
-        summary += f", {counts.get('pruned', False)} pruned"
+        summary += f", {counts['pruned']} pruned"
     print(summary)
-    return 0
+    result = 0
+    return result
 
 
-def cmd_store(args: argparse_Namespace) -> int:
+def cmd_store(args: argparse.Namespace) -> int:
     """Store a statement."""
     core = load_core_instance(args)
     engram = core.engram
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
-    template = False
+    template = {}
     text = args.text
     if args.text.startswith("{"):
         try:
-            template = json_loads(args.text)
+            template = json.loads(args.text)
             text = template.get("text", args.text)
-        except json_JSONDecodeError:
+        except json.JSONDecodeError:
             pass
 
     stmt_id = engram.store(text, tier=tier, pattern=args.pattern, template=template)
     core.flush()
     print(f"Stored: {stmt_id} ({tier.value})")
-    return 0
+    result = 0
+    return result
 
 
-def cmd_load(args: argparse_Namespace) -> int:
+def cmd_load(args: argparse.Namespace) -> int:
     """Load statements from JSON file."""
     core = load_core_instance(args)
     engram = core.engram
@@ -383,18 +385,19 @@ def cmd_load(args: argparse_Namespace) -> int:
 
     path = Path(args.file)
     if not path.exists():
-        print(f"File not found: {args.file}", file=sys_stderr)
-        return 1
+        print(f"File not found: {args.file}", file=sys.stderr)
+        result = 1
+        return result
 
     with open(path, encoding="utf-8") as f:
-        data = json_load(f)
+        data = json.load(f)
 
     count = 0
     pairs = data.get("pairs", data.get("categories", []))
     for item in pairs:
         if isinstance(item, dict):
             pattern = item.get("pattern", "")
-            response = item.get("response", "") or item.get("text", "") or ""
+            response = item.get("response") or item.get("text") or ""
             template = item.get("template", {})
             that = item.get("that", "")
             topic = item.get("topic", "")
@@ -414,10 +417,11 @@ def cmd_load(args: argparse_Namespace) -> int:
 
     core.flush()
     print(f"Loaded {count} statements ({tier.value})")
-    return 0
+    result = 0
+    return result
 
 
-def cmd_query(args: argparse_Namespace) -> int:
+def cmd_query(args: argparse.Namespace) -> int:
     """Query for statements."""
     core = load_core_instance(args)
     engram = core.engram
@@ -427,25 +431,26 @@ def cmd_query(args: argparse_Namespace) -> int:
     # A query is a stat-generating event: query() bumped the global and
     # per-keyword query counters, so persist them. --hit additionally records
     # the hit (numerator) before saving.
-    if args.hit and result.get("matches", False):
-        top_statement = result.get("matches", [])[0][0]
-        engram.record_hit(result.get("keywords", []), statement_id=top_statement.get("id", ""))
+    if args.hit and result["matches"]:
+        top_statement = result["matches"][0][0]
+        engram.record_hit(result["keywords"], statement_id=top_statement["id"])
     core.flush()
 
-    print(f"Keywords: {', '.join(result.get('keywords', []))}")
-    print(f"Matches: {len(result.get('matches', []))}")
+    print(f"Keywords: {', '.join(result['keywords'])}")
+    print(f"Matches: {len(result['matches'])}")
     print()
 
-    for i, (stmt, score) in enumerate(result.get("matches", []), 1):
-        print(f"{i}. [{score:.3f}] ({stmt.get('tier', Tier.DYNAMIC).value}) {stmt.get('text', '')}")
+    for i, (stmt, score) in enumerate(result["matches"], 1):
+        print(f"{i}. [{score:.3f}] ({stmt['tier'].value}) {stmt['text']}")
 
-    if not result.get("matches", []):
+    if not result["matches"]:
         print("No matches found.")
 
-    return 0
+    result = 0
+    return result
 
 
-def cmd_session(args: argparse_Namespace) -> int:
+def cmd_session(args: argparse.Namespace) -> int:
     """Session management commands."""
     core = load_core_instance(args)
     engram = core.engram
@@ -457,34 +462,36 @@ def cmd_session(args: argparse_Namespace) -> int:
             print(f"Created session: {session_id}")
             modified = True
         except SessionLimitExceededError as e:
-            print(f"Error: {e}", file=sys_stderr)
-            return 1
+            print(f"Error: {e}", file=sys.stderr)
+            result = 1
+            return result
 
     elif args.session_command == "list":
         session_list = sessions.list_sessions(engram)
         if session_list:
             print(f"Sessions ({len(session_list)}):")
             for s in session_list:
-                topic = s.get("predicates", {}).get("topic", "") or "(none)"
-                print(f"  {s.get('session_id', '')}: topic={topic}, last={s.get('last_active', NULL_DATETIME).isoformat()}")
+                topic = s["predicates"].get("topic", "") or "(none)"
+                print(f"  {s['session_id']}: topic={topic}, last={s['last_active'].isoformat()}")
         else:
             print("No sessions.")
 
     elif args.session_command == "get":
         session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            print(f"Session: {session.get('session_id', '')}")
-            print(f"Created: {session.get('created_at', NULL_DATETIME).isoformat()}")
-            print(f"Last active: {session.get('last_active', NULL_DATETIME).isoformat()}")
+            print(f"Session: {session['session_id']}")
+            print(f"Created: {session['created_at'].isoformat()}")
+            print(f"Last active: {session['last_active'].isoformat()}")
             print(f"Topic: {session.get('predicates', {}).get('topic', '') or '(none)'}")
-            print(f"That: {session.get('previous_response', '') or '(empty)'}")
-            if session.get("predicates", []):
-                print(f"Predicates: {json_dumps(session.get('predicates', []))}")
-            if session.get("input_history", []):
+            print(f"That: {session['previous_response'] or '(empty)'}")
+            if session["predicates"]:
+                print(f"Predicates: {json.dumps(session['predicates'])}")
+            if session["input_history"]:
                 print(f"Input history: {session.get('input_history', [])[:5]}")
         else:
-            print(f"Session not found: {args.id}", file=sys_stderr)
-            return 1
+            print(f"Session not found: {args.id}", file=sys.stderr)
+            result = 1
+            return result
 
     elif args.session_command == "update":
         try:
@@ -492,16 +499,18 @@ def cmd_session(args: argparse_Namespace) -> int:
             print(f"Updated session: {args.id}")
             modified = True
         except SessionNotFoundError:
-            print(f"Session not found: {args.id}", file=sys_stderr)
-            return 1
+            print(f"Session not found: {args.id}", file=sys.stderr)
+            result = 1
+            return result
 
     elif args.session_command == "delete":
         if sessions.delete_session(engram, args.id):
             print(f"Deleted session: {args.id}")
             modified = True
         else:
-            print(f"Session not found: {args.id}", file=sys_stderr)
-            return 1
+            print(f"Session not found: {args.id}", file=sys.stderr)
+            result = 1
+            return result
 
     elif args.session_command == "expire":
         threshold = timedelta(hours=args.hours)
@@ -512,34 +521,38 @@ def cmd_session(args: argparse_Namespace) -> int:
     elif args.session_command == "set":
         session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            session.get("predicates", {})[args.name] = args.value
+            session["predicates"][args.name] = args.value
             print(f"Set {args.name}={args.value} for session {args.id}")
             modified = True
         else:
-            print(f"Session not found: {args.id}", file=sys_stderr)
-            return 1
+            print(f"Session not found: {args.id}", file=sys.stderr)
+            result = 1
+            return result
 
     elif args.session_command == "topic":
         session = sessions.get_session(engram, args.id, create_if_missing=False)
         if session:
-            session.get("predicates", {})["topic"] = args.topic
+            session["predicates"]["topic"] = args.topic
             print(f"Set topic={args.topic} for session {args.id}")
             modified = True
         else:
-            print(f"Session not found: {args.id}", file=sys_stderr)
-            return 1
+            print(f"Session not found: {args.id}", file=sys.stderr)
+            result = 1
+            return result
 
     else:
         print("Usage: engram session {create|list|get|update|delete|expire|set|topic}")
-        return 1
+        result = 1
+        return result
 
     if modified:
         core.flush()
 
-    return 0
+    result = 0
+    return result
 
 
-def cmd_metrics(args: argparse_Namespace) -> int:
+def cmd_metrics(args: argparse.Namespace) -> int:
     """Show store metrics."""
     core = load_core_instance(args)
     engram = core.engram
@@ -547,21 +560,22 @@ def cmd_metrics(args: argparse_Namespace) -> int:
 
     print("ENGRAM Metrics")
     print("-" * 40)
-    print(f"Statements:     {metric_data.get('statement_count', 0):,}")
-    print(f"  STATIC:       {metric_data.get('static_count', 0):,}")
-    print(f"  DYNAMIC:      {metric_data.get('dynamic_count', 0):,}")
-    print(f"Keywords:       {metric_data.get('keyword_count', 0):,}")
-    print(f"Sessions:       {metric_data.get('session_count', 0):,}")
-    print(f"Total queries:  {metric_data.get('query_count', 0):,}")
-    print(f"Total hits:     {metric_data.get('hit_count', 0):,}")
-    print(f"Hit rate:       {metric_data.get('hit_rate', 0.0):.1%}")
-    print(f"Evictions:      {metric_data.get('eviction_count', 0):,}")
+    print(f"Statements:     {metric_data['statement_count']:,}")
+    print(f"  STATIC:       {metric_data['static_count']:,}")
+    print(f"  DYNAMIC:      {metric_data['dynamic_count']:,}")
+    print(f"Keywords:       {metric_data['keyword_count']:,}")
+    print(f"Sessions:       {metric_data['session_count']:,}")
+    print(f"Total queries:  {metric_data['query_count']:,}")
+    print(f"Total hits:     {metric_data['hit_count']:,}")
+    print(f"Hit rate:       {metric_data['hit_rate']:.1%}")
+    print(f"Evictions:      {metric_data['eviction_count']:,}")
     print(f"Eviction policy: {engram.config.get('eviction_policy', EvictionPolicy.FIFO).value}")
 
-    return 0
+    result = 0
+    return result
 
 
-def cmd_decay(args: argparse_Namespace) -> int:
+def cmd_decay(args: argparse.Namespace) -> int:
     """Age hit statistics so old evidence loses standing over time."""
     core = load_core_instance(args)
     engram = core.engram
@@ -569,15 +583,17 @@ def cmd_decay(args: argparse_Namespace) -> int:
     try:
         changed = metrics.decay_statistics(engram, factor=args.factor)
     except ValueError as err:
-        print(f"Error: {err}", file=sys_stderr)
-        return 1
+        print(f"Error: {err}", file=sys.stderr)
+        result = 1
+        return result
 
     core.flush()
     print(f"Decayed statistics on {changed} records (factor {args.factor})")
-    return 0
+    result = 0
+    return result
 
 
-def cmd_keywords(args: argparse_Namespace) -> int:
+def cmd_keywords(args: argparse.Namespace) -> int:
     """Keyword analysis."""
     core = load_core_instance(args)
     engram = core.engram
@@ -602,12 +618,14 @@ def cmd_keywords(args: argparse_Namespace) -> int:
 
     else:
         print("Usage: engram keywords {--low-hit|--zero-hit}")
-        return 1
+        result = 1
+        return result
 
-    return 0
+    result = 0
+    return result
 
 
-def cmd_coverage(args: argparse_Namespace) -> int:
+def cmd_coverage(args: argparse.Namespace) -> int:
     """Coverage analysis."""
     core = load_core_instance(args)
     engram = core.engram
@@ -616,25 +634,25 @@ def cmd_coverage(args: argparse_Namespace) -> int:
         report = metrics.get_coverage_report(engram)
         print("Coverage Report")
         print("-" * 40)
-        print(f"Total keywords:      {report.get('total_keywords', 0):,}")
-        print(f"Keywords with hits:  {report.get('keywords_with_hits', []):,}")
-        print(f"Keywords zero hits:  {report.get('keywords_zero_hits', []):,}")
-        print(f"Overall hit rate:    {report.get('overall_hit_rate', 0.0):.1%}")
+        print(f"Total keywords:      {report['total_keywords']:,}")
+        print(f"Keywords with hits:  {report['keywords_with_hits']:,}")
+        print(f"Keywords zero hits:  {report['keywords_zero_hits']:,}")
+        print(f"Overall hit rate:    {report['overall_hit_rate']:.1%}")
         print()
 
-        if report.get("coverage_gaps", []):
+        if report["coverage_gaps"]:
             print("Coverage Gaps (high queries, low hits):")
             for gap in report.get("coverage_gaps", [])[:10]:
-                print(f"  {gap.get('keyword', False)}: {gap.get('queries', [])} queries, {gap.get('hit_rate', 0.0):.1%} hit rate")
+                print(f"  {gap['keyword']}: {gap['queries']} queries, {gap['hit_rate']:.1%} hit rate")
             print()
 
-        if report.get("top_performing", False):
+        if report["top_performing"]:
             print("Top Performing Keywords:")
             for kw in report.get("top_performing", [])[:5]:
-                print(f"  {kw.get('keyword', False)}: {kw.get('queries', [])} queries, {kw.get('hit_rate', 0.0):.1%} hit rate")
+                print(f"  {kw['keyword']}: {kw['queries']} queries, {kw['hit_rate']:.1%} hit rate")
             print()
 
-        if report.get("recommendations", []):
+        if report["recommendations"]:
             print("Recommendations:")
             for rec in report.get("recommendations", []):
                 print(f"  - {rec}")
@@ -644,47 +662,46 @@ def cmd_coverage(args: argparse_Namespace) -> int:
         if gaps:
             print(f"Coverage gaps (min queries: {args.min_queries}, max hit rate: 20%):")
             for gap in gaps[:20]:
-                print(
-                    f"  {gap.get('keyword', False)}: {gap.get('queries', [])} queries, {gap.get('hits', [])}"
-                    f" hits, {gap.get('hit_rate', 0.0):.1%}"
-                )
+                print(f"  {gap['keyword']}: {gap['queries']} queries, {gap['hits']} hits, {gap['hit_rate']:.1%}")
         else:
             print("No coverage gaps found.")
 
     else:
         print("Usage: engram coverage {--gaps|--report}")
-        return 1
+        result = 1
+        return result
 
-    return 0
+    result = 0
+    return result
 
 
-def cmd_export(args: argparse_Namespace) -> int:
+def cmd_export(args: argparse.Namespace) -> int:
     """Export statements."""
     core = load_core_instance(args)
     engram = core.engram
 
     statements = []
     for stmt in engram.statements:
-        if args.static_only and stmt.get("tier", "") != Tier.STATIC:
+        if args.static_only and stmt["tier"] != Tier.STATIC:
             continue
-        if args.dynamic_only and stmt.get("tier", "") != Tier.DYNAMIC:
+        if args.dynamic_only and stmt["tier"] != Tier.DYNAMIC:
             continue
         statements.append(stmt)
 
     if args.json:
         pairs = []
         for stmt in statements:
-            item = {"pattern": stmt.get("pattern", ""), "response": stmt.get("text", "")}
-            if stmt.get("template", ""):
-                item["template"] = stmt.get("template", "")
-            if stmt.get("that", False):
-                item["that"] = stmt.get("that", False)
-            if stmt.get("topic", ""):
-                item["topic"] = stmt.get("topic", "")
+            item = {"pattern": stmt["pattern"], "response": stmt["text"]}
+            if stmt["template"]:
+                item["template"] = stmt["template"]
+            if stmt["that"]:
+                item["that"] = stmt["that"]
+            if stmt["topic"]:
+                item["topic"] = stmt["topic"]
             pairs.append(item)
-        output = json_dumps({"pairs": pairs}, indent=2)
+        output = json.dumps({"pairs": pairs}, indent=2)
     else:
-        output = "\n".join(stmt.get("text", "") for stmt in statements)
+        output = "\n".join(stmt["text"] for stmt in statements)
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
@@ -693,7 +710,8 @@ def cmd_export(args: argparse_Namespace) -> int:
     else:
         print(output)
 
-    return 0
+    result = 0
+    return result
 
 
 class InteractiveChat:
@@ -701,9 +719,8 @@ class InteractiveChat:
 
     def __init__(
         self,
-        core_or_engram: object,
-        session_id=False,
-        enable_graph: bool = False,
+        core_or_engram,
+        session_id: str = "",
         store_path: str = "",
         initial_bot_text: str = "",
         transcript_path: str = "",
@@ -722,14 +739,10 @@ class InteractiveChat:
         self.core.start_conversation(
             user_id=self.session_id,
             initial_bot_text=initial_bot_text,
-            transcript_path=transcript_path or False,
+            transcript_path=transcript_path,
         )
         self.runtime = self.core.get_conversation(self.session_id)
         self.session = sessions.get_session(self.engram, self.session_id, create_if_missing=True)
-
-        # Note: Graph support would require extending core.py to accept graph callbacks
-        if enable_graph:
-            print("Note: Graph client support is a future feature")
 
     def process_input(self, user_input: str) -> str:
         """Process user input through the tiered pipeline and return a response.
@@ -740,19 +753,20 @@ class InteractiveChat:
         result = self.core.chat(self.session_id, user_input)
 
         if self.debug_mode:
-            detail = f"Source: {result.get('source', '')} | Score: {result.get('score', 0.0):.2f}"
-            if result.get("pattern", ""):
-                detail += f" | Pattern: '{result.get('pattern', '')}' | Captured: {result.get('captured', False)}"
+            detail = f"Source: {result['source']} | Score: {result['score']:.2f}"
+            if result["pattern"]:
+                detail += f" | Pattern: '{result['pattern']}' | Captured: {result['captured']}"
             print(f"     [{detail}]")
 
-        _return_value = result.get("response", "") or "Tell me more about that."
-        return _return_value
+        result = result["response"] or "Tell me more about that."
+        return result
 
-    def run(self) -> bool:
+    def run(self) -> None:
         """Run the interactive chat loop."""
         print("ENGRAM Chat")
         print(
-            "Commands: /debug, /inspect, /metrics, /finish [prefix], /topic <name>, /set <name> <value>, /get <name>, /save, /quit"
+            "Commands: /debug, /inspect, /metrics, /finish [prefix], /topic <name>, "
+            "/set <name> <value>, /get <name>, /save, /quit"
         )
         print()
 
@@ -779,25 +793,26 @@ class InteractiveChat:
         cmd = parts[0].lower()
 
         if cmd in ("quit", "exit", "q"):
-            return True
+            result = True
+            return result
 
         elif cmd == "debug":
             self.debug_mode = not self.debug_mode
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
 
         elif cmd == "metrics":
-            metric_data = self.core.inspect_conversation(self.session_id).get("metrics", {})
+            metric_data = self.core.inspect_conversation(self.session_id)["metrics"]
             print(f"Patterns: {len(self.engram.pattern_matcher)}")
-            print(f"Statements: {metric_data.get('statement_count', 0)}")
-            print(f"Sessions: {metric_data.get('session_count', 0)}")
-            print(f"Hit rate: {metric_data.get('hit_rate', 0.0):.1%}")
+            print(f"Statements: {metric_data['statement_count']}")
+            print(f"Sessions: {metric_data['session_count']}")
+            print(f"Hit rate: {metric_data['hit_rate']:.1%}")
 
         elif cmd == "inspect":
-            print(json_dumps(self.core.inspect_conversation(self.session_id), indent=2))
+            print(json.dumps(self.core.inspect_conversation(self.session_id), indent=2))
 
         elif cmd == "finish":
             output_prefix = line.split(maxsplit=1)[1] if len(line.split(maxsplit=1)) == 2 else "engram-chat-transcript"
-            print(json_dumps(self.core.finish_conversation(self.session_id, output_prefix), indent=2))
+            print(json.dumps(self.core.finish_conversation(self.session_id, output_prefix), indent=2))
 
         elif cmd == "topic" and len(parts) >= 2:
             self.core.set_predicate(self.session_id, "topic", parts[1])
@@ -832,17 +847,17 @@ class InteractiveChat:
         else:
             print(f"Unknown command: {cmd} (try /help)")
 
-        return False
+        result = False
+        return result
 
 
-def cmd_interactive(args: argparse_Namespace) -> int:
+def cmd_interactive(args: argparse.Namespace) -> int:
     """Interactive AIML-style chat."""
     core = load_core_instance(args)
 
     chat = InteractiveChat(
         core,
         session_id=args.session,
-        enable_graph=args.graph,
         store_path=args.store,
         initial_bot_text=args.initial_bot_text,
         transcript_path=args.transcript,
@@ -852,10 +867,11 @@ def cmd_interactive(args: argparse_Namespace) -> int:
 
     core.stop_conversation(chat.session_id)
     print("Saved.")
-    return 0
+    result = 0
+    return result
 
 
-def main(argv=False) -> int:
+def main(argv=()) -> int:
     """Main entry point.
 
     Args:
@@ -865,11 +881,10 @@ def main(argv=False) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    if args.command is None:
+    if not args.command:
         args.command = "interactive"
         # Set defaults for interactive mode arguments when no subcommand was used
-        args.session = False
-        args.graph = False
+        args.session = ""
         args.initial_bot_text = ""
         args.transcript = ""
 
@@ -899,18 +914,20 @@ def main(argv=False) -> int:
         "interactive": cmd_interactive,
     }
 
-    handler = commands.get(args.command, False)
+    handler = commands.get(args.command, ())
     if handler:
         try:
-            _return_value = handler(args)
-            return _return_value
+            result = handler(args)
+            return result
         except EngramCoreError as error:
-            print(f"Error: {error}", file=sys_stderr)
-            return 1
+            print(f"Error: {error}", file=sys.stderr)
+            result = 1
+            return result
 
     parser.print_help()
-    return 1
+    result = 1
+    return result
 
 
 if __name__ == "__main__":
-    sys_exit(main())
+    sys.exit(main(sys.argv[1:]))

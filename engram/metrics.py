@@ -17,14 +17,14 @@ def get_statement_count(engram) -> int:
 def get_static_count(engram) -> int:
     """Number of STATIC tier statements."""
 
-    count = sum(1 for s in engram.statements if s.get("tier", "") == Tier.STATIC)
+    count = sum(1 for s in engram.statements if s["tier"] == Tier.STATIC)
     return count
 
 
 def get_dynamic_count(engram) -> int:
     """Number of DYNAMIC tier statements."""
 
-    count = sum(1 for s in engram.statements if s.get("tier", "") == Tier.DYNAMIC)
+    count = sum(1 for s in engram.statements if s["tier"] == Tier.DYNAMIC)
     return count
 
 
@@ -43,7 +43,8 @@ def get_session_count(engram) -> int:
 def get_overall_hit_rate(engram) -> float:
     """Overall hit rate percentage."""
     if engram.query_count == 0:
-        return 0.0
+        result = 0.0
+        return result
     rate = engram.hit_count / engram.query_count
     return rate
 
@@ -96,17 +97,17 @@ def decay_statistics(engram, factor: float = 0.5) -> int:
     changed = 0
     with engram.keyword_lock:
         for entry in engram.keywords.values():
-            new_queries = int(entry.get("query_count", 0) * factor)
-            new_hits = int(entry.get("hit_count", 0) * factor)
-            if new_queries != entry.get("query_count", 0) or new_hits != entry.get("hit_count", 0):
+            new_queries = int(entry["query_count"] * factor)
+            new_hits = int(entry["hit_count"] * factor)
+            if new_queries != entry["query_count"] or new_hits != entry["hit_count"]:
                 entry["query_count"] = new_queries
                 entry["hit_count"] = new_hits
                 changed += 1
     with engram.statement_lock:
         for stmt in engram.statements:
-            new_queries = int(stmt.get("query_count", 0) * factor)
-            new_hits = int(stmt.get("hit_count", 0) * factor)
-            if new_queries != stmt.get("query_count", 0) or new_hits != stmt.get("hit_count", 0):
+            new_queries = int(stmt["query_count"] * factor)
+            new_hits = int(stmt["hit_count"] * factor)
+            if new_queries != stmt["query_count"] or new_hits != stmt["hit_count"]:
                 stmt["query_count"] = new_queries
                 stmt["hit_count"] = new_hits
                 changed += 1
@@ -135,8 +136,8 @@ def get_low_hit_keywords(
     with engram.keyword_lock:
         for kw, entry in engram.keywords.items():
             hit_rate = keyword_entry_hit_rate(entry)
-            if entry.get("query_count", 0) >= min_queries and hit_rate <= max_hit_rate:
-                results.append((kw, entry.get("query_count", 0), hit_rate))
+            if entry["query_count"] >= min_queries and hit_rate <= max_hit_rate:
+                results.append((kw, entry["query_count"], hit_rate))
     ranked = sorted(results, key=lambda x: x[1], reverse=True)
     return ranked
 
@@ -157,8 +158,8 @@ def get_zero_hit_keywords(engram, min_queries: int = 10) -> list[tuple[str, int]
     results: list[tuple[str, int]] = []
     with engram.keyword_lock:
         for kw, entry in engram.keywords.items():
-            if entry.get("query_count", 0) >= min_queries and entry.get("hit_count", 0) == 0:
-                results.append((kw, entry.get("query_count", 0)))
+            if entry["query_count"] >= min_queries and entry["hit_count"] == 0:
+                results.append((kw, entry["query_count"]))
     ranked = sorted(results, key=lambda x: x[1], reverse=True)
     return ranked
 
@@ -185,16 +186,16 @@ def get_coverage_gaps(
     with engram.keyword_lock:
         for kw, entry in engram.keywords.items():
             hit_rate = keyword_entry_hit_rate(entry)
-            if entry.get("query_count", 0) >= min_queries and hit_rate <= max_hit_rate:
+            if entry["query_count"] >= min_queries and hit_rate <= max_hit_rate:
                 results.append(
                     {
                         "keyword": kw,
-                        "queries": entry.get("query_count", 0),
-                        "hits": entry.get("hit_count", 0),
+                        "queries": entry["query_count"],
+                        "hits": entry["hit_count"],
                         "hit_rate": round(hit_rate, 3),
                     }
                 )
-    ranked = sorted(results, key=lambda x: x.get("queries", []), reverse=True)
+    ranked = sorted(results, key=lambda x: x["queries"], reverse=True)
     return ranked
 
 
@@ -212,52 +213,44 @@ def get_coverage_report(engram) -> dict:
     """
     with engram.keyword_lock:
         total_keywords = len(engram.keywords)
-        keywords_with_hits = sum(1 for e in engram.keywords.values() if e.get("hit_count", 0) > 0)
+        keywords_with_hits = sum(1 for e in engram.keywords.values() if e["hit_count"] > 0)
         keywords_zero_hits = total_keywords - keywords_with_hits
 
-        # Get coverage gaps (high traffic, low hit rate)
         coverage_gaps = get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
 
-        # Get top performing keywords (high hit rate with significant traffic)
         top_performing: list[dict] = []
         for kw, entry in engram.keywords.items():
             hit_rate = keyword_entry_hit_rate(entry)
-            if entry.get("query_count", 0) >= 10 and hit_rate >= 0.5:
+            if entry["query_count"] >= 10 and hit_rate >= 0.5:
                 top_performing.append(
                     {
                         "keyword": kw,
-                        "queries": entry.get("query_count", 0),
-                        "hits": entry.get("hit_count", 0),
+                        "queries": entry["query_count"],
+                        "hits": entry["hit_count"],
                         "hit_rate": round(hit_rate, 3),
                     }
                 )
-        top_performing.sort(key=lambda x: x.get("hit_rate", 0.0), reverse=True)
-        top_performing = top_performing[:10]  # Top 10
+        top_performing.sort(key=lambda x: x["hit_rate"], reverse=True)
+        top_performing = top_performing[:10]
 
-        # Generate recommendations
         recommendations: list[str] = []
 
-        # Recommend adding categories for zero-hit keywords
         zero_hits = get_zero_hit_keywords(engram, min_queries=10)
         if zero_hits:
             top_zero = [kw for kw, _ in zero_hits[:5]]
             recommendations.append(f"Add categories for: {', '.join(top_zero)}")
 
-        # Recommend reviewing low-performing keywords
         for gap in coverage_gaps[:3]:
-            if gap.get("hit_rate", 0.0) < 0.1:
-                recommendations.append(
-                    f"Review low-performing: {gap.get('keyword', False)} ({gap.get('hit_rate', 0.0) * 100:.1f}% hit rate)"
-                )
+            if gap["hit_rate"] < 0.1:
+                recommendations.append(f"Review low-performing: {gap['keyword']} ({gap['hit_rate'] * 100:.1f}% hit rate)")
 
         report = {
             "total_keywords": total_keywords,
             "keywords_with_hits": keywords_with_hits,
             "keywords_zero_hits": keywords_zero_hits,
             "overall_hit_rate": round(get_overall_hit_rate(engram), 3),
-            "coverage_gaps": coverage_gaps[:10],  # Top 10 gaps
+            "coverage_gaps": coverage_gaps[:10],
             "top_performing": top_performing,
             "recommendations": recommendations,
         }
         return report
-    return {}

@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "name": "section9-temporal-conflict-v1",
+  "development": [
+    {
+      "id": "current-unique",
+      "query": "What is the status now?",
+      "cardinality": "SINGLE",
+      "claims": [{"claim_id": "claim:active", "object_id": "entity:active"}],
+      "expected": {"direct_answer": true, "reason": "relation_selected_unique", "selected_claim_id": "claim:active", "conflict_claim_ids": []}
+    },
+    {
+      "id": "current-missing-trust",
+      "query": "What is the status now?",
+      "cardinality": "SINGLE",
+      "claims": [{"claim_id": "claim:active", "object_id": "entity:active", "trust_available": false}],
+      "expected": {"direct_answer": false, "reason": "relation_trust_unavailable", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "single-valued-conflict",
+      "query": "What is the status now?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:active", "object_id": "entity:active"},
+        {"claim_id": "claim:paused", "object_id": "entity:paused"}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_conflict_single_value", "selected_claim_id": "", "conflict_claim_ids": ["claim:active", "claim:paused"]}
+    },
+    {
+      "id": "valid-multi-value",
+      "query": "What are the tags now?",
+      "cardinality": "MULTI",
+      "claims": [
+        {"claim_id": "claim:red", "object_id": "entity:red"},
+        {"claim_id": "claim:blue", "object_id": "entity:blue"}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_valid_multi_value", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "unknown-cardinality",
+      "query": "What is the status now?",
+      "cardinality": "UNKNOWN",
+      "claims": [
+        {"claim_id": "claim:active", "object_id": "entity:active"},
+        {"claim_id": "claim:paused", "object_id": "entity:paused"}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_cardinality_unknown", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "latest-selection",
+      "query": "What is the latest status?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:older", "object_id": "entity:active", "valid_from": "2023-01-01T00:00:00Z"},
+        {"claim_id": "claim:latest", "object_id": "entity:paused", "valid_from": "2025-01-01T00:00:00Z"}
+      ],
+      "expected": {"direct_answer": true, "reason": "relation_selected_latest", "selected_claim_id": "claim:latest", "conflict_claim_ids": []}
+    }
+  ],
+  "held_out": [
+    {
+      "id": "historical-open-bound",
+      "query": "What was the status in 2024?",
+      "cardinality": "SINGLE",
+      "claims": [{"claim_id": "claim:open", "object_id": "entity:active", "valid_to": ""}],
+      "expected": {"direct_answer": false, "reason": "relation_temporal_bounds_open", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "latest-distinct-tie",
+      "query": "What is the latest status?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:first", "object_id": "entity:active", "valid_from": "2025-01-01T00:00:00Z"},
+        {"claim_id": "claim:second", "object_id": "entity:paused", "valid_from": "2025-01-01T00:00:00Z"}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_latest_tie", "selected_claim_id": "", "conflict_claim_ids": ["claim:first", "claim:second"]}
+    },
+    {
+      "id": "latest-missing-lower-bound",
+      "query": "What is the latest status?",
+      "cardinality": "SINGLE",
+      "claims": [{"claim_id": "claim:missing", "object_id": "entity:active", "valid_from": ""}],
+      "expected": {"direct_answer": false, "reason": "relation_latest_bound_unavailable", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "trust-version-mismatch",
+      "query": "What is the status now?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:first", "object_id": "entity:active", "trust": 0.6, "trust_version": 1},
+        {"claim_id": "claim:second", "object_id": "entity:active", "trust": 0.9, "trust_version": 2}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_trust_version_incomparable", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "bounded-successive-values",
+      "query": "What was the status between 2023 and 2024?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:older", "object_id": "entity:active", "valid_from": "2023-01-01T00:00:00Z", "valid_to": "2024-01-01T00:00:00Z"},
+        {"claim_id": "claim:newer", "object_id": "entity:paused", "valid_from": "2024-01-01T00:00:00Z", "valid_to": "2025-01-01T00:00:00Z"}
+      ],
+      "expected": {"direct_answer": false, "reason": "relation_bounded_multiple_periods", "selected_claim_id": "", "conflict_claim_ids": []}
+    },
+    {
+      "id": "system-time-latest",
+      "query": "What is the latest status by system time?",
+      "cardinality": "SINGLE",
+      "claims": [
+        {"claim_id": "claim:older-system", "object_id": "entity:active", "system_from": "2023-01-01T00:00:00Z", "valid_from": "2025-01-01T00:00:00Z"},
+        {"claim_id": "claim:newer-system", "object_id": "entity:active", "system_from": "2024-01-01T00:00:00Z", "valid_from": "2020-01-01T00:00:00Z"}
+      ],
+      "expected": {"direct_answer": true, "reason": "relation_selected_latest", "selected_claim_id": "claim:newer-system", "conflict_claim_ids": []}
+    }
+  ]
+}

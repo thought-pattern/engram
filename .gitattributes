@@ -1,0 +1,6 @@
+engram/v1/engram_pb2.py text eol=lf
+engram/v1/engram_pb2.pyi text eol=lf
+engram/v1/engram_pb2_grpc.py text eol=lf
+engram/v2/engram_pb2.py text eol=lf
+engram/v2/engram_pb2.pyi text eol=lf
+engram/v2/engram_pb2_grpc.py text eol=lf

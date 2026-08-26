@@ -1,0 +1,11 @@
+{
+  "pairs": [
+    { "pattern": "SUSHI IS GOOD", "response": "I agree; sushi is good." },
+    { "pattern": "TELL ME MORE", "response": "Sushi has many styles and ingredients." },
+    { "pattern": "WHY", "response": "Because it combines contrasting flavors and textures." },
+    { "pattern": "WHERE ARE WE", "response": "We are talking about sushi." },
+    { "pattern": "CONTINUE", "response": "We can keep talking about sushi." },
+    { "pattern": "WHAT DID I SAY", "response": "You said sushi is good." },
+    { "pattern": "HOW ARE YOU", "response": "I'm ready to keep talking." }
+  ]
+}

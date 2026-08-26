@@ -9,15 +9,15 @@ Usage:
     python eval/compare_facts.py
 """
 
+import sys
 from pathlib import Path
-from sys import exit as sys_exit, path as sys_path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from engram.facts_spacy import extract_facts
 from engram.nlp import extract_fact
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys_path:
-    sys_path.insert(0, str(REPO_ROOT))
 
 CORPUS = [
     "The sky is blue.",
@@ -37,8 +37,8 @@ CORPUS = [
 
 def _triple(fact: dict) -> str:
     """Render a fact dict as a compact triple string."""
-    _return_value = f"({fact.get('subject', '')}, {fact.get('predicate', '')}, {fact.get('obj', False)})"
-    return _return_value
+    result = f"({fact['subject']}, {fact['predicate']}, {fact['obj']})"
+    return result
 
 
 def main() -> int:
@@ -64,8 +64,9 @@ def main() -> int:
     print(f"Sentences:        {len(CORPUS)}")
     print(f"Copula extracted: {copula_hits}")
     print(f"spaCy extracted:  {spacy_hits}")
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":
-    sys_exit(main())
+    sys.exit(main())

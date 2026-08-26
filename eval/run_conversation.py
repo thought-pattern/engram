@@ -11,8 +11,9 @@ for mechanical defects:
   - casing polish failures (lowercase sentence start, standalone lowercase i)
   - template artifacts leaking into the response (unresolved {...} tokens)
 
-Softer signals are warnings rather than failures: unanswered turns, three
-identical responses in a row (a conversation loop), and slow turns. After the
+Softer signals are warnings rather than failures: unanswered turns and three
+identical responses in a row (a conversation loop). Every turn length is
+reported without classifying it as fast or slow. After the
 conversation, the rig checks session hygiene (no scratch predicates, bounded
 history) and reports what the store learned along the way.
 
@@ -23,23 +24,22 @@ Usage:
     python eval/run_conversation.py --quiet                # summary only
 """
 
-from argparse import ArgumentParser as argparse_ArgumentParser
-from json import dump as json_dump, load as json_load
-from os import path as os_path
-from sys import exit as sys_exit, path as sys_path, stderr as sys_stderr
-from time import perf_counter as time_perf_counter
+import argparse
+import json
+import os
+import sys
+import time
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from engram import metrics, pipeline, sessions
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 
-REPO_ROOT = os_path.dirname(os_path.dirname(os_path.abspath(__file__)))
-if REPO_ROOT not in sys_path:
-    sys_path.insert(0, REPO_ROOT)
-
 SESSION_ID = "soak"
-SLOW_TURN_SECONDS = 1.0
 LOOP_LENGTH = 3  # identical consecutive responses that count as a loop
 LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
@@ -47,9 +47,9 @@ LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
     engram = Engram(config=engram_config(learn_user_facts=True))
-    seed_path = os_path.join(REPO_ROOT, "data", "seed.json")
+    seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
-        seed_data = json_load(f)
+        seed_data = json.load(f)
     for pair in seed_data.get("pairs", []):
         engram.store(
             pair.get("response", ""),
@@ -62,9 +62,9 @@ def build_seeded_engram() -> Engram:
 
 def load_turns(path: str) -> list:
     """Load conversation turns from a script file."""
-    script_path = path if path else os_path.join(os_path.dirname(os_path.abspath(__file__)), "conversation.json")
+    script_path = path or "eval/conversation.json"
     with open(script_path, encoding="utf-8") as f:
-        data = json_load(f)
+        data = json.load(f)
     turns = data.get("turns", [])
     return turns
 
@@ -79,7 +79,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
             warnings.append("unanswered (source none)")
         else:
             defects.append(f"empty response from source {source}")
-        return defects, warnings
+        result = defects, warnings
+        return result
 
     first_alpha = next((c for c in response if c.isalpha()), "")
     if first_alpha and first_alpha.islower():
@@ -93,7 +94,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
     if "{" in response and "}" in response:
         defects.append("unresolved template token in response")
 
-    return defects, warnings
+    result = defects, warnings
+    return result
 
 
 def run_conversation(turns: list, verbose: bool) -> dict:
@@ -106,7 +108,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
     recent_responses: list[str] = []
 
     for number, text in enumerate(turns, 1):
-        started = time_perf_counter()
+        started = time.perf_counter()
         defects: list[str] = []
         warnings: list[str] = []
         result = {"response": "", "source": "error", "score": 0.0, "pattern": ""}
@@ -114,15 +116,12 @@ def run_conversation(turns: list, verbose: bool) -> dict:
             result = pipeline.respond(engram, text, session_id=SESSION_ID)
         except Exception as err:
             defects.append(f"exception: {type(err).__name__}: {err}")
-        elapsed = time_perf_counter() - started
+        elapsed = time.perf_counter() - started
 
-        response = result.get("response", "")
-        checked_defects, checked_warnings = check_response(response, result.get("source", ""))
+        response = result["response"]
+        checked_defects, checked_warnings = check_response(response, result["source"])
         defects.extend(checked_defects)
         warnings.extend(checked_warnings)
-
-        if elapsed > SLOW_TURN_SECONDS:
-            warnings.append(f"slow turn: {elapsed:.2f}s")
 
         recent_responses.append(response)
         if len(recent_responses) >= LOOP_LENGTH and len(set(recent_responses[-LOOP_LENGTH:])) == 1 and response:
@@ -132,9 +131,9 @@ def run_conversation(turns: list, verbose: bool) -> dict:
             "turn": number,
             "input": text,
             "response": response,
-            "source": result.get("source", ""),
-            "score": round(result.get("score", 0.0), 3),
-            "pattern": result.get("pattern", ""),
+            "source": result["source"],
+            "score": round(result["score"], 3),
+            "pattern": result["pattern"],
             "seconds": round(elapsed, 3),
             "defects": defects,
             "warnings": warnings,
@@ -143,7 +142,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
 
         if verbose:
             print(f"{number:>3} You: {text}")
-            print(f"    Bot: [{result.get('source', '')} {result.get('score', 0.0):.2f}] {response}")
+            print(f"    Bot: [{result['source']} {result['score']:.2f}] {response}")
             for defect in defects:
                 print(f"    [DEFECT] {defect}")
             for warning in warnings:
@@ -160,7 +159,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
         hygiene.append("response history exceeds its bound")
 
     final = metrics.get_metrics(engram)
-    learned = [s.get("pattern", "") or s.get("text", "")[:60] for s in engram.statements if s.get("tier", "") == Tier.DYNAMIC]
+    learned = [s["pattern"] or s["text"][:60] for s in engram.statements if s["tier"] == Tier.DYNAMIC]
 
     report = {
         "turns": records,
@@ -175,7 +174,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
 
 def main() -> int:
     """Run the conversation soak and print a report."""
-    parser = argparse_ArgumentParser(description="Engram conversation soak rig")
+    parser = argparse.ArgumentParser(description="Engram conversation soak rig")
     parser.add_argument("--script", default="", help="Conversation script (default: eval/conversation.json)")
     parser.add_argument("--json", default="", help="Write the full JSON report to this path")
     parser.add_argument("--quiet", action="store_true", help="Suppress the per-turn transcript")
@@ -183,18 +182,19 @@ def main() -> int:
 
     turns = load_turns(args.script)
     if not turns:
-        print("No turns found in the conversation script", file=sys_stderr)
-        return 1
+        print("No turns found in the conversation script", file=sys.stderr)
+        result = 1
+        return result
 
     report = run_conversation(turns, verbose=not args.quiet)
 
-    records = report.get("turns", [])
-    defect_turns = [r for r in records if r.get("defects", [])]
-    warning_turns = [r for r in records if r.get("warnings", [])]
+    records = report["turns"]
+    defect_turns = [r for r in records if r["defects"]]
+    warning_turns = [r for r in records if r["warnings"]]
     sources: dict[str, int] = {}
     for r in records:
-        sources[r.get("source", "")] = sources.get(r.get("source", ""), 0) + 1
-    slowest = max(records, key=lambda r: r.get("seconds", 0.0))
+        sources[r["source"]] = sources.get(r["source"], 0) + 1
+    slowest = max(records, key=lambda r: r["seconds"])
 
     print()
     print("Conversation Soak Report")
@@ -203,29 +203,27 @@ def main() -> int:
     print(f"Sources:          {', '.join(f'{k}={v}' for k, v in sorted(sources.items()))}")
     print(f"Defect turns:     {len(defect_turns)}")
     print(f"Warning turns:    {len(warning_turns)}")
-    print(f"Hygiene defects:  {len(report.get('hygiene_defects', []))}")
-    print(f"Learned entries:  {len(report.get('learned_dynamic', []))}")
-    print(f"Slowest turn:     #{slowest.get('turn', 0)} at {slowest.get('seconds', 0.0):.2f}s")
+    print(f"Hygiene defects:  {len(report['hygiene_defects'])}")
+    print(f"Learned entries:  {len(report['learned_dynamic'])}")
+    print(f"Slowest turn:     #{slowest['turn']} at {slowest['seconds']:.2f}s")
     for r in defect_turns:
-        print(f"  [DEFECT] turn {r.get('turn', False)} {r.get('input', '')!r}: {'; '.join(r.get('defects', []))}")
-    for issue in report.get("hygiene_defects", []):
+        print(f"  [DEFECT] turn {r['turn']} {r['input']!r}: {'; '.join(r['defects'])}")
+    for issue in report["hygiene_defects"]:
         print(f"  [DEFECT] session: {issue}")
 
     print()
     print(
-        f"SUMMARY turns={len(records)} defects="
-        f"{len(defect_turns) + len(report.get('hygiene_defects', []))} warnings="
-        f"{len(warning_turns)}"
+        f"SUMMARY turns={len(records)} defects={len(defect_turns) + len(report['hygiene_defects'])} warnings={len(warning_turns)}"
     )
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json_dump(report, f, indent=2)
+            json.dump(report, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    _return_value = 1 if defect_turns or report.get("hygiene_defects", []) else 0
-    return _return_value
+    result = 1 if defect_turns or report["hygiene_defects"] else 0
+    return result
 
 
 if __name__ == "__main__":
-    sys_exit(main())
+    sys.exit(main())

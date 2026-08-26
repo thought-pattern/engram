@@ -1,15 +1,10 @@
-from collections.abc import Mapping as _Mapping
-from typing import ClassVar as _ClassVar
-from typing import Optional as _Optional
-from typing import Union as _Union
-
-from google.protobuf import descriptor as _descriptor
 from google.protobuf import empty_pb2 as _empty_pb2
-from google.protobuf import message as _message
 from google.protobuf import struct_pb2 as _struct_pb2
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
-
-_PROTO_DEPENDENCIES: tuple = (_empty_pb2,)
+from google.protobuf import descriptor as _descriptor
+from google.protobuf import message as _message
+from collections.abc import Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -21,7 +16,6 @@ class RegulatorOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     REGULATOR_OUTCOME_REJECTED_CONTEXT: _ClassVar[RegulatorOutcome]
     REGULATOR_OUTCOME_REJECTED_STALE: _ClassVar[RegulatorOutcome]
     REGULATOR_OUTCOME_REJECTED_POLICY: _ClassVar[RegulatorOutcome]
-
 REGULATOR_OUTCOME_UNSPECIFIED: RegulatorOutcome
 REGULATOR_OUTCOME_ACCEPTED: RegulatorOutcome
 REGULATOR_OUTCOME_REJECTED_QUALITY: RegulatorOutcome
@@ -37,9 +31,7 @@ class StartConversationRequest(_message.Message):
     user_id: str
     initial_bot_text: str
     random_seed: int
-    def __init__(
-        self, user_id: _Optional[str] = ..., initial_bot_text: _Optional[str] = ..., random_seed: _Optional[int] = ...
-    ) -> None: ...
+    def __init__(self, user_id: _Optional[str] = ..., initial_bot_text: _Optional[str] = ..., random_seed: _Optional[int] = ...) -> None: ...
 
 class ChatRequest(_message.Message):
     __slots__ = ("user_id", "text")
@@ -90,16 +82,7 @@ class PredicateResponse(_message.Message):
     def __init__(self, value: _Optional[str] = ...) -> None: ...
 
 class ProposeRequest(_message.Message):
-    __slots__ = (
-        "request",
-        "request_id",
-        "user_id",
-        "namespace",
-        "context_fingerprint",
-        "limit",
-        "required_metadata",
-        "required_source_label",
-    )
+    __slots__ = ("request", "request_id", "user_id", "namespace", "context_fingerprint", "limit", "required_metadata", "required_source_label")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     USER_ID_FIELD_NUMBER: _ClassVar[int]
@@ -116,17 +99,7 @@ class ProposeRequest(_message.Message):
     limit: int
     required_metadata: _struct_pb2.Struct
     required_source_label: str
-    def __init__(
-        self,
-        request: _Optional[str] = ...,
-        request_id: _Optional[str] = ...,
-        user_id: _Optional[str] = ...,
-        namespace: _Optional[str] = ...,
-        context_fingerprint: _Optional[str] = ...,
-        limit: _Optional[int] = ...,
-        required_metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...,
-        required_source_label: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, request: _Optional[str] = ..., request_id: _Optional[str] = ..., user_id: _Optional[str] = ..., namespace: _Optional[str] = ..., context_fingerprint: _Optional[str] = ..., limit: _Optional[int] = ..., required_metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., required_source_label: _Optional[str] = ...) -> None: ...
 
 class ResolveRequest(_message.Message):
     __slots__ = ("proposal_id", "outcome", "statement_id", "reason")
@@ -138,13 +111,7 @@ class ResolveRequest(_message.Message):
     outcome: RegulatorOutcome
     statement_id: str
     reason: str
-    def __init__(
-        self,
-        proposal_id: _Optional[str] = ...,
-        outcome: _Optional[_Union[RegulatorOutcome, str]] = ...,
-        statement_id: _Optional[str] = ...,
-        reason: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, proposal_id: _Optional[str] = ..., outcome: _Optional[_Union[RegulatorOutcome, str]] = ..., statement_id: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class LearnResponseRequest(_message.Message):
     __slots__ = ("request", "response", "request_id", "user_id", "namespace", "context_fingerprint", "source_label", "metadata")
@@ -164,17 +131,7 @@ class LearnResponseRequest(_message.Message):
     context_fingerprint: str
     source_label: str
     metadata: _struct_pb2.Struct
-    def __init__(
-        self,
-        request: _Optional[str] = ...,
-        response: _Optional[str] = ...,
-        request_id: _Optional[str] = ...,
-        user_id: _Optional[str] = ...,
-        namespace: _Optional[str] = ...,
-        context_fingerprint: _Optional[str] = ...,
-        source_label: _Optional[str] = ...,
-        metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...,
-    ) -> None: ...
+    def __init__(self, request: _Optional[str] = ..., response: _Optional[str] = ..., request_id: _Optional[str] = ..., user_id: _Optional[str] = ..., namespace: _Optional[str] = ..., context_fingerprint: _Optional[str] = ..., source_label: _Optional[str] = ..., metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
 
 class RetireResponseRequest(_message.Message):
     __slots__ = ("statement_id", "reason", "request_id")
@@ -184,9 +141,7 @@ class RetireResponseRequest(_message.Message):
     statement_id: str
     reason: str
     request_id: str
-    def __init__(
-        self, statement_id: _Optional[str] = ..., reason: _Optional[str] = ..., request_id: _Optional[str] = ...
-    ) -> None: ...
+    def __init__(self, statement_id: _Optional[str] = ..., reason: _Optional[str] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class FlushResponse(_message.Message):
     __slots__ = ("persisted",)

@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "name": "section10-composition-v1",
+  "development": [
+    {
+      "id": "lookup-two-hop-unique",
+      "operator": "LOOKUP",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "MULTI"],
+        ["claim:birth", "person:ada", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": ["place:london"], "complete_paths": 1, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_unique"]}
+    },
+    {
+      "id": "exists-two-hop-absent",
+      "operator": "EXISTS",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [],
+      "expected": {"direct": true, "truth_available": true, "truth": false, "aggregate": "", "terminal_ids": [], "complete_paths": 0, "partial_paths": 0, "truncated": false, "reasons": ["composition_no_path"]}
+    },
+    {
+      "id": "not-two-hop-absent",
+      "operator": "NOT",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [],
+      "expected": {"direct": true, "truth_available": true, "truth": true, "aggregate": "", "terminal_ids": [], "complete_paths": 0, "partial_paths": 0, "truncated": false, "reasons": ["composition_no_path"]}
+    },
+    {
+      "id": "and-two-complete-branches",
+      "operator": "AND",
+      "branches": [
+        [["predicate:owner", "owner", "PERSON"]],
+        [["predicate:location", "location", "PLACE"]]
+      ],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:location", "entity:root", "predicate:location", "place:redmond", "Redmond", "PLACE", "SINGLE"]
+      ],
+      "expected": {"direct": true, "truth_available": true, "truth": true, "aggregate": "", "terminal_ids": ["person:ada", "place:redmond"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    },
+    {
+      "id": "or-one-complete-branch",
+      "operator": "OR",
+      "branches": [
+        [["predicate:owner", "owner", "PERSON"]],
+        [["predicate:location", "location", "PLACE"]]
+      ],
+      "claims": [["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"]],
+      "expected": {"direct": true, "truth_available": true, "truth": true, "aggregate": "", "terminal_ids": ["person:ada"], "complete_paths": 1, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_unique"]}
+    },
+    {
+      "id": "count-distinct-two-hop-results",
+      "operator": "COUNT",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [
+        ["claim:owner-a", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "MULTI"],
+        ["claim:owner-b", "entity:root", "predicate:owner", "person:bob", "Bob", "PERSON", "MULTI"],
+        ["claim:birth-a", "person:ada", "predicate:born-in", "place:london", "London", "PLACE", "MULTI"],
+        ["claim:birth-b", "person:bob", "predicate:born-in", "place:paris", "Paris", "PLACE", "MULTI"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "2", "terminal_ids": ["place:london", "place:paris"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    }
+  ],
+  "held_out": [
+    {
+      "id": "lookup-deduplicates-terminal-identity",
+      "operator": "LOOKUP",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [
+        ["claim:owner-a", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "MULTI"],
+        ["claim:owner-b", "entity:root", "predicate:owner", "person:bob", "Bob", "PERSON", "MULTI"],
+        ["claim:birth-a", "person:ada", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"],
+        ["claim:birth-b", "person:bob", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": ["place:london"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    },
+    {
+      "id": "count-refuses-duplicate-terminal-cardinality",
+      "operator": "COUNT",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [
+        ["claim:owner-a", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "MULTI"],
+        ["claim:owner-b", "entity:root", "predicate:owner", "person:bob", "Bob", "PERSON", "MULTI"],
+        ["claim:birth-a", "person:ada", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"],
+        ["claim:birth-b", "person:bob", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"]
+      ],
+      "expected": {"direct": false, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": ["place:london"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_cardinality_conflict"]}
+    },
+    {
+      "id": "minimum-typed-number",
+      "operator": "MIN",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:score", "score", "NUMBER"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:score-10", "person:ada", "predicate:score", "number:10", "10", "NUMBER", "MULTI"],
+        ["claim:score-2", "person:ada", "predicate:score", "number:2", "2", "NUMBER", "MULTI"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "2", "terminal_ids": ["number:10", "number:2"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    },
+    {
+      "id": "maximum-typed-number",
+      "operator": "MAX",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:score", "score", "NUMBER"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:score-10", "person:ada", "predicate:score", "number:10", "10", "NUMBER", "MULTI"],
+        ["claim:score-2", "person:ada", "predicate:score", "number:2", "2", "NUMBER", "MULTI"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "10", "terminal_ids": ["number:10", "number:2"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    },
+    {
+      "id": "order-typed-number",
+      "operator": "ORDER",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:score", "score", "NUMBER"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:score-10", "person:ada", "predicate:score", "number:10", "10", "NUMBER", "MULTI"],
+        ["claim:score-2", "person:ada", "predicate:score", "number:2", "2", "NUMBER", "MULTI"]
+      ],
+      "expected": {"direct": true, "truth_available": false, "truth": false, "aggregate": "2 | 10", "terminal_ids": ["number:10", "number:2"], "complete_paths": 2, "partial_paths": 0, "truncated": false, "reasons": ["composition_complete_multiple"]}
+    },
+    {
+      "id": "candidate-limit-retains-bounded-evidence",
+      "operator": "LOOKUP",
+      "max_candidates": 2,
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [
+        ["claim:owner-a", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "MULTI"],
+        ["claim:owner-b", "entity:root", "predicate:owner", "person:bob", "Bob", "PERSON", "MULTI"],
+        ["claim:owner-c", "entity:root", "predicate:owner", "person:cy", "Cy", "PERSON", "MULTI"],
+        ["claim:birth-a", "person:ada", "predicate:born-in", "place:london", "London", "PLACE", "SINGLE"],
+        ["claim:birth-b", "person:bob", "predicate:born-in", "place:paris", "Paris", "PLACE", "SINGLE"]
+      ],
+      "expected": {"direct": false, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": ["place:london", "place:paris"], "complete_paths": 2, "partial_paths": 0, "truncated": true, "reasons": ["composition_candidate_limit", "composition_completeness_unknown"]}
+    },
+    {
+      "id": "dependency-failure-retains-partial-path",
+      "operator": "LOOKUP",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:born-in", "born in", "PLACE"]],
+      "claims": [["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"]],
+      "fail_queries": ["person:ada|predicate:born-in"],
+      "expected": {"direct": false, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": [], "complete_paths": 0, "partial_paths": 1, "truncated": false, "reasons": ["composition_dependency_failed", "composition_partial_path"]}
+    },
+    {
+      "id": "cycle-retains-prefix-only",
+      "operator": "LOOKUP",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:returns-to", "returns to", "ENTITY"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:return", "person:ada", "predicate:returns-to", "entity:root", "Root", "ENTITY", "SINGLE"]
+      ],
+      "expected": {"direct": false, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": [], "complete_paths": 0, "partial_paths": 1, "truncated": false, "reasons": ["composition_cycle", "composition_partial_path"]}
+    },
+    {
+      "id": "missing-terminal-type-retains-prefix",
+      "operator": "MIN",
+      "predicates": [["predicate:owner", "owner", "PERSON"], ["predicate:score", "score", "NUMBER"]],
+      "claims": [
+        ["claim:owner", "entity:root", "predicate:owner", "person:ada", "Ada", "PERSON", "SINGLE"],
+        ["claim:score", "person:ada", "predicate:score", "number:unknown", "unknown", "UNKNOWN", "SINGLE"]
+      ],
+      "expected": {"direct": false, "truth_available": false, "truth": false, "aggregate": "", "terminal_ids": [], "complete_paths": 0, "partial_paths": 1, "truncated": false, "reasons": ["composition_type_unavailable", "composition_partial_path"]}
+    }
+  ]
+}

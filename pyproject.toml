@@ -25,11 +25,13 @@ dependencies = [
     "PyYAML>=6.0.3",
     "nltk>=3.10.1",
     "spacy>=3.8.14",
+    "sentence-transformers>=5.6.0",
     "pymgclient>=1.6.0",
     "mcp>=2.0.0,<3",
     "grpcio>=1.83,<1.84",
     "grpcio-health-checking>=1.83,<1.84",
     "protobuf>=7.35.1,<8",
+    "tzdata==2026.3",
 ]
 
 # The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
@@ -38,18 +40,19 @@ dependencies = [
 
 [project.scripts]
 engram-mcp = "engram.mcp_server:main"
-engram-grpc = "engram.grpc_server:main"
+engram-grpc = "engram.grpc_server:console_main"
 
 [project.optional-dependencies]
 dev = [
-    "bandit>=1.9.4",
-    "black>=26.5.1",
+    "bandit",
+    "black",
+    "isort",
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.16.1",
+    "ruff",
     "grpcio-tools==1.83.0",
-    "vulture>=2.16",
+    "vulture",
 ]
 
 [build-system]
@@ -61,7 +64,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["v1/*.proto", "v1/*.pyi"]
+engram = ["v1/*.proto", "v1/*.pyi", "v2/*.proto", "v2/*.pyi", "data/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}
@@ -69,10 +72,15 @@ version = {attr = "engram.constants.VERSION"}
 [tool.ruff]
 line-length = 132
 target-version = "py312"
+extend-exclude = ["engram/v1/engram_pb2*.py", "engram/v1/engram_pb2*.pyi", "engram/v2/engram_pb2*.py", "engram/v2/engram_pb2*.pyi"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]
+ignore = ["E501", "UP038"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing".msg = "Use native Python types and runtime validation; do not import typing."
+"typing_extensions".msg = "Use native Python types and runtime validation; do not import typing_extensions."
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -87,13 +95,13 @@ combine-as-imports = true
 # These files are compiler output and are checked for reproducibility in tests.
 "engram/v1/engram_pb2*" = ["ALL"]
 
-# Black is the formatter of record: `black -l 132 -t py311`. The code targets
+# Black is the formatter of record: `black -l 132 -t py311`. The runtime targets
 # 3.12+ (see requires-python and ruff target-version), but the py311 formatting
-# style is preferred over py312's.
+# style is intentionally retained instead of py312's.
 [tool.black]
 line-length = 132
 target-version = ["py311"]
-extend-exclude = "engram/v1/engram_pb2.*"
+extend-exclude = "engram/v[12]/engram_pb2.*"
 
 # isort uses the black profile + matching line length so it never disagrees with
 # black (or ruff's own `I` import-order rule) on how to wrap parenthesized imports.
@@ -102,10 +110,11 @@ profile = "black"
 line_length = 132
 known_first_party = ["engram"]
 combine_as_imports = true
-skip_glob = ["engram/v1/engram_pb2*"]
+skip_glob = ["engram/v1/engram_pb2*", "engram/v2/engram_pb2*"]
 
 [tool.vulture]
 paths = ["engram", "scripts", "eval"]
+exclude = ["engram/v1/engram_pb2*.py", "engram/v2/engram_pb2*.py"]
 min_confidence = 65
 ignore_names = ["exc_type", "exc_value", "traceback"]
 
