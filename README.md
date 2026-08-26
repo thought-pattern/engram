@@ -82,8 +82,9 @@ python -m spacy download en_core_web_sm
 
 ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
 maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon). They are managed
-centrally by `engram/nltk_data.py`, which stores them in `data/nltk_data`
-(gitignored) and puts that directory first on NLTK's search path. Startup
+centrally by `engram/nltk_data.py`, which stores them in the Engram checkout's
+`data/nltk_data` directory (gitignored) and puts that absolute directory first
+on NLTK's search path regardless of the process working directory. Startup
 preflight fails with a bounded readiness error when a required dataset is
 missing. The setup command above provisions serving data.
 
@@ -312,7 +313,11 @@ shared application runtime. Its primary operations are:
 - `flush` and `close` for persistence and lifecycle ownership.
 
 One core retains multiple isolated user conversations and shared knowledge.
-Configured stores checkpoint successful mutations and flush again on `close()`.
+Non-empty conversation identifiers retain their user context. An empty
+conversation identifier remains empty at the service boundary, receives a
+unique non-attributed ephemeral session at each start, never aliases explicit
+user `"0"`, and is deleted and checkpointed on stop. Configured stores
+checkpoint successful mutations and flush again on `close()`.
 See the [Python API contract](documentation/python-api.md) for unified resolution,
 feedback, lifecycle, and error behavior.
 
@@ -553,7 +558,9 @@ tool schemas, persistence, and recovery.
 ### gRPC Service Interface
 
 The gRPC server exposes the same shared core, isolated user conversations, and
-regulated-cache workflow:
+regulated-cache workflow. An empty `user_id` across Start, Chat, Inspect,
+Finish, and Stop addresses the currently active anonymous conversation; each
+new empty-identifier Start receives fresh session context:
 
 ```bash
 engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json

@@ -212,6 +212,36 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
     assert core.chat("Carol", "Hello")["user_id"] == "Carol"
 
 
+def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_zero(tmp_path) -> None:
+    store = tmp_path / "engram.json"
+    core = EngramCore(store_path=store)
+    core.start_conversation("0", initial_bot_text="Explicit zero context.")
+
+    first_start = core.start_conversation("")
+    first_runtime = core.get_conversation("")
+    first_session_id = first_runtime.session_id
+    first_turn = core.chat("", "Hello")
+
+    assert first_start["user_id"] == ""
+    assert first_session_id != "0"
+    assert first_turn["user_id"] == ""
+    assert first_turn["context_changes"]["previous_response"]["before"] == ""
+    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+
+    stopped = core.stop_conversation("")
+    assert stopped["user_id"] == ""
+    assert first_session_id not in core.engram.sessions
+    assert first_session_id not in open_engram_core(store_path=store).engram.sessions
+
+    second_start = core.start_conversation("")
+    second_runtime = core.get_conversation("")
+
+    assert second_start["user_id"] == ""
+    assert second_runtime.session_id != first_session_id
+    assert core.inspect_conversation("")["session"]["previous_response"] == ""
+    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+
+
 def test_regulated_cache_does_not_require_a_chat_conversation() -> None:
     core = EngramCore()
     learned = core.learn_response(

@@ -1,5 +1,7 @@
 """Tests for the centralized NLTK data bootstrap."""
 
+from pathlib import Path
+
 import nltk
 import pytest
 
@@ -7,14 +9,21 @@ from engram import nltk_data
 from engram.constants import NLTK_DATA_DIR
 from engram.nltk_data import configure_path
 
-"""Tests for the local data directory configuration."""
-
 
 def test_data_directory_configure_path_creates_and_registers():
     """configure_path creates the dir and puts it on nltk's path."""
     result = configure_path()
     assert result == NLTK_DATA_DIR
     assert NLTK_DATA_DIR in nltk.data.path
+
+
+def test_data_directory_is_independent_of_process_working_directory():
+    """The provisioned data path is anchored to the Engram checkout."""
+    data_directory = Path(NLTK_DATA_DIR)
+    package_directory = Path(nltk_data.__file__).resolve().parent
+
+    assert data_directory.is_absolute()
+    assert data_directory == package_directory.parent / "data" / "nltk_data"
 
 
 def test_data_directory_configure_path_idempotent():

@@ -169,11 +169,17 @@ class ConversationRuntime:
         self,
         engram,
         user_id: str = "0",
+        anonymous_session_id: str = "",
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
         transcript_path: str = "",
     ) -> None:
+        normalized_user_id = sessions.normalize_user_id(user_id)
+        if not isinstance(anonymous_session_id, str):
+            raise ValueError("anonymous_session_id must be a string")
+        if anonymous_session_id and user_id != "":
+            raise ValueError("anonymous_session_id requires an empty user_id")
         if not isinstance(initial_bot_text, str):
             raise ValueError("initial_bot_text must be a string")
         try:
@@ -188,7 +194,8 @@ class ConversationRuntime:
             raise ValueError("random_seed_present must be a boolean")
 
         self.engram = engram
-        self.user_id = sessions.normalize_user_id(user_id)
+        self.user_id = user_id if user_id == "" else normalized_user_id
+        self.session_id = anonymous_session_id or normalized_user_id
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
@@ -197,9 +204,9 @@ class ConversationRuntime:
         self.turns: list[dict] = []
         self.lock = threading.RLock()
 
-        sessions.get_session(engram, self.user_id, create_if_missing=True)
+        sessions.get_session(engram, self.session_id, create_if_missing=True)
         if initial_bot_text:
-            sessions.update_session_context(engram, self.user_id, initial_bot_text)
+            sessions.update_session_context(engram, self.session_id, initial_bot_text)
         self.metrics_baseline = metrics.get_metrics(engram)
         self._persist()
 
@@ -215,7 +222,7 @@ class ConversationRuntime:
             raise ValueError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
-            session = self.engram.sessions[self.user_id]
+            session = self.engram.sessions.get(self.session_id, {})
             predicates_before = dict(session["predicates"])
             previous_response_before = session["previous_response"]
             dynamic_ids_before = {statement["id"] for statement in self.engram.statements if statement["tier"] == Tier.DYNAMIC}
@@ -227,13 +234,18 @@ class ConversationRuntime:
                 random.seed(self.random_seed + turn_number)
             started = time.perf_counter()
             try:
-                result = pipeline.chat(self.engram, text, user_id=self.user_id)
+                result = pipeline.respond(
+                    self.engram,
+                    text,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                )
             finally:
                 if random_state:
                     random.setstate(random_state)
             elapsed = time.perf_counter() - started
 
-            session = self.engram.sessions[self.user_id]
+            session = self.engram.sessions.get(self.session_id, {})
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
@@ -243,7 +255,7 @@ class ConversationRuntime:
                 "turn": turn_number,
                 "input": text,
                 "response": result["response"],
-                "user_id": result["user_id"],
+                "user_id": self.user_id,
                 "source": result["source"],
                 "score": round(result["score"], 3),
                 "pattern": result["pattern"],
@@ -274,7 +286,7 @@ class ConversationRuntime:
                 "user_id": self.user_id,
                 "turn_count": len(self.turns),
                 "initial_bot_text": self.initial_bot_text,
-                "session": session_view(self.engram.sessions[self.user_id]),
+                "session": session_view(self.engram.sessions.get(self.session_id, {})),
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
                 "learned_unique_texts": sorted({statement["text"] for statement in learned}),

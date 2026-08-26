@@ -261,6 +261,13 @@ def normalize_service_user_id(user_id: str) -> str:
         raise InvalidRequestError(str(error)) from error
 
 
+def conversation_user_id(user_id: str) -> str:
+    """Validate a conversation identity while preserving anonymous emptiness."""
+    require_service_string(user_id, "user_id", MAX_CALLER_ID_BYTES)
+    result = user_id
+    return result
+
+
 def _no_cancellation_check() -> None:
     """Provide the concrete no-op cancellation operation."""
     return
@@ -1212,13 +1219,15 @@ class EngramCore:
         """Create one observable conversation for a user context."""
         with self.lock:
             self._require_running()
-            normalized_user_id = normalize_service_user_id(user_id)
-            if normalized_user_id in self.conversations:
-                raise ConflictError(f"conversation already active for user_id: {normalized_user_id}")
+            conversation_id = conversation_user_id(user_id)
+            if conversation_id in self.conversations:
+                raise ConflictError(f"conversation already active for user_id: {conversation_id}")
+            anonymous_session_id = f"anonymous_{uuid4().hex}" if conversation_id == "" else ""
             try:
                 runtime = ConversationRuntime(
                     self.engram,
-                    user_id=normalized_user_id,
+                    user_id=conversation_id,
+                    anonymous_session_id=anonymous_session_id,
                     initial_bot_text=initial_bot_text,
                     random_seed=random_seed,
                     random_seed_present=random_seed_present,
@@ -1226,7 +1235,7 @@ class EngramCore:
                 )
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
-            self.conversations[normalized_user_id] = runtime
+            self.conversations[conversation_id] = runtime
             snapshot = runtime.inspect()
             self._dirty = True
             self._checkpoint()
@@ -1244,19 +1253,19 @@ class EngramCore:
         """Return an active user runtime or raise a lifecycle error."""
         with self.lock:
             self._require_running()
-            normalized_user_id = normalize_service_user_id(user_id)
-            if normalized_user_id not in self.conversations:
-                raise ResourceNotFoundError(f"no active conversation for user_id: {normalized_user_id}")
-            result = self.conversations[normalized_user_id]
+            conversation_id = conversation_user_id(user_id)
+            if conversation_id not in self.conversations:
+                raise ResourceNotFoundError(f"no active conversation for user_id: {conversation_id}")
+            result = self.conversations.get(conversation_id)
             return result
 
     def chat(self, user_id: str, text: str) -> dict:
         """Submit one chatbot turn to an active user conversation."""
-        normalized_user_id = normalize_service_user_id(user_id)
+        conversation_id = conversation_user_id(user_id)
         operation_id = f"chat:{uuid4().hex}"
-        with self._resolution_slot(operation_id, normalized_user_id), self.lock:
+        with self._resolution_slot(operation_id, conversation_id), self.lock:
             self._require_running()
-            runtime = self.get_conversation(normalized_user_id)
+            runtime = self.get_conversation(conversation_id)
             try:
                 result = runtime.send(text)
             except ValueError as error:
@@ -1305,9 +1314,12 @@ class EngramCore:
             self._require_running()
             runtime = self.get_conversation(user_id)
             report = runtime.report()
+            self.conversations.pop(runtime.user_id, {})
+            if runtime.user_id == "":
+                sessions.delete_session(self.engram, runtime.session_id)
+                self._dirty = True
             if flush:
                 self.flush()
-            self.conversations.pop(runtime.user_id, {})
             result = {
                 "stopped": True,
                 "user_id": report["user_id"],
