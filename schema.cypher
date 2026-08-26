@@ -5,8 +5,26 @@
 // Or with mgconsole:
 //   mgconsole < schema.cypher
 //
-// Schema version: 3.8 (aligned recall subset of the Tapestry knowledge graph)
-// Last updated: 2026-08-06
+// Schema version: 4.4 (aligned recall subset of the Tapestry knowledge graph)
+// Last updated: 2026-08-18
+//
+// 4.4 adds no Engram-owned schema. Tapestry now records Research Agent
+// epistemic artifacts (ResearchAttempt/ResearchResult, Candidate* records,
+// OpenQuestion, CompletenessEstimate) outside Engram's recall-only contract.
+// Candidates are never :Claim nodes and anchor through PROPOSED_*-prefixed
+// edges, so Engram's canonical Claim recall queries cannot traverse into
+// unpromoted research material.
+//
+// 4.3 adds no Engram-owned schema. Tapestry now persists a general inquiry
+// synthesis certificate on Proof nodes outside Engram's recall-only contract.
+//
+// 4.2 adds no Engram-owned schema. Tapestry now persists a comparative proof
+// certificate and exact request-scope Proof index outside Engram's recall-only
+// Claim contract.
+//
+// 4.1 adds no Engram-owned schema. Tapestry's versioned CommunityAssignment
+// and CommunitySnapshotVersion records remain outside Engram's recall-only
+// contract; Engram continues to read canonical Claims and topology.
 //
 // 3.8 adds no Engram-owned schema. Tapestry's CommunitySnapshot and per-Claim
 // routing-version metadata remain outside Engram's recall-only contract, as do

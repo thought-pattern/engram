@@ -13,16 +13,16 @@ Options:
     --check   Print statements that would run without executing
 """
 
-import argparse
-import sys
+from argparse import ArgumentParser as argparse_ArgumentParser
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from sys import exit as sys_exit, path as sys_path
 
 from engram.config import load_config
 from engram.graph import MemGraphConnection
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys_path:
+    sys_path.insert(0, str(REPO_ROOT))
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "schema.cypher"
 
@@ -50,7 +50,8 @@ def parse_statements(text):
 def label_for(stmt):
     """Compact one-line label for a multi-line statement."""
     first = stmt.split("\n", 1)[0].strip()
-    return first if len(first) <= 80 else first[:77] + "..."
+    _return_value = first if len(first) <= 80 else first[:77] + "..."
+    return _return_value
 
 
 def apply_schema(conn, dry_run=False) -> bool:
@@ -77,7 +78,7 @@ def apply_schema(conn, dry_run=False) -> bool:
             try:
                 rows = cur.fetchall()
             except Exception:
-                rows = None
+                rows = []
 
             print(f"  OK:   {label}")
             if rows:
@@ -96,12 +97,13 @@ def apply_schema(conn, dry_run=False) -> bool:
 
     total = succeeded + skipped + failed
     print(f"\nApplied {succeeded} statement(s), skipped {skipped}, failed {failed} (of {total})\n")
-    return failed == 0
+    _return_value = failed == 0
+    return _return_value
 
 
 def main():
     """Apply the schema using config.yml or CLI overrides for the connection."""
-    parser = argparse.ArgumentParser(description="Apply the ENGRAM schema to MemGraph")
+    parser = argparse_ArgumentParser(description="Apply the ENGRAM schema to MemGraph")
     parser.add_argument("--host", help="MemGraph host (default: from config.yml)")
     parser.add_argument("--port", type=int, help="MemGraph port (default: from config.yml)")
     parser.add_argument("--config", "-c", default="config.yml", help="Path to config.yml (default: config.yml)")
@@ -109,10 +111,10 @@ def main():
     args = parser.parse_args()
 
     if args.check:
-        success = apply_schema(None, dry_run=True)
-        sys.exit(0 if success else 1)
+        success = apply_schema(False, dry_run=True)
+        sys_exit(0 if success else 1)
 
-    graph_cfg = load_config(args.config).get("graph") or {}
+    graph_cfg = load_config(args.config).get("graph", {}) or {}
     host = args.host or graph_cfg.get("host", "localhost")
     port = args.port or graph_cfg.get("port", 7687)
     username = graph_cfg.get("username", "")
@@ -120,13 +122,14 @@ def main():
 
     print(f"Connecting to MemGraph at {host}:{port}...")
     conn = MemGraphConnection(host=host, port=port, username=username, password=password)
-    if conn.connect() is None:
+    if conn.connect() is False:
         print(f"ERROR: Failed to connect to MemGraph at {host}:{port}")
-        sys.exit(1)
+        sys_exit(1)
 
     success = apply_schema(conn, dry_run=False)
     conn.disconnect()
-    sys.exit(0 if success else 1)
+    sys_exit(0 if success else 1)
+    return False
 
 
 if __name__ == "__main__":

@@ -10,15 +10,21 @@ list. A backend swap
 method names — duck typing is the contract, so there is no abstract base class.
 """
 
-import logging
-import re
-import threading
-import time
+from logging import getLogger as logging_getLogger
+from re import IGNORECASE as re_IGNORECASE, compile as re_compile
+from threading import RLock as threading_RLock
+from time import monotonic as time_monotonic
 from uuid import UUID
 
-import mgclient
+from mgclient import (
+    InterfaceError as mgclient_InterfaceError,
+    OperationalError as mgclient_OperationalError,
+    connect as mgclient_connect,
+)
 
-logger = logging.getLogger(__name__)
+_DEFAULT_ARGUMENT_DICT = {}
+
+logger = logging_getLogger(__name__)
 
 # Seconds to wait before retrying after a failed connection attempt. A single
 # process hitting an unreachable host repeatedly should not block on TCP
@@ -46,11 +52,12 @@ def is_connection_error(err: Exception) -> bool:
     Query-level errors (storage timeouts, lock contention, syntax errors) return
     False -- the socket is still usable and the reconnect cooldown does not apply.
     """
-    if isinstance(err, (mgclient.InterfaceError, ConnectionError, BrokenPipeError, OSError)):  # noqa: UP038
+    if isinstance(err, (mgclient_InterfaceError, ConnectionError, BrokenPipeError, OSError)):
         return True
-    if isinstance(err, mgclient.OperationalError):
+    if isinstance(err, mgclient_OperationalError):
         err_str = str(err).lower()
-        return any(marker in err_str for marker in CONNECTION_LOST_MARKERS)
+        _return_value = any(marker in err_str for marker in CONNECTION_LOST_MARKERS)
+        return _return_value
     return False
 
 
@@ -59,11 +66,11 @@ def is_connection_error(err: Exception) -> bool:
 # included because stored procedures can write regardless of the surrounding
 # query's shape, and LOAD because LOAD CSV imports data; a read-only path that
 # allowed either would not be read-only.
-WRITE_CLAUSE = re.compile(
+WRITE_CLAUSE = re_compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
-    re.IGNORECASE,
+    re_IGNORECASE,
 )
-VECTOR_INDEX_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
+VECTOR_INDEX_NAME = re_compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
 
 def is_write_cypher(cypher: str) -> bool:
@@ -76,7 +83,8 @@ def is_write_cypher(cypher: str) -> bool:
     mutation -- this also refuses read-only procedures, which is the accepted
     cost of a blocklist that cannot inspect procedure bodies.
     """
-    return bool(WRITE_CLAUSE.search(cypher or ""))
+    _return_value = bool(WRITE_CLAUSE.search(cypher or ""))
+    return _return_value
 
 
 def coerce_params(parameters):
@@ -88,13 +96,17 @@ def coerce_params(parameters):
     nested inside batch payloads are coerced too.
     """
     if isinstance(parameters, UUID):
-        return str(parameters)
+        _return_value = str(parameters)
+        return _return_value
     if isinstance(parameters, dict):
-        return {key: coerce_params(value) for key, value in parameters.items()}
+        _return_value = {key: coerce_params(value) for key, value in parameters.items()}
+        return _return_value
     if isinstance(parameters, list):
-        return [coerce_params(item) for item in parameters]
+        _return_value = [coerce_params(item) for item in parameters]
+        return _return_value
     if isinstance(parameters, tuple):
-        return tuple(coerce_params(item) for item in parameters)
+        _return_value = tuple(coerce_params(item) for item in parameters)
+        return _return_value
     return parameters
 
 
@@ -130,34 +142,35 @@ class MemGraphConnection:
         self.port = port
         self.username = username
         self.password = password
-        self.conn = None
-        self.available = None  # None = unknown, True = connected, False = failed
+        self.conn = False
+        self.available = False  # True = connected; False = unavailable.
         self.last_connect_attempt = 0.0
         # pymgclient connections may be shared between threads but not used
         # concurrently. Serialize all connection and cursor access.
-        self._lock = threading.RLock()
+        self._lock = threading_RLock()
 
     def connect(self):
         """Establish a connection to MemGraph.
 
-        Returns the connection on success, None on failure. Sets self.available
+        Returns the connection on success, or ``False`` on failure. Sets ``available``
         so callers can check without retrying.
         """
         with self._lock:
-            return self._connect_unlocked()
+            _return_value = self._connect_unlocked()
+            return _return_value
 
     def _connect_unlocked(self):
         """Establish a connection while the caller holds the connection lock."""
-        if self.conn is not None:
+        if self.conn is not False:
             return self.conn
 
         # Respect cooldown after a failed attempt
         if self.available is False:
-            elapsed = time.monotonic() - self.last_connect_attempt
+            elapsed = time_monotonic() - self.last_connect_attempt
             if elapsed < RECONNECT_COOLDOWN_SECONDS:
-                return None
+                return False
 
-        self.last_connect_attempt = time.monotonic()
+        self.last_connect_attempt = time_monotonic()
 
         try:
             connect_params = {
@@ -169,7 +182,7 @@ class MemGraphConnection:
             if self.password:
                 connect_params["password"] = self.password
 
-            self.conn = mgclient.connect(**connect_params)
+            self.conn = mgclient_connect(**connect_params)
             self.conn.autocommit = True
             self.available = True
             logger.debug("Connected to MemGraph at %s:%d", self.host, self.port)
@@ -181,7 +194,7 @@ class MemGraphConnection:
                 self.host,
                 self.port,
             )
-            return None
+            return False
         except Exception as err:
             self.available = False
             logger.warning(
@@ -190,21 +203,22 @@ class MemGraphConnection:
                 self.port,
                 err,
             )
-            return None
+            return False
 
     def disconnect(self):
         """Close the connection to MemGraph."""
         with self._lock:
-            if self.conn is not None:
+            if self.conn is not False:
                 self.conn.close()
-                self.conn = None
-                self.available = None
+                self.conn = False
+                self.available = False
                 logger.info("Disconnected from MemGraph")
+        return False
 
     def is_connected(self) -> bool:
         """Check if the connection is active."""
         with self._lock:
-            if self.conn is None:
+            if self.conn is False:
                 return False
             try:
                 cursor = self.conn.cursor()
@@ -212,27 +226,32 @@ class MemGraphConnection:
                 cursor.fetchall()
                 return True
             except Exception:
-                self.conn = None
+                self.conn = False
                 self.available = False
                 return False
 
-    def execute(self, query: str, parameters: dict = None) -> list:
+    def execute(self, query: str, parameters: dict = _DEFAULT_ARGUMENT_DICT) -> list:
         """Execute a Cypher query and return results as a list of dicts.
 
         Returns an empty list if MemGraph is unreachable; raises RuntimeError on
         a query-level failure so a real error is never mistaken for "no rows".
         Mutating or ambiguous Cypher is rejected before connecting.
         """
+        if parameters is _DEFAULT_ARGUMENT_DICT:
+            parameters = _DEFAULT_ARGUMENT_DICT.copy()
         if is_write_cypher(query):
             raise ValueError("ENGRAM graph access is read-only")
 
-        return self._execute_read_query(query, parameters)
+        _return_value = self._execute_read_query(query, parameters)
+        return _return_value
 
-    def _execute_read_query(self, query: str, parameters: dict = None) -> list:
+    def _execute_read_query(self, query: str, parameters: dict = _DEFAULT_ARGUMENT_DICT) -> list:
         """Execute a query already constrained to a read-only internal shape."""
 
+        if parameters is _DEFAULT_ARGUMENT_DICT:
+            parameters = _DEFAULT_ARGUMENT_DICT.copy()
         with self._lock:
-            if self.conn is None and self._connect_unlocked() is None:
+            if self.conn is False and self._connect_unlocked() is False:
                 return []
 
             try:
@@ -240,7 +259,8 @@ class MemGraphConnection:
                 cursor.execute(query, coerce_params(parameters) or {})
                 columns = [desc.name for desc in cursor.description] if cursor.description else []
                 rows = cursor.fetchall()
-                return [dict(zip(columns, row, strict=False)) for row in rows]
+                _return_value = [dict(zip(columns, row, strict=False)) for row in rows]
+                return _return_value
             except Exception as err:
                 err_str = str(err).lower()
                 if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
@@ -248,9 +268,10 @@ class MemGraphConnection:
                 else:
                     logger.error("Query failed: %s: %s", type(err).__name__, err)
                     if is_connection_error(err):
-                        self.conn = None
+                        self.conn = False
                         self.available = False
                 raise RuntimeError(f"Query failed: {err}") from err
+        return []
 
     def vector_search_claims(
         self,
@@ -274,7 +295,7 @@ class MemGraphConnection:
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
             raise ValueError("limit must be an integer from 1 through 1000")
         if (
-            not isinstance(min_similarity, int | float)
+            not isinstance(min_similarity, (int, float))
             or isinstance(min_similarity, bool)
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
@@ -299,7 +320,7 @@ class MemGraphConnection:
                    similarity
             ORDER BY similarity DESC, claim.id
         """
-        return self._execute_read_query(
+        _return_value = self._execute_read_query(
             query,
             {
                 "index_name": index_name,
@@ -308,10 +329,14 @@ class MemGraphConnection:
                 "min_similarity": float(min_similarity),
             },
         )
+        return _return_value
 
-    def execute_read(self, query: str, parameters: dict = None) -> list:
+    def execute_read(self, query: str, parameters: dict = _DEFAULT_ARGUMENT_DICT) -> list:
         """Read-only alias for execute()."""
-        return self.execute(query, parameters)
+        if parameters is _DEFAULT_ARGUMENT_DICT:
+            parameters = _DEFAULT_ARGUMENT_DICT.copy()
+        _return_value = self.execute(query, parameters)
+        return _return_value
 
 
 def create_graph_client(

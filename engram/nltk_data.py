@@ -10,9 +10,9 @@ Run ``python -m engram.nltk_data`` once after installation to pre-fetch
 everything into the local directory.
 """
 
-import os
+from os import makedirs as os_makedirs
 
-import nltk
+from nltk import data as nltk_data, download as nltk_download
 
 from engram.constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
 
@@ -27,9 +27,9 @@ def configure_path() -> str:
     Returns:
         The local data directory path.
     """
-    os.makedirs(NLTK_DATA_DIR, exist_ok=True)
-    if NLTK_DATA_DIR not in nltk.data.path:
-        nltk.data.path.insert(0, NLTK_DATA_DIR)
+    os_makedirs(NLTK_DATA_DIR, exist_ok=True)
+    if NLTK_DATA_DIR not in nltk_data.path:
+        nltk_data.path.insert(0, NLTK_DATA_DIR)
     return NLTK_DATA_DIR
 
 
@@ -41,7 +41,7 @@ def _is_available(find_path: str) -> bool:
     """
     for candidate in (find_path, find_path + ".zip"):
         try:
-            nltk.data.find(candidate)
+            nltk_data.find(candidate)
             return True
         except LookupError:
             continue
@@ -61,7 +61,7 @@ def ensure_resource(find_path: str, download_name: str) -> bool:
     configure_path()
     if _is_available(find_path):
         return True
-    nltk.download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
+    nltk_download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
     available = _is_available(find_path)
     return available
 

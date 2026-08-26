@@ -28,7 +28,7 @@ from engram.text import is_known_word
 
 
 @lru_cache(maxsize=1)
-def _ensure_nltk_data() -> None:
+def _ensure_nltk_data() -> bool:
     """Ensure required NLTK data is present, fetching into the local data dir."""
     required = [
         ("tokenizers/punkt", "punkt"),
@@ -41,6 +41,7 @@ def _ensure_nltk_data() -> None:
     ]
     for path, package in required:
         ensure_resource(path, package)
+    return False
 
 
 def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:
@@ -59,27 +60,27 @@ def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dic
 
 def fact_subject_upper(fact: dict) -> str:
     """Subject in uppercase for pattern matching."""
-    subject_upper = fact["subject"].upper()
+    subject_upper = fact.get("subject", "").upper()
     return subject_upper
 
 
 def fact_query_patterns(fact: dict) -> list[str]:
     """Generate patterns that should retrieve this fact."""
     subj = fact_subject_upper(fact)
-    obj = fact["obj"].upper()
+    obj = fact.get("obj", "").upper()
     patterns = [subj]  # Direct query: "CATS"
 
     # Question forms based on predicate
-    if fact["predicate"] in ("are", "were"):
+    if fact.get("predicate", ()) in ("are", "were"):
         patterns.append(f"WHAT ARE {subj}")
         patterns.append(f"WHAT ARE THE {subj}")
-        patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
+        patterns.append(f"WHAT {fact.get('predicate', '').upper()} {subj}")
     else:
         patterns.append(f"WHAT IS {subj}")
         patterns.append(f"WHAT IS THE {subj}")
         patterns.append(f"WHAT IS A {subj}")
         patterns.append(f"WHO IS {subj}")
-        patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
+        patterns.append(f"WHAT {fact.get('predicate', '').upper()} {subj}")
 
     # Add "TELL ME ABOUT X" form
     patterns.append(f"TELL ME ABOUT {subj}")
@@ -127,7 +128,8 @@ def is_question(text: str) -> bool:
 
     # Inverted subject-verb (e.g., "Is it...")
     words = text.lower().split()
-    return len(words) >= 2 and words[0] in COPULAS
+    _return_value = len(words) >= 2 and words[0] in COPULAS
+    return _return_value
 
 
 def input_kind(text: str) -> str:
@@ -340,6 +342,7 @@ def extract_entities(text: str) -> list[dict]:
 
     except Exception:
         return []
+    return []
 
 
 def extract_entities_by_type(text: str) -> dict[str, list[str]]:
@@ -356,10 +359,10 @@ def extract_entities_by_type(text: str) -> dict[str, list[str]]:
     by_type: dict[str, list[str]] = {}
 
     for entity in entities:
-        if entity["label"] not in by_type:
-            by_type[entity["label"]] = []
-        if entity["text"] not in by_type[entity["label"]]:
-            by_type[entity["label"]].append(entity["text"])
+        if entity.get("label", "") not in by_type:
+            by_type[entity.get("label", "")] = []
+        if entity.get("text", "") not in by_type.get(entity.get("label", ""), False):
+            by_type.get(entity.get("label", ""), []).append(entity.get("text", ""))
 
     return by_type
 
@@ -374,7 +377,7 @@ def get_people(text: str) -> list[str]:
         List of person names found.
     """
     entities = extract_entities(text)
-    people = [e["text"] for e in entities if e["label"] == "PERSON"]
+    people = [e.get("text", "") for e in entities if e.get("label", "") == "PERSON"]
     return people
 
 
@@ -388,7 +391,7 @@ def get_places(text: str) -> list[str]:
         List of place names found (GPE and FACILITY entities).
     """
     entities = extract_entities(text)
-    places = [e["text"] for e in entities if e["label"] in ("GPE", "FACILITY", "GSP")]
+    places = [e.get("text", "") for e in entities if e.get("label", ()) in ("GPE", "FACILITY", "GSP")]
     return places
 
 
@@ -402,5 +405,5 @@ def get_organizations(text: str) -> list[str]:
         List of organization names found.
     """
     entities = extract_entities(text)
-    organizations = [e["text"] for e in entities if e["label"] == "ORGANIZATION"]
+    organizations = [e.get("text", "") for e in entities if e.get("label", "") == "ORGANIZATION"]
     return organizations

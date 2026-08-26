@@ -18,8 +18,8 @@ portable across queries:
   statement; priority applies only when the statement matched (overlap > 0).
 """
 
-import math
 from datetime import UTC, datetime
+from math import log as math_log
 
 from engram.constants import SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry_hit_rate
@@ -42,20 +42,17 @@ def keyword_idf(keyword: str, keyword_index: dict[str, dict], total_statements: 
     Returns:
         IDF weight, always positive.
     """
-    entry = keyword_index.get(keyword)
-    df = len(entry["statement_ids"]) if entry else 0
-    if df < 1:
-        df = 1
-    if total_statements < 1:
-        total_statements = 1
-    idf = math.log(1.0 + total_statements / df)
+    entry = keyword_index.get(keyword, False)
+    df = max(1, len(entry.get("statement_ids", [])) if entry else 0)
+    statement_count = max(1, int(total_statements))
+    idf = math_log(1.0 + statement_count / df)
     return idf
 
 
 def keyword_match_weights(
     query_keywords: list[str],
     statement_keywords: list[str],
-    synonyms=None,
+    synonyms=False,
 ) -> dict[str, float]:
     """Per-query-keyword match weight against a statement's keywords.
 
@@ -70,8 +67,10 @@ def keyword_match_weights(
     Returns:
         Dict of query keyword -> match weight.
     """
+    if synonyms is None:
+        synonyms = False
     statement_set = set(statement_keywords)
-    synonym_map = synonyms if synonyms is not None else {}
+    synonym_map = synonyms if synonyms is not False else {}
     weights: dict[str, float] = {}
     for kw in query_keywords:
         if kw in statement_set:
@@ -133,7 +132,7 @@ def calculate_recency(statement: dict, half_life_seconds: float) -> float:
     Returns:
         Recency score from 0.0 to 1.0.
     """
-    last_active = statement["last_hit"] or statement["created_at"]
+    last_active = statement.get("last_hit", False) or statement.get("created_at", False)
     age_seconds = (datetime.now(UTC) - last_active).total_seconds()
     if age_seconds <= 0:
         return 1.0
@@ -160,7 +159,7 @@ def calculate_average_hit_rate(
 
     hit_rates: list[float] = []
     for kw in matched_keywords:
-        entry = keyword_index.get(kw)
+        entry = keyword_index.get(kw, False)
         if entry:
             hit_rates.append(keyword_entry_hit_rate(entry))
         else:
@@ -179,7 +178,7 @@ def score_statement(
     weight_recency: float,
     weight_hit_rate: float,
     recency_half_life_seconds: float,
-    synonyms=None,
+    synonyms=False,
 ) -> float:
     """Calculate the calibrated score for a statement against a query.
 
@@ -205,7 +204,7 @@ def score_statement(
     Returns:
         Numeric score (0.0 when the statement does not match; higher = better).
     """
-    match = keyword_match_weights(query_keywords, statement["keywords"], synonyms)
+    match = keyword_match_weights(query_keywords, statement.get("keywords", []), synonyms)
     overlap = calculate_overlap(match, keyword_index, total_statements)
 
     if overlap == 0.0:
@@ -217,5 +216,5 @@ def score_statement(
 
     total_weight = weight_base + weight_recency + weight_hit_rate
     relevance = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate) / total_weight
-    score = relevance + statement["priority"]
+    score = relevance + statement.get("priority", 0.0)
     return score

@@ -8,31 +8,47 @@ from functools import lru_cache
 
 from nltk.tokenize import sent_tokenize
 
-from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
+from engram.constants import (
+    DEFAULT_CONTRACTIONS,
+    DEFAULT_GENDER,
+    DEFAULT_PERSON,
+    DEFAULT_PERSON2,
+)
 from engram.nltk_data import ensure_resource
 
 
 @lru_cache(maxsize=1)
-def _ensure_punkt() -> None:
+def _ensure_punkt() -> bool:
     """Ensure the punkt tokenizers are present (cached, runs once)."""
     ensure_resource("tokenizers/punkt", "punkt")
     ensure_resource("tokenizers/punkt_tab", "punkt_tab")
+    return False
 
 
 def substitution_maps(
-    contractions=None,
-    person=None,
-    person2=None,
-    gender=None,
-    custom=None,
+    contractions=False,
+    person=False,
+    person2=False,
+    gender=False,
+    custom=False,
 ) -> dict:
     """Build a container dict holding all substitution maps."""
+    if contractions is None:
+        contractions = False
+    if custom is None:
+        custom = False
+    if gender is None:
+        gender = False
+    if person is None:
+        person = False
+    if person2 is None:
+        person2 = False
     maps = {
-        "contractions": contractions if contractions is not None else DEFAULT_CONTRACTIONS.copy(),
-        "person": person if person is not None else DEFAULT_PERSON.copy(),
-        "person2": person2 if person2 is not None else DEFAULT_PERSON2.copy(),
-        "gender": gender if gender is not None else DEFAULT_GENDER.copy(),
-        "custom": custom if custom is not None else {},
+        "contractions": contractions if contractions is not False else DEFAULT_CONTRACTIONS.copy(),
+        "person": person if person is not False else DEFAULT_PERSON.copy(),
+        "person2": person2 if person2 is not False else DEFAULT_PERSON2.copy(),
+        "gender": gender if gender is not False else DEFAULT_GENDER.copy(),
+        "custom": custom if custom is not False else {},
     }
     return maps
 
@@ -43,8 +59,8 @@ def get_all_input_subs(maps: dict) -> dict[str, str]:
     Returns contractions and custom substitutions merged.
     """
     result = {}
-    result.update(maps["contractions"])
-    result.update(maps["custom"])
+    result.update(maps.get("contractions", []))
+    result.update(maps.get("custom", False))
     return result
 
 
@@ -90,7 +106,7 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
         # Look up substitution (case-insensitive)
         lower_core = core.lower()
         if lower_core in subs:
-            replacement = subs[lower_core]
+            replacement = subs.get(lower_core, False)
             # Preserve original case
             if core.isupper():
                 replacement = replacement.upper()
@@ -104,7 +120,7 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     return substituted
 
 
-def expand_contractions(text: str, contractions=None) -> str:
+def expand_contractions(text: str, contractions=False) -> str:
     """Expand contractions in text.
 
     Args:
@@ -115,12 +131,14 @@ def expand_contractions(text: str, contractions=None) -> str:
         Text with contractions expanded.
     """
     if contractions is None:
+        contractions = False
+    if contractions is False:
         contractions = DEFAULT_CONTRACTIONS
     expanded = apply_substitutions(text, contractions)
     return expanded
 
 
-def apply_person(text: str, person_map=None) -> str:
+def apply_person(text: str, person_map=False) -> str:
     """Apply person substitution (I/me -> you).
 
     Args:
@@ -131,12 +149,14 @@ def apply_person(text: str, person_map=None) -> str:
         Text with person substitutions applied.
     """
     if person_map is None:
+        person_map = False
+    if person_map is False:
         person_map = DEFAULT_PERSON
     substituted = apply_substitutions(text, person_map)
     return substituted
 
 
-def apply_person2(text: str, person2_map=None) -> str:
+def apply_person2(text: str, person2_map=False) -> str:
     """Apply person2 substitution (you -> I/me).
 
     Args:
@@ -147,12 +167,14 @@ def apply_person2(text: str, person2_map=None) -> str:
         Text with person2 substitutions applied.
     """
     if person2_map is None:
+        person2_map = False
+    if person2_map is False:
         person2_map = DEFAULT_PERSON2
     substituted = apply_substitutions(text, person2_map)
     return substituted
 
 
-def apply_gender(text: str, gender_map=None) -> str:
+def apply_gender(text: str, gender_map=False) -> str:
     """Apply gender substitution (gendered pronouns -> singular they/them).
 
     Args:
@@ -163,6 +185,8 @@ def apply_gender(text: str, gender_map=None) -> str:
         Text with gender substitutions applied.
     """
     if gender_map is None:
+        gender_map = False
+    if gender_map is False:
         gender_map = DEFAULT_GENDER
     substituted = apply_substitutions(text, gender_map)
     return substituted

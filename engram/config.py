@@ -3,10 +3,10 @@
 Configurations are plain dicts built by the factory functions below.
 """
 
-import math
-import os
+from math import isfinite as math_isfinite
+from os import path as os_path
 
-import yaml
+from yaml import safe_load as yaml_safe_load
 
 from engram.constants import DEFAULT_STOPWORDS, EvictionPolicy, SessionOverflow
 
@@ -54,16 +54,16 @@ def graph_config(
     if not isinstance(vector_limit, int) or isinstance(vector_limit, bool) or not 1 <= vector_limit <= 1000:
         raise ValueError("graph vector_limit must be an integer from 1 through 1000")
     if (
-        not isinstance(vector_min_similarity, int | float)
+        not isinstance(vector_min_similarity, (int, float))
         or isinstance(vector_min_similarity, bool)
-        or not math.isfinite(vector_min_similarity)
+        or not math_isfinite(vector_min_similarity)
         or not 0.0 <= vector_min_similarity <= 1.0
     ):
         raise ValueError("graph vector_min_similarity must be between 0 and 1")
     if (
-        not isinstance(vector_weight, int | float)
+        not isinstance(vector_weight, (int, float))
         or isinstance(vector_weight, bool)
-        or not math.isfinite(vector_weight)
+        or not math_isfinite(vector_weight)
         or not 0.0 <= vector_weight <= 1.0
     ):
         raise ValueError("graph vector_weight must be between 0 and 1")
@@ -106,7 +106,7 @@ def engram_config(
     srai_depth_limit: int = 100,
     # Eviction settings
     eviction_policy: EvictionPolicy = EvictionPolicy.FIFO,
-    protect_static: bool | None = None,  # Legacy option; STATIC is always protected
+    protect_static=None,  # Legacy option; STATIC is always protected
     min_hit_rate: float = 0.0,  # Protect categories above this hit rate
     # Matching enhancements
     use_stemming: bool = True,  # Enable stemmed matching (run matches running)
@@ -120,7 +120,7 @@ def engram_config(
     # Output processing
     polish_responses: bool = True,  # Repair casing in pattern-path responses
     # Fallback response when no pattern matches
-    fallback_response: str = "",  # Empty means return None on no match
+    fallback_response: str = "",  # Empty means return an empty response on no match
     # Knowledge Graph settings
     graph=None,  # dict from graph_config(), or None for no graph
 ) -> dict:
@@ -133,11 +133,11 @@ def engram_config(
         raise ValueError("session_ttl_seconds must be positive")
 
     weights = (weight_base, weight_recency, weight_hit_rate)
-    if any(not math.isfinite(weight) or weight < 0 for weight in weights):
+    if any(not math_isfinite(weight) or weight < 0 for weight in weights):
         raise ValueError("scoring weights must be finite and non-negative")
     if sum(weights) <= 0:
         raise ValueError("scoring weights must sum to a positive value")
-    if not math.isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
+    if not math_isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
         raise ValueError("recency_half_life_seconds must be finite and positive")
     if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
         raise ValueError("srai_depth_limit must be an integer")
@@ -147,7 +147,7 @@ def engram_config(
         raise ValueError("max_synonyms_per_word must be an integer")
     if max_synonyms_per_word < 0:
         raise ValueError("max_synonyms_per_word must be non-negative")
-    if not math.isfinite(min_hit_rate) or not 0 <= min_hit_rate <= 1:
+    if not math_isfinite(min_hit_rate) or not 0 <= min_hit_rate <= 1:
         raise ValueError("min_hit_rate must be between 0 and 1")
     if protect_static is False:
         raise ValueError("static statements are always protected from eviction")
@@ -193,11 +193,11 @@ def config_to_dict(config: dict) -> dict:
     deliberately omitted so cache persistence cannot retain secrets.
     """
     data = dict(config)
-    data["eviction_policy"] = config["eviction_policy"].value
-    data["session_overflow"] = config["session_overflow"].value
-    data["stopwords"] = sorted(config["stopwords"])
-    if config.get("graph") is not None:
-        data["graph"] = {key: value for key, value in config["graph"].items() if key != "password"}
+    data["eviction_policy"] = config.get("eviction_policy", EvictionPolicy.FIFO).value
+    data["session_overflow"] = config.get("session_overflow", SessionOverflow.LRU).value
+    data["stopwords"] = sorted(config.get("stopwords", []))
+    if bool(config.get("graph", {})):
+        data["graph"] = {key: value for key, value in config.get("graph", {}).items() if key != "password"}
     return data
 
 
@@ -210,13 +210,13 @@ def config_from_dict(data: dict) -> dict:
     """
     params = dict(data)
     if "eviction_policy" in params:
-        params["eviction_policy"] = EvictionPolicy(params["eviction_policy"])
+        params["eviction_policy"] = EvictionPolicy(params.get("eviction_policy", False))
     if "session_overflow" in params:
-        params["session_overflow"] = SessionOverflow(params["session_overflow"])
+        params["session_overflow"] = SessionOverflow(params.get("session_overflow", False))
     if "stopwords" in params:
-        params["stopwords"] = set(params["stopwords"])
-    if params.get("graph"):
-        params["graph"] = graph_config(**params["graph"])
+        params["stopwords"] = set(params.get("stopwords", set()))
+    if params.get("graph", {}):
+        params["graph"] = graph_config(**params.get("graph", {}))
     config = engram_config(**params)
     return config
 
@@ -236,21 +236,21 @@ def load_config(path: str = "config.yml") -> dict:
     Returns:
         A validated config dict.
     """
-    if not os.path.exists(path):
+    if not os_path.exists(path):
         config = engram_config()
         return config
 
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml_safe_load(f)
     if not data:
         config = engram_config()
         return config
 
     if "eviction_policy" in data:
-        data["eviction_policy"] = EvictionPolicy(data["eviction_policy"])
+        data["eviction_policy"] = EvictionPolicy(data.get("eviction_policy", False))
     if "session_overflow" in data:
-        data["session_overflow"] = SessionOverflow(data["session_overflow"])
-    if "graph" in data and data["graph"]:
+        data["session_overflow"] = SessionOverflow(data.get("session_overflow", False))
+    if "graph" in data and data.get("graph", {}):
         graph_keys = {
             "host",
             "port",
@@ -266,13 +266,13 @@ def load_config(path: str = "config.yml") -> dict:
             "vector_min_similarity",
             "vector_weight",
         }
-        unknown_graph = set(data["graph"]) - graph_keys
+        unknown_graph = set(data.get("graph", set())) - graph_keys
         if unknown_graph:
             raise ValueError(
                 f"Unknown graph config key(s) in {path}: {', '.join(sorted(unknown_graph))} "
                 f"(expected: {', '.join(sorted(graph_keys))})"
             )
-        data["graph"] = graph_config(**data["graph"])
+        data["graph"] = graph_config(**data.get("graph", {}))
 
     try:
         config = engram_config(**data)

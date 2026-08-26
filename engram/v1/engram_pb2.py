@@ -4,61 +4,105 @@
 # source: engram/v1/engram.proto
 # Protobuf Python Version: 7.35.1
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 from google.protobuf import runtime_version as _runtime_version
+from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-_runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    7,
-    35,
-    1,
-    '',
-    'engram/v1/engram.proto'
-)
+
+_PROTO_DEPENDENCIES = (google_dot_protobuf_dot_empty__pb2, google_dot_protobuf_dot_struct__pb2)
+
+_runtime_version.ValidateProtobufRuntimeVersion(_runtime_version.Domain.PUBLIC, 7, 35, 1, "", "engram/v1/engram.proto")
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
-
-from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
-
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16\x65ngram/v1/engram.proto\x12\tengram.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\"o\n\x18StartConversationRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x18\n\x10initial_bot_text\x18\x02 \x01(\t\x12\x18\n\x0brandom_seed\x18\x03 \x01(\x03H\x00\x88\x01\x01\x42\x0e\n\x0c_random_seed\",\n\x0b\x43hatRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\"\x1e\n\x0bUserRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\"4\n\x0e\x41\x64\x64\x46\x61\x63tRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x14\n\x0csource_label\x18\x02 \x01(\t\"C\n\x13SetPredicateRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"K\n\x13GetPredicateRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x15\n\rdefault_value\x18\x03 \x01(\t\"\"\n\x11PredicateResponse\x12\r\n\x05value\x18\x01 \x01(\t\"\xe7\x01\n\x0eProposeRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07user_id\x18\x03 \x01(\t\x12\x11\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13\x63ontext_fingerprint\x18\x05 \x01(\t\x12\x12\n\x05limit\x18\x06 \x01(\x05H\x00\x88\x01\x01\x12\x32\n\x11required_metadata\x18\x07 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x1d\n\x15required_source_label\x18\x08 \x01(\tB\x08\n\x06_limit\"y\n\x0eResolveRequest\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12,\n\x07outcome\x18\x02 \x01(\x0e\x32\x1b.engram.v1.RegulatorOutcome\x12\x14\n\x0cstatement_id\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\"\xcf\x01\n\x14LearnResponseRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x10\n\x08response\x18\x02 \x01(\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t\x12\x0f\n\x07user_id\x18\x04 \x01(\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x1b\n\x13\x63ontext_fingerprint\x18\x06 \x01(\t\x12\x14\n\x0csource_label\x18\x07 \x01(\t\x12)\n\x08metadata\x18\x08 \x01(\x0b\x32\x17.google.protobuf.Struct\"Q\n\x15RetireResponseRequest\x12\x14\n\x0cstatement_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t\"\"\n\rFlushResponse\x12\x11\n\tpersisted\x18\x01 \x01(\x08*\xf2\x01\n\x10RegulatorOutcome\x12!\n\x1dREGULATOR_OUTCOME_UNSPECIFIED\x10\x00\x12\x1e\n\x1aREGULATOR_OUTCOME_ACCEPTED\x10\x01\x12&\n\"REGULATOR_OUTCOME_REJECTED_QUALITY\x10\x02\x12&\n\"REGULATOR_OUTCOME_REJECTED_CONTEXT\x10\x03\x12$\n REGULATOR_OUTCOME_REJECTED_STALE\x10\x04\x12%\n!REGULATOR_OUTCOME_REJECTED_POLICY\x10\x05\x32\xd9\x07\n\rEngramService\x12Q\n\x11StartConversation\x12#.engram.v1.StartConversationRequest\x1a\x17.google.protobuf.Struct\x12\x37\n\x04\x43hat\x12\x16.engram.v1.ChatRequest\x1a\x17.google.protobuf.Struct\x12\x46\n\x13InspectConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protobuf.Struct\x12\x45\n\x12\x46inishConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protobuf.Struct\x12\x43\n\x10StopConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protobuf.Struct\x12=\n\x07\x41\x64\x64\x46\x61\x63t\x12\x19.engram.v1.AddFactRequest\x1a\x17.google.protobuf.Struct\x12L\n\x0cSetPredicate\x12\x1e.engram.v1.SetPredicateRequest\x1a\x1c.engram.v1.PredicateResponse\x12L\n\x0cGetPredicate\x12\x1e.engram.v1.GetPredicateRequest\x1a\x1c.engram.v1.PredicateResponse\x12=\n\x07Propose\x12\x19.engram.v1.ProposeRequest\x1a\x17.google.protobuf.Struct\x12=\n\x07Resolve\x12\x19.engram.v1.ResolveRequest\x1a\x17.google.protobuf.Struct\x12I\n\rLearnResponse\x12\x1f.engram.v1.LearnResponseRequest\x1a\x17.google.protobuf.Struct\x12K\n\x0eRetireResponse\x12 .engram.v1.RetireResponseRequest\x1a\x17.google.protobuf.Struct\x12<\n\tGetStatus\x12\x16.google.protobuf.Empty\x1a\x17.google.protobuf.Struct\x12\x39\n\x05\x46lush\x12\x16.google.protobuf.Empty\x1a\x18.engram.v1.FlushResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    (
+        b"\n\x16engram/v1/engram.proto\x12\tengram.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf"
+        b'/struct.proto"o\n\x18StartConversationRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x18\n\x10initi'
+        b"al_bot_text\x18\x02 \x01(\t\x12\x18\n\x0brandom_seed\x18\x03 \x01(\x03H\x00\x88\x01\x01B\x0e\n\x0c_ra"
+        b'ndom_seed",\n\x0bChatRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t"'
+        b'\x1e\n\x0bUserRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t"4\n\x0eAddFactRequest\x12\x0c\n\x04text'
+        b'\x18\x01 \x01(\t\x12\x14\n\x0csource_label\x18\x02 \x01(\t"C\n\x13SetPredicateRequest\x12\x0f\n\x07us'
+        b'er_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t"K\n\x13GetPr'
+        b"edicateRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x15\n\rdefa"
+        b'ult_value\x18\x03 \x01(\t""\n\x11PredicateResponse\x12\r\n\x05value\x18\x01 \x01(\t"\xe7\x01\n\x0ePro'
+        b"poseRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07u"
+        b"ser_id\x18\x03 \x01(\t\x12\x11\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13context_fingerprint\x18\x05 "
+        b"\x01(\t\x12\x12\n\x05limit\x18\x06 \x01(\x05H\x00\x88\x01\x01\x122\n\x11required_metadata\x18\x07 "
+        b"\x01(\x0b2\x17.google.protobuf.Struct\x12\x1d\n\x15required_source_label\x18\x08 \x01(\tB\x08\n\x06_l"
+        b'imit"y\n\x0eResolveRequest\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12,\n\x07outcome\x18\x02 \x01('
+        b"\x0e2\x1b.engram.v1.RegulatorOutcome\x12\x14\n\x0cstatement_id\x18\x03 \x01(\t\x12\x0e\n\x06reason"
+        b'\x18\x04 \x01(\t"\xcf\x01\n\x14LearnResponseRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x10\n'
+        b"\x08response\x18\x02 \x01(\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t\x12\x0f\n\x07user_id\x18\x04 \x01("
+        b"\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x1b\n\x13context_fingerprint\x18\x06 \x01(\t\x12\x14\n"
+        b'\x0csource_label\x18\x07 \x01(\t\x12)\n\x08metadata\x18\x08 \x01(\x0b2\x17.google.protobuf.Struct"Q\n'
+        b"\x15RetireResponseRequest\x12\x14\n\x0cstatement_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01("
+        b'\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t""\n\rFlushResponse\x12\x11\n\tpersisted\x18\x01 \x01(\x08*'
+        b"\xf2\x01\n\x10RegulatorOutcome\x12!\n\x1dREGULATOR_OUTCOME_UNSPECIFIED\x10\x00\x12\x1e\n\x1aREGULATOR"
+        b'_OUTCOME_ACCEPTED\x10\x01\x12&\n"REGULATOR_OUTCOME_REJECTED_QUALITY\x10\x02\x12&\n"REGULATOR_OUTCOME_'
+        b"REJECTED_CONTEXT\x10\x03\x12$\n REGULATOR_OUTCOME_REJECTED_STALE\x10\x04\x12%\n!REGULATOR_OUTCOME_REJ"
+        b"ECTED_POLICY\x10\x052\xd9\x07\n\rEngramService\x12Q\n\x11StartConversation\x12#.engram.v1.StartConver"
+        b"sationRequest\x1a\x17.google.protobuf.Struct\x127\n\x04Chat\x12\x16.engram.v1.ChatRequest\x1a\x17.goo"
+        b"gle.protobuf.Struct\x12F\n\x13InspectConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protob"
+        b"uf.Struct\x12E\n\x12FinishConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protobuf.Struct"
+        b"\x12C\n\x10StopConversation\x12\x16.engram.v1.UserRequest\x1a\x17.google.protobuf.Struct\x12=\n\x07Ad"
+        b"dFact\x12\x19.engram.v1.AddFactRequest\x1a\x17.google.protobuf.Struct\x12L\n\x0cSetPredicate\x12\x1e."
+        b"engram.v1.SetPredicateRequest\x1a\x1c.engram.v1.PredicateResponse\x12L\n\x0cGetPredicate\x12\x1e.engr"
+        b"am.v1.GetPredicateRequest\x1a\x1c.engram.v1.PredicateResponse\x12=\n\x07Propose\x12\x19.engram.v1.Pro"
+        b"poseRequest\x1a\x17.google.protobuf.Struct\x12=\n\x07Resolve\x12\x19.engram.v1.ResolveRequest\x1a\x17"
+        b".google.protobuf.Struct\x12I\n\rLearnResponse\x12\x1f.engram.v1.LearnResponseRequest\x1a\x17.google.p"
+        b"rotobuf.Struct\x12K\n\x0eRetireResponse\x12 .engram.v1.RetireResponseRequest\x1a\x17.google.protobuf."
+        b"Struct\x12<\n\tGetStatus\x12\x16.google.protobuf.Empty\x1a\x17.google.protobuf.Struct\x129\n\x05Flush"
+        b"\x12\x16.google.protobuf.Empty\x1a\x18.engram.v1.FlushResponseb\x06proto3"
+    )
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'engram.v1.engram_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "engram.v1.engram_pb2", _globals)
+
+
+class _MissingDescriptor:
+    """Stable null object for an unexpectedly absent generated descriptor."""
+
+    _serialized_start = 0
+    _serialized_end = 0
+
+
+_MISSING_DESCRIPTOR = _MissingDescriptor()
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_REGULATOROUTCOME']._serialized_start=1210
-  _globals['_REGULATOROUTCOME']._serialized_end=1452
-  _globals['_STARTCONVERSATIONREQUEST']._serialized_start=96
-  _globals['_STARTCONVERSATIONREQUEST']._serialized_end=207
-  _globals['_CHATREQUEST']._serialized_start=209
-  _globals['_CHATREQUEST']._serialized_end=253
-  _globals['_USERREQUEST']._serialized_start=255
-  _globals['_USERREQUEST']._serialized_end=285
-  _globals['_ADDFACTREQUEST']._serialized_start=287
-  _globals['_ADDFACTREQUEST']._serialized_end=339
-  _globals['_SETPREDICATEREQUEST']._serialized_start=341
-  _globals['_SETPREDICATEREQUEST']._serialized_end=408
-  _globals['_GETPREDICATEREQUEST']._serialized_start=410
-  _globals['_GETPREDICATEREQUEST']._serialized_end=485
-  _globals['_PREDICATERESPONSE']._serialized_start=487
-  _globals['_PREDICATERESPONSE']._serialized_end=521
-  _globals['_PROPOSEREQUEST']._serialized_start=524
-  _globals['_PROPOSEREQUEST']._serialized_end=755
-  _globals['_RESOLVEREQUEST']._serialized_start=757
-  _globals['_RESOLVEREQUEST']._serialized_end=878
-  _globals['_LEARNRESPONSEREQUEST']._serialized_start=881
-  _globals['_LEARNRESPONSEREQUEST']._serialized_end=1088
-  _globals['_RETIRERESPONSEREQUEST']._serialized_start=1090
-  _globals['_RETIRERESPONSEREQUEST']._serialized_end=1171
-  _globals['_FLUSHRESPONSE']._serialized_start=1173
-  _globals['_FLUSHRESPONSE']._serialized_end=1207
-  _globals['_ENGRAMSERVICE']._serialized_start=1455
-  _globals['_ENGRAMSERVICE']._serialized_end=2440
+    DESCRIPTOR._loaded_options = {}
+    _globals.get("_REGULATOROUTCOME", _MISSING_DESCRIPTOR)._serialized_start = 1210
+    _globals.get("_REGULATOROUTCOME", _MISSING_DESCRIPTOR)._serialized_end = 1452
+    _globals.get("_STARTCONVERSATIONREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 96
+    _globals.get("_STARTCONVERSATIONREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 207
+    _globals.get("_CHATREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 209
+    _globals.get("_CHATREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 253
+    _globals.get("_USERREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 255
+    _globals.get("_USERREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 285
+    _globals.get("_ADDFACTREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 287
+    _globals.get("_ADDFACTREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 339
+    _globals.get("_SETPREDICATEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 341
+    _globals.get("_SETPREDICATEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 408
+    _globals.get("_GETPREDICATEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 410
+    _globals.get("_GETPREDICATEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 485
+    _globals.get("_PREDICATERESPONSE", _MISSING_DESCRIPTOR)._serialized_start = 487
+    _globals.get("_PREDICATERESPONSE", _MISSING_DESCRIPTOR)._serialized_end = 521
+    _globals.get("_PROPOSEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 524
+    _globals.get("_PROPOSEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 755
+    _globals.get("_RESOLVEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 757
+    _globals.get("_RESOLVEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 878
+    _globals.get("_LEARNRESPONSEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 881
+    _globals.get("_LEARNRESPONSEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 1088
+    _globals.get("_RETIRERESPONSEREQUEST", _MISSING_DESCRIPTOR)._serialized_start = 1090
+    _globals.get("_RETIRERESPONSEREQUEST", _MISSING_DESCRIPTOR)._serialized_end = 1171
+    _globals.get("_FLUSHRESPONSE", _MISSING_DESCRIPTOR)._serialized_start = 1173
+    _globals.get("_FLUSHRESPONSE", _MISSING_DESCRIPTOR)._serialized_end = 1207
+    _globals.get("_ENGRAMSERVICE", _MISSING_DESCRIPTOR)._serialized_start = 1455
+    _globals.get("_ENGRAMSERVICE", _MISSING_DESCRIPTOR)._serialized_end = 2440
 # @@protoc_insertion_point(module_scope)

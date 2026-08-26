@@ -57,7 +57,8 @@ _frame_cache: dict[str, str] = {}
 
 def deslug(predicate: str) -> str:
     """Turn a canonical slug into its surface label (``located_in`` -> ``located in``)."""
-    return predicate.replace("_", " ").strip()
+    _return_value = predicate.replace("_", " ").strip()
+    return _return_value
 
 
 def frame_for_label(label: str) -> str:
@@ -69,40 +70,49 @@ def frame_for_label(label: str) -> str:
     nlp = get_nlp(disable=("parser", "ner"))
     normalized = label.lower().strip()
     if not nlp:
-        return "{s} " + label + " {o}"
+        _return_value = "{s} " + label + " {o}"
+        return _return_value
 
     doc = nlp(normalized)
     head = doc[0]
     ends_prep = doc[-1].pos_ == "ADP"
-    verb_form = head.morph.get("VerbForm")
+    verb_form = head.morph.get("VerbForm", False)
 
     if normalized.endswith(" by"):
-        return "{s} was " + label + " {o}"
+        _return_value = "{s} was " + label + " {o}"
+        return _return_value
 
     if verb_form == ["Fin"]:
-        return "{s} " + label + " {o}"
+        _return_value = "{s} " + label + " {o}"
+        return _return_value
 
     if verb_form == ["Part"]:
         # A participle behind a preposition is stative (`located in`); a
         # bare participle is a past-tense active verb (`created`).
         if ends_prep:
-            return "{s} is " + label + " {o}"
-        return "{s} " + label + " {o}"
+            _return_value = "{s} is " + label + " {o}"
+            return _return_value
+        _return_value = "{s} " + label + " {o}"
+        return _return_value
 
     if verb_form == ["Inf"]:
         # spaCy reads a bare standalone noun (`genre`) as a base-form verb;
         # in this vocabulary those are noun roles.
-        return "{s}'s " + label + " is {o}"
+        _return_value = "{s}'s " + label + " is {o}"
+        return _return_value
 
     if head.pos_ in ("NOUN", "PROPN", "ADJ"):
         if ends_prep:
             article = ""
             if head.pos_ in ("NOUN", "PROPN"):
                 article = "an " if normalized[:1] in VOWELS else "a "
-            return "{s} is " + article + label + " {o}"
-        return "{s}'s " + label + " is {o}"
+            _return_value = "{s} is " + article + label + " {o}"
+            return _return_value
+        _return_value = "{s}'s " + label + " is {o}"
+        return _return_value
 
-    return "{s} " + label + " {o}"
+    _return_value = "{s} " + label + " {o}"
+    return _return_value
 
 
 def frame_for_predicate(predicate: str) -> str:
@@ -122,7 +132,8 @@ def phrase_fact(subject: str, predicate: str, obj: str) -> str:
     if not (subject and predicate and obj):
         return ""
     frame = frame_for_predicate(predicate)
-    return frame.format(s=subject, o=obj) + "."
+    _return_value = frame.format(s=subject, o=obj) + "."
+    return _return_value
 
 
 def phrase_facts(facts: list) -> str:
@@ -132,4 +143,5 @@ def phrase_facts(facts: list) -> str:
         sentence = phrase_fact(subject, predicate, obj)
         if sentence:
             sentences.append(sentence)
-    return " ".join(sentences)
+    _return_value = " ".join(sentences)
+    return _return_value

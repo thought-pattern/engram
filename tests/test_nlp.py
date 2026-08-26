@@ -1,7 +1,10 @@
 """Tests for NLP fact extraction."""
 
 from engram.config import engram_config
-from engram.nlp import extract_fact, extracted_fact, fact_query_patterns
+from engram.constants import LEARNED_ACKNOWLEDGMENTS
+from engram.core import Engram
+from engram.models import Tier
+from engram.nlp import extract_fact, extracted_fact, fact_query_patterns, input_kind, is_question
 
 
 class TestFactExtractor:
@@ -11,49 +14,56 @@ class TestFactExtractor:
         """Test extracting 'X is Y' facts."""
         fact = extract_fact("The sky is blue")
         assert fact
-        assert fact["subject"] == "sky"
-        assert fact["predicate"] == "is"
-        assert fact["obj"] == "blue"
-        assert fact["original"] == "The sky is blue."
+        assert fact.get("subject", "") == "sky"
+        assert fact.get("predicate", "") == "is"
+        assert fact.get("obj", "") == "blue"
+        assert fact.get("original", "") == "The sky is blue."
+        return False
 
     def test_extract_simple_are(self):
         """Test extracting 'X are Y' facts."""
         fact = extract_fact("Cats are mammals")
         assert fact
-        assert fact["subject"] == "Cats"
-        assert fact["predicate"] == "are"
-        assert fact["obj"] == "mammals"
+        assert fact.get("subject", "") == "Cats"
+        assert fact.get("predicate", "") == "are"
+        assert fact.get("obj", "") == "mammals"
+        return False
 
     def test_extract_complex_subject(self):
         """Test extracting facts with complex subjects."""
         fact = extract_fact("The capital of France is Paris")
         assert fact
-        assert fact["subject"] == "capital of France"
-        assert fact["obj"] == "Paris"
+        assert fact.get("subject", "") == "capital of France"
+        assert fact.get("obj", "") == "Paris"
+        return False
 
     def test_skip_questions(self):
         """Test that questions are not extracted as facts."""
         assert not extract_fact("What is the sky?")
         assert not extract_fact("Is the sky blue?")
         assert not extract_fact("Who is Einstein?")
+        return False
 
     def test_skip_commands(self):
         """Test that commands are not extracted as facts."""
         assert not extract_fact("Learn that cats are mammals")
         assert not extract_fact("Remember the sky is blue")
         assert not extract_fact("Tell me about cats")
+        return False
 
     def test_skip_pronouns(self):
         """Test that pronoun subjects are skipped."""
         assert not extract_fact("I am happy")
         assert not extract_fact("He is tall")
         assert not extract_fact("They are ready")
+        return False
 
     def test_skip_short_input(self):
         """Test that very short input is skipped."""
         assert not extract_fact("is blue")
         assert not extract_fact("cats")
         assert not extract_fact("")
+        return False
 
     def test_query_patterns_is(self):
         """Test query pattern generation for 'is' facts."""
@@ -68,6 +78,7 @@ class TestFactExtractor:
         assert "WHAT DO YOU REMEMBER ABOUT SKY" in patterns
         assert "WHAT DID I SAY ABOUT SKY" in patterns
         assert "DO YOU REMEMBER SKY" in patterns
+        return False
 
     def test_query_patterns_are(self):
         """Test query pattern generation for 'are' facts."""
@@ -77,6 +88,7 @@ class TestFactExtractor:
         assert "WHAT ARE CATS" in patterns
         assert "WHAT ARE THE CATS" in patterns
         assert "WHAT IS MAMMALS" in patterns
+        return False
 
 
 class TestFactLearningIntegration:
@@ -84,8 +96,6 @@ class TestFactLearningIntegration:
 
     def test_learn_and_retrieve_fact(self):
         """Test that learned facts can be retrieved."""
-        from engram.core import Engram
-        from engram.models import Tier
 
         engram = Engram(config=engram_config(learn_user_facts=True))
         # Add catch-all pattern for learning to work
@@ -96,7 +106,6 @@ class TestFactLearningIntegration:
         # Should acknowledge learning (via catch-all with learning)
         assert result1
         stmt, captured, response = result1
-        from engram.constants import LEARNED_ACKNOWLEDGMENTS
 
         assert response in LEARNED_ACKNOWLEDGMENTS  # Acknowledgment
 
@@ -105,11 +114,10 @@ class TestFactLearningIntegration:
         assert result2
         stmt, captured, response = result2
         assert response == "Dogs are loyal."
+        return False
 
     def test_learn_and_retrieve_with_article(self):
         """Test facts with articles."""
-        from engram.core import Engram
-        from engram.models import Tier
 
         engram = Engram(config=engram_config(learn_user_facts=True))
         # Add catch-all pattern for learning to work
@@ -123,11 +131,10 @@ class TestFactLearningIntegration:
         assert result
         stmt, captured, response = result
         assert response == "The moon is bright."
+        return False
 
     def test_no_overwrite_existing(self):
         """Test that existing patterns are not overwritten."""
-        from engram.core import Engram
-        from engram.models import Tier
 
         engram = Engram()
         # Add catch-all pattern
@@ -144,6 +151,7 @@ class TestFactLearningIntegration:
         assert result
         stmt, captured, response = result
         assert response == "Custom response"
+        return False
 
 
 class TestFactExtractionGuardrails:
@@ -154,69 +162,67 @@ class TestFactExtractionGuardrails:
         # store a junk fact with an unusable retrieval pattern.
         assert not extract_fact("Your sentiment analysis should inform that tired is not nice.")
         assert not extract_fact("The report we wrote is finished")
+        return False
 
     def test_reject_possessive_led_subject(self):
         assert not extract_fact("My dog is friendly")
         assert not extract_fact("Your car is fast")
+        return False
 
     def test_reject_long_subject(self):
         assert not extract_fact("The old lighthouse keeper of the northern coast is retired")
+        return False
 
     def test_accept_plain_noun_phrase_subjects(self):
         fact = extract_fact("The capital of France is Paris")
-        assert fact["subject"] == "capital of France"
+        assert fact.get("subject", "") == "capital of France"
         fact = extract_fact("The sky is blue")
-        assert fact["subject"] == "sky"
+        assert fact.get("subject", "") == "sky"
+        return False
 
     def test_accept_single_noun_like_ing_subject(self):
         fact = extract_fact("Lightning is an electrical discharge")
 
-        assert fact["subject"] == "Lightning"
-        assert fact["predicate"] == "is"
-        assert fact["obj"] == "an electrical discharge"
+        assert fact.get("subject", "") == "Lightning"
+        assert fact.get("predicate", "") == "is"
+        assert fact.get("obj", "") == "an electrical discharge"
+        return False
 
 
 class TestQuestionDetection:
     """Tests for the public question/intent detection."""
 
     def test_trailing_question_mark(self):
-        from engram.nlp import is_question
-
         assert is_question("This works?")
+        return False
 
     def test_question_word_lead(self):
-        from engram.nlp import is_question
-
         assert is_question("what do you think about python")
+        return False
 
     def test_inverted_copula(self):
-        from engram.nlp import is_question
-
         assert is_question("Is it working")
+        return False
 
     def test_statement_is_not_question(self):
-        from engram.nlp import is_question
-
         assert not is_question("The sky is blue")
+        return False
 
 
 class TestInputKind:
     """Tests for input intent classification."""
 
     def test_question(self):
-        from engram.nlp import input_kind
-
         assert input_kind("Where is my hat?") == "question"
+        return False
 
     def test_command(self):
-        from engram.nlp import input_kind
-
         assert input_kind("tell me a story") == "command"
+        return False
 
     def test_statement(self):
-        from engram.nlp import input_kind
-
         assert input_kind("I lost my hat yesterday") == "statement"
+        return False
 
 
 class TestFactExtractionSoakRegressions:
@@ -226,44 +232,49 @@ class TestFactExtractionSoakRegressions:
         # "y'all" expands to "you all"; "lol that" carries a demonstrative.
         assert not extract_fact("you all are pretty helpful")
         assert not extract_fact("lol that was funny")
+        return False
 
     def test_reject_demonstrative_subject(self):
         assert not extract_fact("That is not true at all")
+        return False
 
     def test_reject_possessive_anywhere_in_subject(self):
         assert not extract_fact("sorry my typing is terrible today")
+        return False
 
     def test_reject_possessive_object(self):
         # A typo'd question word reads as a statement; the possessive object
         # ("your name") marks it as a personal exchange, not a world fact.
         assert not extract_fact("waht is your name")
         assert not extract_fact("The password is my birthday")
+        return False
 
     def test_legitimate_facts_still_learn(self):
-        assert extract_fact("Honey is made by bees")["subject"] == "Honey"
-        assert extract_fact("Rex is a golden retriever")["subject"] == "Rex"
+        assert extract_fact("Honey is made by bees").get("subject", "") == "Honey"
+        assert extract_fact("Rex is a golden retriever").get("subject", "") == "Rex"
+        return False
 
 
 class TestTypoQuestionDetection:
     """A leading near-miss of a question word is a typo'd question."""
 
     def test_typo_question_words_detected(self):
-        from engram.nlp import is_question
-
         assert is_question("waht is the ocean")
         assert is_question("whta is gravity")
         assert is_question("waht is your name")
+        return False
 
     def test_real_words_near_question_words_unaffected(self):
-        from engram.nlp import is_question
-
         # "hat" and "cow" are one edit from question words but are real words.
         assert not is_question("hat is my favorite word")
         assert not is_question("cow tipping is not real")
+        return False
 
     def test_typo_questions_never_learned_as_facts(self):
         assert not extract_fact("waht is the ocean")
         assert not extract_fact("whta is gravity")
+        return False
 
     def test_real_word_subjects_still_learn(self):
-        assert extract_fact("The cow is a farm animal")["subject"] == "cow"
+        assert extract_fact("The cow is a farm animal").get("subject", "") == "cow"
+        return False

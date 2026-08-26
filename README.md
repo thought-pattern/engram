@@ -851,7 +851,7 @@ arbitrary procedure calls or return arbitrary KG content as cached answers.
 The former `<triple_add>`, `<graph_write>`, and `<graph_delete>` operations
 are not supported.
 
-`schema.cypher` defines the recall-relevant Schema 3.3 subset Engram requires,
+`schema.cypher` defines the recall-relevant Schema 4.3 subset Engram requires,
 including canonical semantic identity, Claim trust/ownership classification,
 and half-open valid/system-time fields. A larger store may add Passage,
 Document, Event, Proof, Source, and Inquiry nodes or vector indexes; Engram does

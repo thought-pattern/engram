@@ -7,8 +7,9 @@ import graph: every other ENGRAM module may import from it without risk of a
 cycle.
 """
 
-import os
+from datetime import UTC, datetime
 from enum import Enum
+from os import path as os_path
 
 # =============================================================================
 # Package metadata
@@ -19,6 +20,7 @@ from enum import Enum
 # place, and core.py exposes it as the bot's ``version`` property.
 VERSION = "1.1.11"
 DEFAULT_USER_ID = "0"
+NULL_DATETIME = datetime.min.replace(tzinfo=UTC)
 
 # =============================================================================
 # Enumerations
@@ -54,9 +56,9 @@ class Tier(Enum):
 # =============================================================================
 
 # Local data directory: <repo root>/data/nltk_data
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_THIS_DIR)
-NLTK_DATA_DIR = os.path.join(_REPO_ROOT, "data", "nltk_data")
+_THIS_DIR = os_path.dirname(os_path.abspath(__file__))
+_REPO_ROOT = os_path.dirname(_THIS_DIR)
+NLTK_DATA_DIR = os_path.join(_REPO_ROOT, "data", "nltk_data")
 
 # Required packages as (find_path, download_name) pairs. find_path is what
 # nltk.data.find expects; download_name is what nltk.download expects.

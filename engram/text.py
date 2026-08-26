@@ -1,7 +1,7 @@
 """Text processing for ENGRAM."""
 
-import re
 from functools import lru_cache
+from re import UNICODE as re_UNICODE, finditer as re_finditer, sub as re_sub
 
 from nltk.corpus import wordnet, words
 from nltk.metrics.distance import edit_distance
@@ -53,7 +53,7 @@ def normalize(text: str) -> str:
     # Remove punctuation except intra-word hyphens
     # First, protect intra-word hyphens by replacing word-hyphen-word with placeholder
     placeholder = "\x00"
-    result = re.sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
+    result = re_sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
 
     # Remove all non-alphanumeric except spaces and placeholder
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
@@ -62,7 +62,7 @@ def normalize(text: str) -> str:
     result = result.replace(placeholder, "-")
 
     # Collapse whitespace to single spaces
-    result = re.sub(r"\s+", " ", result)
+    result = re_sub(r"\s+", " ", result)
 
     # Trim
     trimmed = result.strip()
@@ -80,7 +80,7 @@ def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
     if not captures or not source_text:
         return captures
 
-    source_matches = list(re.finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re.UNICODE))
+    source_matches = list(re_finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re_UNICODE))
     source_words = [normalize(match.group(0)) for match in source_matches]
     restored: list[str] = []
     search_start = 0
@@ -198,10 +198,11 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     seen: set[str] = set()
     keywords: list = []
 
-    def add(word: str) -> None:
+    def add(word: str) -> bool:
         if word and word not in stopwords and word not in seen:
             seen.add(word)
             keywords.append(word)
+        return False
 
     # Single content-word lemmas (nouns, verbs, adjectives, adverbs).
     for token in doc:
@@ -218,11 +219,12 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
 
 
 @lru_cache(maxsize=1)
-def _ensure_tagger() -> None:
+def _ensure_tagger() -> bool:
     """Ensure the POS tagger data is available, fetching into the local data dir."""
 
     ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
     ensure_resource("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
+    return False
 
 
 def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
@@ -639,11 +641,12 @@ def extract_name(text: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _ensure_wordnet() -> None:
+def _ensure_wordnet() -> bool:
     """Ensure WordNet data is available, fetching into the local data dir."""
 
     ensure_resource("corpora/wordnet", "wordnet")
     ensure_resource("corpora/omw-1.4", "omw-1.4")
+    return False
 
 
 @lru_cache(maxsize=4096)

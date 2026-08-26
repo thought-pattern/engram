@@ -25,11 +25,20 @@ Stemming support:
     "running" to match "run", "cats" to match "cat", etc.
 """
 
-import re
 from functools import lru_cache
+from re import (
+    IGNORECASE as re_IGNORECASE,
+    Match as re_Match,
+    Pattern as re_Pattern,
+    compile as re_compile,
+    escape as re_escape,
+    sub as re_sub,
+)
 
 from engram.constants import THAT_PRIORITY, TOPIC_PRIORITY, WILDCARD_TOKENS
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
+
+_NEVER_MATCH_PATTERN = re_compile(r"(?!)")
 
 
 def match_result(
@@ -37,17 +46,21 @@ def match_result(
     pattern: str,
     score: int,  # Higher = more specific match
     captured: list[str],  # Text captured by wildcards
-    thatstars=None,  # Captures from that pattern
-    topicstars=None,  # Captures from topic pattern
+    thatstars=False,  # Captures from that pattern
+    topicstars=False,  # Captures from topic pattern
 ) -> dict:
     """Build a pattern-match result dict."""
+    if thatstars is None:
+        thatstars = False
+    if topicstars is None:
+        topicstars = False
     result = {
         "matched": matched,
         "pattern": pattern,
         "score": score,
         "captured": captured,
-        "thatstars": thatstars if thatstars is not None else [],
-        "topicstars": topicstars if topicstars is not None else [],
+        "thatstars": thatstars if thatstars is not False else [],
+        "topicstars": topicstars if topicstars is not False else [],
     }
     return result
 
@@ -64,19 +77,19 @@ def normalize_pattern(pattern: str) -> str:
     """
     # Preserve {set:name} and {bot:name} tokens BEFORE lowercasing
 
-    set_pattern = re.compile(r"\{set:(\w+)\}", re.IGNORECASE)
-    bot_pattern = re.compile(r"\{bot:(\w+)\}", re.IGNORECASE)
+    set_pattern = re_compile(r"\{set:(\w+)\}", re_IGNORECASE)
+    bot_pattern = re_compile(r"\{bot:(\w+)\}", re_IGNORECASE)
 
     # Store set/bot references and replace with placeholders
     set_refs: list[str] = []
     bot_refs: list[str] = []
 
-    def save_set(m: re.Match) -> str:
+    def save_set(m: re_Match) -> str:
         set_refs.append(m.group(1).lower())  # Store lowercase name
         placeholder = f"\x05{len(set_refs) - 1}\x05"
         return placeholder
 
-    def save_bot(m: re.Match) -> str:
+    def save_bot(m: re_Match) -> str:
         bot_refs.append(m.group(1).lower())  # Store lowercase name
         placeholder = f"\x06{len(bot_refs) - 1}\x06"
         return placeholder
@@ -93,7 +106,7 @@ def normalize_pattern(pattern: str) -> str:
 
     # Preserve $ prefix by replacing $word with placeholder
     # \x07 is placeholder for $
-    result = re.sub(r"\$(\w)", lambda m: "\x07" + m.group(1), result)
+    result = re_sub(r"\$(\w)", lambda m: "\x07" + m.group(1), result)
 
     # Remove punctuation (but keep placeholders and digits for index)
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c in "\x01\x02\x03\x04\x05\x06\x07")
@@ -118,9 +131,9 @@ def normalize_pattern(pattern: str) -> str:
 
 def pattern_to_regex(
     pattern: str,
-    sets=None,
-    bot_properties=None,
-) -> tuple[re.Pattern, int]:
+    sets=False,
+    bot_properties=False,
+) -> tuple[re_Pattern, int]:
     """Convert AIML-style pattern to regex.
 
     Args:
@@ -137,7 +150,7 @@ def pattern_to_regex(
 
     if not words:
         # Empty pattern matches nothing
-        empty_regex = re.compile(r"^$")
+        empty_regex = re_compile(r"^$")
         empty_result = (empty_regex, 0)
         return empty_result
 
@@ -147,8 +160,8 @@ def pattern_to_regex(
     can_be_empty = []
 
     # Regex to detect {set:name} and {bot:name}
-    set_ref_pattern = re.compile(r"^\{set:(\w+)\}$")
-    bot_ref_pattern = re.compile(r"^\{bot:(\w+)\}$")
+    set_ref_pattern = re_compile(r"^\{set:(\w+)\}$")
+    bot_ref_pattern = re_compile(r"^\{bot:(\w+)\}$")
 
     for word in words:
         if word == "^":
@@ -178,7 +191,7 @@ def pattern_to_regex(
             set_name = set_match.group(1)
             if sets and set_name in sets and sets[set_name]:
                 # Create alternation of all words in the set (case-insensitive)
-                set_words = [re.escape(w.lower()) for w in sets[set_name]]
+                set_words = [re_escape(w.lower()) for w in sets[set_name]]
                 regex_parts.append(f"({('|'.join(set_words))})")
             else:
                 # Unknown set - match nothing (use impossible pattern)
@@ -189,8 +202,8 @@ def pattern_to_regex(
             # {bot:name} - match the bot property value
             prop_name = bot_match.group(1)
             if bot_properties and prop_name in bot_properties:
-                prop_value = bot_properties[prop_name].lower()
-                regex_parts.append(f"({re.escape(prop_value)})")
+                prop_value = bot_properties.get(prop_name, "").lower()
+                regex_parts.append(f"({re_escape(prop_value)})")
             else:
                 # Unknown property - match nothing
                 regex_parts.append(r"(?!.)")
@@ -199,12 +212,12 @@ def pattern_to_regex(
         elif word.startswith("$"):
             # Priority word - exact match with highest priority
             actual_word = word[1:]  # Strip $ prefix
-            regex_parts.append(re.escape(actual_word))
+            regex_parts.append(re_escape(actual_word))
             can_be_empty.append(False)
             specificity += 1000  # Highest priority for $ words
         else:
             # Exact word match
-            regex_parts.append(re.escape(word))
+            regex_parts.append(re_escape(word))
             can_be_empty.append(False)
             specificity += 100  # High specificity for exact matches
 
@@ -220,7 +233,7 @@ def pattern_to_regex(
         regex_str += part
     regex_str += r"\s*$"
 
-    compiled = re.compile(regex_str, re.IGNORECASE)
+    compiled = re_compile(regex_str, re_IGNORECASE)
     result = (compiled, specificity)
     return result
 
@@ -267,15 +280,15 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
         text: User input text.
 
     Returns:
-        Tuple of (pattern, response, captured) or None if no match.
+        Tuple of (pattern, response, captured), or an empty tuple if there is no match.
     """
     best_match: tuple = ()
 
     for pattern, response in patterns:
         result = match_pattern(pattern, text)
 
-        if result["matched"] and (not best_match or result["score"] > best_match[3]):
-            best_match = (pattern, response, result["captured"], result["score"])
+        if result.get("matched", False) and (not best_match or result.get("score", 0.0) > best_match[3]):
+            best_match = (pattern, response, result.get("captured", False), result.get("score", 0.0))
 
     if best_match:
         best = (best_match[0], best_match[1], best_match[2])
@@ -290,10 +303,10 @@ def pattern_entry(
     regex,
     specificity: int,
     that: str = "",  # Pattern for bot's previous response
-    that_regex=None,
+    that_regex=False,
     that_specificity: int = 0,
     topic: str = "",  # Topic scope (exact match or pattern)
-    topic_regex=None,
+    topic_regex=False,
     topic_specificity: int = 0,
 ) -> dict:
     """Build a pattern entry dict with optional context constraints."""
@@ -324,8 +337,8 @@ class PatternMatcher:
 
     def __init__(
         self,
-        sets=None,
-        bot_properties=None,
+        sets=False,
+        bot_properties=False,
         use_stemming: bool = False,
         use_lemmatization: bool = False,
         use_spacy_lemmatization: bool = False,
@@ -341,6 +354,10 @@ class PatternMatcher:
             use_spacy_lemmatization: If True, lemmatize with spaCy's context-aware
                 lemmatizer instead of the WordNet heuristic.
         """
+        if bot_properties is None:
+            bot_properties = False
+        if sets is None:
+            sets = False
         self._patterns: list[dict] = []
         # Index: first word -> list of pattern indices for faster lookup
         self._first_word_index: dict[str, list[int]] = {}
@@ -350,8 +367,8 @@ class PatternMatcher:
         self._lemmatized_first_word_index: dict[str, list[int]] = {}
         self._wildcard_patterns: list[int] = []  # Patterns starting with * or _
         # Use 'is not None' to preserve reference to passed dict even if empty
-        self._sets = sets if sets is not None else {}
-        self._bot_properties = bot_properties if bot_properties is not None else {}
+        self._sets = sets if sets is not False else {}
+        self._bot_properties = bot_properties if bot_properties is not False else {}
         self._use_stemming = use_stemming
         self._use_lemmatization = use_lemmatization
         # Select the lemmatizer used for the lemmatized index and fallback.
@@ -363,7 +380,7 @@ class PatternMatcher:
         response: str,
         that: str = "",
         topic: str = "",
-    ) -> None:
+    ) -> bool:
         """Add a pattern-response pair with optional context.
 
         Args:
@@ -375,13 +392,13 @@ class PatternMatcher:
         regex, specificity = pattern_to_regex(pattern, self._sets, self._bot_properties)
 
         # Build that regex if provided
-        that_regex = None
+        that_regex = False
         that_specificity = 0
         if that:
             that_regex, that_specificity = pattern_to_regex(that, self._sets, self._bot_properties)
 
         # Build topic regex if provided (topics can have wildcards too)
-        topic_regex = None
+        topic_regex = False
         topic_specificity = 0
         if topic:
             topic_regex, topic_specificity = pattern_to_regex(topic, self._sets, self._bot_properties)
@@ -402,8 +419,9 @@ class PatternMatcher:
         idx = len(self._patterns)
         self._patterns.append(entry)
         self._index_pattern(idx, pattern)
+        return False
 
-    def _index_pattern(self, idx: int, pattern: str) -> None:
+    def _index_pattern(self, idx: int, pattern: str) -> bool:
         """Index a pattern by its first word for faster candidate lookup.
 
         Args:
@@ -413,7 +431,7 @@ class PatternMatcher:
         normalized = normalize_pattern(pattern)
         words = normalized.split()
         if not words:
-            return
+            return False
 
         first = words[0]
         # Strip $ prefix for indexing ($ is priority operator, not part of the word)
@@ -422,29 +440,30 @@ class PatternMatcher:
         # since they can match multiple possible inputs
         if first in ("*", "_", "#", "^") or first.startswith("{set:") or first.startswith("{bot:"):
             self._wildcard_patterns.append(idx)
-            return
+            return False
 
         if index_word not in self._first_word_index:
             self._first_word_index[index_word] = []
-        self._first_word_index[index_word].append(idx)
+        self._first_word_index.get(index_word, []).append(idx)
 
         # Also index by stemmed first word for flexible matching
         if self._use_stemming:
             stemmed_first = stem_text(index_word)
             if stemmed_first not in self._stemmed_first_word_index:
                 self._stemmed_first_word_index[stemmed_first] = []
-            if idx not in self._stemmed_first_word_index[stemmed_first]:
-                self._stemmed_first_word_index[stemmed_first].append(idx)
+            if idx not in self._stemmed_first_word_index.get(stemmed_first, False):
+                self._stemmed_first_word_index.get(stemmed_first, []).append(idx)
 
         # Also index by lemmatized first word for precise flexible matching
         if self._use_lemmatization:
             lemma_first = self._lemmatize(index_word)
             if lemma_first not in self._lemmatized_first_word_index:
                 self._lemmatized_first_word_index[lemma_first] = []
-            if idx not in self._lemmatized_first_word_index[lemma_first]:
-                self._lemmatized_first_word_index[lemma_first].append(idx)
+            if idx not in self._lemmatized_first_word_index.get(lemma_first, False):
+                self._lemmatized_first_word_index.get(lemma_first, []).append(idx)
+        return False
 
-    def _rebuild_indexes(self) -> None:
+    def _rebuild_indexes(self) -> bool:
         """Rebuild every first-word index from the current pattern list.
 
         Entry indices shift when a pattern is removed, so all index buckets are
@@ -455,7 +474,8 @@ class PatternMatcher:
         self._lemmatized_first_word_index.clear()
         self._wildcard_patterns.clear()
         for idx, entry in enumerate(self._patterns):
-            self._index_pattern(idx, entry["pattern"])
+            self._index_pattern(idx, entry.get("pattern", ""))
+        return False
 
     def remove_pattern(self, pattern: str, that: str = "", topic: str = "") -> bool:
         """Remove the first entry matching (pattern, that, topic).
@@ -473,7 +493,7 @@ class PatternMatcher:
             True if an entry was removed, False if no entry matched.
         """
         for i, entry in enumerate(self._patterns):
-            if entry["pattern"] == pattern and entry["that"] == that and entry["topic"] == topic:
+            if entry.get("pattern", "") == pattern and entry.get("that", False) == that and entry.get("topic", "") == topic:
                 del self._patterns[i]
                 self._rebuild_indexes()
                 return True
@@ -493,7 +513,7 @@ class PatternMatcher:
             topic: Current topic.
 
         Returns:
-            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
+            Tuple of match values, or an empty tuple.
         """
         normalized = normalize(text)
         words = normalized.split()
@@ -599,7 +619,7 @@ class PatternMatcher:
                 or "stemmed".
 
         Returns:
-            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that) or None.
+            Tuple of match values, or an empty tuple.
         """
         # Get candidate patterns using first-word index
         candidate_indices = self._get_candidate_indices(first_word, index_kind)
@@ -608,50 +628,50 @@ class PatternMatcher:
         for idx in candidate_indices:
             entry = self._patterns[idx]
             # First check if pattern matches input
-            match = entry["regex"].match(normalized)
+            match = entry.get("regex", _NEVER_MATCH_PATTERN).match(normalized)
             if not match:
                 continue
 
             captured = list(match.groups())
             thatstars: list[str] = []
             topicstars: list[str] = []
-            score = entry["specificity"]
+            score = entry.get("specificity", 0.0)
 
             # Check topic constraint if pattern has one
-            if entry["topic"] and entry["topic_regex"]:
+            if entry.get("topic", "") and entry.get("topic_regex", False):
                 if not topic_normalized:
                     # Pattern requires topic but no topic set - skip
                     continue
-                topic_match = entry["topic_regex"].match(topic_normalized)
+                topic_match = entry.get("topic_regex", _NEVER_MATCH_PATTERN).match(topic_normalized)
                 if not topic_match:
                     continue
                 # Topic matches - add priority and capture wildcards
-                score += TOPIC_PRIORITY + entry["topic_specificity"]
+                score += TOPIC_PRIORITY + entry.get("topic_specificity", 0.0)
                 topicstars = list(topic_match.groups())
 
             # Check that constraint if pattern has one
-            if entry["that"] and entry["that_regex"]:
+            if entry.get("that", False) and entry.get("that_regex", False):
                 if not that_normalized:
                     # Pattern requires that but no previous response - skip
                     continue
-                that_match = entry["that_regex"].match(that_normalized)
+                that_match = entry.get("that_regex", _NEVER_MATCH_PATTERN).match(that_normalized)
                 if not that_match:
                     continue
                 # That matches - add priority and capture wildcards
-                score += THAT_PRIORITY + entry["that_specificity"]
+                score += THAT_PRIORITY + entry.get("that_specificity", 0.0)
                 thatstars = list(that_match.groups())
 
             # Update best if this is better
             if not best or score > best[4]:
                 best = (
-                    entry["response"],
+                    entry.get("response", ""),
                     captured,
                     thatstars,
                     topicstars,
                     score,
-                    entry["pattern"],
-                    entry["topic"],
-                    entry["that"],
+                    entry.get("pattern", ""),
+                    entry.get("topic", ""),
+                    entry.get("that", False),
                 )
 
         if best:
@@ -667,7 +687,7 @@ class PatternMatcher:
         Returns:
             List of (pattern, response) tuples.
         """
-        pairs = [(p["pattern"], p["response"]) for p in self._patterns]
+        pairs = [(p.get("pattern", ""), p.get("response", "")) for p in self._patterns]
         return pairs
 
     def get_patterns_with_context(self) -> list[tuple[str, str, str, str]]:
@@ -676,16 +696,17 @@ class PatternMatcher:
         Returns:
             List of (pattern, response, that, topic) tuples.
         """
-        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self._patterns]
+        entries = [(p.get("pattern", ""), p.get("response", ""), p.get("that", False), p.get("topic", "")) for p in self._patterns]
         return entries
 
-    def clear(self) -> None:
+    def clear(self) -> bool:
         """Remove all patterns."""
         self._patterns.clear()
         self._first_word_index.clear()
         self._stemmed_first_word_index.clear()
         self._lemmatized_first_word_index.clear()
         self._wildcard_patterns.clear()
+        return False
 
     def __len__(self) -> int:
         """Return number of patterns."""

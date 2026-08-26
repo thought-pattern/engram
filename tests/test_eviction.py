@@ -16,7 +16,7 @@ from engram.metrics import get_dynamic_count
 class TestCapacityEnforcement:
     """Capacity holds under engine-only usage."""
 
-    def test_capacity_respected_without_manual_stats(self) -> None:
+    def test_capacity_respected_without_manual_stats(self) -> bool:
         config = engram_config(capacity=2)
         engram = Engram(config=config)
 
@@ -25,8 +25,9 @@ class TestCapacityEnforcement:
 
         assert get_dynamic_count(engram) == 2
         assert engram.eviction_count == 3
+        return False
 
-    def test_min_hit_rate_does_not_protect_unqueried(self) -> None:
+    def test_min_hit_rate_does_not_protect_unqueried(self) -> bool:
         """A statement with no query history has no evidence and stays evictable.
 
         The default hit rate for an unqueried statement is 0.5; if that were
@@ -41,8 +42,9 @@ class TestCapacityEnforcement:
 
         assert get_dynamic_count(engram) == 2
         assert engram.eviction_count == 3
+        return False
 
-    def test_all_protected_admits_over_capacity(self) -> None:
+    def test_all_protected_admits_over_capacity(self) -> bool:
         """When every DYNAMIC statement is protected, the new statement is admitted.
 
         Protection wins over capacity: the store must not drop the incoming
@@ -53,19 +55,20 @@ class TestCapacityEnforcement:
 
         id1 = engram.store("alpha statement")
         result = engram.query("alpha")
-        engram.record_hit(result["keywords"], statement_id=id1)  # rate 1.0 -> protected
+        engram.record_hit(result.get("keywords", []), statement_id=id1)  # rate 1.0 -> protected
 
         id2 = engram.store("beta statement")
 
         assert engram.get_statement(id1)
         assert engram.get_statement(id2)
         assert get_dynamic_count(engram) == 2
+        return False
 
 
 class TestPolicyDifferentiation:
     """Policies must diverge from FIFO when usage differs, via public calls only."""
 
-    def test_lru_prefers_recently_hit(self) -> None:
+    def test_lru_prefers_recently_hit(self) -> bool:
         config = engram_config(capacity=2, eviction_policy=EvictionPolicy.LRU)
         engram = Engram(config=config)
 
@@ -74,7 +77,7 @@ class TestPolicyDifferentiation:
 
         # Use the first statement through the public flow
         result = engram.query("alpha")
-        engram.record_hit(result["keywords"], statement_id=id1)
+        engram.record_hit(result.get("keywords", []), statement_id=id1)
 
         # LRU evicts the never-hit second statement, even though it is newer;
         # FIFO would have evicted the first.
@@ -82,8 +85,9 @@ class TestPolicyDifferentiation:
 
         assert engram.get_statement(id1)
         assert not engram.get_statement(id2)
+        return False
 
-    def test_lfu_prefers_frequently_hit(self) -> None:
+    def test_lfu_prefers_frequently_hit(self) -> bool:
         config = engram_config(capacity=2, eviction_policy=EvictionPolicy.LFU)
         engram = Engram(config=config)
 
@@ -91,16 +95,17 @@ class TestPolicyDifferentiation:
         id2 = engram.store("beta statement two")
 
         result = engram.query("alpha")
-        engram.record_hit(result["keywords"], statement_id=id1)
+        engram.record_hit(result.get("keywords", []), statement_id=id1)
         result = engram.query("alpha")
-        engram.record_hit(result["keywords"], statement_id=id1)
+        engram.record_hit(result.get("keywords", []), statement_id=id1)
 
         engram.store("gamma statement three")
 
         assert engram.get_statement(id1)
         assert not engram.get_statement(id2)
+        return False
 
-    def test_hit_rate_evicts_low_performer(self) -> None:
+    def test_hit_rate_evicts_low_performer(self) -> bool:
         config = engram_config(capacity=2, eviction_policy=EvictionPolicy.HIT_RATE)
         engram = Engram(config=config)
 
@@ -109,7 +114,7 @@ class TestPolicyDifferentiation:
 
         # First statement: queried and confirmed (rate 1.0)
         result = engram.query("alpha")
-        engram.record_hit(result["keywords"], statement_id=id1)
+        engram.record_hit(result.get("keywords", []), statement_id=id1)
         # Second statement: queried but never confirmed (rate 0.0)
         engram.query("beta")
 
@@ -118,12 +123,13 @@ class TestPolicyDifferentiation:
 
         assert engram.get_statement(id1)
         assert not engram.get_statement(id2)
+        return False
 
 
 class TestPatternCleanup:
     """Evicting or retiring a statement must not leave its pattern matching."""
 
-    def test_eviction_removes_pattern_from_matcher(self) -> None:
+    def test_eviction_removes_pattern_from_matcher(self) -> bool:
         config = engram_config(capacity=1)
         engram = Engram(config=config)
 
@@ -137,8 +143,9 @@ class TestPatternCleanup:
         assert engram.pattern_query("second pattern")[2] == "Second response"
         assert len(engram.pattern_matcher) == 1
         assert "FIRST PATTERN" not in engram.pattern_to_statement
+        return False
 
-    def test_shared_pattern_survives_partial_eviction(self) -> None:
+    def test_shared_pattern_survives_partial_eviction(self) -> bool:
         """A pattern shared by a surviving statement stays in the matcher."""
         config = engram_config(capacity=1)
         engram = Engram(config=config)
@@ -150,8 +157,9 @@ class TestPatternCleanup:
         engram.store("Filler statement")
 
         assert engram.pattern_query("greeting")[2] == "Shared response"
+        return False
 
-    def test_retire_statement_removes_pattern(self) -> None:
+    def test_retire_statement_removes_pattern(self) -> bool:
         engram = Engram()
         stmt_id = engram.store("Retired response", pattern="RETIRE ME")
         assert engram.pattern_query("retire me")[2] == "Retired response"
@@ -160,3 +168,4 @@ class TestPatternCleanup:
 
         assert engram.pattern_query("retire me") == ()
         assert "RETIRE ME" not in engram.pattern_to_statement
+        return False

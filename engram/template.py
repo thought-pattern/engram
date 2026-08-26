@@ -7,9 +7,10 @@ random selection, conditionals, redirects, and more.
 The evaluation context is a plain dict built by ``TemplateContext``.
 """
 
-import random
-import re
 from datetime import datetime
+from random import choice as random_choice
+from re import compile as re_compile, match as re_match
+from typing import ClassVar as typing_ClassVar
 
 from engram.constants import VERSION
 from engram.graph import graph_is_empty, graph_single, is_write_cypher
@@ -41,56 +42,98 @@ TRIPLE_QUERY_SUBJECT = (
 )
 
 
+def _no_redirect(pattern: str) -> str:
+    """Return the stable empty response for a context without a redirect adapter."""
+    del pattern
+    return ""
+
+
+def _no_learn(category: dict) -> bool:
+    """Represent a context without a learning adapter."""
+    del category
+    return False
+
+
+def _no_graph(query: str, params: dict) -> list:
+    """Represent a context without a graph lookup adapter."""
+    del query, params
+    return []
+
+
 def template_context(
     # Wildcard captures from pattern matching
-    stars=None,
-    thatstars=None,
-    topicstars=None,
+    stars=False,
+    thatstars=False,
+    topicstars=False,
     # Session state
-    predicates=None,
-    input_history=None,
-    response_history=None,
-    that_history=None,
+    predicates=False,
+    input_history=False,
+    response_history=False,
+    that_history=False,
     # Current input
     input_text: str = "",
     request_text: str = "",
     # Bot properties
-    bot=None,
+    bot=False,
     # Maps for lookups
-    maps=None,
+    maps=False,
     # Substitution maps
-    person_subs=None,
-    person2_subs=None,
-    gender_subs=None,
+    person_subs=False,
+    person2_subs=False,
+    gender_subs=False,
     # System info
     session_id: str = "",
     category_count: int = 0,
     vocabulary_count: int = 0,
     # Callbacks (set by processor)
-    redirect_fn=None,
-    learn_fn=None,
-    graph_fn=None,
+    redirect_fn=False,
+    learn_fn=False,
+    graph_fn=False,
 ) -> dict:
     """Build a context dict for template evaluation.
 
     Contains all data needed to evaluate a template, including wildcard captures,
     session predicates, bot properties, and history.
     """
+    if bot is None:
+        bot = False
+    if gender_subs is None:
+        gender_subs = False
+    if input_history is None:
+        input_history = False
+    if maps is None:
+        maps = False
+    if person2_subs is None:
+        person2_subs = False
+    if person_subs is None:
+        person_subs = False
+    if predicates is None:
+        predicates = False
+    if response_history is None:
+        response_history = False
+    if stars is None:
+        stars = False
+    if that_history is None:
+        that_history = False
+    if thatstars is None:
+        thatstars = False
+    if topicstars is None:
+        topicstars = False
     context = {
-        "stars": stars if stars is not None else [],
-        "thatstars": thatstars if thatstars is not None else [],
-        "topicstars": topicstars if topicstars is not None else [],
-        "predicates": predicates if predicates is not None else {},
-        "input_history": input_history if input_history is not None else [],
-        "response_history": response_history if response_history is not None else [],
-        "that_history": that_history if that_history is not None else [],
+        "stars": stars if stars is not False else [],
+        "thatstars": thatstars if thatstars is not False else [],
+        "topicstars": topicstars if topicstars is not False else [],
+        "predicates": predicates if predicates is not False else {},
+        "input_history": input_history if input_history is not False else [],
+        "response_history": response_history if response_history is not False else [],
+        "that_history": that_history if that_history is not False else [],
         "input_text": input_text,
         "request_text": request_text,
-        "bot": bot if bot is not None else {},
-        "maps": maps if maps is not None else {},
-        "person_subs": person_subs if person_subs is not None else {},
-        "person2_subs": person2_subs if person2_subs is not None else {},
-        "gender_subs": gender_subs if gender_subs is not None else {},
+        "bot": bot if bot is not False else {},
+        "maps": maps if maps is not False else {},
+        "person_subs": person_subs if person_subs is not False else {},
+        "person2_subs": person2_subs if person2_subs is not False else {},
+        "gender_subs": gender_subs if gender_subs is not False else {},
         "session_id": session_id,
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
@@ -106,56 +149,56 @@ def template_context(
 
 def get_star(ctx: dict, index: int) -> str:
     """Get star capture by 1-based index."""
-    if 1 <= index <= len(ctx["stars"]):
-        star = ctx["stars"][index - 1]
+    if 1 <= index <= len(ctx.get("stars", [])):
+        star = ctx.get("stars", [])[index - 1]
         return star
     return ""
 
 
 def get_thatstar(ctx: dict, index: int) -> str:
     """Get thatstar capture by 1-based index."""
-    if 1 <= index <= len(ctx["thatstars"]):
-        thatstar = ctx["thatstars"][index - 1]
+    if 1 <= index <= len(ctx.get("thatstars", [])):
+        thatstar = ctx.get("thatstars", [])[index - 1]
         return thatstar
     return ""
 
 
 def get_topicstar(ctx: dict, index: int) -> str:
     """Get topicstar capture by 1-based index."""
-    if 1 <= index <= len(ctx["topicstars"]):
-        topicstar = ctx["topicstars"][index - 1]
+    if 1 <= index <= len(ctx.get("topicstars", [])):
+        topicstar = ctx.get("topicstars", [])[index - 1]
         return topicstar
     return ""
 
 
 def get_map(ctx: dict, map_name: str, key: str, default: str = "") -> str:
     """Get value from named map."""
-    if map_name in ctx["maps"]:
-        value = ctx["maps"][map_name].get(key.lower(), default)
+    if map_name in ctx.get("maps", {}):
+        value = ctx.get("maps", {})[map_name].get(key.lower(), default)
         return value
     return default
 
 
 def get_input(ctx: dict, index: int = 1) -> str:
     """Get input from history (1-based, 1=most recent)."""
-    if 1 <= index <= len(ctx["input_history"]):
-        value = ctx["input_history"][index - 1]
+    if 1 <= index <= len(ctx.get("input_history", [])):
+        value = ctx.get("input_history", [])[index - 1]
         return value
     return ""
 
 
 def get_response(ctx: dict, index: int = 1) -> str:
     """Get response from history (1-based, 1=most recent)."""
-    if 1 <= index <= len(ctx["response_history"]):
-        value = ctx["response_history"][index - 1]
+    if 1 <= index <= len(ctx.get("response_history", [])):
+        value = ctx.get("response_history", [])[index - 1]
         return value
     return ""
 
 
 def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
     """Get that by response and sentence index (1-based)."""
-    if 1 <= response_idx <= len(ctx["that_history"]):
-        sentences = ctx["that_history"][response_idx - 1]
+    if 1 <= response_idx <= len(ctx.get("that_history", [])):
+        sentences = ctx.get("that_history", [])[response_idx - 1]
         if 1 <= sentence_idx <= len(sentences):
             sentence = sentences[sentence_idx - 1]
             return sentence
@@ -166,39 +209,40 @@ class TemplateProcessor:
     """Processes templates and substitutes variables."""
 
     # Regex patterns for variable substitution
-    STAR_PATTERN = re.compile(r"\{star(\d+)\}")
-    THATSTAR_PATTERN = re.compile(r"\{thatstar(\d+)\}")
-    TOPICSTAR_PATTERN = re.compile(r"\{topicstar(\d+)\}")
-    GET_PATTERN = re.compile(r"\{get:([^:}]+)(?::([^}]*))?\}")
-    BOT_PATTERN = re.compile(r"\{bot:([^}]+)\}")
-    MAP_PATTERN = re.compile(r"\{map:([^:}]+):([^:}]+)(?::([^}]*))?\}")
+    STAR_PATTERN = re_compile(r"\{star(\d+)\}")
+    THATSTAR_PATTERN = re_compile(r"\{thatstar(\d+)\}")
+    TOPICSTAR_PATTERN = re_compile(r"\{topicstar(\d+)\}")
+    GET_PATTERN = re_compile(r"\{get:([^:}]+)(?::([^}]*))?\}")
+    BOT_PATTERN = re_compile(r"\{bot:([^}]+)\}")
+    MAP_PATTERN = re_compile(r"\{map:([^:}]+):([^:}]+)(?::([^}]*))?\}")
     # Bare {input} is the CURRENT input (a simple variable); only the indexed
     # form {input:N} reads history. A bare-form match here would shadow the
     # simple variable and return the PREVIOUS turn's input instead.
-    INPUT_PATTERN = re.compile(r"\{input:(\d+)\}")
-    RESPONSE_PATTERN = re.compile(r"\{response(?::(\d+))?\}")
-    THAT_PATTERN = re.compile(r"\{that(?::(\d+)(?::(\d+))?)?\}")
+    INPUT_PATTERN = re_compile(r"\{input:(\d+)\}")
+    RESPONSE_PATTERN = re_compile(r"\{response(?::(\d+))?\}")
+    THAT_PATTERN = re_compile(r"\{that(?::(\d+)(?::(\d+))?)?\}")
     # Match transforms with content that doesn't contain braces - processes innermost first
-    TRANSFORM_PATTERN = re.compile(
-        r"\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explode|first|rest|uniq|wordcount|sentiment|clause|qtype|name):([^{}]*)\}"
+    TRANSFORM_PATTERN = re_compile(
+        "\\{(upper|lower|capitalize|formal|sentence|person|person2|gender|normalize|denormalize|explod"
+        "e|first|rest|uniq|wordcount|sentiment|clause|qtype|name):([^{}]*)\\}"
     )
 
     # Simple variable patterns
-    SIMPLE_VARS = {
-        "{topic}": lambda ctx: ctx["predicates"].get("topic", ""),
-        "{input}": lambda ctx: ctx["input_text"],
-        "{request}": lambda ctx: ctx["request_text"],
-        "{id}": lambda ctx: ctx["session_id"],
-        "{size}": lambda ctx: str(ctx["category_count"]),
-        "{vocabulary}": lambda ctx: str(ctx["vocabulary_count"]),
+    SIMPLE_VARS: typing_ClassVar = {
+        "{topic}": lambda ctx: ctx.get("predicates", {}).get("topic", ""),
+        "{input}": lambda ctx: ctx.get("input_text", ""),
+        "{request}": lambda ctx: ctx.get("request_text", ""),
+        "{id}": lambda ctx: ctx.get("session_id", ""),
+        "{size}": lambda ctx: str(ctx.get("category_count", "")),
+        "{vocabulary}": lambda ctx: str(ctx.get("vocabulary_count", "")),
         "{date}": lambda ctx: datetime.now().strftime("%B %d, %Y"),
         "{time}": lambda ctx: datetime.now().strftime("%H:%M:%S"),
-        "{program}": lambda ctx: ctx["bot"].get("name", "ENGRAM"),
-        "{version}": lambda ctx: ctx["bot"].get("version", VERSION),
+        "{program}": lambda ctx: ctx.get("bot", {}).get("name", "ENGRAM"),
+        "{version}": lambda ctx: ctx.get("bot", {}).get("version", VERSION),
     }
 
     # Pattern for formatted date: {date:format}
-    DATE_FORMAT_PATTERN = re.compile(r"\{date:([^}]+)\}")
+    DATE_FORMAT_PATTERN = re_compile(r"\{date:([^}]+)\}")
 
     def __init__(self, srai_limit: int = 100):
         """Initialize processor.
@@ -246,65 +290,65 @@ class TemplateProcessor:
 
         # Text template
         if "text" in template:
-            result = self._substitute_variables(str(template["text"]), context)
+            result = self._substitute_variables(str(template.get("text", "")), context)
             return result
 
         # Random selection
         if "random" in template:
-            result = self._process_random(template["random"], context)
+            result = self._process_random(template.get("random", False), context)
             return result
 
         # Condition
         if "condition" in template:
-            result = self._process_condition(template["condition"], context)
+            result = self._process_condition(template.get("condition", False), context)
             return result
 
         # Sequence
         if "sequence" in template:
-            result = self._process_sequence(template["sequence"], context)
+            result = self._process_sequence(template.get("sequence", False), context)
             return result
 
         # Redirect (SRAI)
         if "redirect" in template:
-            result = self._process_redirect(template["redirect"], context)
+            result = self._process_redirect(template.get("redirect", False), context)
             return result
 
         # Shorthand redirect
-        if "sr" in template and template["sr"]:
+        if "sr" in template and template.get("sr", False):
             # Redirect to first star capture
-            if context["stars"]:
-                result = self._process_redirect(context["stars"][0], context)
+            if context.get("stars", []):
+                result = self._process_redirect(context.get("stars", [])[0], context)
                 return result
             return ""
 
         # Think (silent processing)
         if "think" in template:
-            self._process_think(template["think"], context)
+            self._process_think(template.get("think", False), context)
             return ""
 
         # Set variable
         if "set" in template:
-            self._process_set(template["set"], context)
+            self._process_set(template.get("set", False), context)
             return ""
 
         # Learn new category
         if "learn" in template:
-            self._process_learn(template["learn"], context)
+            self._process_learn(template.get("learn", False), context)
             return ""
 
         # Loop (returns to condition evaluation)
-        if "loop" in template and template["loop"]:
+        if "loop" in template and template.get("loop", False):
             # Loop is handled in condition processing
             return ""
 
         # Graph query
         if "graph_query" in template:
-            result = self._process_graph_query(template["graph_query"], context)
+            result = self._process_graph_query(template.get("graph_query", ""), context)
             return result
 
         # Triple query shorthand
         if "triple_query" in template:
-            result = self._process_triple_query(template["triple_query"], context)
+            result = self._process_triple_query(template.get("triple_query", ""), context)
             return result
 
         return ""
@@ -313,7 +357,7 @@ class TemplateProcessor:
         """Process random selection."""
         if not choices:
             return ""
-        choice = random.choice(choices)
+        choice = random_choice(choices)
         result = self.process(choice, context)
         return result
 
@@ -321,7 +365,7 @@ class TemplateProcessor:
         """Process conditional template."""
         # Support both "var" and "name" for variable name
         var_name = condition.get("var", condition.get("name", ""))
-        var_value = context["predicates"].get(var_name, "")
+        var_value = context.get("predicates", {}).get(var_name, "")
 
         # Existence check
         if "exists" in condition or "missing" in condition:
@@ -334,8 +378,8 @@ class TemplateProcessor:
 
         # Pattern match check
         if "pattern" in condition:
-            pattern = condition["pattern"]
-            if re.match(pattern, var_value):
+            pattern = condition.get("pattern", "")
+            if re_match(pattern, var_value):
                 result = self.process(condition.get("match", ""), context)
                 return result
             else:
@@ -347,7 +391,7 @@ class TemplateProcessor:
         if cases:
             for case in cases:
                 if "value" in case:
-                    if var_value == case["value"]:
+                    if var_value == case.get("value", ""):
                         # Support both "template" and "then" for the result
                         result_template = case.get("template", case.get("then", ""))
                         result = self.process(result_template, context)
@@ -397,46 +441,51 @@ class TemplateProcessor:
         resolved_pattern = self._substitute_variables(pattern, context)
 
         # Call redirect function if available
-        if context["redirect_fn"]:
+        redirect_fn = context.get("redirect_fn", _no_redirect)
+        if redirect_fn is not _no_redirect:
             self._srai_depth += 1
             try:
-                response = context["redirect_fn"](resolved_pattern)
+                response = redirect_fn(resolved_pattern)
                 return response
             finally:
                 self._srai_depth -= 1
 
         return ""
 
-    def _process_think(self, items: list, context: dict) -> None:
+    def _process_think(self, items: list, context: dict) -> bool:
         """Process think elements (silent, no output)."""
         for item in items:
             self.process(item, context)
+        return False
 
-    def _process_set(self, set_data: dict, context: dict) -> None:
+    def _process_set(self, set_data: dict, context: dict) -> bool:
         """Process set variable."""
         name = set_data.get("name", "")
         value = set_data.get("value", "")
         if name:
             resolved_value = self._substitute_variables(value, context)
-            context["predicates"][name] = resolved_value
+            context.get("predicates", {})[name] = resolved_value
+        return False
 
-    def _process_learn(self, learn_data: dict, context: dict) -> None:
+    def _process_learn(self, learn_data: dict, context: dict) -> bool:
         """Process learn element."""
-        if context["learn_fn"]:
+        learn_fn = context.get("learn_fn", _no_learn)
+        if learn_fn is not _no_learn:
             # Resolve variables in learn data
             resolved = {}
             if "pattern" in learn_data:
-                resolved["pattern"] = self._substitute_variables(learn_data["pattern"], context).upper()
+                resolved["pattern"] = self._substitute_variables(learn_data.get("pattern", ""), context).upper()
             if "template" in learn_data:
                 # Resolve variables inside template
-                resolved["template"] = self._resolve_template_vars(learn_data["template"], context)
+                resolved["template"] = self._resolve_template_vars(learn_data.get("template", ""), context)
             if "that" in learn_data:
-                resolved["that"] = self._substitute_variables(learn_data["that"], context)
+                resolved["that"] = self._substitute_variables(learn_data.get("that", False), context)
             if "topic" in learn_data:
-                resolved["topic"] = self._substitute_variables(learn_data["topic"], context)
+                resolved["topic"] = self._substitute_variables(learn_data.get("topic", ""), context)
             resolved["tier"] = learn_data.get("tier", "DYNAMIC")
 
-            context["learn_fn"](resolved)
+            learn_fn(resolved)
+        return False
 
     def _resolve_template_vars(self, template, context: dict):
         """Recursively resolve variables in a template structure."""
@@ -453,7 +502,7 @@ class TemplateProcessor:
 
     def _process_graph_query(self, query_data: dict, context: dict) -> str:
         """Process graph query operation."""
-        if not context["graph_fn"]:
+        if not context.get("graph_fn", {}):
             output = self.process(query_data.get("on_failure", ""), context)
             return output
 
@@ -470,10 +519,8 @@ class TemplateProcessor:
         # degrades to an empty list when unreachable; either way recall falls
         # through to on_empty / on_failure rather than surfacing an error.
         try:
-            records = context["graph_fn"](query, params)
+            records = context.get("graph_fn", _no_graph)(query, params) or []
         except Exception:
-            records = []
-        if records is None:
             records = []
 
         if graph_is_empty(records):
@@ -504,18 +551,18 @@ class TemplateProcessor:
         success_template = query_data.get("on_success", {"text": "{result}"})
         if isinstance(success_template, dict):
             # Inject result into context for template processing
-            context["predicates"]["_graph_result"] = result_str
+            context.get("predicates", {})["_graph_result"] = result_str
             # Process with result placeholder replaced
             template_copy = success_template.copy()
             if "text" in template_copy:
-                template_copy["text"] = template_copy["text"].replace("{result}", result_str)
+                template_copy["text"] = template_copy.get("text", "").replace("{result}", result_str)
             output = self.process(template_copy, context)
             return output
         return result_str
 
     def _process_triple_query(self, triple_data: dict, context: dict) -> str:
         """Process triple query shorthand operation."""
-        if not context["graph_fn"]:
+        if not context.get("graph_fn", {}):
             return ""
 
         subject = self._substitute_variables(triple_data.get("subject", ""), context)
@@ -535,7 +582,7 @@ class TemplateProcessor:
             return ""
 
         try:
-            records = context["graph_fn"](query, params)
+            records = context.get("graph_fn", _no_graph)(query, params)
         except Exception:
             records = []
         if records and graph_single(records):
@@ -557,10 +604,10 @@ class TemplateProcessor:
         result = self.TOPICSTAR_PATTERN.sub(lambda m: get_topicstar(context, int(m.group(1))), result)
 
         # Get predicates: {get:name} or {get:name:default}
-        result = self.GET_PATTERN.sub(lambda m: context["predicates"].get(m.group(1), m.group(2) or ""), result)
+        result = self.GET_PATTERN.sub(lambda m: context.get("predicates", {}).get(m.group(1), m.group(2) or ""), result)
 
         # Bot properties: {bot:name}
-        result = self.BOT_PATTERN.sub(lambda m: context["bot"].get(m.group(1), ""), result)
+        result = self.BOT_PATTERN.sub(lambda m: context.get("bot", {}).get(m.group(1), ""), result)
 
         # Map lookups: {map:name:key} or {map:name:key:default}
         result = self.MAP_PATTERN.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
@@ -575,8 +622,9 @@ class TemplateProcessor:
         def that_sub(m):
             if m.group(1) is None:
                 # Get most recent bot response
-                if context["that_history"] and context["that_history"][0]:
-                    return context["that_history"][0][0]
+                if context.get("that_history", []) and context.get("that_history", [])[0]:
+                    _return_value = context.get("that_history", [])[0][0]
+                    return _return_value
                 return ""
             resp_idx = int(m.group(1))
             sent_idx = int(m.group(2)) if m.group(2) else 1
@@ -633,13 +681,13 @@ class TemplateProcessor:
                 transformed = resolved.capitalize()
                 return transformed
             elif fn_name == "person":
-                transformed = self._apply_substitution(resolved, context["person_subs"])
+                transformed = self._apply_substitution(resolved, context.get("person_subs", []))
                 return transformed
             elif fn_name == "person2":
-                transformed = self._apply_substitution(resolved, context["person2_subs"])
+                transformed = self._apply_substitution(resolved, context.get("person2_subs", []))
                 return transformed
             elif fn_name == "gender":
-                transformed = self._apply_substitution(resolved, context["gender_subs"])
+                transformed = self._apply_substitution(resolved, context.get("gender_subs", []))
                 return transformed
             elif fn_name == "normalize":
                 transformed = resolved.upper()
@@ -685,7 +733,7 @@ class TemplateProcessor:
             return resolved
 
         # Keep applying until no more transforms
-        prev = None
+        prev = False
         while prev != text:
             prev = text
             text = self.TRANSFORM_PATTERN.sub(transform, text)
@@ -703,7 +751,7 @@ class TemplateProcessor:
             lower = word.lower()
             if lower in subs:
                 # Preserve case
-                replacement = subs[lower]
+                replacement = subs.get(lower, False)
                 if word.isupper():
                     replacement = replacement.upper()
                 elif word[0].isupper():

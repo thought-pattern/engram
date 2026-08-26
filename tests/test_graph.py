@@ -5,18 +5,25 @@ degrade to an empty list, and every public execution path rejects mutations.
 MockGraphClient is an in-memory stand-in keyed on query parameters.
 """
 
-import pytest
+from pytest import approx as pytest_approx, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
 from engram.constants import Tier
 from engram.core import Engram
-from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
+from engram.graph import (
+    MemGraphConnection,
+    graph_is_empty,
+    graph_single,
+    is_write_cypher,
+)
+from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
 
 
 def same(a, b) -> bool:
     """Case-insensitive surface comparison, matching the canonical queries."""
-    return bool(a) and bool(b) and str(a).lower() == str(b).lower()
+    _return_value = bool(a) and bool(b) and str(a).lower() == str(b).lower()
+    return _return_value
 
 
 class MockGraphClient:
@@ -34,16 +41,16 @@ class MockGraphClient:
         self.entities: set[str] = set()
         self.vector_rows: list[dict] = []
 
-    def execute(self, query: str, params=None) -> list:
+    def execute(self, query: str, params=False) -> list:
         """Execute a mock query, returning a list of row dicts."""
         params = params or {}
         query_upper = query.upper()
 
-        subject = params.get("subject")
-        predicate = params.get("predicate")
-        obj = params.get("object")
-        name = params.get("name")
-        keyword = params.get("keyword")
+        subject = params.get("subject", "")
+        predicate = params.get("predicate", "")
+        obj = params.get("object", False)
+        name = params.get("name", "")
+        keyword = params.get("keyword", False)
 
         if "CREATE" in query_upper or "MERGE" in query_upper:
             # Triple write (canonical Claim or a generic relationship create).
@@ -58,49 +65,58 @@ class MockGraphClient:
             # Triple query, object unknown: subject + predicate -> object.
             if subject and predicate and not obj:
                 for claim in self.claims:
-                    if same(claim["subject"], subject) and same(claim["predicate"], predicate):
-                        return [{"result": claim["object"]}]
+                    if same(claim.get("subject", ""), subject) and same(claim.get("predicate", ""), predicate):
+                        _return_value = [{"result": claim.get("object", {})}]
+                        return _return_value
                 return []
             # Triple query / graph_query, subject unknown: predicate + object -> subject.
             if obj and predicate and not subject:
-                return [
-                    {"result": claim["subject"]}
+                _return_value = [
+                    {"result": claim.get("subject", "")}
                     for claim in self.claims
-                    if same(claim["predicate"], predicate) and same(claim["object"], obj)
+                    if same(claim.get("predicate", ""), predicate) and same(claim.get("object", False), obj)
                 ]
+                return _return_value
             # Facts by entity name (list-format graph_query and entity recall).
             if name:
                 rows = []
                 for claim in self.claims:
-                    if same(claim["subject"], name):
-                        rows.append({"relation": claim["predicate"], "target": claim["object"], **claim})
-                    elif same(claim["object"], name):
-                        rows.append({"relation": claim["predicate"], "target": claim["subject"], **claim})
+                    if same(claim.get("subject", ""), name):
+                        rows.append({"relation": claim.get("predicate", ""), "target": claim.get("object", False), **claim})
+                    elif same(claim.get("object", False), name):
+                        rows.append({"relation": claim.get("predicate", ""), "target": claim.get("subject", ""), **claim})
                 return rows
             # Keyword fallback: entity whose label contains the keyword.
             if keyword:
-                return [dict(claim) for claim in self.claims if keyword.lower() in claim["subject"].lower()]
+                _return_value = [dict(claim) for claim in self.claims if keyword.lower() in claim.get("subject", "").lower()]
+                return _return_value
             return []
 
         if "DELETE" in query_upper:
             if name:
-                self.claims = [claim for claim in self.claims if not (same(claim["subject"], name) or same(claim["object"], name))]
+                self.claims = [
+                    claim
+                    for claim in self.claims
+                    if not (same(claim.get("subject", ""), name) or same(claim.get("object", False), name))
+                ]
                 self.entities.discard(name)
             return []
 
         return []
 
-    def execute_read(self, query: str, params=None) -> list:
+    def execute_read(self, query: str, params=False) -> list:
         """Read alias, matching the real connection's execute_read."""
-        return self.execute(query, params)
+        _return_value = self.execute(query, params)
+        return _return_value
 
     def vector_search_claims(self, embedding, **kwargs) -> list:
         """Return configured ANN rows for vector-recall tests."""
-        return list(self.vector_rows)
+        _return_value = list(self.vector_rows)
+        return _return_value
 
-    def close(self) -> None:
+    def close(self) -> bool:
         """Close the mock connection."""
-        pass
+        return False
 
 
 class TestGraphHelpers:
@@ -110,11 +126,13 @@ class TestGraphHelpers:
         records = [{"name": "Alice"}]
         assert not graph_is_empty(records)
         assert graph_single(records) == {"name": "Alice"}
+        return False
 
     def test_empty(self):
         records = []
         assert graph_is_empty(records)
         assert graph_single(records) == {}
+        return False
 
 
 class TestMockGraphClient:
@@ -125,6 +143,7 @@ class TestMockGraphClient:
         result = client.execute("CREATE (p:Entity {primary_label: $name})", {"name": "Alice"})
         assert result == []
         assert "Alice" in client.entities
+        return False
 
     def test_create_relationship(self):
         client = MockGraphClient()
@@ -133,6 +152,7 @@ class TestMockGraphClient:
             {"subject": "Alice", "predicate": "KNOWS", "object": "Bob"},
         )
         assert len(client.claims) == 1
+        return False
 
     def test_query_relationship(self):
         client = MockGraphClient()
@@ -145,7 +165,8 @@ class TestMockGraphClient:
             {"predicate": "CAPITAL_OF", "object": "France"},
         )
         assert len(result) == 1
-        assert result[0]["result"] == "Paris"
+        assert result[0].get("result", "") == "Paris"
+        return False
 
     def test_query_not_found(self):
         client = MockGraphClient()
@@ -154,6 +175,7 @@ class TestMockGraphClient:
             {"predicate": "CAPITAL_OF", "object": "Unknown"},
         )
         assert graph_is_empty(result)
+        return False
 
     def test_delete_node(self):
         client = MockGraphClient()
@@ -163,6 +185,7 @@ class TestMockGraphClient:
         result = client.execute("MATCH (e:Entity {primary_label: $name}) DETACH DELETE e", {"name": "Alice"})
         assert result == []
         assert "Alice" not in client.entities
+        return False
 
 
 class TestTemplateGraphOperations:
@@ -172,7 +195,8 @@ class TestTemplateGraphOperations:
         """Create a graph function that wraps the client."""
 
         def graph_fn(query: str, params: dict):
-            return client.execute(query, params)
+            _return_value = client.execute(query, params)
+            return _return_value
 
         return graph_fn
 
@@ -198,6 +222,7 @@ class TestTemplateGraphOperations:
         result = processor.process(template, ctx)
         assert "Paris" in result
         assert "France" in result
+        return False
 
     def test_graph_query_not_found(self):
         client = MockGraphClient()
@@ -215,6 +240,7 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert result == "I don't know."
+        return False
 
     def test_graph_query_no_client(self):
         """Test graceful handling when no graph client is configured."""
@@ -230,6 +256,7 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert result == "Graph not available."
+        return False
 
     def test_authoring_template_operations_are_not_supported(self):
         calls = []
@@ -245,6 +272,7 @@ class TestTemplateGraphOperations:
             assert processor.process({operation: {"query": "CREATE (n)"}}, ctx) == ""
 
         assert calls == []
+        return False
 
     def test_graph_query_rejects_mutation_before_callback(self):
         calls = []
@@ -264,6 +292,7 @@ class TestTemplateGraphOperations:
 
         assert processor.process(template, ctx) == "Read-only."
         assert calls == []
+        return False
 
     def test_triple_query_object(self):
         client = MockGraphClient()
@@ -279,6 +308,7 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert result == "France"
+        return False
 
     def test_triple_query_subject(self):
         client = MockGraphClient()
@@ -294,6 +324,7 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert result == "Paris"
+        return False
 
     def test_graph_query_list_format(self):
         client = MockGraphClient()
@@ -311,7 +342,10 @@ class TestTemplateGraphOperations:
 
         template = {
             "graph_query": {
-                "query": "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity {primary_label: $name}) RETURN c.predicate as relation, c.object as target",
+                ("query"): (
+                    "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity {primary_label: $name}) RETURN c.predicate as rela"
+                    "tion, c.object as target"
+                ),
                 "params": {"name": "{star1}"},
                 "format": "list",
                 "item_template": "{star1} {relation} {target}",
@@ -323,6 +357,7 @@ class TestTemplateGraphOperations:
 
         result = processor.process(template, ctx)
         assert "KNOWS" in result or "LIKES" in result
+        return False
 
 
 class TestReadOnlyGraphWiring:
@@ -341,6 +376,7 @@ class TestReadOnlyGraphWiring:
         assert is_write_cypher("MATCH (c) SET c.x = 1")
         assert not is_write_cypher("MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) RETURN c LIMIT 1")
         assert not is_write_cypher("")
+        return False
 
     def test_is_write_cypher_refuses_procedures_and_imports(self):
         # Stored procedures can mutate regardless of the query's shape, and
@@ -351,6 +387,7 @@ class TestReadOnlyGraphWiring:
         # 'called'/'loading' as plain words in string literals do not trip the
         # whole-word guard.
         assert not is_write_cypher("MATCH (c:Claim) WHERE c.subject = 'so-called expert' RETURN c")
+        return False
 
     def test_graph_read_fn_passes_reads(self):
         client = MockGraphClient()
@@ -361,25 +398,28 @@ class TestReadOnlyGraphWiring:
             {"subject": "Athens", "predicate": "located in"},
         )
         assert rows == [{"result": "Greece"}]
+        return False
 
     def test_graph_read_fn_refuses_writes(self):
         client = MockGraphClient()
         engram = self.engram_with_graph(client)
         before = len(client.claims)
-        with pytest.raises(ValueError, match="read-only"):
+        with pytest_raises(ValueError, match="read-only"):
             engram.graph_read_fn(
                 "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
                 {"subject": "Paris", "predicate": "located in", "object": "France"},
             )
         assert len(client.claims) == before  # the write never reached the graph
+        return False
 
     def test_connection_has_no_writer_and_rejects_before_connecting(self):
         client = MemGraphConnection()
 
         assert not hasattr(client, "execute_write")
-        with pytest.raises(ValueError, match="read-only"):
+        with pytest_raises(ValueError, match="read-only"):
             client.execute("CREATE (n)")
         assert client.conn is None
+        return False
 
     def test_internal_vector_search_is_fixed_and_generic_call_stays_refused(self):
         client = MemGraphConnection()
@@ -398,11 +438,12 @@ class TestReadOnlyGraphWiring:
             min_similarity=0.5,
         )
 
-        assert rows[0]["claim_id"] == "claim-1"
-        assert "CALL vector_search.search" in captured["query"]
-        assert captured["params"]["limit"] == 25
-        with pytest.raises(ValueError, match="read-only"):
+        assert rows[0].get("claim_id", "") == "claim-1"
+        assert "CALL vector_search.search" in captured.get("query", "")
+        assert captured.get("params", {}).get("limit", 0) == 25
+        with pytest_raises(ValueError, match="read-only"):
             client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+        return False
 
     def test_vector_graph_fallback_phrases_semantic_claim(self):
         client = MockGraphClient()
@@ -424,10 +465,9 @@ class TestReadOnlyGraphWiring:
 
         assert "Water" in result
         assert "100 degrees Celsius" in result
+        return False
 
     def test_vector_support_retrieves_scoped_response_on_keyword_miss(self):
-        from engram.service import EngramCore
-
         client = MockGraphClient()
         client.vector_rows = [
             {
@@ -465,11 +505,12 @@ class TestReadOnlyGraphWiring:
             context_fingerprint="local-v1",
         )
 
-        assert len(proposal["candidates"]) == 1
-        candidate = proposal["candidates"][0]
-        assert candidate["retrieval"]["selected"] == "vector"
-        assert candidate["retrieval"]["keyword_score"] == 0.0
-        assert candidate["retrieval"]["vector_score"] == pytest.approx(0.63)
+        assert len(proposal.get("candidates", [])) == 1
+        candidate = proposal.get("candidates", [])[0]
+        assert candidate.get("retrieval", {}).get("selected", "") == "vector"
+        assert candidate.get("retrieval", {}).get("keyword_score", 0.0) == 0.0
+        assert candidate.get("retrieval", {}).get("vector_score", 0.0) == pytest_approx(0.63)
+        return False
 
     def test_triple_query_wired_through_response_path(self):
         """A stored `<triple_query>` statement resolves through pattern_query."""
@@ -484,6 +525,7 @@ class TestReadOnlyGraphWiring:
         )
         result = engram.pattern_query("where is athens")
         assert result and result[2] == "Greece"
+        return False
 
     def test_removed_authoring_template_is_inert_through_response_path(self):
         client = MockGraphClient()
@@ -497,3 +539,4 @@ class TestReadOnlyGraphWiring:
         before = len(client.claims)
         engram.pattern_query("add paris")
         assert len(client.claims) == before
+        return False

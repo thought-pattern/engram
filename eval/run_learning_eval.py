@@ -22,19 +22,19 @@ Usage:
     python eval/run_learning_eval.py --json report.json
 """
 
-import argparse
-import json
-import sys
+from argparse import ArgumentParser as argparse_ArgumentParser
+from json import dump as json_dump
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from sys import exit as sys_exit, path as sys_path
 
 from engram import eviction, metrics
 from engram.config import engram_config
 from engram.constants import EvictionPolicy
 from engram.core import Engram
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys_path:
+    sys_path.insert(0, str(REPO_ROOT))
 
 CAPACITY = 8
 CONFIRMATION_ROUNDS = 5
@@ -49,9 +49,10 @@ PROVEN_PAIRS = [
 ]
 
 
-def check(checks: list, name: str, ok: bool, detail: str) -> None:
+def check(checks: list, name: str, ok: bool, detail: str) -> bool:
     """Record one invariant check."""
     checks.append({"name": name, "ok": bool(ok), "detail": detail})
+    return False
 
 
 def run_simulation() -> list:
@@ -71,9 +72,9 @@ def run_simulation() -> list:
     for _ in range(CONFIRMATION_ROUNDS):
         for question, _ in PROVEN_PAIRS:
             result = engram.query(question)
-            if result["matches"]:
-                top_stmt, _ = result["matches"][0]
-                engram.record_hit(result["keywords"], statement_id=top_stmt["id"])
+            if result.get("matches", []):
+                top_stmt, _ = result.get("matches", [])[0]
+                engram.record_hit(result.get("keywords", []), statement_id=top_stmt.get("id", ""))
 
     # Churn: one-off LLM responses that nobody ever confirms.
     for i in range(CHURN_ONE_OFFS):
@@ -93,14 +94,14 @@ def run_simulation() -> list:
     check(
         checks,
         "capacity holds under churn",
-        stats["dynamic_count"] <= CAPACITY,
-        f"dynamic_count={stats['dynamic_count']} capacity={CAPACITY}",
+        stats.get("dynamic_count", 0) <= CAPACITY,
+        f"dynamic_count={stats.get('dynamic_count', 0)} capacity={CAPACITY}",
     )
     check(
         checks,
         "evictions happen",
-        stats["eviction_count"] > 0,
-        f"eviction_count={stats['eviction_count']}",
+        stats.get("eviction_count", 0) > 0,
+        f"eviction_count={stats.get('eviction_count', 0)}",
     )
 
     # Invariant: learned entries create no patterns, so the matcher is bounded.
@@ -115,8 +116,8 @@ def run_simulation() -> list:
     # default confidence threshold, after all the churn.
     question, answer = PROVEN_PAIRS[0]
     result = engram.query(question)
-    top_text = result["matches"][0][0]["text"] if result["matches"] else ""
-    top_score = result["matches"][0][1] if result["matches"] else 0.0
+    top_text = result.get("matches", [])[0][0].get("text", "") if result.get("matches", []) else ""
+    top_score = result.get("matches", [])[0][1] if result.get("matches", []) else 0.0
     check(
         checks,
         "confirmed answer retrieves confidently",
@@ -128,7 +129,7 @@ def run_simulation() -> list:
     # min_hit_rate protection lapses and they become evictable again.
     for _ in range(CONFIRMATION_ROUNDS):
         metrics.decay_statistics(engram, factor=0.5)
-    candidates = {stmt["id"] for _, stmt in eviction.get_eviction_candidates(engram)}
+    candidates = {stmt.get("id", "") for _, stmt in eviction.get_eviction_candidates(engram)}
     decayed_out = sum(1 for stmt_id in proven_ids.values() if engram.get_statement(stmt_id) and stmt_id in candidates)
     check(
         checks,
@@ -142,30 +143,31 @@ def run_simulation() -> list:
 
 def main() -> int:
     """Run the learning-loop evaluation and print a report."""
-    parser = argparse.ArgumentParser(description="Engram learning-loop evaluation")
+    parser = argparse_ArgumentParser(description="Engram learning-loop evaluation")
     parser.add_argument("--json", default="", help="Write a JSON report to this path")
     args = parser.parse_args()
 
     checks = run_simulation()
-    passed = [c for c in checks if c["ok"]]
-    failed = [c for c in checks if not c["ok"]]
+    passed = [c for c in checks if c.get("ok", False)]
+    failed = [c for c in checks if not c.get("ok", False)]
 
     print("ENGRAM Learning-Loop Eval")
     print("=" * 64)
     for c in checks:
-        marker = "[DONE]" if c["ok"] else "[FAILED]"
-        print(f"{marker} {c['name']}")
-        print(f"         {c['detail']}")
+        marker = "[DONE]" if c.get("ok", False) else "[FAILED]"
+        print(f"{marker} {c.get('name', '')}")
+        print(f"         {c.get('detail', False)}")
     print()
     print(f"SUMMARY passed={len(passed)} failed={len(failed)}")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"checks": checks}, f, indent=2)
+            json_dump({"checks": checks}, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    return 1 if failed else 0
+    _return_value = 1 if failed else 0
+    return _return_value
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys_exit(main())
