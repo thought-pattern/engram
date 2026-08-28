@@ -99,7 +99,7 @@ def _contract(name: str, input_schema: str, result_schema: str, errors: tuple[st
             "numeric_precision_digits": UTILITY_NUMERIC_PRECISION_DIGITS,
         },
         "deterministic_result": result_schema,
-        "evidence": "candidate provenance only; no Claim or learned-response evidence",
+        "evidence": "candidate provenance only; no Proposition or learned-response evidence",
         "errors": errors,
         "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
     }

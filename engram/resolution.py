@@ -16,16 +16,16 @@ from engram.constants import (
     BUDGET_CONSUMPTION_SCHEMA_VERSION,
     CANDIDATE_FIELDS,
     CANDIDATE_SCHEMA_VERSION,
-    CANONICAL_CLAIM_REFERENCES_FIELDS,
-    CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION,
-    CLAIM_EVIDENCE_PATH_SCHEMA_VERSION,
-    CLAIM_EVIDENCE_PATH_STEP_FIELDS,
-    CLAIM_EVIDENCE_RECORD_FIELDS,
-    CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION,
-    CLAIM_TRUST_INPUTS_FIELDS,
-    CLAIM_TRUST_INPUTS_SCHEMA_VERSION,
-    CLAIM_VALIDITY_INPUTS_FIELDS,
-    CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
+    CANONICAL_PROPOSITION_REFERENCES_FIELDS,
+    CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION,
+    PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
+    PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
+    PROPOSITION_EVIDENCE_RECORD_FIELDS,
+    PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
+    PROPOSITION_TRUST_INPUTS_FIELDS,
+    PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
+    PROPOSITION_VALIDITY_INPUTS_FIELDS,
+    PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
     DEFAULT_RESOLUTION_MAX_CANDIDATES,
     DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES,
@@ -50,13 +50,13 @@ from engram.constants import (
     MAX_ACCOUNTING_KEYWORD_BYTES,
     MAX_ACCOUNTING_KEYWORDS,
     MAX_CANDIDATE_ID_BYTES,
-    MAX_CLAIM_IDENTIFIER_BYTES,
-    MAX_CLAIM_SELECTION_REASONS,
-    MAX_CLAIM_SOURCE_CONTRIBUTIONS,
-    MAX_CLAIM_TIMESTAMP_BYTES,
-    MAX_CLAIM_TRUST_CATEGORY_BYTES,
+    MAX_PROPOSITION_IDENTIFIER_BYTES,
+    MAX_PROPOSITION_SELECTION_REASONS,
+    MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
+    MAX_PROPOSITION_TIMESTAMP_BYTES,
+    MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     MAX_COMPOSITION_BINDING_BYTES,
-    MAX_COMPOSITION_PATH_CLAIMS,
+    MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_DIAGNOSTIC_ID_BYTES,
     MAX_DISCLOSURE_AUTHORITY_BYTES,
     MAX_DISCLOSURE_ENUM_BYTES,
@@ -103,7 +103,7 @@ from engram.constants import (
     RESOLVER_RESULT_SCHEMA_VERSION,
     REWRITE_TRACE_STEP_FIELDS,
     CandidateSource,
-    ClaimOwnership,
+    PropositionOwnership,
     CostClass,
     DisclosureBasis,
     EvidenceKind,
@@ -178,16 +178,16 @@ def _require_bool(value: object, name: str) -> bool:
     return value
 
 
-def _require_identifier(value: object, name: str, maximum_bytes: int = MAX_CLAIM_IDENTIFIER_BYTES) -> str:
+def _require_identifier(value: object, name: str, maximum_bytes: int = MAX_PROPOSITION_IDENTIFIER_BYTES) -> str:
     identifier = _require_text(value, name, maximum_bytes, allow_empty=False)
     if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in identifier):
         raise InvalidRequestError(f"{name} must not contain whitespace or control characters")
     return identifier
 
 
-def _require_claim_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
+def _require_proposition_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
     presence = _require_bool(available, f"{name}_available")
-    text = _require_text(value, name, MAX_CLAIM_TIMESTAMP_BYTES, allow_empty=not presence)
+    text = _require_text(value, name, MAX_PROPOSITION_TIMESTAMP_BYTES, allow_empty=not presence)
     if not presence:
         if text:
             raise InvalidRequestError(f"{name} must be empty when unavailable")
@@ -1024,30 +1024,30 @@ def feature_set_from_json(value: str) -> FeatureSet:
     return result
 
 
-CanonicalClaimReferences = dict
+CanonicalPropositionReferences = dict
 
 
-def canonical_claim_references(
+def canonical_proposition_references(
     subject_entity_id: object,
     predicate_id: object,
     object_entity_id: object,
-    schema_version: object = CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION,
-) -> CanonicalClaimReferences:
-    """Build canonical graph identifiers for one full Claim record."""
+    schema_version: object = CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION,
+) -> CanonicalPropositionReferences:
+    """Build canonical graph identifiers for one full Proposition record."""
     version = _require_int(schema_version, "schema_version", 1, 1)
-    result: CanonicalClaimReferences = {
+    result: CanonicalPropositionReferences = {
         "schema_version": version,
-        "subject_entity_id": _require_identifier(subject_entity_id, "Claim subject_entity_id"),
-        "predicate_id": _require_identifier(predicate_id, "Claim predicate_id"),
-        "object_entity_id": _require_identifier(object_entity_id, "Claim object_entity_id"),
+        "subject_entity_id": _require_identifier(subject_entity_id, "Proposition subject_entity_id"),
+        "predicate_id": _require_identifier(predicate_id, "Proposition predicate_id"),
+        "object_entity_id": _require_identifier(object_entity_id, "Proposition object_entity_id"),
     }
     return result
 
 
-def validate_canonical_claim_references(value: object) -> CanonicalClaimReferences:
-    """Revalidate and copy one canonical Claim-reference dictionary."""
-    data = _exact_mapping(value, "CanonicalClaimReferences", CANONICAL_CLAIM_REFERENCES_FIELDS)
-    result = canonical_claim_references(
+def validate_canonical_proposition_references(value: object) -> CanonicalPropositionReferences:
+    """Revalidate and copy one canonical Proposition-reference dictionary."""
+    data = _exact_mapping(value, "CanonicalPropositionReferences", CANONICAL_PROPOSITION_REFERENCES_FIELDS)
+    result = canonical_proposition_references(
         data["subject_entity_id"],
         data["predicate_id"],
         data["object_entity_id"],
@@ -1056,36 +1056,36 @@ def validate_canonical_claim_references(value: object) -> CanonicalClaimReferenc
     return result
 
 
-def canonical_claim_references_with_changes(value: object, changes: object) -> CanonicalClaimReferences:
-    """Apply named fields and revalidate canonical Claim references."""
-    references = validate_canonical_claim_references(value)
+def canonical_proposition_references_with_changes(value: object, changes: object) -> CanonicalPropositionReferences:
+    """Apply named fields and revalidate canonical Proposition references."""
+    references = validate_canonical_proposition_references(value)
     if not isinstance(changes, Mapping):
-        raise InvalidRequestError("canonical Claim reference changes must be an object")
-    if not set(changes).issubset(CANONICAL_CLAIM_REFERENCES_FIELDS):
-        raise InvalidRequestError("canonical Claim reference changes contain an unknown field")
+        raise InvalidRequestError("canonical Proposition reference changes must be an object")
+    if not set(changes).issubset(CANONICAL_PROPOSITION_REFERENCES_FIELDS):
+        raise InvalidRequestError("canonical Proposition reference changes contain an unknown field")
     updated: dict[str, object] = dict(references)
     updated.update(changes)
-    result = validate_canonical_claim_references(updated)
+    result = validate_canonical_proposition_references(updated)
     return result
 
 
-def canonical_claim_references_to_dict(value: object) -> dict[str, object]:
-    """Serialize canonical Claim references."""
-    references = validate_canonical_claim_references(value)
+def canonical_proposition_references_to_dict(value: object) -> dict[str, object]:
+    """Serialize canonical Proposition references."""
+    references = validate_canonical_proposition_references(value)
     result: dict[str, object] = dict(references)
     return result
 
 
-def canonical_claim_references_from_dict(value: object) -> CanonicalClaimReferences:
-    """Decode canonical Claim references from their exact serialized form."""
-    result = validate_canonical_claim_references(value)
+def canonical_proposition_references_from_dict(value: object) -> CanonicalPropositionReferences:
+    """Decode canonical Proposition references from their exact serialized form."""
+    result = validate_canonical_proposition_references(value)
     return result
 
 
-ClaimValidityInputs = dict
+PropositionValidityInputs = dict
 
 
-def claim_validity_inputs(
+def proposition_validity_inputs(
     evaluation_time: object,
     active: object,
     system_current: object,
@@ -1094,7 +1094,7 @@ def claim_validity_inputs(
     valid_from_available: object = False,
     valid_to: object = "",
     valid_to_available: object = False,
-    schema_version: object = CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
+    schema_version: object = PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     temporal_operator: object = TemporalQueryOperator.UNSPECIFIED,
     temporal_axis: object = TemporalAxis.VALID_TIME,
     requested_start: object = "",
@@ -1111,41 +1111,41 @@ def claim_validity_inputs(
     system_time_match: object = True,
     valid_time_match: object = True,
     valid_time_match_available: object = True,
-) -> ClaimValidityInputs:
-    """Build inspectable temporal inputs for one eligible Claim."""
+) -> PropositionValidityInputs:
+    """Build inspectable temporal inputs for one eligible Proposition."""
     version = _require_int(
         schema_version,
         "schema_version",
-        CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
-        CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION,
+        PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
+        PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     )
-    evaluation, _evaluation_available = _require_claim_timestamp(evaluation_time, True, "Claim evaluation_time")
-    normalized_active = _require_bool(active, "Claim active")
-    normalized_system_current = _require_bool(system_current, "Claim system_current")
-    normalized_valid_time_current = _require_bool(valid_time_current, "Claim valid_time_current")
+    evaluation, _evaluation_available = _require_proposition_timestamp(evaluation_time, True, "Proposition evaluation_time")
+    normalized_active = _require_bool(active, "Proposition active")
+    normalized_system_current = _require_bool(system_current, "Proposition system_current")
+    normalized_valid_time_current = _require_bool(valid_time_current, "Proposition valid_time_current")
     if not isinstance(temporal_operator, TemporalQueryOperator):
-        raise InvalidRequestError("Claim temporal_operator is unsupported")
+        raise InvalidRequestError("Proposition temporal_operator is unsupported")
     if not isinstance(temporal_axis, TemporalAxis):
-        raise InvalidRequestError("Claim temporal_axis is unsupported")
-    requested_lower, requested_lower_available = _require_claim_timestamp(
+        raise InvalidRequestError("Proposition temporal_axis is unsupported")
+    requested_lower, requested_lower_available = _require_proposition_timestamp(
         requested_start,
         requested_start_available,
-        "Claim requested_start",
+        "Proposition requested_start",
     )
-    requested_upper, requested_upper_available = _require_claim_timestamp(
+    requested_upper, requested_upper_available = _require_proposition_timestamp(
         requested_end,
         requested_end_available,
-        "Claim requested_end",
+        "Proposition requested_end",
     )
-    system_lower, system_lower_available = _require_claim_timestamp(system_from, system_from_available, "Claim system_from")
-    system_upper, system_upper_available = _require_claim_timestamp(system_to, system_to_available, "Claim system_to")
-    invalidated, invalidated_available = _require_claim_timestamp(
+    system_lower, system_lower_available = _require_proposition_timestamp(system_from, system_from_available, "Proposition system_from")
+    system_upper, system_upper_available = _require_proposition_timestamp(system_to, system_to_available, "Proposition system_to")
+    invalidated, invalidated_available = _require_proposition_timestamp(
         invalidated_at,
         invalidated_at_available,
-        "Claim invalidated_at",
+        "Proposition invalidated_at",
     )
-    lower, lower_available = _require_claim_timestamp(valid_from, valid_from_available, "Claim valid_from")
-    upper, upper_available = _require_claim_timestamp(valid_to, valid_to_available, "Claim valid_to")
+    lower, lower_available = _require_proposition_timestamp(valid_from, valid_from_available, "Proposition valid_from")
+    upper, upper_available = _require_proposition_timestamp(valid_to, valid_to_available, "Proposition valid_to")
     for name, interval_lower, interval_lower_available, interval_upper, interval_upper_available in (
         ("requested_start", requested_lower, requested_lower_available, requested_upper, requested_upper_available),
         ("system_from", system_lower, system_lower_available, system_upper, system_upper_available),
@@ -1155,7 +1155,7 @@ def claim_validity_inputs(
             lower_time = datetime.fromisoformat(interval_lower[:-1] + "+00:00")
             upper_time = datetime.fromisoformat(interval_upper[:-1] + "+00:00")
             if lower_time >= upper_time:
-                raise InvalidRequestError(f"Claim {name} must be earlier than its upper bound")
+                raise InvalidRequestError(f"Proposition {name} must be earlier than its upper bound")
     expected_request_bounds = {
         TemporalQueryOperator.UNSPECIFIED: (False, False),
         TemporalQueryOperator.CURRENT: (False, False),
@@ -1168,7 +1168,7 @@ def claim_validity_inputs(
         TemporalQueryOperator.LATEST: (False, False),
     }
     if (requested_lower_available, requested_upper_available) != expected_request_bounds[temporal_operator]:
-        raise InvalidRequestError("Claim requested temporal bounds conflict with temporal_operator")
+        raise InvalidRequestError("Proposition requested temporal bounds conflict with temporal_operator")
     evaluated_at = datetime.fromisoformat(evaluation[:-1] + "+00:00")
     effective_system_upper = system_upper
     effective_system_upper_available = system_upper_available
@@ -1186,25 +1186,25 @@ def claim_validity_inputs(
         not upper_available or evaluated_at < datetime.fromisoformat(upper[:-1] + "+00:00")
     )
     if normalized_active != observed_active:
-        raise InvalidRequestError("Claim active conflicts with the disclosed invalidation boundary")
+        raise InvalidRequestError("Proposition active conflicts with the disclosed invalidation boundary")
     if normalized_system_current != observed_system_current:
-        raise InvalidRequestError("Claim system_current conflicts with the disclosed system interval")
+        raise InvalidRequestError("Proposition system_current conflicts with the disclosed system interval")
     if normalized_valid_time_current != observed_valid_current:
-        raise InvalidRequestError("Claim valid_time_current conflicts with the disclosed valid interval")
-    normalized_request_eligible = _require_bool(eligible_for_request, "Claim eligible_for_request")
-    normalized_system_match = _require_bool(system_time_match, "Claim system_time_match")
-    normalized_valid_match = _require_bool(valid_time_match, "Claim valid_time_match")
+        raise InvalidRequestError("Proposition valid_time_current conflicts with the disclosed valid interval")
+    normalized_request_eligible = _require_bool(eligible_for_request, "Proposition eligible_for_request")
+    normalized_system_match = _require_bool(system_time_match, "Proposition system_time_match")
+    normalized_valid_match = _require_bool(valid_time_match, "Proposition valid_time_match")
     normalized_valid_match_available = _require_bool(
         valid_time_match_available,
-        "Claim valid_time_match_available",
+        "Proposition valid_time_match_available",
     )
     if not normalized_request_eligible or not normalized_system_match:
-        raise InvalidRequestError("Claim evidence validity inputs must describe a Claim eligible for the request")
+        raise InvalidRequestError("Proposition evidence validity inputs must describe a Proposition eligible for the request")
     if normalized_valid_match_available != (temporal_axis == TemporalAxis.VALID_TIME):
-        raise InvalidRequestError("Claim valid_time_match availability conflicts with temporal_axis")
+        raise InvalidRequestError("Proposition valid_time_match availability conflicts with temporal_axis")
     if normalized_valid_match_available != normalized_valid_match:
-        raise InvalidRequestError("available Claim valid_time_match must be true and unavailable match must be false")
-    result: ClaimValidityInputs = {
+        raise InvalidRequestError("available Proposition valid_time_match must be true and unavailable match must be false")
+    result: PropositionValidityInputs = {
         "schema_version": version,
         "evaluation_time": evaluation,
         "active": normalized_active,
@@ -1234,10 +1234,10 @@ def claim_validity_inputs(
     return result
 
 
-def validate_claim_validity_inputs(value: object) -> ClaimValidityInputs:
-    """Revalidate and copy one Claim-validity input dictionary."""
-    data = _exact_mapping(value, "ClaimValidityInputs", CLAIM_VALIDITY_INPUTS_FIELDS)
-    result = claim_validity_inputs(
+def validate_proposition_validity_inputs(value: object) -> PropositionValidityInputs:
+    """Revalidate and copy one Proposition-validity input dictionary."""
+    data = _exact_mapping(value, "PropositionValidityInputs", PROPOSITION_VALIDITY_INPUTS_FIELDS)
+    result = proposition_validity_inputs(
         data["evaluation_time"],
         data["active"],
         data["system_current"],
@@ -1267,78 +1267,78 @@ def validate_claim_validity_inputs(value: object) -> ClaimValidityInputs:
     return result
 
 
-def claim_validity_inputs_with_changes(value: object, changes: object) -> ClaimValidityInputs:
-    """Apply named fields and revalidate complete Claim-validity inputs."""
-    validity = validate_claim_validity_inputs(value)
+def proposition_validity_inputs_with_changes(value: object, changes: object) -> PropositionValidityInputs:
+    """Apply named fields and revalidate complete Proposition-validity inputs."""
+    validity = validate_proposition_validity_inputs(value)
     if not isinstance(changes, Mapping):
-        raise InvalidRequestError("Claim validity changes must be an object")
-    if not set(changes).issubset(CLAIM_VALIDITY_INPUTS_FIELDS):
-        raise InvalidRequestError("Claim validity changes contain an unknown field")
+        raise InvalidRequestError("Proposition validity changes must be an object")
+    if not set(changes).issubset(PROPOSITION_VALIDITY_INPUTS_FIELDS):
+        raise InvalidRequestError("Proposition validity changes contain an unknown field")
     updated: dict[str, object] = dict(validity)
     updated.update(changes)
-    result = validate_claim_validity_inputs(updated)
+    result = validate_proposition_validity_inputs(updated)
     return result
 
 
-def claim_validity_inputs_to_dict(value: object) -> dict[str, object]:
-    """Serialize Claim-validity inputs."""
-    validity = validate_claim_validity_inputs(value)
+def proposition_validity_inputs_to_dict(value: object) -> dict[str, object]:
+    """Serialize Proposition-validity inputs."""
+    validity = validate_proposition_validity_inputs(value)
     result: dict[str, object] = dict(validity)
     result["temporal_operator"] = validity["temporal_operator"].value
     result["temporal_axis"] = validity["temporal_axis"].value
     return result
 
 
-def claim_validity_inputs_from_dict(value: object) -> ClaimValidityInputs:
-    """Decode Claim-validity inputs from their exact serialized form."""
+def proposition_validity_inputs_from_dict(value: object) -> PropositionValidityInputs:
+    """Decode Proposition-validity inputs from their exact serialized form."""
     if not isinstance(value, Mapping):
-        raise InvalidRequestError("ClaimValidityInputs must be an object")
+        raise InvalidRequestError("PropositionValidityInputs must be an object")
     decoded = dict(value)
     try:
         decoded["temporal_operator"] = TemporalQueryOperator(str(decoded.get("temporal_operator", "")))
         decoded["temporal_axis"] = TemporalAxis(str(decoded.get("temporal_axis", "")))
     except ValueError as error:
-        raise InvalidRequestError("Claim validity temporal enum is unsupported") from error
-    result = validate_claim_validity_inputs(decoded)
+        raise InvalidRequestError("Proposition validity temporal enum is unsupported") from error
+    result = validate_proposition_validity_inputs(decoded)
     return result
 
 
-ClaimTrustInputs = dict
+PropositionTrustInputs = dict
 
 
-def claim_trust_inputs(
+def proposition_trust_inputs(
     trust_category: object = "",
     trust_category_available: object = False,
     supplied_trust: object = 0.0,
     supplied_trust_available: object = False,
     supplied_trust_version: object = 0,
     supplied_trust_version_available: object = False,
-    schema_version: object = CLAIM_TRUST_INPUTS_SCHEMA_VERSION,
-) -> ClaimTrustInputs:
-    """Build supplied Claim trust values with concrete availability."""
+    schema_version: object = PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
+) -> PropositionTrustInputs:
+    """Build supplied Proposition trust values with concrete availability."""
     version = _require_int(schema_version, "schema_version", 1, 1)
-    category_available = _require_bool(trust_category_available, "Claim trust_category_available")
+    category_available = _require_bool(trust_category_available, "Proposition trust_category_available")
     category = _require_text(
         trust_category,
-        "Claim trust_category",
-        MAX_CLAIM_TRUST_CATEGORY_BYTES,
+        "Proposition trust_category",
+        MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
         allow_empty=not category_available,
     )
     if not category_available and category:
-        raise InvalidRequestError("Claim trust_category must be empty when unavailable")
-    supplied_available = _require_bool(supplied_trust_available, "Claim supplied_trust_available")
-    supplied = _require_float(supplied_trust, "Claim supplied_trust", 0.0, 1.0)
+        raise InvalidRequestError("Proposition trust_category must be empty when unavailable")
+    supplied_available = _require_bool(supplied_trust_available, "Proposition supplied_trust_available")
+    supplied = _require_float(supplied_trust, "Proposition supplied_trust", 0.0, 1.0)
     if not supplied_available and supplied != 0.0:
-        raise InvalidRequestError("Claim supplied_trust must be zero when unavailable")
-    version_available = _require_bool(supplied_trust_version_available, "Claim supplied_trust_version_available")
-    trust_version = _require_int(supplied_trust_version, "Claim supplied_trust_version", 0, 2_147_483_647)
+        raise InvalidRequestError("Proposition supplied_trust must be zero when unavailable")
+    version_available = _require_bool(supplied_trust_version_available, "Proposition supplied_trust_version_available")
+    trust_version = _require_int(supplied_trust_version, "Proposition supplied_trust_version", 0, 2_147_483_647)
     if not version_available and trust_version != 0:
-        raise InvalidRequestError("Claim supplied_trust_version must be zero when unavailable")
+        raise InvalidRequestError("Proposition supplied_trust_version must be zero when unavailable")
     if supplied_available != version_available:
-        raise InvalidRequestError("Claim supplied trust value and version availability must match")
+        raise InvalidRequestError("Proposition supplied trust value and version availability must match")
     if version_available and trust_version == 0:
-        raise InvalidRequestError("Claim supplied_trust_version must be positive when available")
-    result: ClaimTrustInputs = {
+        raise InvalidRequestError("Proposition supplied_trust_version must be positive when available")
+    result: PropositionTrustInputs = {
         "schema_version": version,
         "trust_category": category,
         "trust_category_available": category_available,
@@ -1350,10 +1350,10 @@ def claim_trust_inputs(
     return result
 
 
-def validate_claim_trust_inputs(value: object) -> ClaimTrustInputs:
-    """Revalidate and copy one Claim-trust input dictionary."""
-    data = _exact_mapping(value, "ClaimTrustInputs", CLAIM_TRUST_INPUTS_FIELDS)
-    result = claim_trust_inputs(
+def validate_proposition_trust_inputs(value: object) -> PropositionTrustInputs:
+    """Revalidate and copy one Proposition-trust input dictionary."""
+    data = _exact_mapping(value, "PropositionTrustInputs", PROPOSITION_TRUST_INPUTS_FIELDS)
+    result = proposition_trust_inputs(
         data["trust_category"],
         data["trust_category_available"],
         data["supplied_trust"],
@@ -1365,29 +1365,29 @@ def validate_claim_trust_inputs(value: object) -> ClaimTrustInputs:
     return result
 
 
-def claim_trust_inputs_with_changes(value: object, changes: object) -> ClaimTrustInputs:
-    """Apply named fields and revalidate complete Claim-trust inputs."""
-    trust = validate_claim_trust_inputs(value)
+def proposition_trust_inputs_with_changes(value: object, changes: object) -> PropositionTrustInputs:
+    """Apply named fields and revalidate complete Proposition-trust inputs."""
+    trust = validate_proposition_trust_inputs(value)
     if not isinstance(changes, Mapping):
-        raise InvalidRequestError("Claim trust changes must be an object")
-    if not set(changes).issubset(CLAIM_TRUST_INPUTS_FIELDS):
-        raise InvalidRequestError("Claim trust changes contain an unknown field")
+        raise InvalidRequestError("Proposition trust changes must be an object")
+    if not set(changes).issubset(PROPOSITION_TRUST_INPUTS_FIELDS):
+        raise InvalidRequestError("Proposition trust changes contain an unknown field")
     updated: dict[str, object] = dict(trust)
     updated.update(changes)
-    result = validate_claim_trust_inputs(updated)
+    result = validate_proposition_trust_inputs(updated)
     return result
 
 
-def claim_trust_inputs_to_dict(value: object) -> dict[str, object]:
-    """Serialize Claim-trust inputs."""
-    trust = validate_claim_trust_inputs(value)
+def proposition_trust_inputs_to_dict(value: object) -> dict[str, object]:
+    """Serialize Proposition-trust inputs."""
+    trust = validate_proposition_trust_inputs(value)
     result: dict[str, object] = dict(trust)
     return result
 
 
-def claim_trust_inputs_from_dict(value: object) -> ClaimTrustInputs:
-    """Decode Claim-trust inputs from their exact serialized form."""
-    result = validate_claim_trust_inputs(value)
+def proposition_trust_inputs_from_dict(value: object) -> PropositionTrustInputs:
+    """Decode Proposition-trust inputs from their exact serialized form."""
+    result = validate_proposition_trust_inputs(value)
     return result
 
 
@@ -1403,10 +1403,10 @@ def disclosure_decision(
     authority_available: object = False,
     schema_version: object = DISCLOSURE_DECISION_SCHEMA_VERSION,
 ) -> DisclosureDecision:
-    """Build an exact scoped Claim-disclosure decision."""
+    """Build an exact scoped Proposition-disclosure decision."""
     version = _require_int(schema_version, "schema_version", 1, 1)
-    if not isinstance(ownership, ClaimOwnership):
-        raise InvalidRequestError("disclosure ownership must be a ClaimOwnership")
+    if not isinstance(ownership, PropositionOwnership):
+        raise InvalidRequestError("disclosure ownership must be a PropositionOwnership")
     if not isinstance(basis, DisclosureBasis):
         raise InvalidRequestError("disclosure basis must be a DisclosureBasis")
     try:
@@ -1426,11 +1426,11 @@ def disclosure_decision(
         )
     if not normalized_authority_available and normalized_authority:
         raise InvalidRequestError("disclosure authority must be empty when unavailable")
-    if ownership == ClaimOwnership.PUBLIC:
+    if ownership == PropositionOwnership.PUBLIC:
         if basis != DisclosureBasis.PUBLIC_RULE or normalized_authority_available:
-            raise InvalidRequestError("PUBLIC Claim disclosure requires the public rule without an authority")
+            raise InvalidRequestError("PUBLIC Proposition disclosure requires the public rule without an authority")
     elif basis != DisclosureBasis.TRUSTED_SCOPE_AUTHORITY or not normalized_authority_available:
-        raise InvalidRequestError("non-PUBLIC Claim disclosure requires an available trusted scope authority")
+        raise InvalidRequestError("non-PUBLIC Proposition disclosure requires an available trusted scope authority")
     result: DisclosureDecision = {
         "schema_version": version,
         "ownership": ownership,
@@ -1490,7 +1490,7 @@ def disclosure_decision_from_dict(value: object) -> DisclosureDecision:
     """Decode one disclosure decision from its exact serialized form."""
     data = _exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
     try:
-        ownership = ClaimOwnership(
+        ownership = PropositionOwnership(
             _require_text(data["ownership"], "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
         )
         basis = DisclosureBasis(_require_text(data["basis"], "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False))
@@ -1508,10 +1508,10 @@ def disclosure_decision_from_dict(value: object) -> DisclosureDecision:
     return result
 
 
-ClaimEvidencePathStep = dict
+PropositionEvidencePathStep = dict
 
 
-_CLAIM_PATH_FILTERS = {
+_PROPOSITION_PATH_FILTERS = {
     "canonical_identity",
     "temporal_eligibility",
     "visibility",
@@ -1527,9 +1527,9 @@ def _path_binding(value: object, name: str) -> str:
     return binding
 
 
-def claim_evidence_path_step(
+def proposition_evidence_path_step(
     position: object,
-    claim_id: object,
+    proposition_id: object,
     subject_entity_id: object,
     predicate_id: object,
     object_entity_id: object,
@@ -1538,48 +1538,48 @@ def claim_evidence_path_step(
     output_binding: object,
     filters: object,
     aggregation_inputs: object = (),
-    schema_version: object = CLAIM_EVIDENCE_PATH_SCHEMA_VERSION,
-) -> ClaimEvidencePathStep:
-    """Build one closed Claim-path step without unrestricted graph content."""
-    version = _require_int(schema_version, "schema_version", 1, CLAIM_EVIDENCE_PATH_SCHEMA_VERSION)
-    normalized_position = _require_int(position, "Claim evidence path position", 0, MAX_COMPOSITION_PATH_CLAIMS - 1)
+    schema_version: object = PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
+) -> PropositionEvidencePathStep:
+    """Build one closed Proposition-path step without unrestricted graph content."""
+    version = _require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION)
+    normalized_position = _require_int(position, "Proposition evidence path position", 0, MAX_COMPOSITION_PATH_PROPOSITIONS - 1)
     if not isinstance(operator, GraphCompositionOperator):
-        raise InvalidRequestError("Claim evidence path operator is unsupported")
+        raise InvalidRequestError("Proposition evidence path operator is unsupported")
     if not isinstance(filters, tuple):
-        raise InvalidRequestError("Claim evidence path filters must be a tuple")
-    normalized_filters = tuple(_require_identifier(value, "Claim evidence path filter") for value in filters)
+        raise InvalidRequestError("Proposition evidence path filters must be a tuple")
+    normalized_filters = tuple(_require_identifier(value, "Proposition evidence path filter") for value in filters)
     if not normalized_filters or normalized_filters != tuple(sorted(set(normalized_filters))):
-        raise InvalidRequestError("Claim evidence path filters must be non-empty, unique, and sorted")
-    if not set(normalized_filters).issubset(_CLAIM_PATH_FILTERS):
-        raise InvalidRequestError("Claim evidence path filter is unsupported")
+        raise InvalidRequestError("Proposition evidence path filters must be non-empty, unique, and sorted")
+    if not set(normalized_filters).issubset(_PROPOSITION_PATH_FILTERS):
+        raise InvalidRequestError("Proposition evidence path filter is unsupported")
     if not isinstance(aggregation_inputs, tuple):
-        raise InvalidRequestError("Claim evidence path aggregation_inputs must be a tuple")
-    normalized_aggregation = tuple(_path_binding(value, "Claim evidence path aggregation input") for value in aggregation_inputs)
+        raise InvalidRequestError("Proposition evidence path aggregation_inputs must be a tuple")
+    normalized_aggregation = tuple(_path_binding(value, "Proposition evidence path aggregation input") for value in aggregation_inputs)
     if normalized_aggregation != tuple(sorted(set(normalized_aggregation))):
-        raise InvalidRequestError("Claim evidence path aggregation_inputs must be unique and sorted")
-    result: ClaimEvidencePathStep = {
+        raise InvalidRequestError("Proposition evidence path aggregation_inputs must be unique and sorted")
+    result: PropositionEvidencePathStep = {
         "schema_version": version,
         "position": normalized_position,
-        "claim_id": _require_identifier(claim_id, "Claim evidence path claim_id"),
-        "subject_entity_id": _require_identifier(subject_entity_id, "Claim evidence path subject_entity_id"),
-        "predicate_id": _require_identifier(predicate_id, "Claim evidence path predicate_id"),
-        "object_entity_id": _require_identifier(object_entity_id, "Claim evidence path object_entity_id"),
+        "proposition_id": _require_identifier(proposition_id, "Proposition evidence path proposition_id"),
+        "subject_entity_id": _require_identifier(subject_entity_id, "Proposition evidence path subject_entity_id"),
+        "predicate_id": _require_identifier(predicate_id, "Proposition evidence path predicate_id"),
+        "object_entity_id": _require_identifier(object_entity_id, "Proposition evidence path object_entity_id"),
         "operator": operator,
-        "input_binding": _path_binding(input_binding, "Claim evidence path input_binding"),
-        "output_binding": _path_binding(output_binding, "Claim evidence path output_binding"),
+        "input_binding": _path_binding(input_binding, "Proposition evidence path input_binding"),
+        "output_binding": _path_binding(output_binding, "Proposition evidence path output_binding"),
         "filters": normalized_filters,
         "aggregation_inputs": normalized_aggregation,
     }
     if result["input_binding"] == result["output_binding"]:
-        raise InvalidRequestError("Claim evidence path input and output bindings must differ")
+        raise InvalidRequestError("Proposition evidence path input and output bindings must differ")
     return result
 
 
-def validate_claim_evidence_path_step(value: object) -> ClaimEvidencePathStep:
-    data = _exact_mapping(value, "ClaimEvidencePathStep", CLAIM_EVIDENCE_PATH_STEP_FIELDS)
-    return claim_evidence_path_step(
+def validate_proposition_evidence_path_step(value: object) -> PropositionEvidencePathStep:
+    data = _exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
+    return proposition_evidence_path_step(
         data["position"],
-        data["claim_id"],
+        data["proposition_id"],
         data["subject_entity_id"],
         data["predicate_id"],
         data["object_entity_id"],
@@ -1592,12 +1592,12 @@ def validate_claim_evidence_path_step(value: object) -> ClaimEvidencePathStep:
     )
 
 
-def claim_evidence_path_step_to_dict(value: object) -> dict[str, object]:
-    step = validate_claim_evidence_path_step(value)
+def proposition_evidence_path_step_to_dict(value: object) -> dict[str, object]:
+    step = validate_proposition_evidence_path_step(value)
     return {
         "schema_version": step["schema_version"],
         "position": step["position"],
-        "claim_id": step["claim_id"],
+        "proposition_id": step["proposition_id"],
         "subject_entity_id": step["subject_entity_id"],
         "predicate_id": step["predicate_id"],
         "object_entity_id": step["object_entity_id"],
@@ -1609,17 +1609,17 @@ def claim_evidence_path_step_to_dict(value: object) -> dict[str, object]:
     }
 
 
-def claim_evidence_path_step_from_dict(value: object) -> ClaimEvidencePathStep:
-    data = _exact_mapping(value, "ClaimEvidencePathStep", CLAIM_EVIDENCE_PATH_STEP_FIELDS)
+def proposition_evidence_path_step_from_dict(value: object) -> PropositionEvidencePathStep:
+    data = _exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     try:
-        operator = GraphCompositionOperator(_require_text(data["operator"], "Claim evidence path operator", 16, allow_empty=False))
+        operator = GraphCompositionOperator(_require_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False))
     except ValueError as error:
-        raise InvalidRequestError("Claim evidence path operator is unsupported") from error
-    raw_filters = _require_list(data["filters"], "Claim evidence path filters")
-    raw_aggregation = _require_list(data["aggregation_inputs"], "Claim evidence path aggregation_inputs")
-    return claim_evidence_path_step(
+        raise InvalidRequestError("Proposition evidence path operator is unsupported") from error
+    raw_filters = _require_list(data["filters"], "Proposition evidence path filters")
+    raw_aggregation = _require_list(data["aggregation_inputs"], "Proposition evidence path aggregation_inputs")
+    return proposition_evidence_path_step(
         data["position"],
-        data["claim_id"],
+        data["proposition_id"],
         data["subject_entity_id"],
         data["predicate_id"],
         data["object_entity_id"],
@@ -1632,11 +1632,11 @@ def claim_evidence_path_step_from_dict(value: object) -> ClaimEvidencePathStep:
     )
 
 
-ClaimEvidenceRecord = dict
+PropositionEvidenceRecord = dict
 
 
-def claim_evidence_record(
-    claim_id: object,
+def proposition_evidence_record(
+    proposition_id: object,
     source_resolver: object,
     source_contributions: object,
     features: object,
@@ -1647,60 +1647,60 @@ def claim_evidence_record(
     path: object,
     selection_reasons: object,
     schema_version: object = 1,
-) -> ClaimEvidenceRecord:
-    """Build strict wire-safe full-Claim evidence without unrestricted graph content."""
-    version = _require_int(schema_version, "schema_version", 1, CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION)
-    normalized_claim_id = _require_identifier(claim_id, "Claim evidence claim_id")
-    source = _require_identifier(source_resolver, "Claim evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
+) -> PropositionEvidenceRecord:
+    """Build strict wire-safe full-Proposition evidence without unrestricted graph content."""
+    version = _require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
+    normalized_proposition_id = _require_identifier(proposition_id, "Proposition evidence proposition_id")
+    source = _require_identifier(source_resolver, "Proposition evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
     if not isinstance(source_contributions, tuple):
-        raise InvalidRequestError("Claim evidence source_contributions must be a tuple")
+        raise InvalidRequestError("Proposition evidence source_contributions must be a tuple")
     contributions = tuple(
-        _require_identifier(value, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES) for value in source_contributions
+        _require_identifier(value, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for value in source_contributions
     )
-    if not contributions or len(contributions) > MAX_CLAIM_SOURCE_CONTRIBUTIONS:
+    if not contributions or len(contributions) > MAX_PROPOSITION_SOURCE_CONTRIBUTIONS:
         raise InvalidRequestError(
-            f"Claim evidence source_contributions must contain 1 through {MAX_CLAIM_SOURCE_CONTRIBUTIONS} values"
+            f"Proposition evidence source_contributions must contain 1 through {MAX_PROPOSITION_SOURCE_CONTRIBUTIONS} values"
         )
     if contributions != tuple(sorted(set(contributions))):
-        raise InvalidRequestError("Claim evidence source_contributions must be unique and sorted")
+        raise InvalidRequestError("Proposition evidence source_contributions must be unique and sorted")
     if source not in contributions:
-        raise InvalidRequestError("Claim evidence source_resolver must be present in source_contributions")
+        raise InvalidRequestError("Proposition evidence source_resolver must be present in source_contributions")
     try:
         validated_features = validate_feature_set(features)
     except InvalidRequestError as error:
-        raise InvalidRequestError("Claim evidence features must be a FeatureSet") from error
+        raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
     try:
-        validated_references = validate_canonical_claim_references(canonical_references)
+        validated_references = validate_canonical_proposition_references(canonical_references)
     except InvalidRequestError as error:
-        raise InvalidRequestError("Claim evidence canonical_references must be CanonicalClaimReferences") from error
+        raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
     try:
-        validated_validity = validate_claim_validity_inputs(validity)
+        validated_validity = validate_proposition_validity_inputs(validity)
     except InvalidRequestError as error:
-        raise InvalidRequestError("Claim evidence validity must be ClaimValidityInputs") from error
+        raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
     try:
-        validated_trust = validate_claim_trust_inputs(trust)
+        validated_trust = validate_proposition_trust_inputs(trust)
     except InvalidRequestError as error:
-        raise InvalidRequestError("Claim evidence trust must be ClaimTrustInputs") from error
+        raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
     try:
         validated_disclosure = validate_disclosure_decision(disclosure)
     except InvalidRequestError as error:
-        raise InvalidRequestError("Claim evidence disclosure must be DisclosureDecision") from error
+        raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
     if not isinstance(path, tuple):
-        raise InvalidRequestError("Claim evidence path must be a tuple")
+        raise InvalidRequestError("Proposition evidence path must be a tuple")
     if version == 1:
-        normalized_path: tuple[object, ...] = tuple(_require_identifier(value, "Claim evidence path identifier") for value in path)
-        if normalized_path != (normalized_claim_id,):
-            raise InvalidRequestError("Section 7 Claim evidence path must be the singleton claim_id")
+        normalized_path: tuple[object, ...] = tuple(_require_identifier(value, "Proposition evidence path identifier") for value in path)
+        if normalized_path != (normalized_proposition_id,):
+            raise InvalidRequestError("Section 7 Proposition evidence path must be the singleton proposition_id")
     else:
-        normalized_path = tuple(validate_claim_evidence_path_step(value) for value in path)
-        if not 1 <= len(normalized_path) <= MAX_COMPOSITION_PATH_CLAIMS:
-            raise InvalidRequestError(f"composed Claim evidence path must contain 1 through {MAX_COMPOSITION_PATH_CLAIMS} steps")
+        normalized_path = tuple(validate_proposition_evidence_path_step(value) for value in path)
+        if not 1 <= len(normalized_path) <= MAX_COMPOSITION_PATH_PROPOSITIONS:
+            raise InvalidRequestError(f"composed Proposition evidence path must contain 1 through {MAX_COMPOSITION_PATH_PROPOSITIONS} steps")
         steps = normalized_path
         if tuple(step["position"] for step in steps) != tuple(range(len(steps))):
-            raise InvalidRequestError("composed Claim evidence path positions must be contiguous and ordered")
-        claim_ids = tuple(step["claim_id"] for step in steps)
-        if len(set(claim_ids)) != len(claim_ids) or normalized_claim_id not in claim_ids:
-            raise InvalidRequestError("composed Claim evidence path must contain unique Claims including claim_id")
+            raise InvalidRequestError("composed Proposition evidence path positions must be contiguous and ordered")
+        proposition_ids = tuple(step["proposition_id"] for step in steps)
+        if len(set(proposition_ids)) != len(proposition_ids) or normalized_proposition_id not in proposition_ids:
+            raise InvalidRequestError("composed Proposition evidence path must contain unique Propositions including proposition_id")
         entity_ids = [steps[0]["subject_entity_id"]]
         for index, step in enumerate(steps):
             entity_ids.append(step["object_entity_id"])
@@ -1708,21 +1708,21 @@ def claim_evidence_record(
                 steps[index - 1]["object_entity_id"] != step["subject_entity_id"]
                 or steps[index - 1]["output_binding"] != step["input_binding"]
             ):
-                raise InvalidRequestError("composed Claim evidence path bindings are not contiguous")
+                raise InvalidRequestError("composed Proposition evidence path bindings are not contiguous")
         if len(set(entity_ids)) != len(entity_ids):
-            raise InvalidRequestError("composed Claim evidence path contains a cycle")
+            raise InvalidRequestError("composed Proposition evidence path contains a cycle")
     if not isinstance(selection_reasons, tuple):
-        raise InvalidRequestError("Claim evidence selection_reasons must be a tuple")
+        raise InvalidRequestError("Proposition evidence selection_reasons must be a tuple")
     reasons = tuple(
-        _require_identifier(value, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for value in selection_reasons
+        _require_identifier(value, "Proposition evidence selection reason", MAX_REASON_CODE_BYTES) for value in selection_reasons
     )
-    if not reasons or len(reasons) > MAX_CLAIM_SELECTION_REASONS:
-        raise InvalidRequestError(f"Claim evidence selection_reasons must contain 1 through {MAX_CLAIM_SELECTION_REASONS} values")
+    if not reasons or len(reasons) > MAX_PROPOSITION_SELECTION_REASONS:
+        raise InvalidRequestError(f"Proposition evidence selection_reasons must contain 1 through {MAX_PROPOSITION_SELECTION_REASONS} values")
     if reasons != tuple(sorted(set(reasons))):
-        raise InvalidRequestError("Claim evidence selection_reasons must be unique and sorted")
-    result: ClaimEvidenceRecord = {
+        raise InvalidRequestError("Proposition evidence selection_reasons must be unique and sorted")
+    result: PropositionEvidenceRecord = {
         "schema_version": version,
-        "claim_id": normalized_claim_id,
+        "proposition_id": normalized_proposition_id,
         "source_resolver": source,
         "source_contributions": contributions,
         "features": validated_features,
@@ -1736,11 +1736,11 @@ def claim_evidence_record(
     return result
 
 
-def validate_claim_evidence_record(value: object) -> ClaimEvidenceRecord:
-    """Revalidate and defensively copy one full-Claim evidence dictionary."""
-    data = _exact_mapping(value, "ClaimEvidenceRecord", CLAIM_EVIDENCE_RECORD_FIELDS)
-    result = claim_evidence_record(
-        data["claim_id"],
+def validate_proposition_evidence_record(value: object) -> PropositionEvidenceRecord:
+    """Revalidate and defensively copy one full-Proposition evidence dictionary."""
+    data = _exact_mapping(value, "PropositionEvidenceRecord", PROPOSITION_EVIDENCE_RECORD_FIELDS)
+    result = proposition_evidence_record(
+        data["proposition_id"],
         data["source_resolver"],
         data["source_contributions"],
         data["features"],
@@ -1755,31 +1755,31 @@ def validate_claim_evidence_record(value: object) -> ClaimEvidenceRecord:
     return result
 
 
-def claim_evidence_record_with_changes(value: object, changes: object) -> ClaimEvidenceRecord:
-    """Apply named fields and revalidate one full-Claim evidence dictionary."""
-    record = validate_claim_evidence_record(value)
+def proposition_evidence_record_with_changes(value: object, changes: object) -> PropositionEvidenceRecord:
+    """Apply named fields and revalidate one full-Proposition evidence dictionary."""
+    record = validate_proposition_evidence_record(value)
     if not isinstance(changes, Mapping):
-        raise InvalidRequestError("Claim evidence changes must be an object")
-    if not set(changes).issubset(CLAIM_EVIDENCE_RECORD_FIELDS):
-        raise InvalidRequestError("Claim evidence changes contain an unknown field")
+        raise InvalidRequestError("Proposition evidence changes must be an object")
+    if not set(changes).issubset(PROPOSITION_EVIDENCE_RECORD_FIELDS):
+        raise InvalidRequestError("Proposition evidence changes contain an unknown field")
     updated: dict[str, object] = dict(record)
     updated.update(changes)
-    result = validate_claim_evidence_record(updated)
+    result = validate_proposition_evidence_record(updated)
     return result
 
 
-def claim_evidence_record_to_dict(value: object) -> dict[str, object]:
-    """Serialize one full-Claim evidence record."""
-    record = validate_claim_evidence_record(value)
-    result = _trusted_claim_evidence_record_to_dict(record)
+def proposition_evidence_record_to_dict(value: object) -> dict[str, object]:
+    """Serialize one full-Proposition evidence record."""
+    record = validate_proposition_evidence_record(value)
+    result = _trusted_proposition_evidence_record_to_dict(record)
     return result
 
 
-def _trusted_claim_evidence_record_to_dict(record: ClaimEvidenceRecord) -> dict[str, object]:
-    """Serialize a Claim-evidence record already validated at a public boundary."""
+def _trusted_proposition_evidence_record_to_dict(record: PropositionEvidenceRecord) -> dict[str, object]:
+    """Serialize a Proposition-evidence record already validated at a public boundary."""
     result = {
         "schema_version": record["schema_version"],
-        "claim_id": record["claim_id"],
+        "proposition_id": record["proposition_id"],
         "source_resolver": record["source_resolver"],
         "source_contributions": list(record["source_contributions"]),
         "features": {
@@ -1788,7 +1788,7 @@ def _trusted_claim_evidence_record_to_dict(record: ClaimEvidenceRecord) -> dict[
             "unavailable": list(record["features"]["unavailable"]),
         },
         "canonical_references": dict(record["canonical_references"]),
-        "validity": claim_validity_inputs_to_dict(record["validity"]),
+        "validity": proposition_validity_inputs_to_dict(record["validity"]),
         "trust": dict(record["trust"]),
         "disclosure": {
             "schema_version": record["disclosure"]["schema_version"],
@@ -1802,42 +1802,42 @@ def _trusted_claim_evidence_record_to_dict(record: ClaimEvidenceRecord) -> dict[
         "path": (
             list(record["path"])
             if record["schema_version"] == 1
-            else [claim_evidence_path_step_to_dict(step) for step in record["path"]]
+            else [proposition_evidence_path_step_to_dict(step) for step in record["path"]]
         ),
         "selection_reasons": list(record["selection_reasons"]),
     }
     return result
 
 
-def claim_evidence_record_from_dict(value: object) -> ClaimEvidenceRecord:
-    """Decode one full-Claim evidence record from its exact serialized form."""
-    data = _exact_mapping(value, "ClaimEvidenceRecord", CLAIM_EVIDENCE_RECORD_FIELDS)
-    contributions = _require_list(data["source_contributions"], "Claim evidence source_contributions")
-    path = _require_list(data["path"], "Claim evidence path")
-    reasons = _require_list(data["selection_reasons"], "Claim evidence selection_reasons")
+def proposition_evidence_record_from_dict(value: object) -> PropositionEvidenceRecord:
+    """Decode one full-Proposition evidence record from its exact serialized form."""
+    data = _exact_mapping(value, "PropositionEvidenceRecord", PROPOSITION_EVIDENCE_RECORD_FIELDS)
+    contributions = _require_list(data["source_contributions"], "Proposition evidence source_contributions")
+    path = _require_list(data["path"], "Proposition evidence path")
+    reasons = _require_list(data["selection_reasons"], "Proposition evidence selection_reasons")
     normalized_contributions = tuple(
-        _require_identifier(item, "Claim evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
+        _require_identifier(item, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
     )
-    version = _require_int(data["schema_version"], "schema_version", 1, CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION)
+    version = _require_int(data["schema_version"], "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
     normalized_path: tuple[object, ...]
     if version == 1:
-        normalized_path = tuple(_require_identifier(item, "Claim evidence path identifier") for item in path)
+        normalized_path = tuple(_require_identifier(item, "Proposition evidence path identifier") for item in path)
     else:
         normalized_path = tuple(
-            claim_evidence_path_step_from_dict(_freeze_mapping(item, "Claim evidence path step")) for item in path
+            proposition_evidence_path_step_from_dict(_freeze_mapping(item, "Proposition evidence path step")) for item in path
         )
     normalized_reasons = tuple(
-        _require_identifier(item, "Claim evidence selection reason", MAX_REASON_CODE_BYTES) for item in reasons
+        _require_identifier(item, "Proposition evidence selection reason", MAX_REASON_CODE_BYTES) for item in reasons
     )
-    validated_features = feature_set_from_dict(_freeze_mapping(data["features"], "Claim evidence features"))
-    validated_references = canonical_claim_references_from_dict(
-        _freeze_mapping(data["canonical_references"], "Claim evidence canonical_references")
+    validated_features = feature_set_from_dict(_freeze_mapping(data["features"], "Proposition evidence features"))
+    validated_references = canonical_proposition_references_from_dict(
+        _freeze_mapping(data["canonical_references"], "Proposition evidence canonical_references")
     )
-    validated_validity = claim_validity_inputs_from_dict(_freeze_mapping(data["validity"], "Claim evidence validity"))
-    validated_trust = claim_trust_inputs_from_dict(_freeze_mapping(data["trust"], "Claim evidence trust"))
-    validated_disclosure = disclosure_decision_from_dict(_freeze_mapping(data["disclosure"], "Claim evidence disclosure"))
-    result = claim_evidence_record(
-        data["claim_id"],
+    validated_validity = proposition_validity_inputs_from_dict(_freeze_mapping(data["validity"], "Proposition evidence validity"))
+    validated_trust = proposition_trust_inputs_from_dict(_freeze_mapping(data["trust"], "Proposition evidence trust"))
+    validated_disclosure = disclosure_decision_from_dict(_freeze_mapping(data["disclosure"], "Proposition evidence disclosure"))
+    result = proposition_evidence_record(
+        data["proposition_id"],
         data["source_resolver"],
         normalized_contributions,
         validated_features,
@@ -1852,19 +1852,19 @@ def claim_evidence_record_from_dict(value: object) -> ClaimEvidenceRecord:
     return result
 
 
-def claim_evidence_record_to_json(value: object) -> str:
-    """Serialize one full-Claim evidence record deterministically."""
-    payload = claim_evidence_record_to_dict(value)
+def proposition_evidence_record_to_json(value: object) -> str:
+    """Serialize one full-Proposition evidence record deterministically."""
+    payload = proposition_evidence_record_to_dict(value)
     result = _json_text(payload)
     return result
 
 
-def claim_evidence_record_from_json(value: object) -> ClaimEvidenceRecord:
-    """Decode one full-Claim evidence record from deterministic JSON."""
+def proposition_evidence_record_from_json(value: object) -> PropositionEvidenceRecord:
+    """Decode one full-Proposition evidence record from deterministic JSON."""
     if not isinstance(value, str):
-        raise InvalidRequestError("ClaimEvidenceRecord JSON must be a string")
-    data = _load_json_mapping(value, "ClaimEvidenceRecord JSON")
-    result = claim_evidence_record_from_dict(data)
+        raise InvalidRequestError("PropositionEvidenceRecord JSON must be a string")
+    data = _load_json_mapping(value, "PropositionEvidenceRecord JSON")
+    result = proposition_evidence_record_from_dict(data)
     return result
 
 
@@ -1874,7 +1874,7 @@ EvidencePackage = dict
 def _evidence_package_payload(value: EvidencePackage) -> dict[str, object]:
     result = {
         "wire_version": value["wire_version"],
-        "records": [_trusted_claim_evidence_record_to_dict(record) for record in value["records"]],
+        "records": [_trusted_proposition_evidence_record_to_dict(record) for record in value["records"]],
         "retained_count": value["retained_count"],
         "omitted_count": value["omitted_count"],
         "truncated": value["truncated"],
@@ -1891,23 +1891,23 @@ def evidence_package(
     truncation_reasons: object,
     wire_version: object = EVIDENCE_PACKAGE_WIRE_VERSION,
 ) -> EvidencePackage:
-    """Build one canonical, count- and byte-bounded full-Claim package."""
+    """Build one canonical, count- and byte-bounded full-Proposition package."""
     version = _require_int(wire_version, "wire_version", 1, EVIDENCE_PACKAGE_WIRE_VERSION)
     if not isinstance(records, tuple):
-        raise InvalidRequestError("evidence package records must be a tuple of ClaimEvidenceRecord values")
+        raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values")
     try:
-        validated_records = tuple(validate_claim_evidence_record(record) for record in records)
+        validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
-        raise InvalidRequestError("evidence package records must be a tuple of ClaimEvidenceRecord values") from error
+        raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
     if version == 1 and any(record["schema_version"] != 1 for record in validated_records):
-        raise InvalidRequestError("evidence package wire_version 1 cannot contain composed Claim paths")
+        raise InvalidRequestError("evidence package wire_version 1 cannot contain composed Proposition paths")
     if len(validated_records) > MAX_EVIDENCE_PACKAGE_RECORDS:
         raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
-    identifiers = tuple(record["claim_id"] for record in validated_records)
+    identifiers = tuple(record["proposition_id"] for record in validated_records)
     if identifiers != tuple(sorted(identifiers)):
-        raise InvalidRequestError("evidence package records must use canonical Claim-ID order")
+        raise InvalidRequestError("evidence package records must use canonical Proposition-ID order")
     if len(set(identifiers)) != len(identifiers):
-        raise InvalidRequestError("evidence package records must have unique Claim IDs")
+        raise InvalidRequestError("evidence package records must have unique Proposition IDs")
     retained = _require_int(retained_count, "evidence package retained_count", 0, 2_147_483_647)
     omitted = _require_int(omitted_count, "evidence package omitted_count", 0, 2_147_483_647)
     if retained != len(validated_records):
@@ -1950,7 +1950,7 @@ def empty_evidence_package() -> EvidencePackage:
 
 
 def _trusted_evidence_package(
-    records: tuple[ClaimEvidenceRecord, ...],
+    records: tuple[PropositionEvidenceRecord, ...],
     omitted_count: int,
     truncation_reasons: tuple[EvidencePackageTruncationReason, ...],
 ) -> EvidencePackage:
@@ -1993,27 +1993,27 @@ def evidence_package_with_changes(value: object, changes: object) -> EvidencePac
     return result
 
 
-def _canonical_claim_evidence_records(records: object) -> tuple[tuple[ClaimEvidenceRecord, ...], int]:
+def _canonical_proposition_evidence_records(records: object) -> tuple[tuple[PropositionEvidenceRecord, ...], int]:
     if not isinstance(records, tuple):
-        raise InvalidRequestError("evidence package input must be a tuple of ClaimEvidenceRecord values")
+        raise InvalidRequestError("evidence package input must be a tuple of PropositionEvidenceRecord values")
     if len(records) > MAX_EVIDENCE_PACKAGE_INPUT_RECORDS:
         raise InvalidRequestError(f"evidence package input exceeds the limit of {MAX_EVIDENCE_PACKAGE_INPUT_RECORDS}")
     try:
-        validated_records = tuple(validate_claim_evidence_record(record) for record in records)
+        validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
-        raise InvalidRequestError("evidence package input must be a tuple of ClaimEvidenceRecord values") from error
-    by_claim_id: dict[str, ClaimEvidenceRecord] = {}
+        raise InvalidRequestError("evidence package input must be a tuple of PropositionEvidenceRecord values") from error
+    by_proposition_id: dict[str, PropositionEvidenceRecord] = {}
     duplicate_count = 0
     for record in validated_records:
-        claim_id = record["claim_id"]
-        if claim_id in by_claim_id:
-            previous = by_claim_id[claim_id]
+        proposition_id = record["proposition_id"]
+        if proposition_id in by_proposition_id:
+            previous = by_proposition_id[proposition_id]
             if previous != record:
-                raise InvalidRequestError(f"conflicting Claim evidence projections for Claim ID: {claim_id}")
+                raise InvalidRequestError(f"conflicting Proposition evidence projections for Proposition ID: {proposition_id}")
             duplicate_count += 1
             continue
-        by_claim_id[claim_id] = record
-    canonical = tuple(by_claim_id[claim_id] for claim_id in sorted(by_claim_id))
+        by_proposition_id[proposition_id] = record
+    canonical = tuple(by_proposition_id[proposition_id] for proposition_id in sorted(by_proposition_id))
     result = (canonical, duplicate_count)
     return result
 
@@ -2024,14 +2024,14 @@ def build_evidence_package(
     max_records: object = MAX_EVIDENCE_PACKAGE_RECORDS,
     max_bytes: object = MAX_EVIDENCE_PACKAGE_BYTES,
 ) -> EvidencePackage:
-    """Canonicalize, deduplicate, and fit full-Claim evidence to configured bounds."""
+    """Canonicalize, deduplicate, and fit full-Proposition evidence to configured bounds."""
     retained_limit = _require_int(max_records, "evidence package max_records", 0, MAX_EVIDENCE_PACKAGE_RECORDS)
     byte_limit = _require_int(max_bytes, "evidence package max_bytes", 256, MAX_EVIDENCE_PACKAGE_BYTES)
-    canonical, duplicate_count = _canonical_claim_evidence_records(records)
+    canonical, duplicate_count = _canonical_proposition_evidence_records(records)
     reasons: set[EvidencePackageTruncationReason] = set()
     omitted = duplicate_count
     if duplicate_count:
-        reasons.add(EvidencePackageTruncationReason.DUPLICATE_CLAIM_ID)
+        reasons.add(EvidencePackageTruncationReason.DUPLICATE_PROPOSITION_ID)
     retained = canonical[:retained_limit]
     if len(canonical) > retained_limit:
         omitted += len(canonical) - retained_limit
@@ -2088,7 +2088,7 @@ def evidence_package_from_dict(value: object) -> EvidencePackage:
             raise InvalidRequestError("unsupported evidence package truncation reason") from error
         reasons.append(reason)
     decoded_records = tuple(
-        claim_evidence_record_from_dict(_freeze_mapping(record, "evidence package record")) for record in records
+        proposition_evidence_record_from_dict(_freeze_mapping(record, "evidence package record")) for record in records
     )
     result = evidence_package(
         decoded_records,
@@ -2532,7 +2532,7 @@ def resolver_result(
     reason_code: object = "",
     candidates: object = (),
     evidence: object = (),
-    claim_evidence: object = (),
+    proposition_evidence: object = (),
     accounting: object = (),
     diagnostics: object = EMPTY_MAPPING,
     consumption: object = EMPTY_MAPPING,
@@ -2554,7 +2554,7 @@ def resolver_result(
     if (
         not isinstance(candidates, tuple)
         or not isinstance(evidence, tuple)
-        or not isinstance(claim_evidence, tuple)
+        or not isinstance(proposition_evidence, tuple)
         or not isinstance(accounting, tuple)
     ):
         raise InvalidRequestError("resolver outputs and accounting must be tuples")
@@ -2567,27 +2567,27 @@ def resolver_result(
     except InvalidRequestError as error:
         raise InvalidRequestError("resolver evidence must be a tuple of EvidenceReference values") from error
     try:
-        validated_claim_evidence = tuple(validate_claim_evidence_record(value) for value in claim_evidence)
+        validated_proposition_evidence = tuple(validate_proposition_evidence_record(value) for value in proposition_evidence)
     except InvalidRequestError as error:
-        raise InvalidRequestError("resolver claim_evidence must be a tuple of ClaimEvidenceRecord values") from error
+        raise InvalidRequestError("resolver proposition_evidence must be a tuple of PropositionEvidenceRecord values") from error
     try:
         validated_accounting = tuple(validate_accounting_observation(value) for value in accounting)
     except InvalidRequestError as error:
         raise InvalidRequestError("resolver accounting must be a tuple of AccountingObservation values") from error
     if state != ResolverState.COMPLETED and (
-        validated_candidates or validated_evidence or validated_claim_evidence or validated_accounting
+        validated_candidates or validated_evidence or validated_proposition_evidence or validated_accounting
     ):
         raise InvalidRequestError("non-completed resolver results cannot contain output or accounting")
     if any(
         value["source_resolver"] != resolver_name or value["source_contributions"] != (resolver_name,)
-        for value in validated_claim_evidence
+        for value in validated_proposition_evidence
     ):
-        raise InvalidRequestError("resolver claim_evidence source must match its producing resolver")
+        raise InvalidRequestError("resolver proposition_evidence source must match its producing resolver")
     if (
         max(
             len(validated_candidates),
             len(validated_evidence),
-            len(validated_claim_evidence),
+            len(validated_proposition_evidence),
             len(validated_accounting),
         )
         > MAX_RESOLUTION_VALUES
@@ -2606,7 +2606,7 @@ def resolver_result(
         "reason_code": validated_reason_code,
         "candidates": validated_candidates,
         "evidence": validated_evidence,
-        "claim_evidence": validated_claim_evidence,
+        "proposition_evidence": validated_proposition_evidence,
         "accounting": validated_accounting,
         "diagnostics": frozen_diagnostics,
         "consumption": validated_consumption,
@@ -2623,7 +2623,7 @@ def validate_resolver_result(value: object) -> ResolverResult:
         data["reason_code"],
         data["candidates"],
         data["evidence"],
-        data["claim_evidence"],
+        data["proposition_evidence"],
         data["accounting"],
         data["diagnostics"],
         data["consumption"],
@@ -2668,7 +2668,7 @@ def _trusted_resolver_result_to_dict(current: ResolverResult) -> dict[str, objec
         "reason_code": current["reason_code"],
         "candidates": [_trusted_candidate_to_dict(item) for item in current["candidates"]],
         "evidence": [_trusted_evidence_reference_to_dict(item) for item in current["evidence"]],
-        "claim_evidence": [_trusted_claim_evidence_record_to_dict(item) for item in current["claim_evidence"]],
+        "proposition_evidence": [_trusted_proposition_evidence_record_to_dict(item) for item in current["proposition_evidence"]],
         "accounting": [accounting_observation_to_dict(item) for item in current["accounting"]],
         "diagnostics": _thaw_json(current["diagnostics"]),
         "consumption": budget_consumption_to_dict(current["consumption"]),
@@ -2690,7 +2690,7 @@ def resolver_result_from_dict(value: object) -> ResolverResult:
         raise InvalidRequestError("unsupported resolver state") from error
     candidates = _require_list(data["candidates"], "resolver candidates")
     evidence = _require_list(data["evidence"], "resolver evidence")
-    claim_evidence = _require_list(data["claim_evidence"], "resolver Claim evidence")
+    proposition_evidence = _require_list(data["proposition_evidence"], "resolver Proposition evidence")
     accounting = _require_list(data["accounting"], "resolver accounting")
     result = resolver_result(
         schema_version=_require_int(data["schema_version"], "schema_version", 1, 1),
@@ -2699,8 +2699,8 @@ def resolver_result_from_dict(value: object) -> ResolverResult:
         reason_code=_require_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
         candidates=tuple(candidate_from_dict(_freeze_mapping(item, "resolver candidate")) for item in candidates),
         evidence=tuple(evidence_reference_from_dict(_freeze_mapping(item, "resolver evidence item")) for item in evidence),
-        claim_evidence=tuple(
-            claim_evidence_record_from_dict(_freeze_mapping(item, "resolver Claim evidence item")) for item in claim_evidence
+        proposition_evidence=tuple(
+            proposition_evidence_record_from_dict(_freeze_mapping(item, "resolver Proposition evidence item")) for item in proposition_evidence
         ),
         accounting=tuple(
             accounting_observation_from_dict(_freeze_mapping(item, "resolver accounting item")) for item in accounting
@@ -2785,8 +2785,8 @@ def resolution_result(
         raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     if len(validated_resolver_results) > MAX_RESOLUTION_REASON_CODES:
         raise InvalidRequestError(f"resolver_results exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
-    if any(value["claim_evidence"] for value in validated_resolver_results):
-        raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Claim evidence")
+    if any(value["proposition_evidence"] for value in validated_resolver_results):
+        raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Proposition evidence")
     try:
         validated_budget = validate_budget_consumption(budget)
     except InvalidRequestError as error:

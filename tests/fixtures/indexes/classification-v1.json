@@ -12,9 +12,7 @@
           "retrieval_keys": [],
           "schema_version": 1,
           "statement_id": "legacy-1",
-          "support_claim_ids": [
-            "claim-legacy"
-          ]
+          "support_references": []
         }
       ],
       "expected_collision_count": 0,
@@ -50,7 +48,7 @@
           ],
           "schema_version": 1,
           "statement_id": "answer-a",
-          "support_claim_ids": []
+          "support_references": []
         },
         {
           "direct_answer_eligible": true,
@@ -75,7 +73,7 @@
           ],
           "schema_version": 1,
           "statement_id": "answer-b",
-          "support_claim_ids": []
+          "support_references": []
         }
       ],
       "expected_collision_count": 1,
@@ -96,7 +94,7 @@
           "retrieval_keys": [],
           "schema_version": 99,
           "statement_id": "future-schema",
-          "support_claim_ids": []
+          "support_references": []
         }
       ],
       "expected_collision_count": 0,
@@ -117,7 +115,7 @@
           "retrieval_keys": [],
           "schema_version": 1,
           "statement_id": "bad-support",
-          "support_claim_ids": "claim-not-an-array"
+          "support_references": "not-an-array"
         }
       ],
       "expected_collision_count": 0,

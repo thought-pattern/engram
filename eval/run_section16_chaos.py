@@ -59,7 +59,7 @@ SCENARIOS = (
     },
     {
         "id": "partial_evidence",
-        "node": "tests/test_resolvers.py::test_orchestrator_trims_claim_package_to_complete_output_budget",
+        "node": "tests/test_resolvers.py::test_orchestrator_trims_proposition_package_to_complete_output_budget",
         "expected_fallback": "the evidence package is complete, bounded, and explicitly truncated",
     },
     {

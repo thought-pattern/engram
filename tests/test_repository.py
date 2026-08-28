@@ -25,13 +25,14 @@ from engram.repository import (
     admission_plan_to_dict,
     build_repository_state,
     check_repository_state,
-    compatibility_statement_from_artifact,
+    statement_projection_from_artifact,
     repository_check_report_to_dict,
     repository_state,
     tier_admission_policy,
     validate_repository_check_report,
     validate_repository_state,
 )
+from .support_fixtures import ASSERTION_REFERENCE_A
 
 
 def accepted_artifact(statement_id="stmt-1", tier=Tier.DYNAMIC, **overrides) -> CachedResponseArtifact:
@@ -46,7 +47,7 @@ def accepted_artifact(statement_id="stmt-1", tier=Tier.DYNAMIC, **overrides) -> 
         "tier": tier,
         "lifecycle": LifecycleState.ACTIVE,
         "scope": scope,
-        "support_claim_ids": (f"claim-{statement_id}",),
+        "support_references": (ASSERTION_REFERENCE_A,),
         "valid_from": "",
         "valid_from_available": False,
         "valid_until": "",
@@ -83,7 +84,7 @@ def object_mapping(value: object) -> Mapping[str, object]:
 
 def test_compatibility_statement_derives_exact_text_identity_provenance_and_statistics() -> None:
     artifact = accepted_artifact()
-    statement = compatibility_statement_from_artifact(artifact)
+    statement = statement_projection_from_artifact(artifact)
 
     assert statement["id"] == artifact["statement_id"]
     assert statement["text"] == artifact["response"]
@@ -95,7 +96,7 @@ def test_compatibility_statement_derives_exact_text_identity_provenance_and_stat
     template = object_mapping(statement["template"])
     tapestry = object_mapping(template["tapestry"])
     assert tapestry["request"] == artifact["retrieval"]["canonical"]
-    assert tapestry["support"] == ({"claim_id": "claim-stmt-1"},)
+    assert tapestry["support"] == (ASSERTION_REFERENCE_A,)
     with pytest.raises(TypeError):
         statement["text"] = "rewritten"
 

@@ -52,6 +52,8 @@ from engram.identity import (
 )
 from engram.indexes import ExactLookupOutcome, IndexOwner, index_projection, index_projection_to_dict, index_state_exact_lookup
 
+from .support_fixtures import PROPOSITION_REFERENCE_A, PROPOSITION_REFERENCE_B
+
 
 def accepted_artifact(**overrides) -> CachedResponseArtifact:
     scope = overrides.pop("scope", scope_key(namespace="tenant-a"))
@@ -65,7 +67,7 @@ def accepted_artifact(**overrides) -> CachedResponseArtifact:
         "tier": Tier.STATIC,
         "lifecycle": LifecycleState.ACTIVE,
         "scope": scope,
-        "support_claim_ids": (),
+        "support_references": (),
         "valid_from": "",
         "valid_from_available": False,
         "valid_until": "",
@@ -535,7 +537,7 @@ def test_pure_eligibility_rejects_wrong_concrete_types(artifact, context, policy
 
 def test_artifact_projection_contains_only_index_fields_and_decision() -> None:
     artifact = accepted_artifact(
-        support_claim_ids=("claim-2", "claim-1"),
+        support_references=(PROPOSITION_REFERENCE_B, PROPOSITION_REFERENCE_A),
         knowledge_epoch=42,
         knowledge_epoch_available=True,
     )
@@ -549,7 +551,7 @@ def test_artifact_projection_contains_only_index_fields_and_decision() -> None:
     serialized = index_projection_to_dict(projection)
     assert projection["statement_id"] == artifact["statement_id"]
     assert projection["generation"] == artifact["generation"]
-    assert projection["support_claim_ids"] == ("claim-1", "claim-2")
+    assert projection["support_references"] == (PROPOSITION_REFERENCE_B, PROPOSITION_REFERENCE_A)
     assert projection["direct_answer_eligible"] is True
     assert projection["exclusion_reason"] == ""
     assert projection["retrieval_keys"] == retrieval_representation_bindings(artifact["retrieval"], artifact["scope"])

@@ -89,7 +89,7 @@ def _artifact(request: str, response: str = "Atlas runs in Virginia.") -> Cached
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=selected_scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",
@@ -106,7 +106,7 @@ def _artifact(request: str, response: str = "Atlas runs in Virginia.") -> Cached
 def _engine_with_artifact(request: str) -> Engram:
     engine = Engram(engram_config(expand_contractions=False, retrieval_rewrites_enabled=True))
     engine.response_repository = ArtifactRepository((_artifact(request),))
-    persistence.synchronize_response_compatibility_views(engine, ())
+    persistence.synchronize_response_statement_projections(engine, ())
     return engine
 
 

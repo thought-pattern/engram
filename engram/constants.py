@@ -74,65 +74,93 @@ FRAME_OVERRIDES = MappingProxyType(
     }
 )
 GRAPH_ENTITY_FACTS_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(proof_subject:Entity) "
-    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
-    "MATCH (c)-[rel:HAS_SUBJECT|HAS_OBJECT]->(e:Entity) "
-    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
-    "WITH c, proof_subject, proof_predicate, proof_object, rel, e "
-    "WHERE (toLower(e.primary_label) = toLower($name) "
-    "OR toLower($name) IN [a IN e.aliases | toLower(a)] "
-    "OR toLower(rel.surface_form) = toLower($name)) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND proof_predicate.canonical_id <> 'generic_relation' "
-    "AND coalesce(c.predicate_canonical, true) = true "
-    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
+    "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
+    "MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND (toLower(subject.primary_label) = toLower($name) "
+    "OR toLower($name) IN [alias IN coalesce(subject.aliases, []) | toLower(alias)] "
+    "OR toLower(object.primary_label) = toLower($name) "
+    "OR toLower($name) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] "
+    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
+    "RETURN DISTINCT proposition.id AS proposition_id, "
+    "subject.primary_label AS subject, "
+    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
+    "object.primary_label AS object "
     "LIMIT 5"
 )
 GRAPH_KEYWORD_FACTS_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) "
-    "MATCH (c)-[:USES_PREDICATE]->(proof_predicate:Predicate) "
-    "OPTIONAL MATCH (c)-[:HAS_OBJECT]->(proof_object:Entity) "
-    "WITH c, e, proof_predicate, proof_object "
-    "WHERE toLower(e.primary_label) CONTAINS toLower($keyword) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND proof_predicate.canonical_id <> 'generic_relation' "
-    "AND coalesce(c.predicate_canonical, true) = true "
-    "AND (trim(coalesce(c.object, '')) = '' OR proof_object.canonical_id IS NOT NULL) "
-    "RETURN DISTINCT c.id AS claim_id, c.subject AS subject, c.predicate AS predicate, c.object AS object "
+    "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
+    "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
+    "MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND (toLower(subject.primary_label) CONTAINS toLower($keyword) "
+    "OR toLower(object.primary_label) CONTAINS toLower($keyword) "
+    "OR toLower(coalesce(predicate.label, predicate.canonical_id)) CONTAINS toLower($keyword)) "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] "
+    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
+    "RETURN DISTINCT proposition.id AS proposition_id, "
+    "subject.primary_label AS subject, "
+    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
+    "object.primary_label AS object "
     "LIMIT 3"
 )
 TRIPLE_QUERY_OBJECT = (
-    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
-    "WHERE (toLower(s.primary_label) = toLower($subject) "
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(c)-[:USES_PREDICATE]->(p:Predicate), "
+    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "WHERE sb.role = 'subject' AND ob.role = 'object' "
+    "AND (toLower(s.primary_label) = toLower($subject) "
     "OR toLower($subject) IN [a IN s.aliases | toLower(a)] "
-    "OR toLower(hs.surface_form) = toLower($subject)) "
+    ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.invalidated_at IS NULL "
-    "RETURN ho.surface_form AS result LIMIT 1"
+    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
+    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "RETURN o.primary_label AS result LIMIT 1"
 )
 TRIPLE_QUERY_SUBJECT = (
-    "MATCH (c:Claim)-[hs:HAS_SUBJECT]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), (c)-[ho:HAS_OBJECT]->(o:Entity) "
-    "WHERE (toLower(o.primary_label) = toLower($object) "
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(c)-[:USES_PREDICATE]->(p:Predicate), "
+    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "WHERE sb.role = 'subject' AND ob.role = 'object' "
+    "AND (toLower(o.primary_label) = toLower($object) "
     "OR toLower($object) IN [a IN o.aliases | toLower(a)] "
-    "OR toLower(ho.surface_form) = toLower($object)) "
+    ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.invalidated_at IS NULL "
-    "RETURN hs.surface_form AS result LIMIT 1"
+    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
+    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "RETURN s.primary_label AS result LIMIT 1"
 )
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
 ARTIFACT_PROVENANCE_SCHEMA_VERSION = 1
 ARTIFACT_STATISTICS_SCHEMA_VERSION = 1
 MAX_ARTIFACT_ID_BYTES = 256
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_SOURCE_LABEL_BYTES = 256
 MAX_CALLER_ID_BYTES = 256
-MAX_SUPPORT_CLAIM_IDS = 256
-MAX_SUPPORT_CLAIM_ID_BYTES = 256
+MAX_SUPPORT_REFERENCES = 256
+MAX_SUPPORT_REFERENCE_ID_BYTES = 256
 MAX_TIMESTAMP_BYTES = 40
 MAX_METADATA_BYTES = 65_536
 MAX_METADATA_DEPTH = 8
@@ -161,7 +189,7 @@ CACHED_RESPONSE_ARTIFACT_FIELDS = set(
         "tier",
         "lifecycle",
         "scope",
-        "support_claim_ids",
+        "support_references",
         "valid_from",
         "valid_from_available",
         "valid_until",
@@ -294,8 +322,8 @@ INDEX_STATE_FIELDS = set(
         "state_generation",
         "retrieval_to_owners",
         "statement_to_retrieval",
-        "claim_to_statements",
-        "statement_to_claims",
+        "record_to_statements",
+        "statement_to_references",
         "direct_retrieval",
         "projections",
         "build_report",
@@ -309,7 +337,7 @@ INDEX_PROJECTION_FIELDS = set(
         "statement_id",
         "generation",
         "retrieval_keys",
-        "support_claim_ids",
+        "support_references",
         "direct_answer_eligible",
         "exclusion_reason",
         "normalization_version",
@@ -324,10 +352,10 @@ MAX_INDEX_REPORT_ITEMS = 1_000
 MAX_INDEX_REPORT_DETAIL_BYTES = 512
 MAX_INDEX_LOOKUP_OWNERS = 1_000
 MAX_INDEX_SUPPORT_SCAN_EDGES = 100_000
-SUPPORT_MATCH_FIELDS = set({"statement_id", "matched_claim_ids"})
+SUPPORT_MATCH_FIELDS = set({"statement_id", "matched_record_ids"})
 SUPPORT_LOOKUP_RESULT_FIELDS = set(
     {
-        "queried_claim_ids",
+        "queried_record_ids",
         "matches",
         "omitted_match_count",
         "omitted_edge_count",
@@ -336,7 +364,7 @@ SUPPORT_LOOKUP_RESULT_FIELDS = set(
         "reason",
     }
 )
-SUPPORT_SCAN_PLAN_FIELDS = set({"queried_claim_ids", "edge_count", "scan_limit", "complete", "reason"})
+SUPPORT_SCAN_PLAN_FIELDS = set({"queried_record_ids", "edge_count", "scan_limit", "complete", "reason"})
 INDEX_SUPPORT_SCAN_LIMIT_REASON = "scan_limit_exceeded"
 MAX_INDEX_SUPPORT_REASON_BYTES = 64
 EXACT_LOOKUP_RESULT_FIELDS = set(
@@ -560,24 +588,24 @@ COMPOSITION_PLAN_FIELDS = set(
         "max_rows",
         "max_branches",
         "max_candidates_per_step",
-        "max_path_claims",
+        "max_path_propositions",
     }
 )
 MAX_COMPOSITION_HOPS = 2
 MAX_COMPOSITION_ROWS = 64
 MAX_COMPOSITION_BRANCHES = 4
 MAX_COMPOSITION_CANDIDATES_PER_STEP = 8
-MAX_COMPOSITION_PATH_CLAIMS = 2
+MAX_COMPOSITION_PATH_PROPOSITIONS = 2
 MAX_COMPOSITION_BINDING_BYTES = 64
 MAX_COMPOSITION_PREDICATE_SURFACES = 12
 FEATURE_SET_SCHEMA_VERSION = 1
 FEATURE_SET_FIELDS = set({"schema_version", "values", "unavailable"})
-CANONICAL_CLAIM_REFERENCES_SCHEMA_VERSION = 1
-CLAIM_VALIDITY_INPUTS_SCHEMA_VERSION = 2
-CLAIM_TRUST_INPUTS_SCHEMA_VERSION = 1
+CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION = 1
+PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION = 2
+PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION = 1
 DISCLOSURE_DECISION_SCHEMA_VERSION = 1
-CANONICAL_CLAIM_REFERENCES_FIELDS = set({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"})
-CLAIM_VALIDITY_INPUTS_FIELDS = set(
+CANONICAL_PROPOSITION_REFERENCES_FIELDS = set({"schema_version", "subject_entity_id", "predicate_id", "object_entity_id"})
+PROPOSITION_VALIDITY_INPUTS_FIELDS = set(
     {
         "schema_version",
         "evaluation_time",
@@ -606,7 +634,7 @@ CLAIM_VALIDITY_INPUTS_FIELDS = set(
         "valid_to_available",
     }
 )
-CLAIM_TRUST_INPUTS_FIELDS = set(
+PROPOSITION_TRUST_INPUTS_FIELDS = set(
     {
         "schema_version",
         "trust_category",
@@ -620,13 +648,13 @@ CLAIM_TRUST_INPUTS_FIELDS = set(
 DISCLOSURE_DECISION_FIELDS = set(
     {"schema_version", "ownership", "basis", "scope", "policy_version", "authority", "authority_available"}
 )
-CLAIM_EVIDENCE_RECORD_SCHEMA_VERSION = 2
-CLAIM_EVIDENCE_PATH_SCHEMA_VERSION = 1
-CLAIM_EVIDENCE_PATH_STEP_FIELDS = set(
+PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION = 2
+PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION = 1
+PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
     {
         "schema_version",
         "position",
-        "claim_id",
+        "proposition_id",
         "subject_entity_id",
         "predicate_id",
         "object_entity_id",
@@ -637,10 +665,10 @@ CLAIM_EVIDENCE_PATH_STEP_FIELDS = set(
         "aggregation_inputs",
     }
 )
-CLAIM_EVIDENCE_RECORD_FIELDS = set(
+PROPOSITION_EVIDENCE_RECORD_FIELDS = set(
     {
         "schema_version",
-        "claim_id",
+        "proposition_id",
         "source_resolver",
         "source_contributions",
         "features",
@@ -654,7 +682,7 @@ CLAIM_EVIDENCE_RECORD_FIELDS = set(
 )
 EVIDENCE_PACKAGE_WIRE_VERSION = 2
 EVIDENCE_PACKAGE_FIELDS = set({"wire_version", "records", "retained_count", "omitted_count", "truncated", "truncation_reasons"})
-EVIDENCE_USEFULNESS_DECISION_FIELDS = set({"policy_version", "claim_id", "included", "reasons"})
+EVIDENCE_USEFULNESS_DECISION_FIELDS = set({"policy_version", "proposition_id", "included", "reasons"})
 EVIDENCE_USEFULNESS_POLICY_FIELDS = set(
     {
         "policy_version",
@@ -668,7 +696,7 @@ EVIDENCE_USEFULNESS_POLICY_FIELDS = set(
 )
 VISIBILITY_AUTHORIZATION_FIELDS = set({"allowed", "scope", "ownership", "authority_id", "policy_version", "reason_code"})
 VISIBILITY_GRANT_FIELDS = set({"scope", "ownership"})
-CLAIM_ELIGIBILITY_DECISION_FIELDS = set({"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"})
+PROPOSITION_ELIGIBILITY_DECISION_FIELDS = set({"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"})
 EVIDENCE_REFERENCE_SCHEMA_VERSION = 1
 EVIDENCE_REFERENCE_FIELDS = set({"schema_version", "evidence_id", "resolver", "kind", "scope", "provenance", "diagnostics"})
 CANDIDATE_SCHEMA_VERSION = 1
@@ -702,7 +730,7 @@ RESOLVER_RESULT_FIELDS = set(
         "reason_code",
         "candidates",
         "evidence",
-        "claim_evidence",
+        "proposition_evidence",
         "accounting",
         "diagnostics",
         "consumption",
@@ -825,11 +853,11 @@ MAX_JSON_ITEMS = 4_096
 MAX_JSON_STRING_BYTES = 16_384
 MAX_JSON_BYTES = 65_536
 MAX_RESOLUTION_VALUES = 1_000
-MAX_CLAIM_IDENTIFIER_BYTES = 256
-MAX_CLAIM_SOURCE_CONTRIBUTIONS = 8
-MAX_CLAIM_SELECTION_REASONS = 16
-MAX_CLAIM_TIMESTAMP_BYTES = 40
-MAX_CLAIM_TRUST_CATEGORY_BYTES = 96
+MAX_PROPOSITION_IDENTIFIER_BYTES = 256
+MAX_PROPOSITION_SOURCE_CONTRIBUTIONS = 8
+MAX_PROPOSITION_SELECTION_REASONS = 16
+MAX_PROPOSITION_TIMESTAMP_BYTES = 40
+MAX_PROPOSITION_TRUST_CATEGORY_BYTES = 96
 MAX_DISCLOSURE_AUTHORITY_BYTES = 256
 MAX_DISCLOSURE_ENUM_BYTES = 32
 MAX_EVIDENCE_PACKAGE_RECORDS = 10
@@ -1089,8 +1117,8 @@ RESOLVER_BUDGET_FIELDS = set(
 )
 RESOLVER_RESERVATION_SCHEMA_VERSION = 1
 RESOLVER_RESERVATION_FIELDS = set({"schema_version", "resolver", "order", "lease", "consumption"})
-CLAIM_DISCLOSURE_POLICY_VERSION = "claim-disclosure-v1"
-CLAIM_EVIDENCE_USEFULNESS_POLICY_VERSION = "claim-evidence-usefulness-v1"
+PROPOSITION_DISCLOSURE_POLICY_VERSION = "proposition-disclosure-v1"
+PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION = "proposition-evidence-usefulness-v1"
 CANONICAL_COMPLETENESS_FLOOR_V1 = 1.0
 STRUCTURED_MATCH_FLOOR_V1 = 1.0
 SEMANTIC_SIMILARITY_FLOOR_V1 = 0.60
@@ -1112,14 +1140,14 @@ WRITE_CLAUSE = re.compile(
     re.IGNORECASE,
 )
 VECTOR_INDEX_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
-MAX_CLAIM_PROJECTION_ROWS = 1_000
-MAX_CLAIM_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
-MAX_CLAIM_PROJECTION_IDENTIFIER_BYTES = 256
-MAX_CLAIM_PROJECTION_TERM_BYTES = 4_096
-MAX_CLAIM_PROJECTION_TIMESTAMP_BYTES = 40
-CLAIM_PROJECTION_FIELDS = set(
+MAX_PROPOSITION_PROJECTION_ROWS = 1_000
+MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
+MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES = 256
+MAX_PROPOSITION_PROJECTION_TERM_BYTES = 4_096
+MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES = 40
+PROPOSITION_PROJECTION_FIELDS = set(
     {
-        "claim_id",
+        "proposition_id",
         "subject_entity_id",
         "predicate_id",
         "object_entity_id",
@@ -1147,23 +1175,23 @@ CLAIM_PROJECTION_FIELDS = set(
         "semantic_similarity_available",
     }
 )
-CLAIM_PROJECTION_RECORD_FIELDS = CLAIM_PROJECTION_FIELDS | set(
+PROPOSITION_PROJECTION_RECORD_FIELDS = PROPOSITION_PROJECTION_FIELDS | set(
     {
         "projection_id",
         "vector_index_id",
         "vector_index_id_available",
     }
 )
-RELATION_ONE_HOP_RESULT_FIELDS = CLAIM_PROJECTION_FIELDS | {
+RELATION_ONE_HOP_RESULT_FIELDS = PROPOSITION_PROJECTION_FIELDS | {
     "object_label",
     "object_type",
     "predicate_cardinality",
 }
 CANONICAL_ENTITY_MATCH_QUERY = (
     "MATCH (entity:Entity) "
-    "OPTIONAL MATCH (:Claim)-[edge:HAS_SUBJECT|HAS_OBJECT]->(entity) "
+    "OPTIONAL MATCH (:Proposition)-[:HAS_ARGUMENT]->(binding:SemanticBinding)-[:BINDS_ENTITY]->(entity) "
     "WITH entity, coalesce(entity.aliases, [])[0..12] AS aliases, "
-    "[surface IN collect(DISTINCT edge.surface_form) WHERE surface IS NOT NULL][0..12] AS edge_surfaces "
+    "[surface IN collect(DISTINCT binding.surface_form) WHERE surface IS NOT NULL][0..12] AS edge_surfaces "
     "WHERE toLower(entity.primary_label) = toLower($surface) "
     "OR toLower($surface) IN [alias IN aliases | toLower(alias)] "
     "OR toLower($surface) IN [value IN edge_surfaces | toLower(value)] "
@@ -1182,95 +1210,146 @@ CANONICAL_PREDICATE_MATCH_QUERY = (
     "synonyms, coalesce(predicate.object_type, 'UNKNOWN') AS object_type "
     "ORDER BY predicate.canonical_id LIMIT $limit"
 )
-CLAIM_PROJECTION_RETURN = (
-    "RETURN DISTINCT c.id AS claim_id, "
+PROPOSITION_PROJECTION_RETURN = (
+    "RETURN DISTINCT c.id AS proposition_id, "
     "subject.canonical_id AS subject_entity_id, "
     "predicate.canonical_id AS predicate_id, "
     "object.canonical_id AS object_entity_id, "
-    "c.invalidated_at AS invalidated_at, "
-    "c.invalidated_at IS NOT NULL AS invalidated_at_available, "
-    "c.system_from AS system_from, "
-    "c.system_from IS NOT NULL AS system_from_available, "
-    "c.system_to AS system_to, "
-    "c.system_to IS NOT NULL AS system_to_available, "
-    "c.valid_from AS valid_from, "
-    "c.valid_from IS NOT NULL AS valid_from_available, "
-    "c.valid_to AS valid_to, "
-    "c.valid_to IS NOT NULL AS valid_to_available, "
-    "c.predicate_canonical AS predicate_canonical, "
+    "CASE WHEN c.lifecycle_disposition = 'invalidated' THEN c.retired_at ELSE null END AS invalidated_at, "
+    "c.lifecycle_disposition = 'invalidated' AND c.retired_at IS NOT NULL AS invalidated_at_available, "
+    "c.recorded_at AS system_from, c.recorded_at IS NOT NULL AS system_from_available, "
+    "c.retired_at AS system_to, c.retired_at IS NOT NULL AS system_to_available, "
+    "assertion.valid_time_start AS valid_from, "
+    "assertion.valid_time_start IS NOT NULL AS valid_from_available, "
+    "assertion.valid_time_end AS valid_to, "
+    "assertion.valid_time_end IS NOT NULL AS valid_to_available, "
+    "true AS predicate_canonical, "
     "c.ownership_category AS ownership_category, "
-    "c.trust_category AS trust_category, "
-    "c.trust_category IS NOT NULL AS trust_category_available, "
-    "c.source_calibrated_trust AS supplied_trust, "
-    "c.source_calibrated_trust IS NOT NULL AS supplied_trust_available, "
-    "c.source_trust_score_version AS supplied_trust_version, "
-    "c.source_trust_score_version IS NOT NULL AS supplied_trust_version_available, "
+    "assertion.trust_category AS trust_category, "
+    "assertion.trust_category IS NOT NULL AS trust_category_available, "
+    "assertion.trust_score AS supplied_trust, "
+    "assertion.trust_score IS NOT NULL AS supplied_trust_available, "
+    "assertion.trust_revision AS supplied_trust_version, "
+    "assertion.trust_revision IS NOT NULL AS supplied_trust_version_available, "
 )
-STRUCTURED_ENTITY_CLAIM_PROJECTION_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(subject:Entity) "
+PROPOSITION_PROJECTION_ASSERTION_SELECTION = (
+    "WITH c, subject, predicate, object, min(assertion.id) AS selected_assertion_id "
+    "MATCH (assertion:Assertion) WHERE assertion.id = selected_assertion_id "
+)
+VECTOR_PROPOSITION_ASSERTION_SELECTION = (
+    "WITH c, subject, predicate, object, similarity, min(assertion.id) AS selected_assertion_id "
+    "MATCH (assertion:Assertion) WHERE assertion.id = selected_assertion_id "
+)
+STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY = (
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
-    "MATCH (c)-[matched_rel:HAS_SUBJECT|HAS_OBJECT]->(matched_entity:Entity) "
-    "WHERE (toLower(matched_entity.primary_label) = toLower($value) "
-    "OR toLower($value) IN [alias IN matched_entity.aliases | toLower(alias)] "
-    "OR toLower(matched_rel.surface_form) = toLower($value)) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND c.predicate_canonical = true AND predicate.canonical_id <> 'generic_relation' "
-    + CLAIM_PROJECTION_RETURN
+    "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND (toLower(subject.primary_label) = toLower($value) "
+    "OR toLower($value) IN [alias IN coalesce(subject.aliases, []) | toLower(alias)] "
+    "OR toLower(object.primary_label) = toLower($value) "
+    "OR toLower($value) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
+    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND (c.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
+    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
+    + PROPOSITION_PROJECTION_ASSERTION_SELECTION
+    + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT $limit"
 )
-STRUCTURED_KEYWORD_CLAIM_PROJECTION_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(subject:Entity) "
+STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY = (
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
-    "WHERE toLower(subject.primary_label) CONTAINS toLower($value) "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND c.predicate_canonical = true AND predicate.canonical_id <> 'generic_relation' "
-    + CLAIM_PROJECTION_RETURN
+    "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND (toLower(subject.primary_label) CONTAINS toLower($value) "
+    "OR toLower(object.primary_label) CONTAINS toLower($value) "
+    "OR toLower(coalesce(predicate.label, predicate.canonical_id)) "
+    "CONTAINS toLower($value)) "
+    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND (c.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
+    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
+    + PROPOSITION_PROJECTION_ASSERTION_SELECTION
+    + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT $limit"
 )
-VECTOR_CLAIM_PROJECTION_QUERY = (
+VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "CALL vector_search.search($index_name, $limit, $query_embedding) YIELD node, distance "
     "WITH node AS c, 1.0 - distance AS similarity "
-    "MATCH (c)-[:HAS_SUBJECT]->(subject:Entity) "
+    "MATCH (c)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
-    "WHERE similarity >= $min_similarity "
-    "AND c.invalidated_at IS NULL AND c.system_to IS NULL "
-    "AND c.predicate_canonical = true AND predicate.canonical_id <> 'generic_relation' "
-    + CLAIM_PROJECTION_RETURN
+    "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND similarity >= $min_similarity "
+    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND (c.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
+    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
+    + VECTOR_PROPOSITION_ASSERTION_SELECTION
+    + PROPOSITION_PROJECTION_RETURN
     + "0.0 AS structured_match, false AS structured_match_available, "
     "similarity AS semantic_similarity, true AS semantic_similarity_available "
     "ORDER BY semantic_similarity DESC, c.id"
 )
-CLAIM_PROJECTION_BY_ID_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(subject:Entity) "
+PROPOSITION_PROJECTION_BY_ID_QUERY = (
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
-    "WHERE c.id = $claim_id " + CLAIM_PROJECTION_RETURN + "0.0 AS structured_match, false AS structured_match_available, "
+    "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND c.id = $proposition_id AND c.lifecycle_disposition = 'active' "
+    "AND c.retired_at IS NULL AND assertion.lifecycle_disposition = 'active' "
+    "AND assertion.retired_at IS NULL AND support.retired_at IS NULL "
+    "AND (c.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
+    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
+    + PROPOSITION_PROJECTION_ASSERTION_SELECTION
+    + PROPOSITION_PROJECTION_RETURN + "0.0 AS structured_match, false AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT 2"
 )
-RELATION_ONE_HOP_CLAIM_PROJECTION_QUERY = (
-    "MATCH (c:Claim)-[:HAS_SUBJECT]->(subject:Entity) "
+RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY = (
+    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (c)-[:HAS_OBJECT]->(object:Entity) "
-    "WHERE subject.canonical_id = $subject_entity_id AND predicate.canonical_id = $predicate_id "
-    "AND ($include_historical = true OR (c.invalidated_at IS NULL AND c.system_to IS NULL)) "
-    "AND c.predicate_canonical = true AND predicate.canonical_id <> 'generic_relation' "
-    + CLAIM_PROJECTION_RETURN
+    "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
+    "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
+    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
+    "AND subject.canonical_id = $subject_entity_id AND predicate.canonical_id = $predicate_id "
+    "AND ($include_historical = true OR (c.lifecycle_disposition = 'active' AND c.retired_at IS NULL)) "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND (c.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
+    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
+    + PROPOSITION_PROJECTION_ASSERTION_SELECTION
+    + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available, "
     "object.primary_label AS object_label, coalesce(object.entity_type, 'UNKNOWN') AS object_type, "
     "coalesce(predicate.cardinality, 'UNKNOWN') AS predicate_cardinality "
     "ORDER BY c.id LIMIT $limit"
 )
-MAX_STRUCTURED_CLAIM_PROJECTION_TERMS = 3
-CLAIM_EVIDENCE_PRODUCERS = set({"structured_graph", "support_semantic"})
+MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS = 3
+PROPOSITION_EVIDENCE_PRODUCERS = set({"structured_graph", "support_semantic"})
 MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
 COORDINATED_RESPONSE_STATE_FIELDS = set(
     {
@@ -1296,8 +1375,7 @@ MUTATION_EXECUTION_RESULT_FIELDS = set(
         "recovered",
     }
 )
-RESPONSE_STATE_SCHEMA_VERSION = 1
-LEGACY_PERSISTENCE_VERSION = 1
+RESPONSE_STATE_SCHEMA_VERSION = 2
 MAX_QUARANTINE_DETAIL_BYTES = 512
 MAX_QUARANTINE_RECORDS = 100_000
 RESPONSE_QUARANTINE_RECORD_FIELDS = set(
@@ -1460,14 +1538,14 @@ class CheckpointFailureKind(StrEnum):
     INDETERMINATE = "INDETERMINATE"
 
 
-class ClaimEligibilityReason(StrEnum):
-    """Closed temporal Claim evidence eligibility outcomes."""
+class PropositionEligibilityReason(StrEnum):
+    """Closed temporal Proposition evidence eligibility outcomes."""
 
     ELIGIBLE_PUBLIC = "eligible_public"
     ELIGIBLE_TRUSTED_SCOPE = "eligible_trusted_scope"
     EVALUATION_TIME_UNAVAILABLE = "evaluation_time_unavailable"
     TEMPORAL_QUERY_UNRESOLVED = "temporal_query_unresolved"
-    CLAIM_INACTIVE = "claim_inactive"
+    PROPOSITION_INACTIVE = "proposition_inactive"
     SYSTEM_TIME_UNAVAILABLE = "system_time_unavailable"
     SYSTEM_NOT_YET_CURRENT = "system_not_yet_current"
     SYSTEM_NO_LONGER_CURRENT = "system_no_longer_current"
@@ -1594,13 +1672,13 @@ class ExpectedObjectType(StrEnum):
 class EvidenceKind(StrEnum):
     """Kinds safe for the minimal Section 4 evidence-reference contract."""
 
-    CLAIM = "claim"
+    PROPOSITION = "proposition"
     GRAPH_FACT = "graph_fact"
     SUPPORT = "support"
 
 
-class ClaimOwnership(StrEnum):
-    """Allow-listed canonical Claim ownership categories."""
+class PropositionOwnership(StrEnum):
+    """Allow-listed canonical Proposition ownership categories."""
 
     PUBLIC = "PUBLIC"
     COMPANY = "COMPANY"
@@ -1608,7 +1686,7 @@ class ClaimOwnership(StrEnum):
 
 
 class DisclosureBasis(StrEnum):
-    """Stable provenance for a successful Claim visibility decision."""
+    """Stable provenance for a successful Proposition visibility decision."""
 
     PUBLIC_RULE = "public_rule"
     TRUSTED_SCOPE_AUTHORITY = "trusted_scope_authority"
@@ -1617,7 +1695,7 @@ class DisclosureBasis(StrEnum):
 class EvidencePackageTruncationReason(StrEnum):
     """Stable reasons that a package retained fewer records than supplied."""
 
-    DUPLICATE_CLAIM_ID = "duplicate_claim_id"
+    DUPLICATE_PROPOSITION_ID = "duplicate_proposition_id"
     RECORD_LIMIT = "record_limit"
     SERIALIZED_SIZE_LIMIT = "serialized_size_limit"
 
@@ -1696,14 +1774,14 @@ class SessionOverflow(Enum):
     LRU = "lru"
 
 
-class ClaimProjectionQuery(StrEnum):
-    """Allow-listed fixed query identifiers for full Claim projection."""
+class PropositionProjectionQuery(StrEnum):
+    """Allow-listed fixed query identifiers for full Proposition projection."""
 
-    STRUCTURED_ENTITY_V1 = "structured_entity_claim_projection_v1"
-    STRUCTURED_KEYWORD_V1 = "structured_keyword_claim_projection_v1"
-    RELATION_ONE_HOP_V1 = "relation_one_hop_claim_projection_v1"
-    VECTOR_V1 = "vector_claim_projection_v1"
-    BY_ID_V1 = "claim_projection_by_id_v1"
+    STRUCTURED_ENTITY_V1 = "structured_entity_proposition_projection_v1"
+    STRUCTURED_KEYWORD_V1 = "structured_keyword_proposition_projection_v1"
+    RELATION_ONE_HOP_V1 = "relation_one_hop_proposition_projection_v1"
+    VECTOR_V1 = "vector_proposition_projection_v1"
+    BY_ID_V1 = "proposition_projection_by_id_v1"
 
 
 class CanonicalResolutionStatus(StrEnum):
@@ -1717,7 +1795,7 @@ class CanonicalResolutionStatus(StrEnum):
 class RelationPlanTemplate(StrEnum):
     """Allow-listed internal Section 8 query-plan templates."""
 
-    ONE_HOP_CLAIM_V1 = "one_hop_claim_v1"
+    ONE_HOP_PROPOSITION_V1 = "one_hop_proposition_v1"
 
 
 class GraphCompositionOperator(StrEnum):
@@ -1773,7 +1851,7 @@ class PredicateCardinality(StrEnum):
 class RelationSelectionReason(StrEnum):
     """Stable one-hop temporal, trust, and conflict selection outcomes."""
 
-    NO_ELIGIBLE_CLAIM = "relation_no_eligible_claim"
+    NO_ELIGIBLE_PROPOSITION = "relation_no_eligible_proposition"
     SELECTED_UNIQUE = "relation_selected_unique"
     SELECTED_LATEST = "relation_selected_latest"
     SELECTED_TRUST_RANKED = "relation_selected_trust_ranked"
@@ -2850,7 +2928,7 @@ WILDCARD_TOKENS = {"*", "_", "#", "^"}
 # =============================================================================
 
 # Version constant for persistence format
-PERSISTENCE_VERSION = 2
+PERSISTENCE_VERSION = 3
 PERSISTENCE_MANIFEST_SCHEMA_VERSION = 1
 PERSISTENCE_STATUS_SCHEMA_VERSION = 1
 PERSISTENCE_MANIFEST_FIELDS = set(
@@ -3061,7 +3139,7 @@ DIALOGUE_META_FACT_WORDS = set(
     {
         "answer",
         "chat",
-        "claim",
+        "proposition",
         "conversation",
         "detail",
         "discussion",

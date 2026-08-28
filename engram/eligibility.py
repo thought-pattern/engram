@@ -787,7 +787,7 @@ def _trusted_index_projection_from_artifact(
         artifact["statement_id"],
         artifact["generation"],
         retrieval_representation_bindings(artifact["retrieval"], artifact["scope"]),
-        artifact["support_claim_ids"],
+        artifact["support_references"],
         decision["direct_answer_eligible"],
         exclusion_reason,
     )

@@ -102,7 +102,7 @@ def test_initial_context_and_service_signatures_are_bounded() -> None:
 
 
 def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
-    secret = "private-request-and-claim-content"
+    secret = "private-request-and-proposition-content"
 
     class FailingGraph:
         available = True

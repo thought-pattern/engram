@@ -1,9 +1,5 @@
 """Section 15 cross-feature persistence management tests."""
 
-import copy
-import json
-from pathlib import Path
-
 import pytest
 
 from engram import persistence
@@ -32,7 +28,7 @@ def managed_config(semantic_version: str = "semantic-r1") -> dict:
     return result
 
 
-def legacy_state(engram: Engram) -> dict:
+def version_one_state(engram: Engram) -> dict:
     state = persistence.to_dict(engram)
     state["version"] = 1
     state.pop("manifest")
@@ -66,20 +62,12 @@ def test_manifest_mismatch_blocks_startup_before_derived_state_is_served() -> No
         persistence.load_engram_from_dict(state)
 
 
-def test_existing_v2_without_manifest_loads_and_explicit_migration_adds_it() -> None:
+def test_current_persistence_without_manifest_is_rejected() -> None:
     state = persistence.to_dict(Engram())
     state.pop("manifest")
 
-    restored = persistence.load_engram_from_dict(state)
-    status = EngramCore(restored).status()["persistence"]
-    migrated = persistence.migrate_persistence_state(state)
-
-    assert status["ready"] is True
-    assert status["manifest_present"] is False
-    assert status["migration_required"] is True
-    assert status["derived_state_rebuilt"] is True
-    assert set(migrated["manifest"]) == PERSISTENCE_MANIFEST_FIELDS
-    assert persistence.migrate_persistence_state(migrated) == migrated
+    with pytest.raises(InvalidRequestError, match="requires manifest"):
+        persistence.load_engram_from_dict(state)
 
 
 def test_runtime_override_is_reported_without_blocking_rebuildable_model_change() -> None:
@@ -93,40 +81,10 @@ def test_runtime_override_is_reported_without_blocking_rebuildable_model_change(
     assert status["manifest"]["semantic_model_version"] == "semantic-r2"
 
 
-def test_explicit_file_migration_preserves_source_refuses_overwrite_and_reports_quarantine(tmp_path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_version_one_persistence_is_rejected_without_migration() -> None:
     engram = Engram()
     engram.store("Legacy response without identity", keyword_source="legacy response")
-    source_state = legacy_state(engram)
-    source = Path("engram-v1.json")
-    output = Path("engram-v2.json")
-    source.write_text(json.dumps(source_state, indent=2), encoding="utf-8")
-    source_before = source.read_bytes()
+    source = version_one_state(engram)
 
-    report = persistence.migrate_persistence_file(source, output)
-    migrated = json.loads(output.read_text(encoding="utf-8"))
-
-    assert source.read_bytes() == source_before
-    assert report["source_version"] == 1
-    assert report["output_version"] == PERSISTENCE_VERSION
-    assert report["source_path"] == "engram-v1.json"
-    assert report["output_path"] == "engram-v2.json"
-    assert report["artifact_count"] == 0
-    assert report["quarantine_count"] == 1
-    assert report["quarantine_reasons"] == {"missing_identity": 1}
-    assert report["idempotent"] is True
-    assert persistence.migrate_persistence_state(migrated) == migrated
-
-    with pytest.raises(InvalidRequestError, match="already exists"):
-        persistence.migrate_persistence_file(source, output)
-    with pytest.raises(InvalidRequestError, match="must differ"):
-        persistence.migrate_persistence_file(source, source)
-
-
-def test_migration_functions_do_not_mutate_caller_input() -> None:
-    source = legacy_state(Engram())
-    original = copy.deepcopy(source)
-
-    persistence.migrate_persistence_state(source)
-
-    assert source == original
+    with pytest.raises(ValueError, match="Unsupported persistence version: 1"):
+        persistence.load_engram_from_dict(source)

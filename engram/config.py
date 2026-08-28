@@ -10,6 +10,7 @@ from types import NoneType
 import yaml
 
 from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, RolloutMode, SessionOverflow
+from engram.scope import validate_visibility_scope
 from engram.utilities import UtilityConfig, utility_config
 
 SparseConfig = dict
@@ -31,8 +32,10 @@ def graph_config(
     username: str = "",
     password: str = "",
     enabled: bool = False,
+    deployment_mode: str = "",
+    visibility_scope: dict = EMPTY_CONFIG,
     vector_enabled: bool = False,
-    vector_index_name: str = "claim_premise_embeddings",
+    vector_index_name: str = "proposition_embeddings",
     vector_model: str = "all-MiniLM-L6-v2",
     vector_model_path: str = "",
     vector_dimension: int = 384,
@@ -56,12 +59,21 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
+    if not isinstance(deployment_mode, str) or deployment_mode not in {
+        "",
+        "standalone",
+        "tapestry_managed",
+    }:
+        raise ValueError("graph deployment_mode must be standalone or tapestry_managed")
+    if enabled and deployment_mode not in {"standalone", "tapestry_managed"}:
+        raise ValueError("enabled graph requires an explicit deployment_mode")
+    scope = validate_visibility_scope(visibility_scope)
     if not isinstance(vector_enabled, bool):
         raise ValueError("graph vector_enabled must be a boolean")
     if vector_enabled and not enabled:
         raise ValueError("graph vector_enabled requires graph enabled")
-    if not isinstance(vector_index_name, str) or not vector_index_name.strip():
-        raise ValueError("graph vector_index_name must be a non-empty string")
+    if vector_index_name != "proposition_embeddings":
+        raise ValueError("graph vector_index_name must be proposition_embeddings")
     if not isinstance(vector_model, str) or not vector_model.strip():
         raise ValueError("graph vector_model must be a non-empty string")
     if not isinstance(vector_model_path, str):
@@ -97,6 +109,8 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
+        "deployment_mode": deployment_mode,
+        "visibility_scope": scope,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),
         "vector_model": vector_model.strip(),
@@ -528,6 +542,8 @@ def load_config(path: str = "config.yml") -> dict:
             "username",
             "password",
             "enabled",
+            "deployment_mode",
+            "visibility_scope",
             "vector_enabled",
             "vector_index_name",
             "vector_model",

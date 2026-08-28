@@ -35,8 +35,7 @@ from engram.constants import (
     MAX_METADATA_STRING_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_SOURCE_LABEL_BYTES,
-    MAX_SUPPORT_CLAIM_ID_BYTES,
-    MAX_SUPPORT_CLAIM_IDS,
+    MAX_SUPPORT_REFERENCES,
     MAX_TIMESTAMP_BYTES,
     TERMINAL_LIFECYCLE_STATES as TERMINAL_LIFECYCLE_STATES,
     HistoricalKeyReuseReason,
@@ -61,6 +60,7 @@ from engram.identity import (
     validate_retrieval_representation,
     validate_scope_key,
 )
+from engram.support import validate_support_references
 
 
 def _require_exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
@@ -375,24 +375,15 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
         raise InvalidRequestError("artifact scope must be a ScopeKey") from error
     if scope != query_identity["scope"]:
         raise InvalidRequestError("artifact scope must match query_identity scope")
-    raw_support = data["support_claim_ids"]
+    raw_support = data["support_references"]
     if not isinstance(raw_support, tuple):
-        raise InvalidRequestError("artifact support_claim_ids must be a tuple")
-    if len(raw_support) > MAX_SUPPORT_CLAIM_IDS:
-        raise InvalidRequestError(f"artifact support_claim_ids exceed the limit of {MAX_SUPPORT_CLAIM_IDS}")
-    support_claim_ids = tuple(
-        sorted(
-            {
-                _require_text(
-                    claim_id,
-                    "artifact support Claim ID",
-                    MAX_SUPPORT_CLAIM_ID_BYTES,
-                    allow_empty=False,
-                )
-                for claim_id in raw_support
-            }
-        )
-    )
+        raise InvalidRequestError("artifact support_references must be a tuple")
+    if len(raw_support) > MAX_SUPPORT_REFERENCES:
+        raise InvalidRequestError(f"artifact support_references exceed the limit of {MAX_SUPPORT_REFERENCES}")
+    try:
+        support_references = validate_support_references(raw_support)
+    except ValueError as error:
+        raise InvalidRequestError(str(error)) from error
     valid_from, valid_from_available = _require_present_timestamp(
         data["valid_from"],
         data["valid_from_available"],
@@ -427,7 +418,7 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
         "tier": tier,
         "lifecycle": lifecycle,
         "scope": scope,
-        "support_claim_ids": support_claim_ids,
+        "support_references": support_references,
         "valid_from": valid_from,
         "valid_from_available": valid_from_available,
         "valid_until": valid_until,
@@ -451,7 +442,7 @@ def cached_response_artifact(
     tier: Tier,
     lifecycle: LifecycleState,
     scope: ScopeKey,
-    support_claim_ids: tuple[str, ...],
+    support_references: tuple[dict, ...],
     valid_from: str,
     valid_from_available: bool,
     valid_until: str,
@@ -479,7 +470,7 @@ def cached_response_artifact(
         "tier": tier,
         "lifecycle": lifecycle,
         "scope": scope,
-        "support_claim_ids": support_claim_ids,
+        "support_references": support_references,
         "valid_from": valid_from,
         "valid_from_available": valid_from_available,
         "valid_until": valid_until,
@@ -509,7 +500,7 @@ def cached_response_artifact_to_dict(value: object) -> dict[str, object]:
         "tier": artifact["tier"].value,
         "lifecycle": artifact["lifecycle"].value,
         "scope": scope_key_to_dict(artifact["scope"]),
-        "support_claim_ids": list(artifact["support_claim_ids"]),
+        "support_references": [dict(reference) for reference in artifact["support_references"]],
         "valid_from": artifact["valid_from"],
         "valid_from_available": artifact["valid_from_available"],
         "valid_until": artifact["valid_until"],
@@ -546,9 +537,9 @@ def cached_response_artifact_from_dict(value: object) -> CachedResponseArtifact:
         lifecycle = LifecycleState(lifecycle_value)
     except ValueError as error:
         raise InvalidRequestError(f"unsupported artifact lifecycle: {lifecycle_value}") from error
-    raw_support = data["support_claim_ids"]
+    raw_support = data["support_references"]
     if not isinstance(raw_support, list):
-        raise InvalidRequestError("artifact support_claim_ids must be an array")
+        raise InvalidRequestError("artifact support_references must be an array")
     metadata = _require_mapping(data["metadata"], "artifact metadata")
     query_identity = _require_mapping(data["query_identity"], "artifact query_identity")
     retrieval = _require_mapping(data["retrieval"], "artifact retrieval")
@@ -565,7 +556,7 @@ def cached_response_artifact_from_dict(value: object) -> CachedResponseArtifact:
         tier=tier,
         lifecycle=lifecycle,
         scope=scope_key_from_dict(scope),
-        support_claim_ids=tuple(raw_support),
+        support_references=tuple(raw_support),
         valid_from=_require_canonical_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
         valid_from_available=_require_bool(data["valid_from_available"], "artifact valid_from_available"),
         valid_until=_require_canonical_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),

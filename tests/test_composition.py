@@ -25,22 +25,22 @@ from engram.constants import (
 )
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.evidence import ClaimEligibilityEvaluator, claim_evidence_record
+from engram.evidence import PropositionEligibilityEvaluator, proposition_evidence_record
 from engram.fusion import EngramCandidateAuthority
-from engram.graph import ClaimProjectionQuery, claim_projection, relation_claim_projection_from_graph_row
+from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import scope_key
 from engram.relation import canonical_resolution, resolve_canonical_subject
 from engram.resolution import (
     QueryFrameBuilder,
     ResolutionOutcome,
     build_evidence_package,
-    claim_evidence_path_step,
-    claim_evidence_record_from_json,
-    claim_evidence_record_to_json,
-    claim_evidence_record_with_changes,
+    proposition_evidence_path_step,
+    proposition_evidence_record_from_json,
+    proposition_evidence_record_to_json,
+    proposition_evidence_record_with_changes,
     evidence_package_from_json,
     evidence_package_to_json,
-    validate_claim_evidence_path_step,
+    validate_proposition_evidence_path_step,
 )
 from engram.resolvers import StructuredGraphResolver, resolver_budget, resolver_budget_with_changes
 from engram.service import EngramCore
@@ -75,7 +75,7 @@ def _plan(operator: GraphCompositionOperator = GraphCompositionOperator.LOOKUP, 
 
 
 def _relation(
-    claim_id: str,
+    proposition_id: str,
     subject_id: str,
     predicate_id: str,
     object_id: str,
@@ -85,9 +85,9 @@ def _relation(
     cardinality: PredicateCardinality = PredicateCardinality.SINGLE,
     trust_available: bool = True,
 ):
-    return relation_claim_projection_from_graph_row(
+    return relation_proposition_projection_from_graph_row(
         {
-            "claim_id": claim_id,
+            "proposition_id": proposition_id,
             "subject_entity_id": subject_id,
             "predicate_id": predicate_id,
             "object_entity_id": object_id,
@@ -121,7 +121,7 @@ def _relation(
 
 
 FOUNDER = _relation(
-    "claim:microsoft-founder",
+    "proposition:microsoft-founder",
     "entity:microsoft",
     "predicate:founded-by",
     "entity:founder",
@@ -129,7 +129,7 @@ FOUNDER = _relation(
     ExpectedObjectType.PERSON,
 )
 BIRTHPLACE = _relation(
-    "claim:founder-born-in",
+    "proposition:founder-born-in",
     "entity:founder",
     "predicate:born-in",
     "entity:london",
@@ -149,7 +149,7 @@ def _current(item):
     values = dict(item["projection"])
     values.update(
         {
-            "projection_id": ClaimProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID_V1,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -158,7 +158,7 @@ def _current(item):
             "vector_index_id_available": False,
         }
     )
-    return claim_projection(**values)
+    return proposition_projection(**values)
 
 
 def _execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
@@ -169,13 +169,13 @@ def _execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
     }
     selected_query = query or (lambda subject, predicate, limit: rows.get((subject, predicate), [])[:limit])
     frame = _frame()
-    evaluator = ClaimEligibilityEvaluator()
-    current = {item["projection"]["claim_id"]: _current(item) for item in current_items}
+    evaluator = PropositionEligibilityEvaluator()
+    current = {item["projection"]["proposition_id"]: _current(item) for item in current_items}
     return execute_composition_plan(
         selected_plan,
         selected_query,
         lambda projection: evaluator.evaluate(projection, frame),
-        lambda projection: evaluator.revalidate(projection, frame, lambda claim_id: (current[claim_id],)),
+        lambda projection: evaluator.revalidate(projection, frame, lambda proposition_id: (current[proposition_id],)),
     )
 
 
@@ -309,7 +309,7 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
         ExpectedObjectType.PLACE,
     )
     location = _relation(
-        "claim:microsoft-location",
+        "proposition:microsoft-location",
         "entity:microsoft",
         "predicate:located-in",
         "entity:redmond",
@@ -362,7 +362,7 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
 def test_aggregates_require_complete_typed_distinct_results(operator, expected) -> None:
     values = (
         _relation(
-            "claim:founder-score-10",
+            "proposition:founder-score-10",
             "entity:founder",
             "predicate:score",
             "number:10",
@@ -371,7 +371,7 @@ def test_aggregates_require_complete_typed_distinct_results(operator, expected) 
             cardinality=PredicateCardinality.MULTI,
         ),
         _relation(
-            "claim:founder-score-2",
+            "proposition:founder-score-2",
             "entity:founder",
             "predicate:score",
             "number:2",
@@ -412,16 +412,16 @@ def test_two_hop_execution_preserves_order_and_phrases_one_complete_path() -> No
     assert execution["direct_result"] is True
     assert execution["graph_rows"] == 4
     assert execution["terminal_entity_ids"] == ("entity:london",)
-    assert tuple(entry["claim"]["projection"]["claim_id"] for entry in execution["complete_paths"][0]) == (
-        "claim:microsoft-founder",
-        "claim:founder-born-in",
+    assert tuple(entry["proposition"]["projection"]["proposition_id"] for entry in execution["complete_paths"][0]) == (
+        "proposition:microsoft-founder",
+        "proposition:founder-born-in",
     )
     assert phrase_composition_result(_plan(), execution) == "Microsoft — founded by → born in: London."
 
 
 def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() -> None:
     cycle = _relation(
-        "claim:founder-born-in",
+        "proposition:founder-born-in",
         "entity:founder",
         "predicate:born-in",
         "entity:microsoft",
@@ -450,7 +450,7 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
 def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_partial_rows() -> None:
     extras = [
         _relation(
-            f"claim:founder-{index}",
+            f"proposition:founder-{index}",
             "entity:microsoft",
             "predicate:founded-by",
             f"entity:founder-{index}",
@@ -470,7 +470,7 @@ def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_parti
 
 def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
     unknown = _relation(
-        "claim:founder-born-in",
+        "proposition:founder-born-in",
         "entity:founder",
         "predicate:born-in",
         "entity:london",
@@ -492,7 +492,7 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
     assert CompositionReason.CARDINALITY_UNKNOWN in result["reasons"]
 
     second_founder = _relation(
-        "claim:microsoft-founder-2",
+        "proposition:microsoft-founder-2",
         "entity:microsoft",
         "predicate:founded-by",
         "entity:founder-2",
@@ -501,7 +501,7 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
         cardinality=PredicateCardinality.MULTI,
     )
     same_place = _relation(
-        "claim:founder-2-born-in",
+        "proposition:founder-2-born-in",
         "entity:founder-2",
         "predicate:born-in",
         "entity:london",
@@ -529,24 +529,24 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
     assert deduplicated_lookup["direct_result"] is True
 
 
-def test_composed_evidence_path_round_trips_ordered_claims_and_filters() -> None:
+def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -> None:
     execution = _execute()
     frame = _frame()
-    evaluator = ClaimEligibilityEvaluator()
+    evaluator = PropositionEligibilityEvaluator()
     terminal = execution["complete_paths"][0][-1]
     decision = evaluator.revalidate(
-        terminal["claim"]["projection"],
+        terminal["proposition"]["projection"],
         frame,
-        lambda _claim_id: (_current(BIRTHPLACE),),
+        lambda _proposition_id: (_current(BIRTHPLACE),),
     )
-    base = claim_evidence_record(terminal["claim"]["projection"], decision, frame, "structured_graph")
+    base = proposition_evidence_record(terminal["proposition"]["projection"], decision, frame, "structured_graph")
     steps = tuple(
-        claim_evidence_path_step(
+        proposition_evidence_path_step(
             position,
-            entry["claim"]["projection"]["claim_id"],
-            entry["claim"]["projection"]["subject_entity_id"],
-            entry["claim"]["projection"]["predicate_id"],
-            entry["claim"]["projection"]["object_entity_id"],
+            entry["proposition"]["projection"]["proposition_id"],
+            entry["proposition"]["projection"]["subject_entity_id"],
+            entry["proposition"]["projection"]["predicate_id"],
+            entry["proposition"]["projection"]["object_entity_id"],
             GraphCompositionOperator.LOOKUP,
             entry["step"]["subject_binding"],
             entry["step"]["object_binding"],
@@ -554,18 +554,18 @@ def test_composed_evidence_path_round_trips_ordered_claims_and_filters() -> None
         )
         for position, entry in enumerate(execution["complete_paths"][0])
     )
-    composed = claim_evidence_record_with_changes(base, {"schema_version": 2, "path": steps})
+    composed = proposition_evidence_record_with_changes(base, {"schema_version": 2, "path": steps})
 
-    assert claim_evidence_record_from_json(claim_evidence_record_to_json(composed)) == composed
+    assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(composed)) == composed
     package = build_evidence_package((composed,))
     assert package["wire_version"] == 2
     assert evidence_package_from_json(evidence_package_to_json(package)) == package
-    assert [validate_claim_evidence_path_step(step)["claim_id"] for step in composed["path"]] == [
-        "claim:microsoft-founder",
-        "claim:founder-born-in",
+    assert [validate_proposition_evidence_path_step(step)["proposition_id"] for step in composed["path"]] == [
+        "proposition:microsoft-founder",
+        "proposition:founder-born-in",
     ]
     with pytest.raises(InvalidRequestError, match="ordered"):
-        claim_evidence_record_with_changes(base, {"schema_version": 2, "path": tuple(reversed(steps))})
+        proposition_evidence_record_with_changes(base, {"schema_version": 2, "path": tuple(reversed(steps))})
 
 
 def test_cooperative_cancellation_propagates_before_graph_work() -> None:
@@ -581,7 +581,7 @@ def test_cooperative_cancellation_propagates_before_graph_work() -> None:
 
 def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence(monkeypatch) -> None:
     founder = _relation(
-        "claim:microsoft-founder",
+        "proposition:microsoft-founder",
         "entity:microsoft",
         "predicate:founded-by",
         "entity:founder",
@@ -629,7 +629,7 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
                 }
             return [row][:limit] if row else []
 
-        def relation_one_hop_claim_projections(
+        def relation_one_hop_proposition_projections(
             self,
             subject_entity_id,
             predicate_id,
@@ -640,8 +640,8 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
             self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
             return self.rows.get((subject_entity_id, predicate_id), [])[:limit]
 
-        def claim_projection_by_id(self, claim_id):
-            return [_current(item) for items in self.rows.values() for item in items if item["projection"]["claim_id"] == claim_id]
+        def proposition_projection_by_id(self, proposition_id):
+            return [_current(item) for items in self.rows.values() for item in items if item["projection"]["proposition_id"] == proposition_id]
 
     graph = CompositionGraph()
     engine = Engram()
@@ -673,11 +673,11 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     assert result["reason_code"] == "graph_composition_candidate"
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["response"] == "Microsoft — founded by → born in: London."
-    assert len(result["claim_evidence"]) == 1
-    assert result["claim_evidence"][0]["schema_version"] == 2
-    assert tuple(validate_claim_evidence_path_step(step)["claim_id"] for step in result["claim_evidence"][0]["path"]) == (
-        "claim:microsoft-founder",
-        "claim:founder-born-in",
+    assert len(result["proposition_evidence"]) == 1
+    assert result["proposition_evidence"][0]["schema_version"] == 2
+    assert tuple(validate_proposition_evidence_path_step(step)["proposition_id"] for step in result["proposition_evidence"][0]["path"]) == (
+        "proposition:microsoft-founder",
+        "proposition:founder-born-in",
     )
     assert [(subject, predicate) for subject, predicate, _limit, _historical in graph.one_hop_calls] == [
         ("entity:microsoft", "predicate:founded-by"),

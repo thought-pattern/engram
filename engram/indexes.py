@@ -1,4 +1,4 @@
-"""Immutable exact-retrieval and Claim-support indexes.
+"""Immutable exact-retrieval and record-support indexes.
 
 The records in this module are disposable derived state.  Authoritative
 response artifacts live outside the index and supply :class:`IndexProjection`
@@ -39,7 +39,7 @@ from engram.constants import (
     MAX_INDEX_SUPPORT_IDS,
     MAX_INDEX_SUPPORT_REASON_BYTES,
     MAX_INDEX_SUPPORT_SCAN_EDGES,
-    MAX_SUPPORT_CLAIM_ID_BYTES,
+    MAX_SUPPORT_REFERENCE_ID_BYTES,
     RETRIEVAL_OWNER_FIELDS,
     SUPPORT_LOOKUP_RESULT_FIELDS,
     SUPPORT_MATCH_FIELDS,
@@ -64,6 +64,7 @@ from engram.identity import (
     validate_retrieval_key_binding,
     validate_scoped_retrieval_key,
 )
+from engram.support import validate_support_references
 
 
 def _bounded_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
@@ -111,7 +112,7 @@ def index_projection(
     statement_id: object,
     generation: object,
     retrieval_keys: object,
-    support_claim_ids: object,
+    support_references: object,
     direct_answer_eligible: object,
     exclusion_reason: object,
     normalization_version: object = RETRIEVAL_NORMALIZATION_VERSION,
@@ -144,18 +145,14 @@ def index_projection(
         if validated_binding["key"]["normalization_version"] != normalization:
             raise InvalidRequestError("retrieval key normalization version differs from its projection")
         validated_bindings.append(validated_binding)
-    if not isinstance(support_claim_ids, tuple):
-        raise InvalidRequestError("index projection support_claim_ids must be a tuple")
-    if len(support_claim_ids) > MAX_INDEX_SUPPORT_IDS:
-        raise InvalidRequestError(f"index projection support_claim_ids exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
-    validated_support = tuple(
-        sorted(
-            {
-                _bounded_text(claim_id, "support Claim ID", MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False)
-                for claim_id in support_claim_ids
-            }
-        )
-    )
+    if not isinstance(support_references, tuple):
+        raise InvalidRequestError("index projection support_references must be a tuple")
+    if len(support_references) > MAX_INDEX_SUPPORT_IDS:
+        raise InvalidRequestError(f"index projection support_references exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
+    try:
+        validated_support = validate_support_references(support_references)
+    except ValueError as error:
+        raise InvalidRequestError(str(error)) from error
     if not isinstance(direct_answer_eligible, bool):
         raise InvalidRequestError("index projection direct_answer_eligible must be a boolean")
     normalized_reason = _bounded_text(
@@ -168,7 +165,7 @@ def index_projection(
         "statement_id": normalized_statement_id,
         "generation": normalized_generation,
         "retrieval_keys": tuple(validated_bindings),
-        "support_claim_ids": validated_support,
+        "support_references": validated_support,
         "direct_answer_eligible": direct_answer_eligible,
         "exclusion_reason": normalized_reason,
         "normalization_version": normalization,
@@ -184,7 +181,7 @@ def validate_index_projection(value: object) -> IndexProjection:
         data["statement_id"],
         data["generation"],
         data["retrieval_keys"],
-        data["support_claim_ids"],
+        data["support_references"],
         data["direct_answer_eligible"],
         data["exclusion_reason"],
         data["normalization_version"],
@@ -232,7 +229,7 @@ def _trusted_index_projection_to_dict(projection: IndexProjection) -> dict[str, 
             }
             for binding in projection["retrieval_keys"]
         ],
-        "support_claim_ids": list(projection["support_claim_ids"]),
+        "support_references": [dict(reference) for reference in projection["support_references"]],
         "direct_answer_eligible": projection["direct_answer_eligible"],
         "exclusion_reason": projection["exclusion_reason"],
         "normalization_version": projection["normalization_version"],
@@ -290,12 +287,13 @@ def index_projection_from_dict(value: object) -> IndexProjection:
                 ),
             )
         )
-    raw_support = data["support_claim_ids"]
+    raw_support = data["support_references"]
     if not isinstance(raw_support, list):
-        raise InvalidRequestError("index projection support_claim_ids must be an array")
-    support = tuple(
-        _bounded_text(claim_id, "support Claim ID", MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False) for claim_id in raw_support
-    )
+        raise InvalidRequestError("index projection support_references must be an array")
+    try:
+        support = validate_support_references(tuple(raw_support))
+    except ValueError as error:
+        raise InvalidRequestError(str(error)) from error
     result = index_projection(
         data["statement_id"],
         data["generation"],
@@ -764,29 +762,29 @@ def exact_lookup_result_to_dict(value: object) -> dict[str, object]:
 SupportMatch = dict
 
 
-def _support_claim_ids(value: object, name: str, *, allow_empty: bool) -> tuple[str, ...]:
+def support_record_ids(value: object, name: str, *, allow_empty: bool) -> tuple[str, ...]:
     if not isinstance(value, tuple):
         raise InvalidRequestError(f"{name} must be a tuple")
     if len(value) > MAX_INDEX_SUPPORT_IDS:
         raise InvalidRequestError(f"{name} exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
-    result = tuple(sorted({_bounded_text(claim_id, name, MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False) for claim_id in value}))
+    result = tuple(sorted({_bounded_text(record_id, name, MAX_SUPPORT_REFERENCE_ID_BYTES, allow_empty=False) for record_id in value}))
     if not allow_empty and not result:
         raise InvalidRequestError(f"{name} must not be empty")
     return result
 
 
-def support_match(statement_id: object, matched_claim_ids: object) -> SupportMatch:
-    """Build one statement plus the queried Claims that support it."""
+def support_match(statement_id: object, matched_record_ids: object) -> SupportMatch:
+    """Build one statement plus the queried records that support it."""
     normalized_statement_id = _bounded_text(
         statement_id,
         "support match statement_id",
         MAX_INDEX_STATEMENT_ID_BYTES,
         allow_empty=False,
     )
-    normalized_claim_ids = _support_claim_ids(matched_claim_ids, "support match Claim IDs", allow_empty=False)
+    normalized_record_ids = support_record_ids(matched_record_ids, "support match record IDs", allow_empty=False)
     result: SupportMatch = {
         "statement_id": normalized_statement_id,
-        "matched_claim_ids": normalized_claim_ids,
+        "matched_record_ids": normalized_record_ids,
     }
     return result
 
@@ -794,7 +792,7 @@ def support_match(statement_id: object, matched_claim_ids: object) -> SupportMat
 def validate_support_match(value: object) -> SupportMatch:
     """Revalidate and copy one support match."""
     data = _exact_mapping(value, "SupportMatch", SUPPORT_MATCH_FIELDS)
-    result = support_match(data["statement_id"], data["matched_claim_ids"])
+    result = support_match(data["statement_id"], data["matched_record_ids"])
     return result
 
 
@@ -803,7 +801,7 @@ def support_match_to_dict(value: object) -> dict[str, object]:
     match = validate_support_match(value)
     result = {
         "statement_id": match["statement_id"],
-        "matched_claim_ids": list(match["matched_claim_ids"]),
+        "matched_record_ids": list(match["matched_record_ids"]),
     }
     return result
 
@@ -818,7 +816,7 @@ def _nonnegative_integer(value: object, name: str) -> int:
 
 
 def support_lookup_result(
-    queried_claim_ids: object,
+    queried_record_ids: object,
     matches: object,
     omitted_match_count: object,
     omitted_edge_count: object,
@@ -827,7 +825,7 @@ def support_lookup_result(
     reason: object,
 ) -> SupportLookupResult:
     """Build one bounded support lookup result."""
-    normalized_queried = _support_claim_ids(queried_claim_ids, "support lookup queried Claim IDs", allow_empty=True)
+    normalized_queried = support_record_ids(queried_record_ids, "support lookup queried record IDs", allow_empty=True)
     if not isinstance(matches, tuple):
         raise InvalidRequestError("support lookup matches must be a tuple")
     if len(matches) > MAX_INDEX_LOOKUP_OWNERS:
@@ -840,8 +838,8 @@ def support_lookup_result(
     if len({match["statement_id"] for match in normalized_matches}) != len(normalized_matches):
         raise InvalidRequestError("support lookup matches must have unique statement IDs")
     queried_set = set(normalized_queried)
-    if any(not set(match["matched_claim_ids"]).issubset(queried_set) for match in normalized_matches):
-        raise InvalidRequestError("support lookup matched Claim IDs must be queried")
+    if any(not set(match["matched_record_ids"]).issubset(queried_set) for match in normalized_matches):
+        raise InvalidRequestError("support lookup matched record IDs must be queried")
     omitted_matches = _nonnegative_integer(omitted_match_count, "support lookup omitted_match_count")
     omitted_edges = _nonnegative_integer(omitted_edge_count, "support lookup omitted_edge_count")
     scanned_edges = _nonnegative_integer(scanned_edge_count, "support lookup scanned_edge_count")
@@ -859,7 +857,7 @@ def support_lookup_result(
     elif normalized_matches or omitted_matches or scanned_edges or normalized_reason != INDEX_SUPPORT_SCAN_LIMIT_REASON:
         raise InvalidRequestError("incomplete support lookup must abstain with the scan-limit reason")
     result: SupportLookupResult = {
-        "queried_claim_ids": normalized_queried,
+        "queried_record_ids": normalized_queried,
         "matches": normalized_matches,
         "omitted_match_count": omitted_matches,
         "omitted_edge_count": omitted_edges,
@@ -874,7 +872,7 @@ def validate_support_lookup_result(value: object) -> SupportLookupResult:
     """Revalidate and copy one support lookup result."""
     data = _exact_mapping(value, "SupportLookupResult", SUPPORT_LOOKUP_RESULT_FIELDS)
     result = support_lookup_result(
-        data["queried_claim_ids"],
+        data["queried_record_ids"],
         data["matches"],
         data["omitted_match_count"],
         data["omitted_edge_count"],
@@ -889,7 +887,7 @@ def support_lookup_result_to_dict(value: object) -> dict[str, object]:
     """Serialize one support lookup result."""
     lookup = validate_support_lookup_result(value)
     result = {
-        "queried_claim_ids": list(lookup["queried_claim_ids"]),
+        "queried_record_ids": list(lookup["queried_record_ids"]),
         "matches": [support_match_to_dict(match) for match in lookup["matches"]],
         "omitted_match_count": lookup["omitted_match_count"],
         "omitted_edge_count": lookup["omitted_edge_count"],
@@ -904,14 +902,14 @@ SupportScanPlan = dict
 
 
 def support_scan_plan(
-    queried_claim_ids: object,
+    queried_record_ids: object,
     edge_count: object,
     scan_limit: object,
     complete: object,
     reason: object,
 ) -> SupportScanPlan:
     """Build one validated support traversal plan."""
-    normalized_queried = _support_claim_ids(queried_claim_ids, "support scan queried Claim IDs", allow_empty=True)
+    normalized_queried = support_record_ids(queried_record_ids, "support scan queried record IDs", allow_empty=True)
     normalized_edges = _nonnegative_integer(edge_count, "support scan edge_count")
     normalized_limit = _positive_int(scan_limit, "support scan limit")
     if not isinstance(complete, bool):
@@ -929,7 +927,7 @@ def support_scan_plan(
     if normalized_reason != expected_reason:
         raise InvalidRequestError("support scan reason must agree with completeness")
     result: SupportScanPlan = {
-        "queried_claim_ids": normalized_queried,
+        "queried_record_ids": normalized_queried,
         "edge_count": normalized_edges,
         "scan_limit": normalized_limit,
         "complete": complete,
@@ -942,7 +940,7 @@ def validate_support_scan_plan(value: object) -> SupportScanPlan:
     """Revalidate and copy one support scan plan."""
     data = _exact_mapping(value, "SupportScanPlan", SUPPORT_SCAN_PLAN_FIELDS)
     result = support_scan_plan(
-        data["queried_claim_ids"],
+        data["queried_record_ids"],
         data["edge_count"],
         data["scan_limit"],
         data["complete"],
@@ -955,7 +953,7 @@ def support_scan_plan_to_dict(value: object) -> dict[str, object]:
     """Serialize one support scan plan."""
     plan = validate_support_scan_plan(value)
     result = {
-        "queried_claim_ids": list(plan["queried_claim_ids"]),
+        "queried_record_ids": list(plan["queried_record_ids"]),
         "edge_count": plan["edge_count"],
         "scan_limit": plan["scan_limit"],
         "complete": plan["complete"],
@@ -1141,8 +1139,8 @@ def _frozen_index_state(
     state_generation: int,
     retrieval_to_owners: dict[ScopedRetrievalKeySignature, tuple[RetrievalOwner, ...]],
     statement_to_retrieval: dict[str, tuple[RetrievalKeyBinding, ...]],
-    claim_to_statements: dict[str, tuple[str, ...]],
-    statement_to_claims: dict[str, tuple[str, ...]],
+    record_to_statements: dict[str, tuple[str, ...]],
+    statement_to_references: dict[str, tuple[dict, ...]],
     direct_retrieval: dict[ScopedRetrievalKeySignature, RetrievalOwner],
     projections: dict[str, IndexProjection],
     build_report: IndexBuildReport,
@@ -1154,8 +1152,8 @@ def _frozen_index_state(
         "state_generation": state_generation,
         "retrieval_to_owners": MappingProxyType(retrieval_to_owners),
         "statement_to_retrieval": MappingProxyType(statement_to_retrieval),
-        "claim_to_statements": MappingProxyType(claim_to_statements),
-        "statement_to_claims": MappingProxyType(statement_to_claims),
+        "record_to_statements": MappingProxyType(record_to_statements),
+        "statement_to_references": MappingProxyType(statement_to_references),
         "direct_retrieval": MappingProxyType(direct_retrieval),
         "projections": MappingProxyType(projections),
         "build_report": build_report,
@@ -1169,8 +1167,8 @@ def index_state(
     state_generation: object,
     retrieval_to_owners: object,
     statement_to_retrieval: object,
-    claim_to_statements: object,
-    statement_to_claims: object,
+    record_to_statements: object,
+    statement_to_references: object,
     direct_retrieval: object,
     projections: object,
     build_report: object,
@@ -1212,35 +1210,34 @@ def index_state(
             raise InvalidRequestError("index statement retrieval bindings are invalid") from error
         validated_statement_to_retrieval[statement_id] = validated_bindings
 
-    validated_claim_to_statements = {}
-    for raw_claim_id, statement_ids in _index_mapping(claim_to_statements, "index claim_to_statements").items():
-        claim_id = _bounded_text(raw_claim_id, "index support Claim ID", MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False)
+    validated_record_to_statements = {}
+    for raw_record_id, statement_ids in _index_mapping(record_to_statements, "index record_to_statements").items():
+        record_id = _bounded_text(raw_record_id, "index support record ID", MAX_SUPPORT_REFERENCE_ID_BYTES, allow_empty=False)
         if not isinstance(statement_ids, tuple):
-            raise InvalidRequestError("index Claim statement IDs must be tuples")
+            raise InvalidRequestError("index record statement IDs must be tuples")
         validated_statement_ids = tuple(
             _bounded_text(
                 statement_id,
-                "index Claim statement ID",
+                "index record statement ID",
                 MAX_INDEX_STATEMENT_ID_BYTES,
                 allow_empty=False,
             )
             for statement_id in statement_ids
         )
-        validated_claim_to_statements[claim_id] = validated_statement_ids
+        validated_record_to_statements[record_id] = validated_statement_ids
 
-    validated_statement_to_claims = {}
-    for raw_statement_id, claim_ids in _index_mapping(statement_to_claims, "index statement_to_claims").items():
+    validated_statement_to_references = {}
+    for raw_statement_id, references in _index_mapping(statement_to_references, "index statement_to_references").items():
         statement_id = _bounded_text(
             raw_statement_id,
-            "index statement_to_claims statement ID",
+            "index statement_to_references statement ID",
             MAX_INDEX_STATEMENT_ID_BYTES,
             allow_empty=False,
         )
-        validated_statement_to_claims[statement_id] = _support_claim_ids(
-            claim_ids,
-            "index statement support Claim IDs",
-            allow_empty=True,
-        )
+        try:
+            validated_statement_to_references[statement_id] = validate_support_references(references)
+        except ValueError as error:
+            raise InvalidRequestError(str(error)) from error
 
     validated_direct = {}
     for raw_signature, owner in _index_mapping(direct_retrieval, "index direct_retrieval").items():
@@ -1265,8 +1262,8 @@ def index_state(
         generation,
         validated_owner_map,
         validated_statement_to_retrieval,
-        validated_claim_to_statements,
-        validated_statement_to_claims,
+        validated_record_to_statements,
+        validated_statement_to_references,
         validated_direct,
         validated_projections,
         validated_report,
@@ -1283,8 +1280,8 @@ def validate_index_state(value: object) -> IndexState:
         data["state_generation"],
         data["retrieval_to_owners"],
         data["statement_to_retrieval"],
-        data["claim_to_statements"],
-        data["statement_to_claims"],
+        data["record_to_statements"],
+        data["statement_to_references"],
         data["direct_retrieval"],
         data["projections"],
         data["build_report"],
@@ -1343,26 +1340,26 @@ def trusted_index_state_exact_lookup(state: IndexState, key: ScopedRetrievalKey)
 
 def index_state_support_scan_plan(
     state: IndexState,
-    claim_ids: tuple[str, ...],
+    record_ids: tuple[str, ...],
     scan_limit: int = MAX_INDEX_SUPPORT_SCAN_EDGES,
 ) -> SupportScanPlan:
     """Validate one bounded support traversal before materializing fan-out."""
     _exact_mapping(state, "IndexState", INDEX_STATE_FIELDS)
-    if not isinstance(claim_ids, tuple):
-        raise InvalidRequestError("support lookup Claim IDs must be a tuple")
+    if not isinstance(record_ids, tuple):
+        raise InvalidRequestError("support lookup record IDs must be a tuple")
     if isinstance(scan_limit, bool) or not isinstance(scan_limit, int) or scan_limit < 1:
         raise InvalidRequestError("support scan limit must be a positive integer")
     queried = tuple(
         sorted(
             {
-                _bounded_text(claim_id, "support lookup Claim ID", MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False)
-                for claim_id in claim_ids
+                _bounded_text(record_id, "support lookup record ID", MAX_SUPPORT_REFERENCE_ID_BYTES, allow_empty=False)
+                for record_id in record_ids
             }
         )
     )
     if len(queried) > MAX_INDEX_SUPPORT_IDS:
-        raise InvalidRequestError(f"support lookup Claim IDs exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
-    edge_count = sum(len(state["claim_to_statements"].get(claim_id, ())) for claim_id in queried)
+        raise InvalidRequestError(f"support lookup record IDs exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
+    edge_count = sum(len(state["record_to_statements"].get(record_id, ())) for record_id in queried)
     complete = edge_count <= scan_limit
     reason = "" if complete else INDEX_SUPPORT_SCAN_LIMIT_REASON
     result = support_scan_plan(
@@ -1377,14 +1374,14 @@ def index_state_support_scan_plan(
 
 def index_state_support_lookup(
     state: IndexState,
-    claim_ids: tuple[str, ...],
+    record_ids: tuple[str, ...],
     scan_limit: int = MAX_INDEX_SUPPORT_SCAN_EDGES,
 ) -> SupportLookupResult:
-    """Return bounded statement matches for one support-Claim set."""
-    plan = index_state_support_scan_plan(state, claim_ids, scan_limit)
+    """Return bounded statement matches for one support-record set."""
+    plan = index_state_support_scan_plan(state, record_ids, scan_limit)
     if not plan["complete"]:
         result = support_lookup_result(
-            plan["queried_claim_ids"],
+            plan["queried_record_ids"],
             (),
             0,
             plan["edge_count"],
@@ -1394,16 +1391,16 @@ def index_state_support_lookup(
         )
         return result
     matched_by_statement: dict[str, set[str]] = {}
-    for claim_id in plan["queried_claim_ids"]:
-        for statement_id in state["claim_to_statements"].get(claim_id, ()):
-            matched_by_statement.setdefault(statement_id, set()).add(claim_id)
+    for record_id in plan["queried_record_ids"]:
+        for statement_id in state["record_to_statements"].get(record_id, ()):
+            matched_by_statement.setdefault(statement_id, set()).add(record_id)
     all_matches = tuple(
         support_match(statement_id, tuple(sorted(matched_by_statement[statement_id])))
         for statement_id in sorted(matched_by_statement)
     )
     matches = all_matches[:MAX_INDEX_LOOKUP_OWNERS]
     result = support_lookup_result(
-        plan["queried_claim_ids"],
+        plan["queried_record_ids"],
         matches,
         len(all_matches) - len(matches),
         0,
@@ -1600,17 +1597,18 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
     retrieval_work: dict[ScopedRetrievalKeySignature, list[RetrievalOwner]] = {}
     retrieval_keys: dict[ScopedRetrievalKeySignature, ScopedRetrievalKey] = {}
     statement_to_retrieval: dict[str, tuple[RetrievalKeyBinding, ...]] = {}
-    claim_work: dict[str, set[str]] = {}
-    statement_to_claims: dict[str, tuple[str, ...]] = {}
+    record_work: dict[str, set[str]] = {}
+    statement_to_references: dict[str, tuple[dict, ...]] = {}
     projection_map: dict[str, IndexProjection] = {}
 
     for position, projection in sorted(accepted, key=lambda entry: entry[1]["statement_id"]):
         bindings = _deduplicate_bindings(projection, position, issues)
         projection_map[projection["statement_id"]] = projection
         statement_to_retrieval[projection["statement_id"]] = bindings
-        statement_to_claims[projection["statement_id"]] = projection["support_claim_ids"]
-        for claim_id in projection["support_claim_ids"]:
-            claim_work.setdefault(claim_id, set()).add(projection["statement_id"])
+        statement_to_references[projection["statement_id"]] = projection["support_references"]
+        for reference in projection["support_references"]:
+            record_id = reference.get("id", "")
+            record_work.setdefault(record_id, set()).add(projection["statement_id"])
         if not bindings:
             issues.append(
                 index_build_issue(
@@ -1684,7 +1682,7 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
                     )
                 )
 
-    claim_to_statements = {claim_id: tuple(sorted(statement_ids)) for claim_id, statement_ids in sorted(claim_work.items())}
+    record_to_statements = {record_id: tuple(sorted(statement_ids)) for record_id, statement_ids in sorted(record_work.items())}
     bounded_issues, omitted_issues = _bounded_issues(issues)
     ordered_collisions = tuple(sorted(collisions, key=lambda collision: scoped_retrieval_key_signature(collision["key"])))
     bounded_collisions = ordered_collisions[:MAX_INDEX_REPORT_ITEMS]
@@ -1692,7 +1690,7 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
         input_count=len(inputs),
         projection_count=len(projection_map),
         exact_key_count=len(retrieval_to_owners),
-        support_edge_count=sum(len(statement_ids) for statement_ids in claim_to_statements.values()),
+        support_edge_count=sum(len(statement_ids) for statement_ids in record_to_statements.values()),
         issues=bounded_issues,
         collisions=bounded_collisions,
         omitted_issue_count=omitted_issues,
@@ -1702,8 +1700,8 @@ def build_index_state(projections: Iterable[object], state_generation: int = 1) 
         state_generation,
         retrieval_to_owners,
         statement_to_retrieval,
-        claim_to_statements,
-        statement_to_claims,
+        record_to_statements,
+        statement_to_references,
         direct_retrieval,
         projection_map,
         report,
@@ -1719,7 +1717,7 @@ def projection_from_statement(statement: dict) -> IndexProjection:
         raise InvalidRequestError("statement projection source must be an object")
     statement_id = _bounded_text(statement.get("id", ""), "statement id", MAX_INDEX_STATEMENT_ID_BYTES, allow_empty=False)
     malformed_support = False
-    support_ids: tuple[str, ...] = ()
+    support_references: tuple[dict, ...] = ()
     template = statement.get("template", {})
     if not isinstance(template, dict):
         malformed_support = True
@@ -1732,25 +1730,16 @@ def projection_from_statement(statement: dict) -> IndexProjection:
             if not isinstance(raw_support, list):
                 malformed_support = True
             else:
-                support = []
-                for reference in raw_support:
-                    if not isinstance(reference, dict):
-                        malformed_support = True
-                        break
-                    claim_id = reference.get("claim_id", "")
-                    try:
-                        support.append(_bounded_text(claim_id, "support Claim ID", MAX_SUPPORT_CLAIM_ID_BYTES, allow_empty=False))
-                    except InvalidRequestError:
-                        malformed_support = True
-                        break
-                if not malformed_support:
-                    support_ids = tuple(support)
+                try:
+                    support_references = validate_support_references(tuple(raw_support))
+                except ValueError:
+                    malformed_support = True
     reason = IndexIssueReason.MALFORMED_SUPPORT.value if malformed_support else IndexIssueReason.MISSING_IDENTITY.value
     result = index_projection(
         statement_id,
         1,
         (),
-        support_ids,
+        support_references,
         False,
         reason,
     )
@@ -1873,8 +1862,8 @@ def _check_index_state_against(state: IndexState, expected_inputs: tuple[object,
     issues: list[IndexCheckIssue] = []
     _compare_maps("retrieval_to_owners", expected["retrieval_to_owners"], state["retrieval_to_owners"], issues)
     _compare_maps("statement_to_retrieval", expected["statement_to_retrieval"], state["statement_to_retrieval"], issues)
-    _compare_maps("claim_to_statements", expected["claim_to_statements"], state["claim_to_statements"], issues)
-    _compare_maps("statement_to_claims", expected["statement_to_claims"], state["statement_to_claims"], issues)
+    _compare_maps("record_to_statements", expected["record_to_statements"], state["record_to_statements"], issues)
+    _compare_maps("statement_to_references", expected["statement_to_references"], state["statement_to_references"], issues)
     _compare_maps("direct_retrieval", expected["direct_retrieval"], state["direct_retrieval"], issues)
     _compare_maps("projections", expected["projections"], state["projections"], issues)
     retained_expected = build_index_state(tuple(state["projections"].values()), state["state_generation"])
@@ -1943,7 +1932,7 @@ def check_index_state_against(state: IndexState, projections: Iterable[object]) 
 def _report_from_valid_state(
     projections: Mapping[str, IndexProjection],
     statement_to_retrieval: Mapping[str, tuple[RetrievalKeyBinding, ...]],
-    statement_to_claims: Mapping[str, tuple[str, ...]],
+    statement_to_references: Mapping[str, tuple[dict, ...]],
     retrieval_to_owners: Mapping[ScopedRetrievalKeySignature, tuple[RetrievalOwner, ...]],
 ) -> IndexBuildReport:
     """Refresh bounded diagnostics without reconstructing any index map."""
@@ -2020,7 +2009,7 @@ def _report_from_valid_state(
         len(projections),
         len(projections),
         len(retrieval_to_owners),
-        sum(len(claim_ids) for claim_ids in statement_to_claims.values()),
+        sum(len(record_ids) for record_ids in statement_to_references.values()),
         bounded_issues,
         bounded_collisions,
         omitted_issues,
@@ -2050,8 +2039,8 @@ def _mutated_state(
     """Copy the immutable maps and alter only the named projection edges."""
     retrieval_to_owners = dict(state["retrieval_to_owners"])
     statement_to_retrieval = dict(state["statement_to_retrieval"])
-    claim_to_statements = dict(state["claim_to_statements"])
-    statement_to_claims = dict(state["statement_to_claims"])
+    record_to_statements = dict(state["record_to_statements"])
+    statement_to_references = dict(state["statement_to_references"])
     direct_retrieval = dict(state["direct_retrieval"])
     projections = dict(state["projections"])
 
@@ -2065,12 +2054,13 @@ def _mutated_state(
             else:
                 retrieval_to_owners.pop(key_signature, ())
                 direct_retrieval.pop(key_signature, ())
-        for claim_id in statement_to_claims.pop(statement_id, ()):
-            statement_ids = tuple(owner_id for owner_id in claim_to_statements[claim_id] if owner_id != statement_id)
+        for reference in statement_to_references.pop(statement_id, ()):
+            record_id = reference.get("id", "")
+            statement_ids = tuple(owner_id for owner_id in record_to_statements[record_id] if owner_id != statement_id)
             if statement_ids:
-                claim_to_statements[claim_id] = statement_ids
+                record_to_statements[record_id] = statement_ids
             else:
-                claim_to_statements.pop(claim_id, ())
+                record_to_statements.pop(record_id, ())
         projections.pop(statement_id, ())
 
     for projection in added_projections:
@@ -2079,10 +2069,11 @@ def _mutated_state(
         eligible = projection["direct_answer_eligible"] and not projection["exclusion_reason"] and bool(bindings)
         projections[projection["statement_id"]] = projection
         statement_to_retrieval[projection["statement_id"]] = bindings
-        statement_to_claims[projection["statement_id"]] = projection["support_claim_ids"]
-        for claim_id in projection["support_claim_ids"]:
-            statement_ids = tuple(sorted((*claim_to_statements.get(claim_id, ()), projection["statement_id"])))
-            claim_to_statements[claim_id] = statement_ids
+        statement_to_references[projection["statement_id"]] = projection["support_references"]
+        for reference in projection["support_references"]:
+            record_id = reference.get("id", "")
+            statement_ids = tuple(sorted((*record_to_statements.get(record_id, ()), projection["statement_id"])))
+            record_to_statements[record_id] = statement_ids
         for binding in bindings:
             key_signature = scoped_retrieval_key_signature(binding["key"])
             owner = retrieval_owner(
@@ -2101,13 +2092,13 @@ def _mutated_state(
             retrieval_to_owners[key_signature] = owners
             _refresh_direct_key(key_signature, owners, direct_retrieval)
 
-    report = _report_from_valid_state(projections, statement_to_retrieval, statement_to_claims, retrieval_to_owners)
+    report = _report_from_valid_state(projections, statement_to_retrieval, statement_to_references, retrieval_to_owners)
     result = _frozen_index_state(
         state["state_generation"] + 1,
         retrieval_to_owners,
         statement_to_retrieval,
-        claim_to_statements,
-        statement_to_claims,
+        record_to_statements,
+        statement_to_references,
         direct_retrieval,
         projections,
         report,
@@ -2171,7 +2162,7 @@ def remove_index_projection(state: IndexState, statement_id: str) -> IndexState:
 def _update_index_support_in_valid_state(
     state: IndexState,
     statement_id: str,
-    support_claim_ids: tuple[str, ...],
+    support_references: tuple[dict, ...],
 ) -> IndexState:
     validated_id = _bounded_text(statement_id, "index projection statement_id", MAX_INDEX_STATEMENT_ID_BYTES, allow_empty=False)
     projection = state["projections"].get(validated_id)
@@ -2179,16 +2170,16 @@ def _update_index_support_in_valid_state(
         raise InvalidRequestError(f"index projection does not exist: {validated_id}")
     updated = index_projection_with_changes(
         projection,
-        {"generation": projection["generation"] + 1, "support_claim_ids": support_claim_ids},
+        {"generation": projection["generation"] + 1, "support_references": support_references},
     )
     result = _replace_index_projection_in_valid_state(state, updated)
     return result
 
 
-def update_index_support(state: IndexState, statement_id: str, support_claim_ids: tuple[str, ...]) -> IndexState:
+def update_index_support(state: IndexState, statement_id: str, support_references: tuple[dict, ...]) -> IndexState:
     """Return an isolated state with one projection's support set replaced."""
     validated_state = validate_index_state(state)
-    result = _update_index_support_in_valid_state(validated_state, statement_id, support_claim_ids)
+    result = _update_index_support_in_valid_state(validated_state, statement_id, support_references)
     return result
 
 
@@ -2196,8 +2187,8 @@ def _states_equivalent(left: IndexState, right: IndexState) -> bool:
     result = (
         left["retrieval_to_owners"] == right["retrieval_to_owners"]
         and left["statement_to_retrieval"] == right["statement_to_retrieval"]
-        and left["claim_to_statements"] == right["claim_to_statements"]
-        and left["statement_to_claims"] == right["statement_to_claims"]
+        and left["record_to_statements"] == right["record_to_statements"]
+        and left["statement_to_references"] == right["statement_to_references"]
         and left["direct_retrieval"] == right["direct_retrieval"]
         and left["projections"] == right["projections"]
     )
@@ -2213,9 +2204,12 @@ def _mutation_is_consistent(before: IndexState, candidate: IndexState, statement
             *candidate["statement_to_retrieval"].get(statement_id, ()),
         )
     }
-    touched_claims = {
-        *before["statement_to_claims"].get(statement_id, ()),
-        *candidate["statement_to_claims"].get(statement_id, ()),
+    touched_record_ids = {
+        reference.get("id", "")
+        for reference in (
+            *before["statement_to_references"].get(statement_id, ()),
+            *candidate["statement_to_references"].get(statement_id, ()),
+        )
     }
     for key_signature in touched_keys:
         owners = candidate["retrieval_to_owners"].get(key_signature, ())
@@ -2252,23 +2246,31 @@ def _mutation_is_consistent(before: IndexState, candidate: IndexState, statement
         elif selected:
             result = False
             return result
-    for claim_id in touched_claims:
-        statement_ids = candidate["claim_to_statements"].get(claim_id, ())
+    for record_id in touched_record_ids:
+        statement_ids = candidate["record_to_statements"].get(record_id, ())
         for owner_id in statement_ids:
-            if claim_id not in candidate["statement_to_claims"].get(owner_id, ()):
+            owner_record_ids = tuple(
+                reference.get("id", "")
+                for reference in candidate["statement_to_references"].get(owner_id, ())
+            )
+            if record_id not in owner_record_ids:
                 result = False
                 return result
-        if claim_id in candidate["statement_to_claims"].get(statement_id, ()) and statement_id not in statement_ids:
+        candidate_record_ids = tuple(
+            reference.get("id", "")
+            for reference in candidate["statement_to_references"].get(statement_id, ())
+        )
+        if record_id in candidate_record_ids and statement_id not in statement_ids:
             result = False
             return result
-        if statement_id in statement_ids and claim_id not in candidate["statement_to_claims"].get(statement_id, ()):
+        if statement_id in statement_ids and record_id not in candidate_record_ids:
             result = False
             return result
     projection_present = statement_id in candidate["projections"]
     result = (
         projection_present
         == (statement_id in candidate["statement_to_retrieval"])
-        == (statement_id in candidate["statement_to_claims"])
+        == (statement_id in candidate["statement_to_references"])
     )
     return result
 
@@ -2408,9 +2410,9 @@ class IndexOwner:
             self._state = candidate
             return
 
-    def update_support(self, statement_id: str, support_claim_ids: tuple[str, ...]) -> IndexState:
+    def update_support(self, statement_id: str, support_references: tuple[dict, ...]) -> IndexState:
         with self._lock:
-            candidate = _update_index_support_in_valid_state(self._state, statement_id, support_claim_ids)
+            candidate = _update_index_support_in_valid_state(self._state, statement_id, support_references)
             if not _mutation_is_consistent(self._state, candidate, statement_id):
                 raise ConflictError("candidate support-update state failed consistency checking")
             self._state = candidate
@@ -2474,7 +2476,7 @@ class IndexOwner:
                     current["statement_id"] != refreshed["statement_id"]
                     or current["generation"] != refreshed["generation"]
                     or current["retrieval_keys"] != refreshed["retrieval_keys"]
-                    or current["support_claim_ids"] != refreshed["support_claim_ids"]
+                    or current["support_references"] != refreshed["support_references"]
                     or current["normalization_version"] != refreshed["normalization_version"]
                     or current["schema_version"] != refreshed["schema_version"]
                 ):

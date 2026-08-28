@@ -1,7 +1,7 @@
 """Tests for Knowledge Graph integration.
 
-The runtime graph layer is read-only: queries return a list of row dicts, reads
-degrade to an empty list, and every public execution path rejects mutations.
+The runtime graph layer is read-only: queries return a list of row dicts, an
+unavailable graph raises, and every public execution path rejects mutations.
 MockGraphClient is an in-memory stand-in keyed on query parameters.
 """
 
@@ -17,6 +17,8 @@ from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
 from engram.utilities import UTILITY_TZDATA_VERSION
 
+from .support_fixtures import PROPOSITION_REFERENCE_A
+
 
 def same(a, b) -> bool:
     """Case-insensitive surface comparison, matching the canonical queries."""
@@ -27,7 +29,7 @@ def same(a, b) -> bool:
 class MockGraphClient:
     """In-memory canonical graph stand-in.
 
-    Stores claims as (subject, predicate, object) triples and resolves the
+    Stores propositions as (subject, predicate, object) triples and resolves the
     canonical triple/entity queries by their parameters. Returns list[dict] and
     never raises (the connection's raise-on-failure path is exercised by the
     live smoke test).
@@ -36,7 +38,7 @@ class MockGraphClient:
     def __init__(self) -> None:
         """Initialize the mock store."""
         self.available = True
-        self.claims: list[dict] = []  # {"subject","predicate","object"}
+        self.propositions: list[dict] = []  # {"subject","predicate","object"}
         self.entities: set[str] = set()
         self.vector_rows: list[dict] = []
 
@@ -52,9 +54,9 @@ class MockGraphClient:
         keyword = params.get("keyword")
 
         if "CREATE" in query_upper or "MERGE" in query_upper:
-            # Triple write (canonical Claim or a generic relationship create).
+            # Triple write (canonical Proposition or a generic relationship create).
             if subject and predicate and obj:
-                self.claims.append({"subject": subject, "predicate": predicate, "object": obj})
+                self.propositions.append({"subject": subject, "predicate": predicate, "object": obj})
                 self.entities.update({subject, obj})
             elif name:
                 self.entities.add(name)
@@ -64,39 +66,45 @@ class MockGraphClient:
         if "MATCH" in query_upper and "RETURN" in query_upper:
             # Triple query, object unknown: subject + predicate -> object.
             if subject and predicate and not obj:
-                for claim in self.claims:
-                    if same(claim["subject"], subject) and same(claim["predicate"], predicate):
-                        result = [{"result": claim["object"]}]
+                for proposition in self.propositions:
+                    if same(proposition["subject"], subject) and same(proposition["predicate"], predicate):
+                        result = [{"result": proposition["object"]}]
                         return result
                 result = []
                 return result
             # Triple query / graph_query, subject unknown: predicate + object -> subject.
             if obj and predicate and not subject:
                 result = [
-                    {"result": claim["subject"]}
-                    for claim in self.claims
-                    if same(claim["predicate"], predicate) and same(claim["object"], obj)
+                    {"result": proposition["subject"]}
+                    for proposition in self.propositions
+                    if same(proposition["predicate"], predicate) and same(proposition["object"], obj)
                 ]
                 return result
             # Facts by entity name (list-format graph_query and entity recall).
             if name:
                 rows = []
-                for claim in self.claims:
-                    if same(claim["subject"], name):
-                        rows.append({"relation": claim["predicate"], "target": claim["object"], **claim})
-                    elif same(claim["object"], name):
-                        rows.append({"relation": claim["predicate"], "target": claim["subject"], **claim})
+                for proposition in self.propositions:
+                    if same(proposition["subject"], name):
+                        rows.append({"relation": proposition["predicate"], "target": proposition["object"], **proposition})
+                    elif same(proposition["object"], name):
+                        rows.append({"relation": proposition["predicate"], "target": proposition["subject"], **proposition})
                 return rows
             # Keyword fallback: entity whose label contains the keyword.
             if keyword:
-                result = [dict(claim) for claim in self.claims if keyword.lower() in claim["subject"].lower()]
+                result = [
+                    dict(proposition) for proposition in self.propositions if keyword.lower() in proposition["subject"].lower()
+                ]
                 return result
             result = []
             return result
 
         if "DELETE" in query_upper:
             if name:
-                self.claims = [claim for claim in self.claims if not (same(claim["subject"], name) or same(claim["object"], name))]
+                self.propositions = [
+                    proposition
+                    for proposition in self.propositions
+                    if not (same(proposition["subject"], name) or same(proposition["object"], name))
+                ]
                 self.entities.discard(name)
             result = []
             return result
@@ -109,7 +117,7 @@ class MockGraphClient:
         result = self.execute(query, params)
         return result
 
-    def vector_search_claims(self, embedding, **kwargs) -> list:
+    def vector_search_propositions(self, embedding, **kwargs) -> list:
         """Return configured ANN rows for vector-recall tests."""
         result = list(self.vector_rows)
         return result
@@ -169,7 +177,7 @@ def _template_graph_operations_make_graph_fn(client: MockGraphClient):
 def test_template_graph_operations_graph_query_success():
     client = MockGraphClient()
     client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
         {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
     )
 
@@ -178,7 +186,7 @@ def test_template_graph_operations_graph_query_success():
 
     template = {
         "graph_query": {
-            "query": "MATCH (c:Claim) RETURN hs.surface_form as result",
+            "query": "MATCH (c:Proposition) RETURN hs.surface_form as result",
             "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
             "on_success": {"text": "{result} is the capital of {star2}."},
             "on_failure": {"text": "I don't know."},
@@ -197,7 +205,7 @@ def test_template_graph_operations_graph_query_not_found():
 
     template = {
         "graph_query": {
-            "query": "MATCH (c:Claim) RETURN hs.surface_form as result",
+            "query": "MATCH (c:Proposition) RETURN hs.surface_form as result",
             "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
             "on_success": {"text": "{result} is the capital."},
             "on_failure": {"text": "I don't know."},
@@ -283,7 +291,7 @@ def test_template_graph_operations_graph_query_rejects_mutation_before_callback(
 def test_template_graph_operations_triple_query_object():
     client = MockGraphClient()
     client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
         {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
     )
 
@@ -299,7 +307,7 @@ def test_template_graph_operations_triple_query_object():
 def test_template_graph_operations_triple_query_subject():
     client = MockGraphClient()
     client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
         {"subject": "Paris", "predicate": "CAPITAL_OF", "object": "France"},
     )
 
@@ -327,11 +335,11 @@ def test_template_graph_operations_triple_query_callback_failure_is_visible():
 def test_template_graph_operations_graph_query_list_format():
     client = MockGraphClient()
     client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
         {"subject": "Alice", "predicate": "KNOWS", "object": "Bob"},
     )
     client.execute(
-        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+        "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
         {"subject": "Alice", "predicate": "LIKES", "object": "Pizza"},
     )
 
@@ -340,7 +348,7 @@ def test_template_graph_operations_graph_query_list_format():
 
     template = {
         "graph_query": {
-            "query": "MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity {primary_label: $name}) RETURN c.predicate as relation, c.object as target",
+            "query": "MATCH (c:Proposition)-[:HAS_SUBJECT]->(e:Entity {primary_label: $name}) RETURN c.predicate as relation, c.object as target",
             "params": {"name": "{star1}"},
             "format": "list",
             "item_template": "{star1} {relation} {target}",
@@ -360,17 +368,24 @@ def test_template_graph_operations_graph_query_list_format():
 def _read_only_graph_wiring_engram_with_graph(client):
     """An ENGRAM with the graph enabled and a mock client injected."""
     with patch("engram.core.create_graph_client", return_value=client) as create_client:
-        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+        engram = Engram(
+            config=engram_config(
+                graph=graph_config(
+                    enabled=True,
+                    deployment_mode="tapestry_managed",
+                )
+            )
+        )
     create_client.assert_called_once()
     return engram
 
 
 def test_read_only_graph_wiring_is_write_cypher_detects_mutations():
-    assert is_write_cypher("MATCH (c:Claim) CREATE (x:Claim) RETURN x")
+    assert is_write_cypher("MATCH (c:Proposition) CREATE (x:Proposition) RETURN x")
     assert is_write_cypher("MERGE (n:Entity {primary_label: 'X'})")
     assert is_write_cypher("MATCH (n) DETACH DELETE n")
     assert is_write_cypher("MATCH (c) SET c.x = 1")
-    assert not is_write_cypher("MATCH (c:Claim)-[:HAS_SUBJECT]->(e:Entity) RETURN c LIMIT 1")
+    assert not is_write_cypher("MATCH (c:Proposition)-[:HAS_SUBJECT]->(e:Entity) RETURN c LIMIT 1")
     assert not is_write_cypher("")
 
 
@@ -382,15 +397,15 @@ def test_read_only_graph_wiring_is_write_cypher_refuses_procedures_and_imports()
     assert is_write_cypher("LOAD CSV FROM 'rows.csv' AS row RETURN row")
     # 'called'/'loading' as plain words in string literals do not trip the
     # whole-word guard.
-    assert not is_write_cypher("MATCH (c:Claim) WHERE c.subject = 'so-called expert' RETURN c")
+    assert not is_write_cypher("MATCH (c:Proposition) WHERE c.subject = 'so-called expert' RETURN c")
 
 
 def test_read_only_graph_wiring_graph_read_fn_passes_reads():
     client = MockGraphClient()
-    client.claims.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
+    client.propositions.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
     engram = _read_only_graph_wiring_engram_with_graph(client)
     rows = engram.graph_read_fn(
-        "MATCH (c:Claim) RETURN c.object AS result",
+        "MATCH (c:Proposition) RETURN c.object AS result",
         {"subject": "Athens", "predicate": "located in"},
     )
     assert rows == [{"result": "Greece"}]
@@ -400,7 +415,14 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
     client = MockGraphClient()
     client.available = False
     with patch("engram.core.create_graph_client", return_value=client):
-        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+        engram = Engram(
+            config=engram_config(
+                graph=graph_config(
+                    enabled=True,
+                    deployment_mode="tapestry_managed",
+                )
+            )
+        )
 
     assert engram.component_status["graph"] == {"enabled": True, "ready": False}
     assert engram.graph_query("RETURN 1") == []
@@ -410,7 +432,14 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
 def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_component_readiness():
     client = MockGraphClient()
     with patch("engram.core.create_graph_client", return_value=client):
-        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+        engram = Engram(
+            config=engram_config(
+                graph=graph_config(
+                    enabled=True,
+                    deployment_mode="tapestry_managed",
+                )
+            )
+        )
 
     core = EngramCore(engram)
 
@@ -466,13 +495,13 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
 def test_read_only_graph_wiring_graph_read_fn_refuses_writes():
     client = MockGraphClient()
     engram = _read_only_graph_wiring_engram_with_graph(client)
-    before = len(client.claims)
+    before = len(client.propositions)
     with pytest.raises(ValueError, match="read-only"):
         engram.graph_read_fn(
-            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Claim)",
+            "MERGE (s:Entity {primary_label: $subject}) CREATE (c:Proposition)",
             {"subject": "Paris", "predicate": "located in", "object": "France"},
         )
-    assert len(client.claims) == before  # the write never reached the graph
+    assert len(client.propositions) == before  # the write never reached the graph
 
 
 def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_connecting():
@@ -483,43 +512,62 @@ def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_conn
     assert client.conn == ()
 
 
+def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
+    with pytest.raises(ValueError, match="invalid shape"):
+        MemGraphConnection(
+            visibility_scope={
+                "kind": "global",
+                "company_id": {},
+                "customer_id": {},
+                "engagement_id": {},
+                "user_id": "user:elias",
+            }
+        )
+
+
 def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call_stays_refused():
     client = MemGraphConnection()
     captured = {}
 
     def execute(query: str, parameters=()) -> list[dict]:
         captured.update({"query": query, "params": parameters})
-        result = [{"claim_id": "claim-1", "similarity": 0.8}]
+        result = [{"proposition_id": "proposition-1", "similarity": 0.8}]
         return result
 
     client._execute_read_query = execute
 
-    rows = client.vector_search_claims(
+    rows = client.vector_search_propositions(
         [0.0, 1.0],
-        index_name="claim_premise_embeddings",
+        index_name="proposition_embeddings",
         limit=25,
         min_similarity=0.5,
     )
 
-    assert rows[0]["claim_id"] == "claim-1"
+    assert rows[0]["proposition_id"] == "proposition-1"
     assert "CALL vector_search.search" in captured["query"]
     assert captured["params"]["limit"] == 25
     with pytest.raises(ValueError, match="read-only"):
         client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
 
 
-def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_claim():
+def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_proposition():
     client = MockGraphClient()
     client.vector_rows = [
         {
-            "claim_id": "claim-1",
+            "proposition_id": "proposition-1",
             "subject": "Water",
             "predicate": "boils at",
             "object": "100 degrees Celsius",
             "similarity": 0.81,
         }
     ]
-    config = engram_config(graph=graph_config(enabled=True, vector_enabled=True))
+    config = engram_config(
+        graph=graph_config(
+            enabled=True,
+            deployment_mode="tapestry_managed",
+            vector_enabled=True,
+        )
+    )
     with (
         patch("engram.core.create_graph_client", return_value=client),
         patch("engram.core.SentenceTransformer", return_value=fake_embedding_model()) as load_model,
@@ -538,7 +586,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     client = MockGraphClient()
     client.vector_rows = [
         {
-            "claim_id": "support-1",
+            "proposition_id": PROPOSITION_REFERENCE_A.get("id", ""),
             "subject": "Western Roman Empire",
             "predicate": "declined because",
             "object": "overlapping pressures",
@@ -548,6 +596,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     config = engram_config(
         graph=graph_config(
             enabled=True,
+            deployment_mode="tapestry_managed",
             vector_enabled=True,
             vector_weight=0.75,
         )
@@ -566,7 +615,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         request_id="learn-1",
         namespace="tapestry",
         context_fingerprint="local-v1",
-        metadata={"support": [{"claim_id": "support-1", "trust": 1.0}]},
+        metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
 
     proposal = core.propose(
@@ -586,7 +635,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
 def test_read_only_graph_wiring_triple_query_wired_through_response_path():
     """A stored `<triple_query>` statement resolves through pattern_query."""
     client = MockGraphClient()
-    client.claims.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
+    client.propositions.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
     engram = _read_only_graph_wiring_engram_with_graph(client)
     engram.store(
         text="",
@@ -607,6 +656,6 @@ def test_read_only_graph_wiring_removed_authoring_template_is_inert_through_resp
         template={"triple_add": {"subject": "Paris", "predicate": "located in", "object": "France"}},
         tier=Tier.STATIC,
     )
-    before = len(client.claims)
+    before = len(client.propositions)
     engram.pattern_query("add paris")
-    assert len(client.claims) == before
+    assert len(client.propositions) == before

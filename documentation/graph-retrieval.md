@@ -1,7 +1,7 @@
 # Graph retrieval contracts
 
 Graph retrieval is optional and read-only. It enriches a resolution request with
-canonical identity and retrieves bounded Claim evidence through fixed parameterized
+canonical identity and retrieves bounded Proposition evidence through fixed parameterized
 capabilities with typed identity and relation inputs.
 
 ## Context and canonical identity
@@ -20,15 +20,15 @@ unavailable identity produces typed diagnostics and an `EVIDENCE` or `MISS` outc
 ## One-hop relations
 
 The relation path compiles one canonical subject and predicate into the fixed
-`relation_one_hop_claim_projections` capability. Returned rows are strict
-`ClaimProjection` values plus a bounded object label and type. Current lifecycle,
+`relation_one_hop_proposition_projections` capability. Returned rows are strict
+`PropositionProjection` values plus a bounded object label and type. Current lifecycle,
 system time, valid time, trust inputs, ownership, scope, and publication identity are
 revalidated before a row becomes evidence.
 
 A unique eligible `SINGLE` relation may become a direct candidate through the common
 fusion policy. Multiple values, unknown cardinality, ambiguity, or incomplete trust
 remain evidence. Rendering changes the bounded output phrase and preserves the
-canonical Claim record.
+canonical Proposition record.
 
 ## Temporal and conflict policy
 
@@ -37,8 +37,9 @@ explicit valid-time or system-time axis. Intervals are lower-inclusive and
 upper-exclusive. Historical direct output requires closed bounds on the requested
 axis. Unqualified requests use the captured evaluation time.
 
-Engram consumes source-calibrated trust and its version exactly as supplied by the
-Claim. Known `MULTI` cardinality yields evidence; conflicting `SINGLE` rows abstain.
+Engram consumes source-calibrated trust and its version exactly as projected from
+the Proposition's eligible Assertion basis. Known `MULTI` cardinality yields
+evidence; conflicting `SINGLE` rows abstain.
 
 ## Two-hop composition
 
@@ -47,7 +48,7 @@ entity and exactly two ordered predicates. The compiler emits only a closed two-
 plan over the one-hop capability. Execution is bounded by request budgets and uses
 the same temporal, trust, visibility, and revalidation rules at both steps.
 
-Composed evidence uses `ClaimEvidenceRecord` schema version 2 and evidence-package
+Composed evidence uses `PropositionEvidenceRecord` schema version 2 and evidence-package
 wire version 2. Its path contains one or two typed steps. Cycles, excessive fan-out,
 ambiguous roots or predicates, conflicting terminal values, incomplete trust, and
 unknown cardinality produce `EVIDENCE` or `MISS`.
@@ -63,4 +64,5 @@ Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 
 Focused behavior is covered by `tests/test_contextual.py`, `tests/test_temporal.py`,
 `tests/test_composition.py`, `tests/test_claim_projection.py`, and
-`tests/test_claim_eligibility.py`.
+`tests/test_claim_eligibility.py`; the last two filenames are retained test-suite
+names, while their executable contracts are Proposition-centered.

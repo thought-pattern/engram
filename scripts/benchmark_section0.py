@@ -40,11 +40,11 @@ PACKAGE_NAMES = (
 class SyntheticVectorGraph:
     """Offline fixed-result graph used to measure support intersection cost."""
 
-    def __init__(self, claim_id: str) -> None:
+    def __init__(self, proposition_id: str) -> None:
         self.available = True
         self.rows = [
             {
-                "claim_id": claim_id,
+                "proposition_id": proposition_id,
                 "subject": "Synthetic subject",
                 "predicate": "supports",
                 "object": "Synthetic object",
@@ -52,7 +52,7 @@ class SyntheticVectorGraph:
             }
         ]
 
-    def vector_search_claims(self, embedding: list[float], **kwargs) -> list[dict]:
+    def vector_search_propositions(self, embedding: list[float], **kwargs) -> list[dict]:
         result = list(self.rows)
         return result
 
@@ -177,7 +177,7 @@ def _lexical_result(corpus_size: int, iterations: int) -> dict:
 
 
 def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCore, dict]:
-    claim_id = "claim-section0-synthetic"
+    proposition_id = "proposition-section0-synthetic"
 
     def build() -> EngramCore:
         config = _benchmark_config(corpus_size)
@@ -192,7 +192,7 @@ def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCor
                     "tapestry": {
                         "namespace": "benchmark",
                         "context_fingerprint": "section0-v1",
-                        "support": [{"claim_id": f"noise-claim-{index}"}],
+                        "support": [{"proposition_id": f"noise-proposition-{index}"}],
                     }
                 },
             )
@@ -205,14 +205,14 @@ def _build_vector_core(corpus_size: int, support_fanout: int) -> tuple[EngramCor
                     "tapestry": {
                         "namespace": "benchmark",
                         "context_fingerprint": "section0-v1",
-                        "support": [{"claim_id": claim_id}],
+                        "support": [{"proposition_id": proposition_id}],
                     }
                 },
             )
         engram.config["graph"]["enabled"] = True
         engram.config["graph"]["vector_enabled"] = True
         benchmark_engram = engram
-        benchmark_engram._graph_client = SyntheticVectorGraph(claim_id)
+        benchmark_engram._graph_client = SyntheticVectorGraph(proposition_id)
         benchmark_engram._graph_embedding_model = object()
         benchmark_engram._encode_graph_query = lambda text: [0.0] * 384
         result = EngramCore(engram, checkpoint_on_mutation=False)

@@ -72,12 +72,12 @@ result = core.resolve_request(
 outcome = result["outcome"]
 candidates = result["response_candidates"]
 package_available = result["evidence_package_available"]
-claim_records = result["evidence_package"]["records"]
+proposition_records = result["evidence_package"]["records"]
 ```
 
 `resolution_result_to_dict`, `resolution_result_to_json`, and their strict
 decoders preserve schema version 1, concrete absence, exact accepted text,
-bounded evidence, and unsupported-version rejection. Full Claim records occur
+bounded evidence, and unsupported-version rejection. Full Proposition records occur
 inside `evidence_package`; fusion authorizes an Engram answer.
 
 The compact previous query frame supplies session context; the repository owns
@@ -112,7 +112,7 @@ are documented in the [deployment runbook](operations/deployment-and-rollback-v1
   and malformed boundary values.
 - `tests/test_resolution_contracts.py` covers deterministic codecs, exact
   fields, schema rejection, concrete absence, and outcome invariants.
-- `tests/test_resolvers.py` covers response candidates, full Claim packages,
+- `tests/test_resolvers.py` covers response candidates, full Proposition packages,
   accounting, bounded execution, cancellation, and fail-soft dependency behavior.
 - `tests/test_service.py` proves transient cancellation and identical request-ID retry.
 - Existing CLI, MCP, gRPC, conversation, and regulated-cache suites protect the

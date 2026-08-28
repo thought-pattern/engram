@@ -12,8 +12,8 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
-from engram.graph import RelationClaimProjection, relation_claim_projection_from_graph_row
-from engram.relation import select_relation_claims
+from engram.graph import RelationPropositionProjection, relation_proposition_projection_from_graph_row
+from engram.relation import select_relation_propositions
 from engram.temporal import parse_temporal_query
 from scripts.benchmark_metadata import benchmark_source_state
 
@@ -31,14 +31,14 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def _item(value: dict[str, object], cardinality: str) -> RelationClaimProjection:
+def _item(value: dict[str, object], cardinality: str) -> RelationPropositionProjection:
     trust_available = bool(value.get("trust_available", True))
     valid_from = str(value.get("valid_from", "2020-01-01T00:00:00Z"))
     valid_to = str(value.get("valid_to", "2030-01-01T00:00:00Z"))
     system_from = str(value.get("system_from", "2020-01-01T00:00:00Z"))
     system_to = str(value.get("system_to", ""))
     row = {
-        "claim_id": value["claim_id"],
+        "proposition_id": value["proposition_id"],
         "subject_entity_id": "entity:subject",
         "predicate_id": "predicate:relation",
         "object_entity_id": value["object_id"],
@@ -68,7 +68,7 @@ def _item(value: dict[str, object], cardinality: str) -> RelationClaimProjection
         "object_type": "ENTITY",
         "predicate_cardinality": cardinality,
     }
-    result = relation_claim_projection_from_graph_row(row)
+    result = relation_proposition_projection_from_graph_row(row)
     return result
 
 
@@ -86,16 +86,16 @@ def run(corpus_path: Path) -> dict[str, object]:
     for split in ("development", "held_out"):
         for case in corpus[split]:
             started = time.perf_counter_ns()
-            items = tuple(_item(value, case["cardinality"]) for value in case["claims"])
-            selection = select_relation_claims(items, parse_temporal_query(case["query"]))
+            items = tuple(_item(value, case["cardinality"]) for value in case["propositions"])
+            selection = select_relation_propositions(items, parse_temporal_query(case["query"]))
             elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
             durations.append(elapsed_ms)
             expected = case["expected"]
             observed = {
                 "direct_answer": selection["direct_answer"],
                 "reason": selection["reason"].value,
-                "selected_claim_id": selection["selected_claim_id"],
-                "conflict_claim_ids": list(selection["conflict_claim_ids"]),
+                "selected_proposition_id": selection["selected_proposition_id"],
+                "conflict_proposition_ids": list(selection["conflict_proposition_ids"]),
             }
             results.append(
                 {

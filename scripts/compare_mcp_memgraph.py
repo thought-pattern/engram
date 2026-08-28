@@ -70,7 +70,7 @@ def _relation_probe(config_path: str) -> dict:
         relation_latency = 0.0
         if len(entities) == 1 and len(predicates) == 1:
             relation_rows, relation_latency = _timed(
-                lambda: engine.relation_one_hop_claim_projections(
+                lambda: engine.relation_one_hop_proposition_projections(
                     entities[0]["canonical_id"], predicates[0]["canonical_id"], row_limit=10
                 )
             )
@@ -111,7 +111,7 @@ def _relation_probe(config_path: str) -> dict:
                 "latency_ms": relation_latency,
                 "matches": [
                     {
-                        "claim_id": item["projection"]["claim_id"],
+                        "proposition_id": item["projection"]["proposition_id"],
                         "object_label": item["object_label"],
                         "object_type": item["object_type"].value,
                     }
@@ -123,7 +123,7 @@ def _relation_probe(config_path: str) -> dict:
                 "outcome": resolution["outcome"].value,
                 "reason_codes": list(resolution["reason_codes"]),
                 "response_candidates": [item["response"] for item in resolution["response_candidates"]],
-                "claim_evidence": resolution["evidence_package"]["retained_count"],
+                "proposition_evidence": resolution["evidence_package"]["retained_count"],
                 "structured_graph": {
                     "state": structured["state"].value,
                     "reason_code": structured["reason_code"],

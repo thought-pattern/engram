@@ -175,7 +175,10 @@ def test_service_requires_an_explicit_lifecycle(tmp_path) -> None:
 
 def test_mcp_start_keeps_serving_when_optional_graph_is_unavailable(tmp_path, monkeypatch) -> None:
     config = tmp_path / "graph.yml"
-    config.write_text("graph:\n  enabled: true\n", encoding="utf-8")
+    config.write_text(
+        "graph:\n  enabled: true\n  deployment_mode: standalone\n",
+        encoding="utf-8",
+    )
     unavailable_client = type("UnavailableGraph", (), {"available": False})()
     monkeypatch.setattr("engram.core.create_graph_client", lambda **kwargs: unavailable_client)
 
@@ -347,7 +350,7 @@ def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
     assert _runtime(service).engram.get_statement(learned["statement_id"])["hit_count"] == 1
 
 
-def test_abandoned_mcp_wait_does_not_claim_to_cancel_started_mutation(tmp_path, monkeypatch) -> None:
+def test_abandoned_mcp_wait_does_not_proposition_to_cancel_started_mutation(tmp_path, monkeypatch) -> None:
     service = MCPConversationService()
     service.start(seed_path=str(_seed_file(tmp_path)))
     core = service.core

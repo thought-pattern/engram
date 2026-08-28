@@ -14,8 +14,8 @@ from engram.resolution import (
     BudgetLedger,
     Candidate,
     CandidateSource,
-    ClaimEvidenceRecord,
-    ClaimOwnership,
+    PropositionEvidenceRecord,
+    PropositionOwnership,
     CostClass,
     DisclosureBasis,
     EvidenceKind,
@@ -40,12 +40,12 @@ from engram.resolution import (
     candidate_from_json,
     candidate_to_json,
     candidate_with_changes,
-    canonical_claim_references,
+    canonical_proposition_references,
     capture_resolution_budget,
-    claim_evidence_record,
-    claim_evidence_record_to_dict,
-    claim_trust_inputs,
-    claim_validity_inputs,
+    proposition_evidence_record,
+    proposition_evidence_record_to_dict,
+    proposition_trust_inputs,
+    proposition_validity_inputs,
     disclosure_decision,
     empty_candidate,
     evidence_package_to_dict,
@@ -119,9 +119,9 @@ def _frame() -> QueryFrame:
 
 def _evidence() -> EvidenceReference:
     result = evidence_reference(
-        evidence_id="claim-1",
+        evidence_id="proposition-1",
         resolver="structured_graph",
-        kind=EvidenceKind.CLAIM,
+        kind=EvidenceKind.PROPOSITION,
         scope=_scope(),
         provenance={"query": "entity"},
         diagnostics={"row": 1},
@@ -129,30 +129,30 @@ def _evidence() -> EvidenceReference:
     return result
 
 
-def _claim_record() -> ClaimEvidenceRecord:
-    result = claim_evidence_record(
-        claim_id="claim-full",
+def _proposition_record() -> PropositionEvidenceRecord:
+    result = proposition_evidence_record(
+        proposition_id="proposition-full",
         source_resolver="structured_graph",
         source_contributions=("structured_graph",),
         features=feature_set(
             values={"canonical_completeness": 1.0, "structured_match": 1.0},
             unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
         ),
-        canonical_references=canonical_claim_references("entity:subject", "predicate:relation", "entity:object"),
-        validity=claim_validity_inputs(
+        canonical_references=canonical_proposition_references("entity:subject", "predicate:relation", "entity:object"),
+        validity=proposition_validity_inputs(
             evaluation_time="2026-08-12T00:00:00Z",
             active=True,
             system_current=True,
             valid_time_current=True,
         ),
-        trust=claim_trust_inputs(),
+        trust=proposition_trust_inputs(),
         disclosure=disclosure_decision(
-            ownership=ClaimOwnership.PUBLIC,
+            ownership=PropositionOwnership.PUBLIC,
             basis=DisclosureBasis.PUBLIC_RULE,
             scope=_scope(),
-            policy_version="claim-disclosure-v1",
+            policy_version="proposition-disclosure-v1",
         ),
-        path=("claim-full",),
+        path=("proposition-full",),
         selection_reasons=("canonical_complete", "structured_match"),
     )
     return result
@@ -518,7 +518,7 @@ def test_every_versioned_resolution_contract_rejects_unknown_versions(factory) -
 def test_resolver_result_current_field_set_is_exact() -> None:
     result = resolver_result_with_changes(
         _resolver_result(),
-        {"resolver": "structured_graph", "claim_evidence": (_claim_record(),)},
+        {"resolver": "structured_graph", "proposition_evidence": (_proposition_record(),)},
     )
 
     assert set(resolver_result_to_dict(result)) == set(
@@ -529,16 +529,16 @@ def test_resolver_result_current_field_set_is_exact() -> None:
             "reason_code",
             "candidates",
             "evidence",
-            "claim_evidence",
+            "proposition_evidence",
             "accounting",
             "diagnostics",
             "consumption",
         }
     )
-    assert resolver_result_to_dict(result)["claim_evidence"] == [claim_evidence_record_to_dict(_claim_record())]
+    assert resolver_result_to_dict(result)["proposition_evidence"] == [proposition_evidence_record_to_dict(_proposition_record())]
     assert resolver_result_from_json(resolver_result_to_json(result)) == result
     missing = resolver_result_to_dict(result)
-    missing.pop("claim_evidence")
+    missing.pop("proposition_evidence")
     with pytest.raises(InvalidRequestError, match="invalid fields"):
         resolver_result_from_dict(missing)
     added = resolver_result_to_dict(result)
@@ -547,9 +547,9 @@ def test_resolver_result_current_field_set_is_exact() -> None:
         resolver_result_from_dict(added)
 
 
-def test_resolver_result_rejects_mismatched_claim_evidence_source() -> None:
+def test_resolver_result_rejects_mismatched_proposition_evidence_source() -> None:
     with pytest.raises(InvalidRequestError, match="source must match"):
-        resolver_result_with_changes(_resolver_result(), {"claim_evidence": (_claim_record(),)})
+        resolver_result_with_changes(_resolver_result(), {"proposition_evidence": (_proposition_record(),)})
 
 
 def test_resolution_result_current_package_fields_are_exact() -> None:
@@ -566,12 +566,12 @@ def test_resolution_result_current_package_fields_are_exact() -> None:
         resolver_results=(),
         budget=budget_consumption(),
     )
-    package = build_evidence_package((_claim_record(),))
+    package = build_evidence_package((_proposition_record(),))
     evidence_result = resolution_result_with_changes(
         miss,
         {
             "outcome": ResolutionOutcome.EVIDENCE,
-            "reason_codes": ("claim_evidence_included",),
+            "reason_codes": ("proposition_evidence_included",),
             "evidence_package_available": True,
             "evidence_package": package,
         },
@@ -591,14 +591,14 @@ def test_resolution_result_current_package_fields_are_exact() -> None:
     added["compatibility_version"] = 1
     with pytest.raises(InvalidRequestError, match="invalid fields"):
         resolution_result_from_dict(added)
-    with pytest.raises(InvalidRequestError, match="unpackaged Claim evidence"):
+    with pytest.raises(InvalidRequestError, match="unpackaged Proposition evidence"):
         resolution_result_with_changes(
             miss,
             {
                 "resolver_results": (
                     resolver_result_with_changes(
                         _resolver_result(),
-                        {"resolver": "structured_graph", "claim_evidence": (_claim_record(),)},
+                        {"resolver": "structured_graph", "proposition_evidence": (_proposition_record(),)},
                     ),
                 )
             },
@@ -642,13 +642,13 @@ def test_resolution_result_answer_and_miss_package_invariants() -> None:
             answer,
             {
                 "evidence_package_available": True,
-                "evidence_package": build_evidence_package((_claim_record(),)),
+                "evidence_package": build_evidence_package((_proposition_record(),)),
             },
         )
     with pytest.raises(InvalidRequestError, match="MISS cannot contain"):
         resolution_result_with_changes(
             available_empty_miss,
-            {"evidence_package": build_evidence_package((_claim_record(),))},
+            {"evidence_package": build_evidence_package((_proposition_record(),))},
         )
 
 

@@ -88,7 +88,7 @@ def candidate(
 def supported_pair(statement_id: str, semantic: float = 0.92, lexical: float = 0.95) -> tuple[Candidate, Candidate]:
     """Build independent lexical and support-semantic contributions."""
     support = evidence_reference(
-        f"claim:{statement_id}",
+        f"proposition:{statement_id}",
         "support_semantic",
         EvidenceKind.SUPPORT,
         SCOPE,

@@ -19,13 +19,13 @@ from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, FusionPolicyReason, permissive_candidate_authority
 from engram.graph import (
-    CLAIM_PROJECTION_FIELDS,
-    ClaimProjection,
-    ClaimProjectionQuery,
+    PROPOSITION_PROJECTION_FIELDS,
     MemGraphConnection,
-    claim_projection,
-    claim_projection_from_graph_row,
-    claim_projection_to_dict,
+    PropositionProjection,
+    PropositionProjectionQuery,
+    proposition_projection,
+    proposition_projection_from_graph_row,
+    proposition_projection_to_dict,
 )
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
@@ -45,16 +45,16 @@ from engram.resolution import (
     budget_consumption,
     build_evidence_package,
     candidate as resolution_candidate,
-    canonical_claim_references_with_changes,
+    canonical_proposition_references_with_changes,
     capture_resolution_budget,
-    claim_evidence_record_to_dict,
-    claim_evidence_record_with_changes,
-    claim_validity_inputs_with_changes,
     disclosure_decision_with_changes,
     empty_evidence_package,
     evidence_package_to_json,
     evidence_reference,
     feature_set,
+    proposition_evidence_record_to_dict,
+    proposition_evidence_record_with_changes,
+    proposition_validity_inputs_with_changes,
     query_frame_with_changes,
     resolution_budget,
     resolution_budget_with_changes,
@@ -76,7 +76,7 @@ from engram.resolvers import (
     StructuredGraphResolver,
     SupportSemanticResolver,
     bound_resolver_result,
-    execution_report_canonical_claim_evidence,
+    execution_report_canonical_proposition_evidence,
     execution_report_with_changes,
     resolution_plan_to_dict,
     resolver_budget as build_resolver_budget,
@@ -91,6 +91,8 @@ from engram.resolvers import (
 )
 from engram.service import EngramCore
 
+from .support_fixtures import PROPOSITION_REFERENCE_A, REFERENCE_IDS
+
 NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 
@@ -104,7 +106,7 @@ def artifact(
     namespace: str = "tenant-a",
     lifecycle: LifecycleState = LifecycleState.ACTIVE,
     source_label: str = "tapestry:released",
-    support_claim_ids: tuple[str, ...] = (),
+    support_references: tuple[dict, ...] = (),
     metadata=(),
 ) -> CachedResponseArtifact:
     scope = scope_key(namespace=namespace)
@@ -118,7 +120,7 @@ def artifact(
         tier=Tier.STATIC,
         lifecycle=lifecycle,
         scope=scope,
-        support_claim_ids=support_claim_ids,
+        support_references=support_references,
         valid_from="",
         valid_from_available=False,
         valid_until="",
@@ -136,7 +138,7 @@ def artifact(
 def engine_with_artifacts(*artifacts: CachedResponseArtifact) -> Engram:
     engine = Engram()
     engine.response_repository = ArtifactRepository(artifacts)
-    persistence.synchronize_response_compatibility_views(engine, ())
+    persistence.synchronize_response_statement_projections(engine, ())
     return engine
 
 
@@ -320,7 +322,10 @@ def test_pattern_discovery_is_pure_and_never_uses_graph_fallback(monkeypatch) ->
 
 def test_lexical_discovery_exposes_existing_components_without_accounting() -> None:
     engine = Engram()
-    statement_id = engine.store("The automobile is fast")
+    statement_id = engine.store(
+        "The automobile is fast",
+        introduced_by_user_id="standalone-conversation-label",
+    )
     before_statement = dict(engine.get_statement(statement_id))
     before_keywords = {name: (value["query_count"], value["hit_count"]) for name, value in engine.keywords.items()}
     query_frame = frame(engine, "car", namespace="")
@@ -329,6 +334,7 @@ def test_lexical_discovery_exposes_existing_components_without_accounting() -> N
 
     features = result["candidates"][0]["features"]
     assert result["candidates"][0]["statement_id"] == statement_id
+    assert "introduced_by_user_id" not in result["candidates"][0]["provenance"]
     assert features["values"]["lexical_score"] > 0.0
     assert features["values"]["synonym_match_ratio"] > 0.0
     assert {"lexical_overlap", "recency", "keyword_hit_rate", "priority"}.issubset(features["values"])
@@ -356,9 +362,9 @@ def test_legacy_query_wrappers_retain_accounting_behavior() -> None:
     assert engine.get_statement(pattern_id)["hit_count"] == 1
 
 
-def _structured_claim_projection(claim_id: str = "claim-1") -> ClaimProjection:
+def _structured_proposition_projection(proposition_id: str = "proposition-1") -> PropositionProjection:
     row = {
-        "claim_id": claim_id,
+        "proposition_id": proposition_id,
         "subject_entity_id": "entity:ada",
         "predicate_id": "predicate:built",
         "object_entity_id": "entity:engine",
@@ -385,21 +391,21 @@ def _structured_claim_projection(claim_id: str = "claim-1") -> ClaimProjection:
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    result = claim_projection_from_graph_row(row, ClaimProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
     return result
 
 
-def _changed_claim_projection(projection: ClaimProjection, **changes) -> ClaimProjection:
+def _changed_proposition_projection(projection: PropositionProjection, **changes) -> PropositionProjection:
     values = dict(projection)
     values.update(changes)
-    result = claim_projection(**values)
+    result = proposition_projection(**values)
     return result
 
 
-def _current_claim_projection(discovered: ClaimProjection, **changes) -> ClaimProjection:
-    result = _changed_claim_projection(
+def _current_proposition_projection(discovered: PropositionProjection, **changes) -> PropositionProjection:
+    result = _changed_proposition_projection(
         discovered,
-        projection_id=ClaimProjectionQuery.BY_ID_V1,
+        projection_id=PropositionProjectionQuery.BY_ID_V1,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=0.0,
@@ -411,27 +417,27 @@ def _current_claim_projection(discovered: ClaimProjection, **changes) -> ClaimPr
     return result
 
 
-def _semantic_claim_projection(claim_id: str = "claim-1", similarity: float = 0.9) -> ClaimProjection:
-    result = _changed_claim_projection(
-        _structured_claim_projection(claim_id),
-        projection_id=ClaimProjectionQuery.VECTOR_V1,
+def _semantic_proposition_projection(proposition_id: str = "proposition-1", similarity: float = 0.9) -> PropositionProjection:
+    result = _changed_proposition_projection(
+        _structured_proposition_projection(proposition_id),
+        projection_id=PropositionProjectionQuery.VECTOR_V1,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=similarity,
         semantic_similarity_available=True,
-        vector_index_id="claim_premise_embeddings",
+        vector_index_id="proposition_premise_embeddings",
         vector_index_id_available=True,
     )
     return result
 
 
-def _claim_projection_graph_row(projection: ClaimProjection) -> dict[str, object]:
-    encoded = claim_projection_to_dict(projection)
-    result = {field: encoded[field] for field in CLAIM_PROJECTION_FIELDS}
+def _proposition_projection_graph_row(projection: PropositionProjection) -> dict[str, object]:
+    encoded = proposition_projection_to_dict(projection)
+    result = {field: encoded[field] for field in PROPOSITION_PROJECTION_FIELDS}
     return result
 
 
-def test_claim_resolvers_reject_falsey_invalid_eligibility_evaluator() -> None:
+def test_proposition_resolvers_reject_falsey_invalid_eligibility_evaluator() -> None:
     engine = Engram()
 
     with pytest.raises(InvalidRequestError, match="structured graph eligibility_evaluator"):
@@ -440,16 +446,16 @@ def test_claim_resolvers_reject_falsey_invalid_eligibility_evaluator() -> None:
         SupportSemanticResolver(engine, lambda: START_NS, False)
 
 
-def test_structured_graph_adapter_emits_full_claim_in_current_core_result(monkeypatch) -> None:
+def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection()
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection()
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -457,53 +463,53 @@ def test_structured_graph_adapter_emits_full_claim_in_current_core_result(monkey
     assert result["candidates"] == ()
     assert result["schema_version"] == 1
     assert result["evidence"] == ()
-    assert len(result["claim_evidence"]) == 1
-    record = result["claim_evidence"][0]
-    assert record["claim_id"] == "claim-1"
+    assert len(result["proposition_evidence"]) == 1
+    record = result["proposition_evidence"][0]
+    assert record["proposition_id"] == "proposition-1"
     assert record["canonical_references"]["subject_entity_id"] == "entity:ada"
     assert record["features"]["values"]["structured_match"] == 1.0
     assert record["features"]["unavailable"] == ("semantic_similarity", "source_agreement", "supplied_trust")
     assert record["disclosure"]["scope"] == query_frame["scope"]
-    serialized = claim_evidence_record_to_dict(record)
+    serialized = proposition_evidence_record_to_dict(record)
     assert "response" not in serialized
     assert not {"subject", "predicate", "object", "proof", "cypher", "embedding"}.intersection(serialized)
     assert resolver_result_from_json(resolver_result_to_json(result)) == result
 
 
-def test_structured_graph_adapter_excludes_ineligible_and_changed_claims(monkeypatch) -> None:
+def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(monkeypatch) -> None:
     engine = Engram()
-    eligible = _structured_claim_projection("claim-eligible")
-    inactive = _changed_claim_projection(
-        _structured_claim_projection("claim-inactive"),
+    eligible = _structured_proposition_projection("proposition-eligible")
+    inactive = _changed_proposition_projection(
+        _structured_proposition_projection("proposition-inactive"),
         invalidated_at="2026-08-01T00:00:00Z",
         invalidated_at_available=True,
     )
-    changed = _structured_claim_projection("claim-changed")
+    changed = _structured_proposition_projection("proposition-changed")
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [eligible, inactive, changed][:row_limit],
     )
 
-    def current(claim_id):
-        if claim_id == eligible["claim_id"]:
-            result = (_current_claim_projection(eligible),)
+    def current(proposition_id):
+        if proposition_id == eligible["proposition_id"]:
+            result = (_current_proposition_projection(eligible),)
             return result
-        if claim_id == changed["claim_id"]:
-            result = (_current_claim_projection(changed, object_entity_id="entity:changed"),)
+        if proposition_id == changed["proposition_id"]:
+            result = (_current_proposition_projection(changed, object_entity_id="entity:changed"),)
             return result
-        raise AssertionError("initially ineligible Claim must not be revalidated")
+        raise AssertionError("initially ineligible Proposition must not be revalidated")
 
-    monkeypatch.setattr(engine, "current_claim_projection", current)
+    monkeypatch.setattr(engine, "current_proposition_projection", current)
     query_frame = frame(engine, "Ada", namespace="")
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-eligible",)
+    assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-eligible",)
     assert result["diagnostics"]["discovery_rows"] == 3
     assert result["diagnostics"]["revalidation_rows"] == 2
     assert result["diagnostics"]["exclusion_counts"] == {
-        "claim_inactive": 1,
+        "proposition_inactive": 1,
         "revalidation_identity_conflict": 1,
     }
     assert result["consumption"]["graph_rows"] == 5
@@ -512,15 +518,15 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_claims(monkeyp
 
 def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection()
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection()
+    current = _current_proposition_projection(discovered)
     before = (engine.query_count, engine.hit_count, tuple(engine.statements))
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget_with_changes(
         resolver_budget(query_frame),
@@ -529,22 +535,22 @@ def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkey
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    assert result["claim_evidence"] == ()
+    assert result["proposition_evidence"] == ()
     assert result["reason_code"] == "structured_graph_miss"
     assert result["consumption"]["exhausted_dimensions"] == ("evidence_bytes",)
     assert before == (engine.query_count, engine.hit_count, tuple(engine.statements))
 
 
-def test_executor_defensively_bounds_full_claim_evidence_in_current_schema(monkeypatch) -> None:
+def test_executor_defensively_bounds_full_proposition_evidence_in_current_schema(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection()
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection()
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
     raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
@@ -552,35 +558,35 @@ def test_executor_defensively_bounds_full_claim_evidence_in_current_schema(monke
     bounded = bound_resolver_result(raw, resolver_budget_with_changes(lease, {"max_evidence": 0}))
 
     assert bounded["schema_version"] == 1
-    assert bounded["claim_evidence"] == ()
+    assert bounded["proposition_evidence"] == ()
     assert bounded["evidence"] == ()
     assert bounded["consumption"]["evidence"] == 0
     assert "evidence" in bounded["consumption"]["exhausted_dimensions"]
 
 
 def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypatch) -> None:
-    accepted = artifact(support_claim_ids=("claim-support",))
+    accepted = artifact(support_references=(PROPOSITION_REFERENCE_A,))
     engine = engine_with_artifacts(accepted)
     engine.config["graph"]["enabled"] = True
     engine.config["graph"]["vector_enabled"] = True
     engine.config["graph"]["vector_weight"] = 1.0
     engine.statements[engine.statement_index[accepted["statement_id"]]]["priority"] = 3
-    projections = [_semantic_claim_projection("unlinked", 1.0)]
+    projections = [_semantic_proposition_projection("unlinked", 1.0)]
     monkeypatch.setattr(
         engine,
-        "graph_vector_claims",
+        "graph_vector_propositions",
         lambda _text, *, limit=0: [
-            {"claim_id": "claim-support", "similarity": 0.9},
-            {"claim_id": "unlinked", "similarity": 1.0},
+            {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 0.9},
+            {"proposition_id": "unlinked", "similarity": 1.0},
         ][:limit],
     )
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: projections[:limit],
     )
-    by_id = {projection["claim_id"]: _current_claim_projection(projection) for projection in projections}
-    monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (by_id[claim_id],))
+    by_id = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in projections}
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (by_id[proposition_id],))
     query_frame = frame(engine)
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -588,27 +594,29 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["statement_id"] == accepted["statement_id"]
     assert result["candidates"][0]["source"] == CandidateSource.SUPPORT_SEMANTIC
-    assert tuple(reference["evidence_id"] for reference in result["candidates"][0]["evidence"]) == ("claim-support",)
+    assert tuple(reference["evidence_id"] for reference in result["candidates"][0]["evidence"]) == (
+        REFERENCE_IDS.get("proposition_a", ""),
+    )
     assert result["candidates"][0]["features"]["values"]["semantic_score"] == pytest.approx(0.9)
     assert result["candidates"][0]["features"]["values"]["priority"] == pytest.approx(3.0)
     assert result["candidates"][0]["features"]["values"]["legacy_retrieval_score"] == pytest.approx(3.9)
-    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("unlinked",)
+    assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("unlinked",)
     assert result["consumption"]["vector_results"] == 3
 
 
-def test_support_semantic_emits_unlinked_full_claim_without_response_candidate(monkeypatch) -> None:
+def test_support_semantic_emits_unlinked_full_proposition_without_response_candidate(monkeypatch) -> None:
     engine = Engram()
     engine.config["graph"]["enabled"] = True
     engine.config["graph"]["vector_enabled"] = True
     engine.config["graph"]["vector_weight"] = 1.0
-    discovered = _semantic_claim_projection("claim-unlinked", 0.73)
-    current = _current_claim_projection(discovered)
+    discovered = _semantic_proposition_projection("proposition-unlinked", 0.73)
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -616,9 +624,9 @@ def test_support_semantic_emits_unlinked_full_claim_without_response_candidate(m
     assert result["schema_version"] == 1
     assert result["candidates"] == ()
     assert result["accounting"] == ()
-    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-unlinked",)
-    assert result["claim_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.73)
-    assert result["claim_evidence"][0]["features"]["unavailable"] == (
+    assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-unlinked",)
+    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.73)
+    assert result["proposition_evidence"][0]["features"]["unavailable"] == (
         "source_agreement",
         "structured_match",
         "supplied_trust",
@@ -629,20 +637,20 @@ def test_support_semantic_emits_unlinked_full_claim_without_response_candidate(m
 
 
 def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> None:
-    discovered = _semantic_claim_projection("claim-vertical", 0.67)
-    current = _current_claim_projection(discovered)
+    discovered = _semantic_proposition_projection("proposition-vertical", 0.67)
+    current = _current_proposition_projection(discovered)
     client = MemGraphConnection()
     calls = []
 
     def execute(query: str, parameters=()):
         calls.append((query, parameters))
-        if "claim.subject AS subject" in query:
-            result = [{"claim_id": discovered["claim_id"], "similarity": discovered["semantic_similarity"]}]
+        if "proposition.subject AS subject" in query:
+            result = [{"proposition_id": discovered["proposition_id"], "similarity": discovered["semantic_similarity"]}]
             return result
         if "query_embedding" in parameters:
-            result = [_claim_projection_graph_row(discovered)]
+            result = [_proposition_projection_graph_row(discovered)]
             return result
-        result = [_claim_projection_graph_row(current)]
+        result = [_proposition_projection_graph_row(current)]
         return result
 
     client._execute_read_query = execute
@@ -652,7 +660,7 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
         {
             "enabled": True,
             "vector_enabled": True,
-            "vector_index_name": "claim_premise_embeddings",
+            "vector_index_name": "proposition_premise_embeddings",
             "vector_limit": 10,
             "vector_min_similarity": 0.45,
             "vector_weight": 1.0,
@@ -663,35 +671,35 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert tuple(record["claim_id"] for record in result["claim_evidence"]) == ("claim-vertical",)
-    assert result["claim_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.67)
+    assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-vertical",)
+    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.67)
     assert len(calls) == 3
     assert calls[0][1] == {
-        "index_name": "claim_premise_embeddings",
+        "index_name": "proposition_premise_embeddings",
         "limit": query_frame["budget"]["max_candidates"],
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
     }
     assert calls[1][1] == {
-        "index_name": "claim_premise_embeddings",
+        "index_name": "proposition_premise_embeddings",
         "limit": query_frame["budget"]["max_vector_results"] - 1,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
     }
-    assert calls[2][1] == {"claim_id": "claim-vertical"}
+    assert calls[2][1] == {"proposition_id": "proposition-vertical"}
     assert "Ada" not in calls[0][0]
     assert "Ada" not in calls[1][0]
     assert "Ada" not in calls[2][0]
 
 
-def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(monkeypatch) -> None:
+def test_support_semantic_proposition_discovery_fails_soft_and_cooperates_with_limits(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda *_args, **_kwargs: [],
     )
 
@@ -699,12 +707,12 @@ def test_support_semantic_claim_discovery_fails_soft_and_cooperates_with_limits(
 
     assert unavailable["state"] == ResolverState.COMPLETED
     assert unavailable["reason_code"] == "support_semantic_miss"
-    assert unavailable["claim_evidence"] == ()
+    assert unavailable["proposition_evidence"] == ()
     assert unavailable["consumption"]["vector_results"] == 0
 
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("deadline")),
     )
     failed = ResolverExecutor(lambda: START_NS).execute(
@@ -735,25 +743,25 @@ def test_executor_isolates_a_malformed_resolver_result() -> None:
     assert result["diagnostics"] == {"exception_type": "InvalidRequestError"}
 
 
-def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
+def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
     engine = Engram()
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_claim_projection("claim-bounded", 0.8)
-    current = _current_claim_projection(discovered)
+    discovered = _semantic_proposition_projection("proposition-bounded", 0.8)
+    current = _current_proposition_projection(discovered)
     current_calls = 0
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
 
-    def current_projection(_claim_id):
+    def current_projection(_proposition_id):
         nonlocal current_calls
         current_calls += 1
         result = (current,)
         return result
 
-    monkeypatch.setattr(engine, "current_claim_projection", current_projection)
+    monkeypatch.setattr(engine, "current_proposition_projection", current_projection)
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
 
@@ -761,7 +769,7 @@ def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(mon
         query_frame,
         resolver_budget_with_changes(lease, {"max_graph_rows": 0}),
     )
-    assert no_graph_rows["claim_evidence"] == ()
+    assert no_graph_rows["proposition_evidence"] == ()
     assert current_calls == 0
     byte_limited = SupportSemanticResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -774,24 +782,24 @@ def test_support_semantic_claim_evidence_honors_graph_byte_and_memory_bounds(mon
     )
 
     assert current_calls == 2
-    assert byte_limited["claim_evidence"] == ()
+    assert byte_limited["proposition_evidence"] == ()
     assert "evidence_bytes" in byte_limited["consumption"]["exhausted_dimensions"]
     assert memory_limited["state"] == ResolverState.EXHAUSTED
     assert memory_limited["reason_code"] == "working_memory_bytes_budget"
 
 
-def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consumed(monkeypatch) -> None:
+def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is_consumed(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_claim_projection("claim-after-candidate", 0.8)
-    current = _current_claim_projection(discovered)
+    discovered = _semantic_proposition_projection("proposition-after-candidate", 0.8)
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(
         engine,
         "Ada",
@@ -820,29 +828,29 @@ def test_executor_runs_semantic_claim_evidence_after_candidate_capacity_is_consu
 
     assert len(report["results"][0]["candidates"]) == 1
     assert report["reservations"][1]["lease"]["max_candidates"] == 0
-    assert tuple(record["claim_id"] for record in report["results"][1]["claim_evidence"]) == ("claim-after-candidate",)
+    assert tuple(record["proposition_id"] for record in report["results"][1]["proposition_evidence"]) == ("proposition-after-candidate",)
     assert report["results"][1]["accounting"] == ()
 
 
-def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_or_accounting(monkeypatch) -> None:
+def test_execution_report_canonicalizes_cross_producer_proposition_without_candidacy_or_accounting(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    structured = _structured_claim_projection("claim-shared")
-    semantic = _semantic_claim_projection("claim-shared", 0.76)
-    current = _current_claim_projection(structured)
+    structured = _structured_proposition_projection("proposition-shared")
+    semantic = _semantic_proposition_projection("proposition-shared", 0.76)
+    current = _current_proposition_projection(structured)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [structured][:row_limit],
     )
-    monkeypatch.setattr(engine, "graph_vector_claims", lambda _text, *, limit=0: [])
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [semantic][:limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry(
         (
@@ -852,10 +860,10 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
     )
 
     report = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame))
-    records = execution_report_canonical_claim_evidence(report)
+    records = execution_report_canonical_proposition_evidence(report)
 
     assert len(records) == 1
-    assert records[0]["claim_id"] == "claim-shared"
+    assert records[0]["proposition_id"] == "proposition-shared"
     assert records[0]["source_contributions"] == ("structured_graph", "support_semantic")
     assert records[0]["features"]["values"]["structured_match"] == 1.0
     assert records[0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.76)
@@ -863,8 +871,8 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
     assert all(result["candidates"] == () for result in report["results"])
     assert all(result["accounting"] == () for result in report["results"])
 
-    raw_record = report["results"][0]["claim_evidence"][0]
-    untrusted_record = claim_evidence_record_with_changes(
+    raw_record = report["results"][0]["proposition_evidence"][0]
+    untrusted_record = proposition_evidence_record_with_changes(
         raw_record,
         {"source_resolver": "lexical", "source_contributions": ("lexical",)},
     )
@@ -875,12 +883,12 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
                 resolver_result(
                     "lexical",
                     ResolverState.COMPLETED,
-                    claim_evidence=(untrusted_record,),
+                    proposition_evidence=(untrusted_record,),
                 ),
             ),
         },
     )
-    assert execution_report_canonical_claim_evidence(untrusted_report) == ()
+    assert execution_report_canonical_proposition_evidence(untrusted_report) == ()
 
     orchestrated, finalization = ResolutionOrchestrator(
         registry,
@@ -895,21 +903,21 @@ def test_execution_report_canonicalizes_cross_producer_claim_without_candidacy_o
         "support_semantic",
     )
     assert orchestrated["evidence_package"]["records"][0]["features"]["values"]["source_agreement"] == 1.0
-    assert all(not result["claim_evidence"] for result in orchestrated["resolver_results"])
+    assert all(not result["proposition_evidence"] for result in orchestrated["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeypatch) -> None:
+def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_claim_projection("claim-orchestrated")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection("proposition-orchestrated")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
@@ -917,7 +925,7 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-only")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-only")
 
     assert result["schema_version"] == 1
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
@@ -925,8 +933,8 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
     assert result["response_candidates"] == ()
     assert result["evidence"] == ()
     assert result["evidence_package_available"] is True
-    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-orchestrated",)
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert tuple(record["proposition_id"] for record in result["evidence_package"]["records"]) == ("proposition-orchestrated",)
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert result["budget"]["evidence"] == 1
     assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
     assert result["budget"]["evidence_bytes"] <= query_frame["budget"]["max_evidence_bytes"]
@@ -935,9 +943,9 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
     assert result["budget"]["output_bytes"] == len(resolution_result_to_json(result).encode("utf-8"))
     assert result["budget"]["diagnostic_bytes"] <= query_frame["budget"]["max_diagnostic_bytes"]
     assert result["budget"]["working_memory_bytes"] <= query_frame["budget"]["max_working_memory_bytes"]
-    claim_diagnostics = result["frame_diagnostics"]["claim_evidence"]
-    assert isinstance(claim_diagnostics, Mapping)
-    assert set(claim_diagnostics) == set(
+    proposition_diagnostics = result["frame_diagnostics"]["proposition_evidence"]
+    assert isinstance(proposition_diagnostics, Mapping)
+    assert set(proposition_diagnostics) == set(
         {
             "policy_version",
             "available",
@@ -952,7 +960,7 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
         }
     )
     diagnostic_payload = json.dumps(resolution_result_to_dict(result)["frame_diagnostics"], sort_keys=True)
-    assert discovered["claim_id"] not in diagnostic_payload
+    assert discovered["proposition_id"] not in diagnostic_payload
     assert discovered["subject_entity_id"] not in diagnostic_payload
     assert discovered["object_entity_id"] not in diagnostic_payload
     assert finalization["candidate_statement_ids"] == ()
@@ -960,19 +968,19 @@ def test_orchestrator_emits_only_bounded_package_for_claim_only_evidence(monkeyp
     assert finalization["success_applied"] is False
 
 
-def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch) -> None:
+def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_claim_projection("claim-below-floor", 0.59)
-    current = _current_claim_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_claims", lambda _text, *, limit=0: [])
+    discovered = _semantic_proposition_projection("proposition-below-floor", 0.59)
+    current = _current_proposition_projection(discovered)
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((SupportSemanticResolver(engine, lambda: START_NS),)),
@@ -980,13 +988,13 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-excluded")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-excluded")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is True
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_excluded" in result["reason_codes"]
-    diagnostics = result["frame_diagnostics"]["claim_evidence"]
+    assert "proposition_evidence_excluded" in result["reason_codes"]
+    diagnostics = result["frame_diagnostics"]["proposition_evidence"]
     assert isinstance(diagnostics, Mapping)
     assert diagnostics["input_count"] == 1
     assert diagnostics["normalized_count"] == 1
@@ -996,7 +1004,7 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
         "retrieval_signal_below_floor": 1,
         "supplied_trust_unavailable": 1,
     }
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert result["budget"]["evidence"] == 0
     assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
     assert result["budget"]["graph_rows"] == 1
@@ -1005,20 +1013,20 @@ def test_orchestrator_keeps_miss_when_claim_fails_usefulness_policy(monkeypatch)
     assert finalization["success_applied"] is False
 
 
-def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded(monkeypatch) -> None:
+def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_excluded(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     statement_id = engine.store("Candidate response")
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_claim_projection("claim-below-floor-with-candidate", 0.59)
-    current = _current_claim_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_claims", lambda _text, *, limit=0: [])
+    discovered = _semantic_proposition_projection("proposition-below-floor-with-candidate", 0.59)
+    current = _current_proposition_projection(discovered)
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
-        "graph_vector_claim_projections",
+        "graph_vector_proposition_projections",
         lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     lexical_candidate = candidate(statement_id)
     lexical = FakeResolver(
         "lexical",
@@ -1037,28 +1045,28 @@ def test_orchestrator_retains_response_candidate_evidence_when_claim_is_excluded
         CandidateFusionEngine(authority=permissive_candidate_authority),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-candidate-plus-excluded-claim")
+    result, finalization = orchestrator.resolve(query_frame, "request-candidate-plus-excluded-proposition")
 
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
     assert tuple(value["statement_id"] for value in result["response_candidates"]) == (statement_id,)
     assert result["evidence_package_available"] is True
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_excluded" in result["reason_codes"]
+    assert "proposition_evidence_excluded" in result["reason_codes"]
     assert finalization["candidate_statement_ids"] == (statement_id,)
     assert finalization["success_applied"] is False
 
 
-def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeypatch) -> None:
+def test_orchestrator_canonically_truncates_proposition_package_to_ten_records(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = tuple(_structured_claim_projection(f"claim-{index:02d}") for index in range(12))
-    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
+    discovered = tuple(_structured_proposition_projection(f"proposition-{index:02d}") for index in range(12))
+    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
@@ -1066,11 +1074,11 @@ def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeyp
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-count-limit")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-count-limit")
 
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
-    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == tuple(
-        f"claim-{index:02d}" for index in range(10)
+    assert tuple(record["proposition_id"] for record in result["evidence_package"]["records"]) == tuple(
+        f"proposition-{index:02d}" for index in range(10)
     )
     assert result["evidence_package"]["retained_count"] == 10
     assert result["evidence_package"]["omitted_count"] == 2
@@ -1082,17 +1090,17 @@ def test_orchestrator_canonically_truncates_claim_package_to_ten_records(monkeyp
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch) -> None:
+def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = tuple(_structured_claim_projection(f"claim-output-{index:02d}") for index in range(4))
-    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
+    discovered = tuple(_structured_proposition_projection(f"proposition-output-{index:02d}") for index in range(4))
+    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_output_bytes=4_096,
@@ -1104,7 +1112,7 @@ def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch)
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-output-limit")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-output-limit")
 
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
     assert 0 < result["evidence_package"]["retained_count"] < len(discovered)
@@ -1113,40 +1121,40 @@ def test_orchestrator_trims_claim_package_to_complete_output_budget(monkeypatch)
     assert "output_bytes" in result["budget"]["exhausted_dimensions"]
     assert result["budget"]["output_bytes"] == len(resolution_result_to_json(result).encode("utf-8"))
     assert result["budget"]["output_bytes"] <= selected_budget["max_output_bytes"]
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
 def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    probe_projection = _structured_claim_projection("claim-byte-00")
+    probe_projection = _structured_proposition_projection("proposition-byte-00")
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [probe_projection][:row_limit],
     )
     monkeypatch.setattr(
         engine,
-        "current_claim_projection",
-        lambda _claim_id: (_current_claim_projection(probe_projection),),
+        "current_proposition_projection",
+        lambda _proposition_id: (_current_proposition_projection(probe_projection),),
     )
     probe_frame = frame(engine, "Ada", namespace="")
     probe_result = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         probe_frame,
         resolver_budget(probe_frame),
     )
-    probe_record = probe_result["claim_evidence"][0]
+    probe_record = probe_result["proposition_evidence"][0]
     single_package_bytes = len(evidence_package_to_json(build_evidence_package((probe_record,))).encode("utf-8"))
 
-    discovered = tuple(_structured_claim_projection(f"claim-byte-{index:02d}") for index in range(2))
-    current = {projection["claim_id"]: _current_claim_projection(projection) for projection in discovered}
+    discovered = tuple(_structured_proposition_projection(f"proposition-byte-{index:02d}") for index in range(2))
+    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda claim_id: (current[claim_id],))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_evidence_bytes=single_package_bytes,
@@ -1158,10 +1166,10 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-evidence-byte-limit")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-evidence-byte-limit")
 
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
-    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-byte-00",)
+    assert tuple(record["proposition_id"] for record in result["evidence_package"]["records"]) == ("proposition-byte-00",)
     assert result["budget"]["evidence"] == 1
     assert result["budget"]["evidence_bytes"] == len(evidence_package_to_json(result["evidence_package"]).encode("utf-8"))
     assert result["budget"]["evidence_bytes"] <= single_package_bytes
@@ -1169,17 +1177,17 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch) -> None:
+def test_orchestrator_omits_diagnostics_without_losing_proposition_package(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_claim_projection("claim-no-diagnostics")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection("proposition-no-diagnostics")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_diagnostic_bytes=0,
@@ -1191,10 +1199,10 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-diagnostic-limit")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-diagnostic-limit")
 
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
-    assert tuple(record["claim_id"] for record in result["evidence_package"]["records"]) == ("claim-no-diagnostics",)
+    assert tuple(record["proposition_id"] for record in result["evidence_package"]["records"]) == ("proposition-no-diagnostics",)
     assert result["frame_diagnostics"] == {}
     assert result["budget"]["diagnostic_bytes"] == 0
     assert "diagnostic_bytes" in result["budget"]["exhausted_dimensions"]
@@ -1202,17 +1210,17 @@ def test_orchestrator_omits_diagnostics_without_losing_claim_package(monkeypatch
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted(monkeypatch) -> None:
+def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exhausted(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_claim_projection("claim-memory-bound")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection("proposition-memory-bound")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     base_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),))
     executor = ResolverExecutor(lambda: START_NS)
@@ -1239,40 +1247,40 @@ def test_orchestrator_refuses_claim_package_when_post_fusion_memory_is_exhausted
         fusion,
     )
 
-    result, finalization = orchestrator.resolve(constrained_frame, "request-claim-memory-limit")
+    result, finalization = orchestrator.resolve(constrained_frame, "request-proposition-memory-limit")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_memory_exhausted" in result["reason_codes"]
+    assert "proposition_evidence_memory_exhausted" in result["reason_codes"]
     assert "working_memory_bytes" in result["budget"]["exhausted_dimensions"]
     assert result["budget"]["working_memory_bytes"] == memory_limit
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_records(monkeypatch) -> None:
+def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leaking_records(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection("claim-conflict")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection("proposition-conflict")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
         resolver_budget(query_frame),
     )
-    record = resolver_output["claim_evidence"][0]
-    conflicting = claim_evidence_record_with_changes(
+    record = resolver_output["proposition_evidence"][0]
+    conflicting = proposition_evidence_record_with_changes(
         record,
         {
             "source_resolver": "support_semantic",
             "source_contributions": ("support_semantic",),
-            "canonical_references": canonical_claim_references_with_changes(
+            "canonical_references": canonical_proposition_references_with_changes(
                 record["canonical_references"],
                 {"object_entity_id": "entity:conflict"},
             ),
@@ -1280,11 +1288,11 @@ def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_reco
     )
     structured = FakeResolver(
         "structured_graph",
-        resolver_result("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
+        resolver_result("structured_graph", ResolverState.COMPLETED, proposition_evidence=(record,)),
     )
     semantic = FakeResolver(
         "support_semantic",
-        resolver_result("support_semantic", ResolverState.COMPLETED, claim_evidence=(conflicting,)),
+        resolver_result("support_semantic", ResolverState.COMPLETED, proposition_evidence=(conflicting,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((structured, semantic)),
@@ -1292,35 +1300,35 @@ def test_orchestrator_rejects_cross_producer_claim_conflict_without_leaking_reco
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-conflict")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-conflict")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_conflict" in result["reason_codes"]
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert "proposition_evidence_conflict" in result["reason_codes"]
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
 @pytest.mark.parametrize("mismatch", ("scope", "evaluation_time"))
-def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mismatch: str) -> None:
+def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch, mismatch: str) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection(f"claim-{mismatch}-mismatch")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection(f"proposition-{mismatch}-mismatch")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
         resolver_budget(query_frame),
     )
-    record = resolver_output["claim_evidence"][0]
+    record = resolver_output["proposition_evidence"][0]
     if mismatch == "scope":
-        record = claim_evidence_record_with_changes(
+        record = proposition_evidence_record_with_changes(
             record,
             {
                 "disclosure": disclosure_decision_with_changes(
@@ -1330,10 +1338,10 @@ def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mism
             },
         )
     else:
-        record = claim_evidence_record_with_changes(
+        record = proposition_evidence_record_with_changes(
             record,
             {
-                "validity": claim_validity_inputs_with_changes(
+                "validity": proposition_validity_inputs_with_changes(
                     record["validity"],
                     {"evaluation_time": "2026-08-17T12:00:00Z"},
                 )
@@ -1341,7 +1349,7 @@ def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mism
         )
     resolver = FakeResolver(
         "structured_graph",
-        resolver_result("structured_graph", ResolverState.COMPLETED, claim_evidence=(record,)),
+        resolver_result("structured_graph", ResolverState.COMPLETED, proposition_evidence=(record,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
@@ -1354,34 +1362,34 @@ def test_orchestrator_rejects_claim_not_bound_to_current_frame(monkeypatch, mism
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_conflict" in result["reason_codes"]
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert "proposition_evidence_conflict" in result["reason_codes"]
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_ignores_claim_from_untrusted_producer(monkeypatch) -> None:
+def test_orchestrator_ignores_proposition_from_untrusted_producer(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_claim_projection("claim-untrusted-producer")
-    current = _current_claim_projection(discovered)
+    discovered = _structured_proposition_projection("proposition-untrusted-producer")
+    current = _current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
-        "structured_claim_projections",
+        "structured_proposition_projections",
         lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_claim_projection", lambda _claim_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
         resolver_budget(query_frame),
     )
-    trusted_record = resolver_output["claim_evidence"][0]
-    untrusted_record = claim_evidence_record_with_changes(
+    trusted_record = resolver_output["proposition_evidence"][0]
+    untrusted_record = proposition_evidence_record_with_changes(
         trusted_record,
         {"source_resolver": "lexical", "source_contributions": ("lexical",)},
     )
     resolver = FakeResolver(
         "lexical",
-        resolver_result("lexical", ResolverState.COMPLETED, claim_evidence=(untrusted_record,)),
+        resolver_result("lexical", ResolverState.COMPLETED, proposition_evidence=(untrusted_record,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
@@ -1389,17 +1397,17 @@ def test_orchestrator_ignores_claim_from_untrusted_producer(monkeypatch) -> None
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-untrusted-claim-producer")
+    result, finalization = orchestrator.resolve(query_frame, "request-untrusted-proposition-producer")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
     assert result["evidence_package"]["records"] == ()
-    assert "claim_evidence_untrusted_producer" in result["reason_codes"]
-    assert all(not resolver_result["claim_evidence"] for resolver_result in result["resolver_results"])
+    assert "proposition_evidence_untrusted_producer" in result["reason_codes"]
+    assert all(not resolver_result["proposition_evidence"] for resolver_result in result["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
 
 
-def test_orchestrator_fails_soft_when_claim_producer_dependency_fails() -> None:
+def test_orchestrator_fails_soft_when_proposition_producer_dependency_fails() -> None:
     engine = Engram()
     query_frame = frame(engine, "Ada", namespace="")
     failed = FakeResolver(
@@ -1413,7 +1421,7 @@ def test_orchestrator_fails_soft_when_claim_producer_dependency_fails() -> None:
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-claim-dependency-failure")
+    result, finalization = orchestrator.resolve(query_frame, "request-proposition-dependency-failure")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
@@ -1436,7 +1444,7 @@ def test_orchestrator_keeps_package_unavailable_when_producer_has_no_strict_reco
         ResolutionAccountingFinalizer(engine),
     )
 
-    result, finalization = orchestrator.resolve(query_frame, "request-empty-claim-producer")
+    result, finalization = orchestrator.resolve(query_frame, "request-empty-proposition-producer")
 
     assert result["outcome"] == ResolutionOutcome.MISS
     assert result["evidence_package_available"] is False
@@ -1606,7 +1614,7 @@ def test_executor_short_circuits_only_on_one_exact_candidate() -> None:
 
 def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bounds() -> None:
     engine = Engram()
-    reference = evidence_reference("claim-1", "oversized", EvidenceKind.SUPPORT, scope_key())
+    reference = evidence_reference("proposition-1", "oversized", EvidenceKind.SUPPORT, scope_key())
     oversized_candidate = candidate(response="x" * 10_000, evidence=(reference, reference))
     raw = resolver_result(
         "oversized",
@@ -1901,7 +1909,7 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
 def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit_acceptance() -> None:
     engine = Engram()
     statement_id = engine.store("Candidate response")
-    reference = evidence_reference("claim-fused", "semantic", EvidenceKind.SUPPORT, scope_key())
+    reference = evidence_reference("proposition-fused", "semantic", EvidenceKind.SUPPORT, scope_key())
     lexical_candidate = candidate(
         statement_id,
         source=CandidateSource.LEXICAL,

@@ -86,6 +86,20 @@ def test_engram_config_graph_config_validation() -> None:
         graph_config(vector_weight=-0.1)
     with pytest.raises(ValueError, match="requires graph enabled"):
         graph_config(vector_enabled=True)
+    with pytest.raises(ValueError, match="explicit deployment_mode"):
+        graph_config(enabled=True)
+    with pytest.raises(ValueError, match="proposition_embeddings"):
+        graph_config(vector_index_name="other_embeddings")
+    with pytest.raises(ValueError, match="invalid shape"):
+        graph_config(
+            visibility_scope={
+                "kind": "global",
+                "company_id": {},
+                "customer_id": {},
+                "engagement_id": {},
+                "user_id": "user:elias",
+            }
+        )
 
 
 @pytest.mark.parametrize("invalid", [[], (), "", 0, False])
@@ -100,8 +114,9 @@ def test_engram_config_engram_config_rejects_falsey_non_object_graph_config(inva
 def test_engram_config_graph_vector_config() -> None:
     config = graph_config(
         enabled=True,
+        deployment_mode="tapestry_managed",
         vector_enabled=True,
-        vector_index_name="claim_premise_embeddings",
+        vector_index_name="proposition_embeddings",
         vector_model_path="/models/minilm",
         vector_limit=75,
         vector_support_scan_limit=50000,
@@ -110,6 +125,13 @@ def test_engram_config_graph_vector_config() -> None:
     )
 
     assert config["vector_enabled"] is True
+    assert config["deployment_mode"] == "tapestry_managed"
+    assert config["visibility_scope"] == {
+        "kind": "global",
+        "company_id": {},
+        "customer_id": {},
+        "engagement_id": {},
+    }
     assert config["vector_limit"] == 75
     assert config["vector_support_scan_limit"] == 50000
     assert config["vector_min_similarity"] == 0.52

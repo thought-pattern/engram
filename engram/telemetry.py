@@ -124,7 +124,7 @@ def record_resolution(telemetry: dict, resolution: dict, *, replayed: bool) -> N
         resolver["invocations"] += 1
         resolver["states"][state] += 1
         resolver["candidate_contributions"] += len(result["candidates"])
-        resolver["evidence_contributions"] += len(result["evidence"]) + len(result["claim_evidence"])
+        resolver["evidence_contributions"] += len(result["evidence"]) + len(result["proposition_evidence"])
         if selected_id and any(candidate["statement_id"] == selected_id for candidate in result["candidates"]):
             resolver["selected_contributions"] += 1
         _record_duration(resolver["latency"], result["consumption"]["elapsed_ns"])

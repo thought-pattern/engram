@@ -17,15 +17,15 @@ if str(REPOSITORY) not in sys.path:
 
 from engram.core import Engram
 from engram.evidence import (
-    canonicalize_claim_evidence,
+    canonicalize_proposition_evidence,
     evaluate_evidence_usefulness,
     evidence_usefulness_policy,
     evidence_usefulness_policy_to_dict,
 )
 from engram.identity import scope_key
 from engram.resolution import (
-    ClaimEvidenceRecord,
-    ClaimOwnership,
+    PropositionEvidenceRecord,
+    PropositionOwnership,
     DisclosureBasis,
     QueryFrame,
     QueryFrameBuilder,
@@ -34,14 +34,14 @@ from engram.resolution import (
     ResolverState,
     budget_consumption_to_dict,
     build_evidence_package,
-    canonical_claim_references,
+    canonical_proposition_references,
     capture_resolution_budget,
-    claim_evidence_record,
-    claim_evidence_record_from_json,
-    claim_evidence_record_to_dict,
-    claim_evidence_record_to_json,
-    claim_trust_inputs,
-    claim_validity_inputs,
+    proposition_evidence_record,
+    proposition_evidence_record_from_json,
+    proposition_evidence_record_to_dict,
+    proposition_evidence_record_to_json,
+    proposition_trust_inputs,
+    proposition_validity_inputs,
     disclosure_decision,
     evidence_package_from_json,
     evidence_package_to_json,
@@ -90,36 +90,36 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def record(index: int) -> ClaimEvidenceRecord:
+def record(index: int) -> PropositionEvidenceRecord:
     """Construct one content-neutral, currently eligible synthetic record."""
-    claim_id = f"claim-benchmark-{index:04d}"
-    result = claim_evidence_record(
-        claim_id=claim_id,
+    proposition_id = f"proposition-benchmark-{index:04d}"
+    result = proposition_evidence_record(
+        proposition_id=proposition_id,
         source_resolver="structured_graph",
         source_contributions=("structured_graph",),
         features=feature_set(
             values={"canonical_completeness": 1.0, "structured_match": 1.0},
             unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
         ),
-        canonical_references=canonical_claim_references(
+        canonical_references=canonical_proposition_references(
             f"entity:subject-{index:04d}",
             "predicate:benchmark",
             f"entity:object-{index:04d}",
         ),
-        validity=claim_validity_inputs(
+        validity=proposition_validity_inputs(
             "2026-08-16T16:00:00Z",
             True,
             True,
             True,
         ),
-        trust=claim_trust_inputs(),
+        trust=proposition_trust_inputs(),
         disclosure=disclosure_decision(
-            ClaimOwnership.PUBLIC,
+            PropositionOwnership.PUBLIC,
             DisclosureBasis.PUBLIC_RULE,
             SCOPE,
-            "claim-disclosure-v1",
+            "proposition-disclosure-v1",
         ),
-        path=(claim_id,),
+        path=(proposition_id,),
         selection_reasons=("canonical_complete", "public", "structured_match"),
     )
     return result
@@ -151,16 +151,16 @@ def build_result(samples: int) -> dict[str, object]:
     records = tuple(record(index) for index in range(1_000))
     ten_records = records[:10]
     policy = evidence_usefulness_policy()
-    encoded_record = claim_evidence_record_to_json(records[0])
+    encoded_record = proposition_evidence_record_to_json(records[0])
 
-    codec = measure(lambda: claim_evidence_record_to_json(claim_evidence_record_from_json(encoded_record)), samples)
+    codec = measure(lambda: proposition_evidence_record_to_json(proposition_evidence_record_from_json(encoded_record)), samples)
     package = measure(
         lambda: evidence_package_from_json(evidence_package_to_json(build_evidence_package(ten_records))),
         samples,
     )
     normalization_samples = max(10, samples // 5)
     normalization = measure(
-        lambda: canonicalize_claim_evidence(records),
+        lambda: canonicalize_proposition_evidence(records),
         normalization_samples,
     )
     usefulness = measure(
@@ -168,25 +168,25 @@ def build_result(samples: int) -> dict[str, object]:
         normalization_samples,
     )
 
-    canonical_forward = canonicalize_claim_evidence(records)
-    canonical_reverse = canonicalize_claim_evidence(tuple(reversed(records)))
+    canonical_forward = canonicalize_proposition_evidence(records)
+    canonical_reverse = canonicalize_proposition_evidence(tuple(reversed(records)))
     canonical_digest = hashlib.sha256(
         json.dumps(
-            [claim_evidence_record_to_dict(value) for value in canonical_forward],
+            [proposition_evidence_record_to_dict(value) for value in canonical_forward],
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
     reverse_digest = hashlib.sha256(
         json.dumps(
-            [claim_evidence_record_to_dict(value) for value in canonical_reverse],
+            [proposition_evidence_record_to_dict(value) for value in canonical_reverse],
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
 
     tracemalloc.start()
-    memory_result = canonicalize_claim_evidence(records)
+    memory_result = canonicalize_proposition_evidence(records)
     memory_package = build_evidence_package(memory_result, max_records=10)
     _, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
@@ -194,7 +194,7 @@ def build_result(samples: int) -> dict[str, object]:
     engine = Engram()
     budget = capture_resolution_budget(lambda: START_NS)
     frame = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
-        "Which benchmark Claims are useful?",
+        "Which benchmark Propositions are useful?",
         SCOPE,
         diagnostic_seed="section7-evidence-benchmark",
         budget=budget,
@@ -204,7 +204,7 @@ def build_result(samples: int) -> dict[str, object]:
         resolver_result(
             "structured_graph",
             ResolverState.COMPLETED,
-            claim_evidence=ten_records,
+            proposition_evidence=ten_records,
         ),
     )
     failed = SyntheticResolver(
@@ -239,9 +239,9 @@ def build_result(samples: int) -> dict[str, object]:
         "partial_failure_is_visible": any(value["state"] == ResolverState.FAILED for value in partial_result["resolver_results"]),
         "partial_failure_contains_full_records_only_in_package": (
             partial_result["evidence_package"]["retained_count"] == 10
-            and all(not value["claim_evidence"] for value in partial_result["resolver_results"])
+            and all(not value["proposition_evidence"] for value in partial_result["resolver_results"])
         ),
-        "claim_only_has_no_response_accounting": (
+        "proposition_only_has_no_response_accounting": (
             partial_finalization["candidate_statement_ids"] == () and not partial_finalization["success_applied"]
         ),
         "complete_output_accounting_is_exact": (

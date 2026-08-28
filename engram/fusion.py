@@ -52,9 +52,9 @@ from engram.constants import (
 )
 from engram.eligibility import EpochEligibilityPolicy, evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, ResolutionCancelledError
-from engram.evidence import ClaimEligibilityEvaluator
+from engram.evidence import PropositionEligibilityEvaluator
 from engram.feedback import FeedbackStore, constraint_fingerprint
-from engram.graph import ClaimProjectionQuery, validate_claim_projection
+from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.identity import ScopeKey
 from engram.relation import phrase_relation_result
 from engram.reranking import RERANKER_FEATURES, TransparentLogisticReranker
@@ -733,7 +733,7 @@ class EngramCandidateAuthority:
         return result
 
     def _relation_candidate(self, candidate: Candidate, frame: QueryFrame) -> CandidateEligibility:
-        """Revalidate a deterministic one-hop phrase against current Claim state."""
+        """Revalidate a deterministic one-hop phrase against current Proposition state."""
         provenance = candidate["provenance"]
         required = {
             "producer",
@@ -760,7 +760,7 @@ class EngramCandidateAuthority:
             return candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
         if (
             len(candidate["evidence"]) != 1
-            or candidate["evidence"][0]["kind"] != EvidenceKind.CLAIM
+            or candidate["evidence"][0]["kind"] != EvidenceKind.PROPOSITION
             or candidate["evidence"][0]["evidence_id"] != candidate["statement_id"]
         ):
             return candidate_eligibility(
@@ -770,12 +770,12 @@ class EngramCandidateAuthority:
                 (FusionPolicyReason.SUPPORT_REFERENCE_STALE,),
             )
         try:
-            current_values = self._engram.current_claim_projection(candidate["statement_id"])
+            current_values = self._engram.current_proposition_projection(candidate["statement_id"])
             if not isinstance(current_values, tuple) or len(current_values) != 1:
-                raise InvalidRequestError("current relation Claim is unavailable")
-            current = validate_claim_projection(current_values[0])
-            if current["projection_id"] != ClaimProjectionQuery.BY_ID_V1:
-                raise InvalidRequestError("current relation Claim was not read by ID")
+                raise InvalidRequestError("current relation Proposition is unavailable")
+            current = validate_proposition_projection(current_values[0])
+            if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+                raise InvalidRequestError("current relation Proposition was not read by ID")
             identity = (
                 current["subject_entity_id"],
                 current["predicate_id"],
@@ -787,13 +787,13 @@ class EngramCandidateAuthority:
                 provenance["object_entity_id"],
             )
             if identity != expected_identity:
-                raise InvalidRequestError("current relation Claim identity changed")
+                raise InvalidRequestError("current relation Proposition identity changed")
             if (
                 not current["supplied_trust_available"]
                 or current["supplied_trust"] != provenance["supplied_trust"]
                 or current["supplied_trust_version"] != provenance["supplied_trust_version"]
             ):
-                raise InvalidRequestError("current relation Claim trust changed")
+                raise InvalidRequestError("current relation Proposition trust changed")
             response = phrase_relation_result(
                 provenance["subject_label"],
                 provenance["predicate_label"],
@@ -831,13 +831,13 @@ class EngramCandidateAuthority:
                 False,
                 (FusionPolicyReason.OBJECT_TYPE_FEATURE_MISMATCH,),
             )
-        decision = ClaimEligibilityEvaluator(getattr(self._engram, "claim_visibility_authority", ())).evaluate(current, frame)
+        decision = PropositionEligibilityEvaluator(getattr(self._engram, "proposition_visibility_authority", ())).evaluate(current, frame)
         if not decision["eligible"]:
             return candidate_eligibility(False, False, False, (FusionPolicyReason.ARTIFACT_INELIGIBLE,))
         return candidate_eligibility(True, True, True)
 
     def _composition_candidate(self, candidate: Candidate, frame: QueryFrame) -> CandidateEligibility:
-        """Revalidate every Claim and reconstruct one bounded composition phrase."""
+        """Revalidate every Proposition and reconstruct one bounded composition phrase."""
         provenance = candidate["provenance"]
         required = {
             "producer",
@@ -845,7 +845,7 @@ class EngramCandidateAuthority:
             "root_entity_id",
             "root_label",
             "predicate_labels",
-            "claim_ids",
+            "proposition_ids",
             "identity_chain",
             "trust_chain",
             "terminal_labels",
@@ -860,7 +860,7 @@ class EngramCandidateAuthority:
         if candidate["scope"] != frame["scope"]:
             return candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
         tuple_values = (
-            provenance["claim_ids"],
+            provenance["proposition_ids"],
             provenance["identity_chain"],
             provenance["trust_chain"],
             provenance["predicate_labels"],
@@ -869,31 +869,31 @@ class EngramCandidateAuthority:
         )
         if not all(isinstance(value, tuple) for value in tuple_values):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
-        claim_ids = tuple_values[0]
+        proposition_ids = tuple_values[0]
         identity_chain = tuple_values[1]
         trust_chain = tuple_values[2]
         predicate_labels = tuple_values[3]
         terminal_labels = tuple_values[4]
         terminal_types = tuple_values[5]
-        if not 1 <= len(claim_ids) <= 2 or not (len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(claim_ids)):
+        if not 1 <= len(proposition_ids) <= 2 or not (len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(proposition_ids)):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
         if (
-            len(candidate["evidence"]) != len(claim_ids)
-            or tuple(reference["evidence_id"] for reference in candidate["evidence"]) != claim_ids
+            len(candidate["evidence"]) != len(proposition_ids)
+            or tuple(reference["evidence_id"] for reference in candidate["evidence"]) != proposition_ids
         ):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.SUPPORT_REFERENCE_STALE,))
         try:
             operator = GraphCompositionOperator(str(provenance["operator"]))
-            evaluator = ClaimEligibilityEvaluator(getattr(self._engram, "claim_visibility_authority", ()))
-            for index, claim_id in enumerate(claim_ids):
-                if not isinstance(claim_id, str) or not claim_id:
-                    raise InvalidRequestError("composition Claim ID is malformed")
-                current_values = self._engram.current_claim_projection(claim_id)
+            evaluator = PropositionEligibilityEvaluator(getattr(self._engram, "proposition_visibility_authority", ()))
+            for index, proposition_id in enumerate(proposition_ids):
+                if not isinstance(proposition_id, str) or not proposition_id:
+                    raise InvalidRequestError("composition Proposition ID is malformed")
+                current_values = self._engram.current_proposition_projection(proposition_id)
                 if not isinstance(current_values, tuple) or len(current_values) != 1:
-                    raise InvalidRequestError("composition Claim is unavailable")
-                current = validate_claim_projection(current_values[0])
-                if current["projection_id"] != ClaimProjectionQuery.BY_ID_V1:
-                    raise InvalidRequestError("composition Claim was not read by ID")
+                    raise InvalidRequestError("composition Proposition is unavailable")
+                current = validate_proposition_projection(current_values[0])
+                if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+                    raise InvalidRequestError("composition Proposition was not read by ID")
                 identity_value = identity_chain[index]
                 trust_value = trust_chain[index]
                 identity = identity_value if isinstance(identity_value, tuple) else ()
@@ -905,15 +905,15 @@ class EngramCandidateAuthority:
                     current["predicate_id"],
                     current["object_entity_id"],
                 ) != identity:
-                    raise InvalidRequestError("composition Claim identity changed")
+                    raise InvalidRequestError("composition Proposition identity changed")
                 if (
                     not current["supplied_trust_available"]
                     or not current["supplied_trust_version_available"]
                     or (current["supplied_trust"], current["supplied_trust_version"]) != trust
                 ):
-                    raise InvalidRequestError("composition Claim trust changed")
+                    raise InvalidRequestError("composition Proposition trust changed")
                 if not evaluator.evaluate(current, frame)["eligible"]:
-                    raise InvalidRequestError("composition Claim is no longer eligible")
+                    raise InvalidRequestError("composition Proposition is no longer eligible")
             root_label = str(provenance["root_label"])
             chain = " → ".join(str(value) for value in predicate_labels)
             if operator == GraphCompositionOperator.LOOKUP:
@@ -1035,7 +1035,7 @@ class EngramCandidateAuthority:
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.OWNERSHIP_VISIBILITY_MISMATCH,))
                 return result
             feature_values: dict[FusionFeature, float] = {
-                FusionFeature.SUPPORT: float(bool(artifact["support_claim_ids"])),
+                FusionFeature.SUPPORT: float(bool(artifact["support_references"])),
             }
             feature_available = [FusionFeature.SUPPORT]
             if artifact["statistics"]["query_count"]:
@@ -1077,7 +1077,11 @@ class EngramCandidateAuthority:
             retained_support = tuple(
                 reference["evidence_id"] for reference in candidate["evidence"] if reference["kind"] == EvidenceKind.SUPPORT
             )
-            if any(reference_id not in artifact["support_claim_ids"] for reference_id in retained_support):
+            support_ids = {
+                reference.get("id", "")
+                for reference in artifact["support_references"]
+            }
+            if any(reference_id not in support_ids for reference_id in retained_support):
                 answer_eligible = False
                 reasons = tuple(dict.fromkeys((*reasons, FusionPolicyReason.SUPPORT_REFERENCE_STALE)))
             result = candidate_eligibility(

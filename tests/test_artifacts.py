@@ -41,6 +41,7 @@ from engram.artifacts import (
 from engram.constants import Tier
 from engram.errors import InvalidRequestError, LifecycleError
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from .support_fixtures import ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_B
 
 
 def accepted_artifact(**overrides) -> CachedResponseArtifact:
@@ -55,7 +56,7 @@ def accepted_artifact(**overrides) -> CachedResponseArtifact:
         "tier": Tier.STATIC,
         "lifecycle": LifecycleState.ACTIVE,
         "scope": scope,
-        "support_claim_ids": ("claim-2", "claim-1"),
+        "support_references": (ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A),
         "valid_from": "",
         "valid_from_available": False,
         "valid_until": "",
@@ -348,10 +349,22 @@ def test_artifact_dictionary_revalidates_mutation_and_copies_nested_records() ->
         validate_cached_response_artifact(malformed)
 
 
-def test_support_is_bounded_deduplicated_and_sorted() -> None:
-    artifact = accepted_artifact(support_claim_ids=("claim-z", "claim-a", "claim-z"))
-    assert artifact["support_claim_ids"] == ("claim-a", "claim-z")
-    assert cached_response_artifact_to_dict(artifact)["support_claim_ids"] == ["claim-a", "claim-z"]
+def test_support_is_bounded_ordered_and_duplicate_free() -> None:
+    artifact = accepted_artifact(
+        support_references=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A)
+    )
+    assert artifact["support_references"] == (
+        ASSERTION_REFERENCE_B,
+        ASSERTION_REFERENCE_A,
+    )
+    assert cached_response_artifact_to_dict(artifact)["support_references"] == [
+        ASSERTION_REFERENCE_B,
+        ASSERTION_REFERENCE_A,
+    ]
+    with pytest.raises(InvalidRequestError, match="duplicate"):
+        accepted_artifact(
+            support_references=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_A)
+        )
 
 
 def test_metadata_is_deeply_immutable_and_json_concrete() -> None:
@@ -445,7 +458,7 @@ def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
         ({"response": "bad\x00response"}, "unsupported control"),
         ({"tier": "STATIC"}, "must be a Tier"),
         ({"lifecycle": "ACTIVE"}, "must be a LifecycleState"),
-        ({"support_claim_ids": []}, "must be a tuple"),
+        ({"support_references": []}, "must be a tuple"),
         ({"metadata": []}, "must be an object"),
     ],
 )

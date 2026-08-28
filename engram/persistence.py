@@ -11,14 +11,8 @@ import os
 from collections import Counter
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from pathlib import Path
 
 from engram.artifacts import (
-    CachedResponseArtifact,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
     cached_response_artifact_from_dict,
     cached_response_artifact_to_dict,
 )
@@ -32,7 +26,6 @@ from engram.constants import (
     FUSION_POLICY_VERSION,
     IDENTITY_SCHEMA_VERSION,
     INDEX_STATE_SCHEMA_VERSION,
-    LEGACY_PERSISTENCE_VERSION,
     MAX_QUARANTINE_DETAIL_BYTES,
     MAX_QUARANTINE_RECORDS,
     PERSISTENCE_MANIFEST_FIELDS,
@@ -55,16 +48,9 @@ from engram.coordination import (
     validate_coordinated_response_state,
 )
 from engram.core import Engram
-from engram.eligibility import NamespaceEpochState, namespace_epoch_state_from_snapshot
+from engram.eligibility import namespace_epoch_state_from_snapshot
 from engram.errors import InvalidRequestError
 from engram.feedback import FeedbackState, FeedbackStore, feedback_state_from_dict, feedback_state_to_dict, validate_feedback_state
-from engram.identity import (
-    build_retrieval_representation,
-    build_standalone_identity,
-    retrieval_representation_bindings,
-    scope_key,
-    scoped_retrieval_key_to_json,
-)
 from engram.models import (
     keyword_entry,
     keyword_entry_from_dict,
@@ -74,7 +60,7 @@ from engram.models import (
     statement_from_dict,
     statement_to_dict,
 )
-from engram.mutations import MutationReceiptLedger, mutation_receipt_ledger_from_snapshot
+from engram.mutations import mutation_receipt_ledger_from_snapshot
 from engram.repository import ArtifactRepository
 
 
@@ -508,127 +494,6 @@ def _canonical_utc(value: object, name: str) -> str:
     return text
 
 
-def _legacy_response_artifact(statement: dict) -> CachedResponseArtifact:
-    template = statement.get("template", {})
-    if not isinstance(template, dict):
-        raise InvalidRequestError("legacy template must be an object")
-    tapestry = template.get("tapestry", {})
-    if not isinstance(tapestry, dict):
-        raise InvalidRequestError("legacy tapestry metadata must be an object")
-    request = tapestry.get("request", "")
-    if not isinstance(request, str) or not request.strip():
-        raise InvalidRequestError("legacy response has no recoverable request identity")
-    namespace = tapestry.get("namespace", "")
-    context_fingerprint = tapestry.get("context_fingerprint", "")
-    if not isinstance(namespace, str) or not isinstance(context_fingerprint, str):
-        raise InvalidRequestError("legacy response scope must use concrete strings")
-    scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
-    aliases = tapestry.get("retrieval_aliases", [])
-    if not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases):
-        raise InvalidRequestError("legacy retrieval_aliases must be an array of strings")
-    retrieval = build_retrieval_representation(request, tuple(aliases))
-    identity = build_standalone_identity(request, scope)
-    raw_support = tapestry.get("support", [])
-    if not isinstance(raw_support, list):
-        raise InvalidRequestError("legacy support must be an array")
-    support = []
-    for reference in raw_support:
-        if (
-            not isinstance(reference, dict)
-            or not isinstance(reference.get("claim_id", ""), str)
-            or not reference.get("claim_id", "")
-        ):
-            raise InvalidRequestError("legacy support entries must contain a non-empty string claim_id")
-        support.append(reference["claim_id"])
-    reserved = {"request", "retrieval_aliases", "namespace", "context_fingerprint", "support"}
-    metadata = {key: value for key, value in tapestry.items() if key not in reserved}
-    last_hit = _canonical_utc(statement["last_hit"], "legacy last_hit") if statement["last_hit"] else ""
-    artifact = cached_response_artifact(
-        statement_id=statement["id"],
-        generation=1,
-        response=statement["text"],
-        query_identity=identity,
-        retrieval=retrieval,
-        tier=statement["tier"],
-        lifecycle=LifecycleState.ACTIVE,
-        scope=scope,
-        support_claim_ids=tuple(support),
-        valid_from="",
-        valid_from_available=False,
-        valid_until="",
-        valid_until_available=False,
-        knowledge_epoch=0,
-        knowledge_epoch_available=False,
-        superseded_by="",
-        provenance=artifact_provenance(
-            source_label=statement["source_label"],
-            caller_id=statement["introduced_by_user_id"],
-            accepted_at=_canonical_utc(statement["created_at"], "legacy created_at"),
-        ),
-        statistics=artifact_statistics(
-            hit_count=statement["hit_count"],
-            query_count=statement["query_count"],
-            last_hit=last_hit,
-            last_hit_available=bool(last_hit),
-        ),
-        metadata=metadata,
-    )
-    return artifact
-
-
-def _migrate_legacy_response_state(instance) -> None:
-    artifacts = []
-    quarantine = []
-    for statement in instance.statements:
-        template = statement.get("template", {})
-        tapestry = template.get("tapestry", {}) if isinstance(template, dict) else {}
-        request = tapestry.get("request", "") if isinstance(tapestry, dict) else ""
-        if not isinstance(request, str) or not request.strip():
-            quarantine.append(
-                response_quarantine_record(
-                    statement["id"],
-                    ResponseQuarantineReason.MISSING_IDENTITY,
-                    "legacy response has no recoverable request identity",
-                )
-            )
-            continue
-        try:
-            artifacts.append(_legacy_response_artifact(statement))
-        except (InvalidRequestError, ValueError, TypeError) as error:
-            quarantine.append(
-                response_quarantine_record(
-                    statement["id"],
-                    ResponseQuarantineReason.MALFORMED_IDENTITY,
-                    _migration_detail(error),
-                )
-            )
-
-    key_owners: dict[str, set[str]] = {}
-    for artifact in artifacts:
-        for binding in retrieval_representation_bindings(artifact["retrieval"], artifact["scope"]):
-            key_text = scoped_retrieval_key_to_json(binding["key"])
-            key_owners.setdefault(key_text, set()).add(artifact["statement_id"])
-    ambiguous_ids = set()
-    for owners in key_owners.values():
-        if len(owners) > 1:
-            ambiguous_ids.update(owners)
-    for statement_id in sorted(ambiguous_ids):
-        quarantine.append(
-            response_quarantine_record(
-                statement_id,
-                ResponseQuarantineReason.AMBIGUOUS_IDENTITY,
-                "recoverable scoped retrieval key has multiple legacy owners",
-            )
-        )
-
-    instance.response_repository = ArtifactRepository(artifacts)
-    instance.namespace_epochs = NamespaceEpochState()
-    for namespace in sorted({artifact["scope"]["namespace"] for artifact in artifacts}):
-        instance.namespace_epochs.initialize(namespace, 0)
-    instance.mutation_receipts = MutationReceiptLedger()
-    instance.response_quarantine = validate_response_quarantine_records(tuple(quarantine))
-
-
 def _load_response_state(instance, value: object) -> None:
     if not isinstance(value, Mapping):
         raise InvalidRequestError("response_state must be an object")
@@ -656,7 +521,7 @@ def _load_response_state(instance, value: object) -> None:
     instance.response_quarantine = validate_response_quarantine_records(decoded_quarantine)
 
 
-def _install_response_compatibility_views(instance, previous_response_ids: tuple[str, ...] = ()) -> None:
+def install_response_statement_projections(instance, previous_response_ids: tuple[str, ...] = ()) -> None:
     artifact_ids = set(instance.response_repository.snapshot()["artifacts"])
     response_ids = artifact_ids | set(previous_response_ids)
     retained = []
@@ -681,64 +546,16 @@ def _install_response_compatibility_views(instance, previous_response_ids: tuple
     instance.statement_index = {statement["id"]: position for position, statement in enumerate(instance.statements)}
 
 
-def synchronize_response_compatibility_views(instance, previous_response_ids: tuple[str, ...]) -> None:
-    """Replace legacy response mirrors from the authoritative live repository."""
+def synchronize_response_statement_projections(instance, previous_response_ids: tuple[str, ...]) -> None:
+    """Replace local matcher projections from the authoritative repository."""
 
     if not isinstance(previous_response_ids, tuple) or not all(
         isinstance(statement_id, str) and statement_id for statement_id in previous_response_ids
     ):
         raise InvalidRequestError("previous_response_ids must be a tuple of non-empty strings")
     with instance.statement_lock, instance.keyword_lock:
-        _install_response_compatibility_views(instance, previous_response_ids)
+        install_response_statement_projections(instance, previous_response_ids)
         instance.rebuild_indexes(apply=True)
-
-
-def migrate_persistence_state(data: dict) -> dict:
-    """Return deterministic persistence v2 without mutating caller input."""
-
-    if not isinstance(data, dict):
-        raise InvalidRequestError("persisted state must be an object")
-    version = data.get("version", LEGACY_PERSISTENCE_VERSION)
-    if version == PERSISTENCE_VERSION:
-        instance = load_engram_from_dict(copy.deepcopy(data))
-        migrated = copy.deepcopy(data) if "manifest" in data else to_dict(instance)
-        return migrated
-    if version != LEGACY_PERSISTENCE_VERSION:
-        raise InvalidRequestError(f"Unsupported persistence version: {version}")
-    instance = load_engram_from_dict(copy.deepcopy(data))
-    migrated = to_dict(instance)
-    return migrated
-
-
-def migrate_persistence_file(source_path, output_path) -> PersistenceStatus:
-    """Migrate one source file to a distinct new output and return a bounded report."""
-    source = Path(source_path)
-    output = Path(output_path)
-    if source == output:
-        raise InvalidRequestError("migration output must differ from the source path")
-    if output.exists():
-        raise InvalidRequestError("migration output already exists")
-    with source.open(encoding="utf-8") as stream:
-        data = json.load(stream)
-    migrated = migrate_persistence_state(data)
-    if migrate_persistence_state(migrated) != migrated:
-        raise InvalidRequestError("persistence migration is not idempotent")
-    instance = load_engram_from_dict(migrated)
-    _write_json_atomic(output, migrated)
-    status = dict(instance.persistence_status)
-    report: PersistenceStatus = {
-        "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
-        "source_path": source.as_posix(),
-        "output_path": output.as_posix(),
-        "source_version": data.get("version", LEGACY_PERSISTENCE_VERSION),
-        "output_version": migrated["version"],
-        "artifact_count": len(instance.response_repository.snapshot()["artifacts"]),
-        "quarantine_count": status["quarantine_count"],
-        "quarantine_reasons": status["quarantine_reasons"],
-        "manifest": migrated["manifest"],
-        "idempotent": True,
-    }
-    return report
 
 
 def load_engram(path, config: dict = EMPTY_CONFIG, engram_class=()):
@@ -796,15 +613,17 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
     if not engram_class:
         engram_class = Engram
 
-    version = data.get("version", LEGACY_PERSISTENCE_VERSION)
+    version = data.get("version", {})
     if isinstance(version, bool) or not isinstance(version, int):
         raise ValueError("persistence version must be an integer")
-    if version not in {LEGACY_PERSISTENCE_VERSION, PERSISTENCE_VERSION}:
+    if version != PERSISTENCE_VERSION:
         raise ValueError(f"Unsupported persistence version: {version}")
 
     # Create instance with config: an explicit override wins, then the config
     # stored with the state, then defaults (older files carried only capacity).
-    manifest_present = version == PERSISTENCE_VERSION and "manifest" in data
+    manifest_present = "manifest" in data
+    if not manifest_present:
+        raise InvalidRequestError(f"persistence v{PERSISTENCE_VERSION} requires manifest")
     stored_config: dict = {}
     if not config or manifest_present:
         stored_config = (
@@ -868,12 +687,9 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         sess = session_from_dict(sess_data)
         instance.sessions[sess["session_id"]] = sess
 
-    if version == LEGACY_PERSISTENCE_VERSION:
-        _migrate_legacy_response_state(instance)
-    else:
-        if "response_state" not in data:
-            raise InvalidRequestError("persistence v2 requires response_state")
-        _load_response_state(instance, data["response_state"])
+    if "response_state" not in data:
+        raise InvalidRequestError(f"persistence v{PERSISTENCE_VERSION} requires response_state")
+    _load_response_state(instance, data["response_state"])
     if "feedback_state" in data:
         feedback_state = feedback_state_from_dict(data["feedback_state"])
         instance.feedback_store = FeedbackStore(feedback_state)
@@ -881,11 +697,10 @@ def load_engram_from_dict(data: dict, config: dict = EMPTY_CONFIG, engram_class=
         # Existing files deliberately leave typed Regulator feedback unavailable;
         # legacy query/hit statistics are not reinterpreted as external labels.
         instance.feedback_store = FeedbackStore()
-    _install_response_compatibility_views(instance)
+    install_response_statement_projections(instance)
 
-    # The legacy Engram index remains rebuildable compatibility state. The
-    # response repository independently rebuilds exact/alias/support indexes
-    # from authoritative artifacts and never loads a persisted index snapshot.
+    # Matcher and retrieval indexes are rebuildable projections of the
+    # authoritative accepted-response repository.
     instance.rebuild_indexes(apply=True)
     instance.synchronize_sparse_index(instance.response_repository.snapshot())
     instance.synchronize_semantic_index(instance.response_repository.snapshot())

@@ -105,11 +105,11 @@ def _projections(count: int) -> tuple[IndexProjection, ...]:
 
 def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object]:
     """Measure the complete regulated proposal path over an off-live-built index."""
-    claim_id = "claim-section2-remediation"
+    proposition_id = "proposition-section2-remediation"
     engram = Engram()
     statements = []
     for index in range(FULL_PROPOSAL_CORPUS_SIZE):
-        support_id = claim_id if index >= FULL_PROPOSAL_CORPUS_SIZE - support_fanout else f"noise-claim-{index}"
+        support_id = proposition_id if index >= FULL_PROPOSAL_CORPUS_SIZE - support_fanout else f"noise-proposition-{index}"
         statements.append(
             statement(
                 f"Supported response {index}.",
@@ -119,7 +119,7 @@ def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object
                     "tapestry": {
                         "namespace": "benchmark",
                         "context_fingerprint": "indexes-v1-remediated",
-                        "support": [{"claim_id": support_id}],
+                        "support": [{"proposition_id": support_id}],
                     }
                 },
             )
@@ -129,7 +129,7 @@ def _full_proposal_result(support_fanout: int, samples: int) -> dict[str, object
     benchmark_engram.statement_index = {item["id"]: index for index, item in enumerate(statements)}
     benchmark_engram._index_owner = IndexOwner(tuple(projection_from_statement(item) for item in statements))
     benchmark_engram.config["graph"] = {"vector_weight": 0.65, "vector_support_scan_limit": 100_000}
-    benchmark_engram.graph_vector_claims = lambda text, *, limit=0: [{"claim_id": claim_id, "similarity": 0.8}]
+    benchmark_engram.graph_vector_propositions = lambda text, *, limit=0: [{"proposition_id": proposition_id, "similarity": 0.8}]
     core = EngramCore(engram, checkpoint_on_mutation=False)
     sequence = [0]
     candidate_counts = []
@@ -199,14 +199,14 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
     rebuild_state, memory = _peak_build_memory(rebuild_projections)
     rebuild = _measure(lambda: build_index_state(rebuild_projections), samples)
 
-    replacement = _projection(REBUILD_CORPUS_SIZE - 1, ("replacement-claim",))
-    addition = _projection(REBUILD_CORPUS_SIZE, ("addition-claim",))
+    replacement = _projection(REBUILD_CORPUS_SIZE - 1, ("replacement-proposition",))
+    addition = _projection(REBUILD_CORPUS_SIZE, ("addition-proposition",))
     mutations = {
         "add": _measure(lambda: add_index_projection(rebuild_state, addition), samples),
         "replace": _measure(lambda: replace_index_projection(rebuild_state, replacement), samples),
         "remove": _measure(lambda: remove_index_projection(rebuild_state, replacement["statement_id"]), samples),
         "support_update": _measure(
-            lambda: update_index_support(rebuild_state, replacement["statement_id"], ("updated-claim",)),
+            lambda: update_index_support(rebuild_state, replacement["statement_id"], ("updated-proposition",)),
             samples,
         ),
     }
@@ -228,13 +228,13 @@ def run_benchmark(samples: int, lookup_batch_size: int) -> dict[str, object]:
         if corpus_size == EXACT_CORPUS_SIZES[-1]:
             largest_state = state
             for fanout in SUPPORT_FANOUTS:
-                claim_id = f"fanout-{fanout}"
+                proposition_id = f"fanout-{fanout}"
                 support_results[str(fanout)] = _measure(
-                    lambda claim_id=claim_id, state=state: index_state_support_lookup(state, (claim_id,)),
+                    lambda proposition_id=proposition_id, state=state: index_state_support_lookup(state, (proposition_id,)),
                     samples,
                     lookup_batch_size,
                 )
-                correctness.append(len(index_state_support_lookup(state, (claim_id,))["matches"]) == fanout)
+                correctness.append(len(index_state_support_lookup(state, (proposition_id,))["matches"]) == fanout)
 
     remediation_state = build_index_state(
         tuple(_projection(index, ("remediation-fanout",)) for index in range(MAX_INDEX_LOOKUP_OWNERS + 1))

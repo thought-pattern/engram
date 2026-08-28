@@ -10,7 +10,7 @@ interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the human CLI.
 The interface compatibility contract freezes the ten names, input schemas,
 defaults, and descriptions. Output schemas remain unspecified. The gRPC v2
-service owns unified Claim evidence.
+service owns unified Proposition evidence.
 
 MCP tool calls remain synchronous at this boundary. If a client abandons its
 wait, already-started mutation work may complete; retry the same request ID to

@@ -61,13 +61,23 @@ from engram.indexes import (
     validate_support_scan_plan,
 )
 from engram.models import statement
+from .support_fixtures import (
+    ASSERTION_REFERENCE_A,
+    ASSERTION_REFERENCE_B,
+    ASSERTION_REFERENCE_C,
+    ASSERTION_REFERENCE_D,
+    PROPOSITION_REFERENCE_A,
+    PROPOSITION_REFERENCE_B,
+    PROPOSITION_REFERENCE_C,
+    REFERENCE_IDS,
+)
 
 
 def projection(
     statement_id: str,
     canonical: str = "",
     aliases: tuple[str, ...] = (),
-    support: tuple[str, ...] = (),
+    support: tuple[dict, ...] = (),
     *,
     namespace: str = "",
     eligible: bool = True,
@@ -91,8 +101,8 @@ def state_signature(state) -> tuple[object, ...]:
     result = (
         state["retrieval_to_owners"],
         state["statement_to_retrieval"],
-        state["claim_to_statements"],
-        state["statement_to_claims"],
+        state["record_to_statements"],
+        state["statement_to_references"],
         state["direct_retrieval"],
         state["projections"],
     )
@@ -103,13 +113,18 @@ def mutate_mapping(mapping, key, value) -> None:
     mapping[key] = value
 
 
-def call_support_lookup(state, claim_ids):
-    result = index_state_support_lookup(state, claim_ids)
+def call_support_lookup(state, record_ids):
+    result = index_state_support_lookup(state, record_ids)
     return result
 
 
 def test_projection_codec_round_trip_is_deterministic() -> None:
-    original = projection("stmt-1", "Who acquired GitHub?", ("GitHub acquirer",), ("claim-2", "claim-1"))
+    original = projection(
+        "stmt-1",
+        "Who acquired GitHub?",
+        ("GitHub acquirer",),
+        (ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A),
+    )
 
     encoded = index_projection_to_json(original)
     decoded = index_projection_from_json(encoded)
@@ -118,7 +133,10 @@ def test_projection_codec_round_trip_is_deterministic() -> None:
     assert type(original) is dict
     assert decoded == original
     assert index_projection_to_json(decoded) == encoded
-    assert decoded["support_claim_ids"] == ("claim-1", "claim-2")
+    assert decoded["support_references"] == (
+        ASSERTION_REFERENCE_B,
+        ASSERTION_REFERENCE_A,
+    )
     assert copied == original
     assert copied is not original
     assert copied["retrieval_keys"][0] is not original["retrieval_keys"][0]
@@ -176,7 +194,9 @@ def test_atomic_exact_refresh_rejects_non_eligibility_changes_and_stale_generati
     owner = IndexOwner((original,))
     key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
 
-    changed_support = index_projection_with_changes(original, {"support_claim_ids": ("claim-new",)})
+    changed_support = index_projection_with_changes(
+        original, {"support_references": (ASSERTION_REFERENCE_D,)}
+    )
     with pytest.raises(InvalidRequestError, match="may change only"):
         owner.atomic_refresh_exact_lookup(key, (changed_support,), owner.snapshot()["state_generation"])
     with pytest.raises(ConflictError, match="stale index state generation"):
@@ -310,21 +330,42 @@ def test_ineligible_owner_is_auditable_but_not_directly_retrievable() -> None:
     assert key_signature not in state["direct_retrieval"]
 
 
-def test_support_maps_and_matched_claim_lookup_are_bidirectional() -> None:
+def test_support_maps_and_matched_record_lookup_are_bidirectional() -> None:
     state = build_index_state(
         (
-            projection("stmt-a", "a", support=("claim-1", "claim-2")),
-            projection("stmt-b", "b", support=("claim-2", "claim-3")),
+            projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_B)),
+            projection("stmt-b", "b", support=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_C)),
         )
     )
 
-    result = index_state_support_lookup(state, ("claim-3", "claim-2", "claim-2"))
+    result = index_state_support_lookup(
+        state,
+        (
+            REFERENCE_IDS.get("c", ""),
+            REFERENCE_IDS.get("b", ""),
+            REFERENCE_IDS.get("b", ""),
+        ),
+    )
 
-    assert state["claim_to_statements"]["claim-2"] == ("stmt-a", "stmt-b")
-    assert state["statement_to_claims"]["stmt-a"] == ("claim-1", "claim-2")
-    assert result["queried_claim_ids"] == ("claim-2", "claim-3")
-    assert result["matches"][0]["matched_claim_ids"] == ("claim-2",)
-    assert result["matches"][1]["matched_claim_ids"] == ("claim-2", "claim-3")
+    assert state["record_to_statements"][REFERENCE_IDS.get("b", "")] == (
+        "stmt-a",
+        "stmt-b",
+    )
+    assert state["statement_to_references"]["stmt-a"] == (
+        ASSERTION_REFERENCE_A,
+        ASSERTION_REFERENCE_B,
+    )
+    assert result["queried_record_ids"] == (
+        REFERENCE_IDS.get("b", ""),
+        REFERENCE_IDS.get("c", ""),
+    )
+    assert result["matches"][0]["matched_record_ids"] == (
+        REFERENCE_IDS.get("b", ""),
+    )
+    assert result["matches"][1]["matched_record_ids"] == (
+        REFERENCE_IDS.get("b", ""),
+        REFERENCE_IDS.get("c", ""),
+    )
     assert result["scanned_edge_count"] == 3
     assert result["complete"] is True
     assert result["reason"] == ""
@@ -332,12 +373,12 @@ def test_support_maps_and_matched_claim_lookup_are_bidirectional() -> None:
 
 def test_support_lookup_reports_output_truncation_only_after_a_complete_scan() -> None:
     projections = tuple(
-        projection(f"stmt-{index:04d}", support=("claim-shared",), eligible=False, exclusion_reason="missing_identity")
+        projection(f"stmt-{index:04d}", support=(ASSERTION_REFERENCE_D,), eligible=False, exclusion_reason="missing_identity")
         for index in range(1_001)
     )
     state = build_index_state(projections)
 
-    result = index_state_support_lookup(state, ("claim-shared",))
+    result = index_state_support_lookup(state, (REFERENCE_IDS.get("d", ""),))
 
     assert result["complete"] is True
     assert result["scanned_edge_count"] == 1_001
@@ -348,13 +389,13 @@ def test_support_lookup_reports_output_truncation_only_after_a_complete_scan() -
 def test_support_lookup_abstains_before_partial_output_when_scan_limit_is_exceeded() -> None:
     state = build_index_state(
         (
-            projection("stmt-a", support=("claim-shared",)),
-            projection("stmt-b", support=("claim-shared",)),
+            projection("stmt-a", support=(ASSERTION_REFERENCE_D,)),
+            projection("stmt-b", support=(ASSERTION_REFERENCE_D,)),
         )
     )
 
-    incomplete = index_state_support_lookup(state, ("claim-shared",), scan_limit=1)
-    complete = index_state_support_lookup(state, ("claim-shared",), scan_limit=2)
+    incomplete = index_state_support_lookup(state, (REFERENCE_IDS.get("d", ""),), scan_limit=1)
+    complete = index_state_support_lookup(state, (REFERENCE_IDS.get("d", ""),), scan_limit=2)
 
     assert incomplete["complete"] is False
     assert incomplete["matches"] == ()
@@ -367,25 +408,30 @@ def test_support_lookup_abstains_before_partial_output_when_scan_limit_is_exceed
 
 
 def test_support_records_are_exact_validated_non_aliasing_dictionaries() -> None:
-    state = build_index_state((projection("stmt-a", support=("claim-1",)),))
-    plan = index_state_support_scan_plan(state, ("claim-1",))
-    lookup = index_state_support_lookup(state, ("claim-1",))
+    state = build_index_state((projection("stmt-a", support=(ASSERTION_REFERENCE_A,)),))
+    plan = index_state_support_scan_plan(state, (REFERENCE_IDS.get("a", ""),))
+    lookup = index_state_support_lookup(state, (REFERENCE_IDS.get("a", ""),))
 
     assert type(plan) is dict
     assert type(lookup) is dict
     assert type(lookup["matches"][0]) is dict
     assert support_scan_plan_to_dict(plan) == {
-        "queried_claim_ids": ["claim-1"],
+        "queried_record_ids": [REFERENCE_IDS.get("a", "")],
         "edge_count": 1,
         "scan_limit": MAX_INDEX_SUPPORT_SCAN_EDGES,
         "complete": True,
         "reason": "",
     }
-    assert support_lookup_result_to_dict(lookup)["matches"] == [{"statement_id": "stmt-a", "matched_claim_ids": ["claim-1"]}]
+    assert support_lookup_result_to_dict(lookup)["matches"] == [
+        {
+            "statement_id": "stmt-a",
+            "matched_record_ids": [REFERENCE_IDS.get("a", "")],
+        }
+    ]
     assert validate_support_scan_plan(plan) is not plan
     assert validate_support_lookup_result(lookup) is not lookup
 
-    lookup["matches"][0]["matched_claim_ids"] = ()
+    lookup["matches"][0]["matched_record_ids"] = ()
     with pytest.raises(InvalidRequestError, match="must not be empty"):
         validate_support_lookup_result(lookup)
 
@@ -405,7 +451,7 @@ def test_builder_classifies_invalid_and_legacy_inputs_without_guessing() -> None
     unsupported_normalization["normalization_version"] = 99
     malformed_support = index_projection_to_dict(missing)
     malformed_support["statement_id"] = "support"
-    malformed_support["support_claim_ids"] = "claim-1"
+    malformed_support["support_references"] = "not-a-reference-vector"
 
     state = build_index_state((missing, unsupported_schema, unsupported_normalization, malformed_support, 42))
     reasons = {issue["reason"] for issue in state["build_report"]["issues"]}
@@ -437,7 +483,9 @@ def test_classification_fixture() -> None:
 
 
 def test_malformed_current_support_is_explicitly_excluded() -> None:
-    item = projection_from_statement({"id": "legacy", "template": {"tapestry": {"support": "claim-1"}}})
+    item = projection_from_statement(
+        {"id": "malformed", "template": {"tapestry": {"support": "not-an-array"}}}
+    )
     state = build_index_state((item,))
 
     assert item["exclusion_reason"] == IndexIssueReason.MALFORMED_SUPPORT.value
@@ -476,12 +524,16 @@ def test_index_reports_are_exact_validated_non_aliasing_dictionaries() -> None:
 
 
 def test_checker_reports_corruption_and_expected_safe_exclusions() -> None:
-    active = projection("active", "key", support=("claim-1",))
+    active = projection("active", "key", support=(ASSERTION_REFERENCE_A,))
     legacy = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
     state = build_index_state((active, legacy))
     corrupt = state.copy()
-    corrupt["claim_to_statements"] = MappingProxyType({"claim-extra": ("active",)})
-    corrupt["statement_to_claims"] = MappingProxyType({"active": ("claim-wrong",), "legacy": ()})
+    corrupt["record_to_statements"] = MappingProxyType(
+        {REFERENCE_IDS.get("d", ""): ("active",)}
+    )
+    corrupt["statement_to_references"] = MappingProxyType(
+        {"active": (ASSERTION_REFERENCE_D,), "malformed": ()}
+    )
     corrupt["direct_retrieval"] = MappingProxyType({})
 
     report = check_index_state(corrupt)
@@ -496,7 +548,7 @@ def test_checker_reports_corruption_and_expected_safe_exclusions() -> None:
 
 
 def test_explicit_empty_projection_set_is_not_self_check_fallback() -> None:
-    item = projection("stmt-a", "a", support=("claim-a",))
+    item = projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A,))
     state = build_index_state((item,))
 
     report = check_index_state_against(state, ())
@@ -506,7 +558,7 @@ def test_explicit_empty_projection_set_is_not_self_check_fallback() -> None:
 
 
 def test_empty_projection_repair_is_dry_run_safe_and_atomically_clears() -> None:
-    item = projection("stmt-a", "a", support=("claim-a",))
+    item = projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A,))
     owner = IndexOwner((item,))
     before = owner.snapshot()
 
@@ -525,11 +577,11 @@ def test_empty_projection_repair_is_dry_run_safe_and_atomically_clears() -> None
     assert applied["applied"] is True
     assert owner.snapshot()["projections"] == {}
     assert owner.snapshot()["retrieval_to_owners"] == {}
-    assert owner.snapshot()["claim_to_statements"] == {}
+    assert owner.snapshot()["record_to_statements"] == {}
 
 
 def test_checker_and_atomic_swap_reject_corrupt_build_report() -> None:
-    item = projection("stmt-a", "a", support=("claim-a",))
+    item = projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A,))
     owner = IndexOwner((item,))
     before = owner.snapshot()
     candidate = build_index_state((item,), before["state_generation"] + 1)
@@ -559,7 +611,7 @@ def test_checker_rejects_missing_collision_diagnostics() -> None:
 
 
 def test_checker_rejects_each_reproducible_report_field_mismatch() -> None:
-    active = projection("stmt-a", "same key", support=("claim-a",))
+    active = projection("stmt-a", "same key", support=(ASSERTION_REFERENCE_A,))
     collision = projection("stmt-b", "same key")
     legacy = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
     state = build_index_state((active, collision, legacy))
@@ -600,11 +652,17 @@ def test_index_state_maps_are_immutable() -> None:
     state = build_index_state((projection("stmt-1", "key"),))
 
     with pytest.raises(TypeError):
-        mutate_mapping(state["claim_to_statements"], "claim-1", ("stmt-1",))
+        mutate_mapping(
+            state["record_to_statements"],
+            REFERENCE_IDS.get("a", ""),
+            ("stmt-1",),
+        )
 
 
 def test_index_state_is_an_exact_validated_non_aliasing_dictionary() -> None:
-    state = build_index_state((projection("stmt-1", "key", support=("claim-1",)),))
+    state = build_index_state(
+        (projection("stmt-1", "key", support=(ASSERTION_REFERENCE_A,)),)
+    )
     copied = validate_index_state(state)
 
     assert type(state) is dict
@@ -638,9 +696,9 @@ def test_pure_index_mutation_does_not_alias_its_input_state() -> None:
 
 
 def test_generic_mutations_equal_clean_rebuild() -> None:
-    first = projection("stmt-a", "a", support=("claim-a",))
-    second = projection("stmt-b", "b", support=("claim-b",))
-    replacement = projection("stmt-a", "new a", support=("claim-c",))
+    first = projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A,))
+    second = projection("stmt-b", "b", support=(ASSERTION_REFERENCE_B,))
+    replacement = projection("stmt-a", "new a", support=(ASSERTION_REFERENCE_C,))
     state = build_index_state((first,))
 
     added = add_index_projection(state, second)
@@ -649,8 +707,11 @@ def test_generic_mutations_equal_clean_rebuild() -> None:
     replaced = replace_index_projection(added, replacement)
     assert state_signature(replaced) == state_signature(build_index_state((replacement, second), replaced["state_generation"]))
 
-    supported = update_index_support(replaced, "stmt-b", ("claim-d",))
-    expected_second = index_projection_with_changes(second, {"generation": 2, "support_claim_ids": ("claim-d",)})
+    supported = update_index_support(replaced, "stmt-b", (ASSERTION_REFERENCE_D,))
+    expected_second = index_projection_with_changes(
+        second,
+        {"generation": 2, "support_references": (ASSERTION_REFERENCE_D,)},
+    )
     assert state_signature(supported) == state_signature(
         build_index_state((replacement, expected_second), supported["state_generation"])
     )
@@ -671,27 +732,29 @@ def test_atomic_owner_rejects_stale_swap_and_abandoned_build_is_invisible() -> N
 
 
 def test_checked_repair_has_bounded_dry_run_and_atomic_apply() -> None:
-    expected = (projection("stmt-a", "a", support=("claim-a",)),)
+    expected = (projection("stmt-a", "a", support=(ASSERTION_REFERENCE_A,)),)
     owner = IndexOwner(expected)
     original = owner.snapshot()
     corrupt = original.copy()
-    corrupt["claim_to_statements"] = MappingProxyType({})
+    corrupt["record_to_statements"] = MappingProxyType({})
     owner._state = corrupt
 
     dry_run = owner.repair(expected, dry_run=True)
     assert dry_run["applied"] is False
     assert dry_run["changed"] is True
-    assert owner.snapshot()["claim_to_statements"] == {}
+    assert owner.snapshot()["record_to_statements"] == {}
 
     applied = owner.repair(expected, dry_run=False)
     assert applied["applied"] is True
-    assert owner.snapshot()["claim_to_statements"] == {"claim-a": ("stmt-a",)}
+    assert owner.snapshot()["record_to_statements"] == {
+        REFERENCE_IDS.get("a", ""): ("stmt-a",)
+    }
     assert check_index_state(owner.snapshot())["consistent"] is True
 
 
 def test_concurrent_readers_observe_only_complete_checked_states() -> None:
-    base = projection("base", "base", support=("claim-base",))
-    changing = projection("changing", "changing", support=("claim-changing",))
+    base = projection("base", "base", support=(ASSERTION_REFERENCE_A,))
+    changing = projection("changing", "changing", support=(ASSERTION_REFERENCE_B,))
     owner = IndexOwner((base,))
     start = threading.Barrier(3)
     errors = []
@@ -726,12 +789,14 @@ def test_current_statement_support_is_indexed_but_exact_identity_is_not_invented
     engram = Engram()
     statement_id = engram.store(
         "A response",
-        template={"tapestry": {"support": [{"claim_id": "claim-1"}]}},
+        template={"tapestry": {"support": [ASSERTION_REFERENCE_A]}},
         keyword_source="question words",
     )
     state = engram.index_snapshot()
 
-    assert state["claim_to_statements"] == {"claim-1": (statement_id,)}
+    assert state["record_to_statements"] == {
+        REFERENCE_IDS.get("a", ""): (statement_id,)
+    }
     assert state["statement_to_retrieval"][statement_id] == ()
     assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in state["build_report"]["issues"]}
 
@@ -741,33 +806,39 @@ def test_current_support_metadata_updates_and_eviction_update_both_maps() -> Non
     statement_id = engram.learn_from_response(
         "question",
         "first",
-        template={"tapestry": {"support": [{"claim_id": "claim-1"}]}},
+        template={"tapestry": {"support": [ASSERTION_REFERENCE_A]}},
     )
     same_id = engram.learn_from_response(
         "question",
         "second",
-        template={"tapestry": {"support": [{"claim_id": "claim-2"}]}},
+        template={"tapestry": {"support": [ASSERTION_REFERENCE_B]}},
     )
 
     assert same_id == statement_id
-    assert engram.index_snapshot()["claim_to_statements"] == {"claim-2": (statement_id,)}
+    assert engram.index_snapshot()["record_to_statements"] == {
+        REFERENCE_IDS.get("b", ""): (statement_id,)
+    }
 
     engram.retire_statement(statement_id)
-    assert engram.index_snapshot()["claim_to_statements"] == {}
-    assert engram.index_snapshot()["statement_to_claims"] == {}
+    assert engram.index_snapshot()["record_to_statements"] == {}
+    assert engram.index_snapshot()["statement_to_references"] == {}
 
 
 def test_current_support_metadata_rebuilds_after_persistence_load() -> None:
     engram = Engram()
     statement_id = engram.store(
         "A persisted response",
-        template={"tapestry": {"support": [{"claim_id": "claim-persisted"}]}},
+        template={"tapestry": {"support": [ASSERTION_REFERENCE_C]}},
     )
 
     loaded = persistence.load_engram_json(persistence.save_json(engram))
 
-    assert loaded.index_snapshot()["claim_to_statements"] == {"claim-persisted": (statement_id,)}
-    assert loaded.index_snapshot()["statement_to_claims"] == {statement_id: ("claim-persisted",)}
+    assert loaded.index_snapshot()["record_to_statements"] == {
+        REFERENCE_IDS.get("c", ""): (statement_id,)
+    }
+    assert loaded.index_snapshot()["statement_to_references"] == {
+        statement_id: (ASSERTION_REFERENCE_C,)
+    }
 
 
 def test_vector_support_path_does_not_iterate_statement_corpus() -> None:
@@ -779,11 +850,13 @@ def test_vector_support_path_does_not_iterate_statement_corpus() -> None:
     statement_id = engram.store(
         "A response",
         priority=3,
-        template={"tapestry": {"support": [{"claim_id": "claim-1"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
     )
     engram.statements = NoIterationList(engram.statements)
     engram.config["graph"] = {"vector_weight": 0.65}
-    engram.graph_vector_claims = lambda text, *, limit=0: [{"claim_id": "claim-1", "similarity": 0.8}]
+    engram.graph_vector_propositions = lambda text, *, limit=0: [
+        {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 0.8}
+    ]
 
     matches = engram.vector_supported_matches("query", limit=1)
 
@@ -805,7 +878,7 @@ def test_vector_support_filters_scope_before_top_k_across_more_than_lookup_outpu
                     "tapestry": {
                         "namespace": namespace,
                         "context_fingerprint": "scope-v1",
-                        "support": [{"claim_id": "claim-shared"}],
+                        "support": [PROPOSITION_REFERENCE_A],
                     }
                 },
             )
@@ -814,7 +887,9 @@ def test_vector_support_filters_scope_before_top_k_across_more_than_lookup_outpu
     engram.statement_index = {item["id"]: index for index, item in enumerate(statements)}
     engram._index_owner = IndexOwner(tuple(projection_from_statement(item) for item in statements))
     engram.config["graph"] = {"vector_weight": 1.0, "vector_support_scan_limit": 2_000}
-    engram.graph_vector_claims = lambda text, *, limit=0: [{"claim_id": "claim-shared", "similarity": 1.0}]
+    engram.graph_vector_propositions = lambda text, *, limit=0: [
+        {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 1.0}
+    ]
 
     matches = engram.vector_supported_matches(
         "query",
@@ -833,18 +908,20 @@ def test_vector_support_scan_exhaustion_abstains_without_partial_ranking(caplog)
         "First",
         statement_id="stmt-a",
         priority=100,
-        template={"tapestry": {"support": [{"claim_id": "claim-shared"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
     )
     second = statement(
         "Second",
         statement_id="stmt-b",
-        template={"tapestry": {"support": [{"claim_id": "claim-shared"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
     )
     engram.statements = [first, second]
     engram.statement_index = {"stmt-a": 0, "stmt-b": 1}
     engram._index_owner = IndexOwner((projection_from_statement(first), projection_from_statement(second)))
     engram.config["graph"] = {"vector_weight": 1.0, "vector_support_scan_limit": 1}
-    engram.graph_vector_claims = lambda text, *, limit=0: [{"claim_id": "claim-shared", "similarity": 1.0}]
+    engram.graph_vector_propositions = lambda text, *, limit=0: [
+        {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 1.0}
+    ]
 
     matches = engram.vector_supported_matches("query", limit=1)
 
@@ -852,26 +929,26 @@ def test_vector_support_scan_exhaustion_abstains_without_partial_ranking(caplog)
     assert "vector_support_scan_incomplete" in caplog.text
 
 
-def test_vector_support_deduplicates_multi_claim_paths_and_keeps_score_top_k() -> None:
+def test_vector_support_deduplicates_multi_proposition_paths_and_keeps_score_top_k() -> None:
     engram = Engram()
     first = statement(
         "First",
         statement_id="stmt-a",
-        template={"tapestry": {"support": [{"claim_id": "claim-low"}, {"claim_id": "claim-high"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A, PROPOSITION_REFERENCE_C]}},
     )
     second = statement(
         "Second",
         statement_id="stmt-b",
-        template={"tapestry": {"support": [{"claim_id": "claim-middle"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_B]}},
     )
     engram.statements = [first, second]
     engram.statement_index = {"stmt-a": 0, "stmt-b": 1}
     engram._index_owner = IndexOwner((projection_from_statement(first), projection_from_statement(second)))
     engram.config["graph"] = {"vector_weight": 1.0, "vector_support_scan_limit": 10}
-    engram.graph_vector_claims = lambda text, *, limit=0: [
-        {"claim_id": "claim-low", "similarity": 0.1},
-        {"claim_id": "claim-middle", "similarity": 0.5},
-        {"claim_id": "claim-high", "similarity": 0.9},
+    engram.graph_vector_propositions = lambda text, *, limit=0: [
+        {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 0.1},
+        {"proposition_id": REFERENCE_IDS.get("proposition_b", ""), "similarity": 0.5},
+        {"proposition_id": REFERENCE_IDS.get("proposition_c", ""), "similarity": 0.9},
     ]
 
     matches = engram.vector_supported_matches("query", limit=1)
@@ -885,7 +962,7 @@ def test_core_explicit_empty_projection_operations_preserve_authoritative_statem
     engram = Engram()
     statement_id = engram.store(
         "A response",
-        template={"tapestry": {"support": [{"claim_id": "claim-1"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
     )
 
     assert engram.check_index_projections(())["consistent"] is False
@@ -905,11 +982,14 @@ def test_core_explicit_empty_projection_operations_preserve_authoritative_statem
 
 def test_engram_repair_does_not_change_authoritative_statement_content() -> None:
     engram = Engram()
-    engram.store("A response", template={"tapestry": {"support": [{"claim_id": "claim-1"}]}})
+    engram.store(
+        "A response",
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
+    )
     before = [dict(statement) for statement in engram.statements]
     state = engram.index_snapshot()
     corrupt = state.copy()
-    corrupt["claim_to_statements"] = MappingProxyType({})
+    corrupt["record_to_statements"] = MappingProxyType({})
     engram._index_owner._state = corrupt
 
     dry_run = engram.repair_indexes(dry_run=True)
@@ -924,8 +1004,8 @@ def test_engram_repair_does_not_change_authoritative_statement_content() -> None
 def test_generic_mutation_validation_is_strict() -> None:
     state = build_index_state(())
     with pytest.raises(InvalidRequestError):
-        call_support_lookup(state, ["claim-1"])
+        call_support_lookup(state, ["proposition-1"])
     with pytest.raises(InvalidRequestError):
         remove_index_projection(state, "missing")
     with pytest.raises(InvalidRequestError):
-        index_state_support_lookup(state, ("claim-1",), scan_limit=0)
+        index_state_support_lookup(state, ("proposition-1",), scan_limit=0)

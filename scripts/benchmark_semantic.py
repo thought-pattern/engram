@@ -55,7 +55,7 @@ def artifact(value: dict) -> dict:
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=selected_scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",

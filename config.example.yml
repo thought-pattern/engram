@@ -112,7 +112,8 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 
 # --- Knowledge graph (optional) ---
 # MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
-# interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
+# interface. Standalone DDL uses: python scripts/setup_schema.py --apply
+# A Tapestry-managed graph uses only the read-only verify_schema.py gate.
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
 # MemGraph remains optional when enabled. An unavailable graph reports not ready
@@ -123,12 +124,18 @@ graph:
   username: ""
   password: ""
   enabled: false
+  deployment_mode: "" # standalone or tapestry_managed when enabled
+  visibility_scope:
+    kind: global
+    company_id: {}
+    customer_id: {}
+    engagement_id: {}
   vector_enabled: false
-  vector_index_name: claim_premise_embeddings
+  vector_index_name: proposition_embeddings
   vector_model: all-MiniLM-L6-v2
   vector_model_path: ""
   vector_dimension: 384
   vector_limit: 250
-  vector_support_scan_limit: 100000 # Abstain when matched Claim fan-out exceeds this bound
+  vector_support_scan_limit: 100000 # Bound matched Proposition-support fan-out
   vector_min_similarity: 0.45
   vector_weight: 0.75

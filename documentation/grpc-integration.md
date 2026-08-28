@@ -11,27 +11,24 @@ and closes the core during graceful shutdown.
 Deploy one server process with one JSON store.
 
 The v1 contract carries proposal and conversation data. The v2
-`ResolveEvidence` result carries the bounded Claim evidence package. When graph recall is enabled,
-Engram reads the configured Memgraph instance directly. Its
-Schema 3.8 read subset understands Tapestry's half-open Claim times and excludes
-closed or retrieval-only (`generic_relation`) Claims. Tapestry deployments use
-the shared Memgraph schema.
+`ResolveEvidence` result carries the bounded Proposition evidence package. When
+graph recall is enabled, Engram reads the configured Memgraph instance directly.
+Its corrected read subset understands Tapestry's half-open Proposition times and
+excludes inactive or retrieval-ineligible Propositions. Tapestry deployments use
+the shared root Memgraph schema; standalone deployments use Engram's exact
+independently installable subset.
 
-Schema 3.8 may also expose `research_leaf_proof_id` on a Claim as an
-application-owned proof receipt. Engram retains it as opaque data; recall uses
-the active canonical Claim and configured vector index.
-
-The subset also indexes the canonical semantic fingerprint and carries Claim
-trust/ownership classification. These are graph properties read from the shared
-Memgraph schema. Serving uses a read-only graph account; the graph supplies
-identity, temporal bounds, trust, and ownership.
+The projection carries canonical subject, predicate, and object identity plus
+the Proposition lifecycle, scope, ownership, and support-derived trust inputs.
+Serving uses read-only graph access. Startup verifies the selected deployment
+mode and compatible schema before graph recall becomes ready.
 
 ## Vector-search boundary
 
 When graph vector recall is enabled, `Propose` embeds the request with the
-configured local sentence-transformer and queries Memgraph's Claim-premise
-vector index. ANN results are intersected with the Claim identifiers already
-stored in each exactly scoped cached response. Vector similarity therefore
+configured local sentence-transformer and queries Memgraph's Proposition
+vector index. ANN results are intersected with the Proposition identifiers in
+each response's ordered `tapestry-engram-support-v1` mappings. Vector similarity therefore
 helps find a previously verified response whose durable support is semantically
 related to the request. Proposals remain scoped to stored responses. Keyword
 retrieval remains active and the two scores are merged before candidate selection.
@@ -39,7 +36,7 @@ retrieval remains active and the two scores are merged before candidate selectio
 Engram's general read-only Cypher guard still rejects `CALL`. The sole exception
 is an internal, fixed `vector_search.search` query with server-owned Cypher and
 index configuration, validated identifiers, bounded results, and active
-canonical Claims. The same ANN lookup is available as a fallback for conversational
+canonical Propositions. The same ANN lookup is available as a fallback for conversational
 graph recall after exact canonical label, alias, and keyword lookup misses.
 
 The standalone server enables graph access through `--config-path`. With vectors
@@ -163,7 +160,7 @@ The separate `engram.v2.EngramEvidenceService` has one RPC:
 
 | RPC | Purpose |
 | --- | --- |
-| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Claim package when available. |
+| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Proposition package when available. |
 
 `Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
 Tapestry contract documented in the
@@ -287,8 +284,10 @@ retry the final checkpoint. The transport remains stopped.
 - `source_label` and metadata record provenance; deployment policy supplies authorization.
 - Grant `AddFact`, `LearnResponse`, and `RetireResponse` only to callers that
   may change shared cache content.
-- Runtime graph access remains read-only. Graph schema setup remains the
-  separate administrative utility in `scripts/setup_schema.py`.
+- Runtime graph access remains read-only. Standalone Graph schema setup is the
+  separate explicit `scripts/setup_schema.py --apply` administration path.
+  A Tapestry-managed graph receives no Engram DDL and is inspected with
+  `scripts/verify_schema.py --deployment tapestry_managed`.
 
 ## Verification coverage
 

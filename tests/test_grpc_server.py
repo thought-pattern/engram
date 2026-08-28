@@ -99,7 +99,7 @@ def test_section7_keeps_current_grpc_v1_as_proposal_resolution_only() -> None:
         ("reason", 4),
     )
     assert not {
-        "ClaimEvidenceRecord",
+        "PropositionEvidenceRecord",
         "EvidencePackage",
         "ResolutionResult",
     }.intersection(engram_pb2.DESCRIPTOR.message_types_by_name)
@@ -601,7 +601,7 @@ def test_durable_state_survives_restart_but_proposals_do_not(tmp_path) -> None:
         assert expired.value.code() == grpc.StatusCode.NOT_FOUND
 
 
-def test_deadline_does_not_claim_to_roll_back_started_core_work() -> None:
+def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
     core = _core()
     entered = threading.Event()
     release = threading.Event()

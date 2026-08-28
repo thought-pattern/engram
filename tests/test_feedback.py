@@ -132,7 +132,7 @@ def artifact(statement_id: str = "stmt-artifact") -> CachedResponseArtifact:
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",
@@ -151,7 +151,7 @@ def engine_with_artifact() -> Engram:
     engine = Engram()
     engine.response_repository = ArtifactRepository((artifact(),))
     engine.namespace_epochs.initialize("tenant-a", 1)
-    persistence.synchronize_response_compatibility_views(engine, ())
+    persistence.synchronize_response_statement_projections(engine, ())
     return engine
 
 
@@ -683,7 +683,7 @@ def test_feedback_checkpoint_marks_divergent_recovery_degraded(tmp_path, monkeyp
     assert feedback_state_signature(persistence.load_feedback_state(store_path)) == feedback_state_signature(divergent_state)
 
 
-def test_uncheckpointed_feedback_replay_does_not_claim_durability(tmp_path) -> None:
+def test_uncheckpointed_feedback_replay_does_not_proposition_durability(tmp_path) -> None:
     core = EngramCore(
         engine_with_artifact(),
         store_path=str(tmp_path / "not-yet-checkpointed.json"),

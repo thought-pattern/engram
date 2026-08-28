@@ -18,7 +18,6 @@ from engram.composition import (
 )
 from engram.constants import (
     ACCOUNTING_FINALIZATION_FIELDS,
-    CLAIM_EVIDENCE_PRODUCERS,
     EXACT_RESOLVER_COST_CLASS,
     EXACT_RESOLVER_NAME,
     EXECUTION_REPORT_FIELDS,
@@ -33,6 +32,7 @@ from engram.constants import (
     MAX_STATEMENT_ID_BYTES,
     PATTERN_RESOLVER_COST_CLASS,
     PATTERN_RESOLVER_NAME,
+    PROPOSITION_EVIDENCE_PRODUCERS,
     RESOLUTION_PLAN_ENTRY_FIELDS,
     RESOLUTION_PLAN_FIELDS,
     RESOLVER_BUDGET_FIELDS,
@@ -57,16 +57,16 @@ from engram.constants import (
 from engram.eligibility import EpochEligibilityPolicy
 from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError, ResourceNotFoundError
 from engram.evidence import (
-    ClaimEligibilityDecision,
-    ClaimEligibilityEvaluator,
-    canonicalize_claim_evidence,
-    claim_evidence_record,
+    PropositionEligibilityDecision,
+    PropositionEligibilityEvaluator,
+    canonicalize_proposition_evidence,
     evaluate_evidence_usefulness,
     evidence_usefulness_policy,
+    proposition_evidence_record,
     validate_evidence_usefulness_policy,
 )
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
-from engram.graph import RelationClaimProjection, claim_projection_to_dict
+from engram.graph import RelationPropositionProjection, proposition_projection_to_dict
 from engram.identity import ScopeKey, build_scoped_retrieval_key, scope_key
 from engram.indexes import ExactLookupOutcome
 from engram.models import record_statement_hit, record_statement_query
@@ -76,7 +76,7 @@ from engram.relation import (
     phrase_relation_result,
     resolve_canonical_predicate,
     resolve_canonical_subject,
-    select_relation_claims,
+    select_relation_propositions,
 )
 from engram.resolution import (
     BudgetConsumption,
@@ -95,9 +95,9 @@ from engram.resolution import (
     _trusted_budget_consumption_with_changes,
     _trusted_candidate_to_dict,
     _trusted_candidate_with_changes,
-    _trusted_claim_evidence_record_to_dict,
     _trusted_evidence_package_to_json,
     _trusted_evidence_reference_to_dict,
+    _trusted_proposition_evidence_record_to_dict,
     _trusted_resolution_result,
     _trusted_resolution_result_to_json,
     _trusted_resolver_result_with_changes,
@@ -109,14 +109,14 @@ from engram.resolution import (
     build_evidence_package,
     candidate as resolution_candidate,
     candidate_to_dict,
-    claim_evidence_path_step,
-    claim_evidence_record_to_dict,
-    claim_evidence_record_with_changes,
     empty_candidate,
     empty_evidence_package,
     evidence_reference,
     evidence_reference_to_dict,
     feature_set,
+    proposition_evidence_path_step,
+    proposition_evidence_record_to_dict,
+    proposition_evidence_record_with_changes,
     resolver_result,
     resolver_result_to_dict,
     validate_budget_consumption,
@@ -636,7 +636,6 @@ def _legacy_candidate(
         lifecycle=lifecycle,
         provenance={
             "source_label": str(statement.get("source_label", "")),
-            "introduced_by_user_id": str(statement.get("introduced_by_user_id", "")),
             "metadata_present": bool(metadata),
         },
         diagnostics=diagnostics,
@@ -715,13 +714,13 @@ class ExactResolver:
             features=feature_set(values={"exact_match": 1.0}, unavailable=()),
             evidence=tuple(
                 evidence_reference(
-                    evidence_id=claim_id,
+                    evidence_id=reference.get("id", ""),
                     resolver=self.name,
                     kind=EvidenceKind.SUPPORT,
                     scope=artifact["scope"],
                     provenance={"support_linked": True},
                 )
-                for claim_id in artifact["support_claim_ids"][: budget["max_evidence"]]
+                for reference in artifact["support_references"][: budget["max_evidence"]]
             ),
             scope=artifact["scope"],
             lifecycle=artifact["lifecycle"],
@@ -1280,7 +1279,7 @@ class SparseResolver:
 
 
 class StructuredGraphResolver:
-    """Pure full-Claim evidence adapter over fixed structured graph projections."""
+    """Pure full-Proposition evidence adapter over fixed structured graph projections."""
 
     def __init__(self, engram, clock_ns: Callable[[], int], eligibility_evaluator: object = ()) -> None:
         self.name = STRUCTURED_GRAPH_RESOLVER_NAME
@@ -1288,12 +1287,12 @@ class StructuredGraphResolver:
         self._engram = engram
         self._clock_ns = clock_ns
         if eligibility_evaluator == ():
-            selected_evaluator = ClaimEligibilityEvaluator(getattr(engram, "claim_visibility_authority", ()))
-        elif isinstance(eligibility_evaluator, ClaimEligibilityEvaluator):
+            selected_evaluator = PropositionEligibilityEvaluator(getattr(engram, "proposition_visibility_authority", ()))
+        elif isinstance(eligibility_evaluator, PropositionEligibilityEvaluator):
             selected_evaluator = eligibility_evaluator
         else:
-            raise InvalidRequestError("structured graph eligibility_evaluator must be ClaimEligibilityEvaluator")
-        self._eligibility_evaluator: ClaimEligibilityEvaluator = selected_evaluator
+            raise InvalidRequestError("structured graph eligibility_evaluator must be PropositionEligibilityEvaluator")
+        self._eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: QueryFrame) -> bool:
         client = self._engram.graph_client
@@ -1404,8 +1403,8 @@ class StructuredGraphResolver:
             )
             return (result,)
 
-        def query(subject_id: str, predicate_id: str, limit: int) -> list[RelationClaimProjection]:
-            return self._engram.relation_one_hop_claim_projections(
+        def query(subject_id: str, predicate_id: str, limit: int) -> list[RelationPropositionProjection]:
+            return self._engram.relation_one_hop_proposition_projections(
                 subject_id,
                 predicate_id,
                 row_limit=limit,
@@ -1426,7 +1425,7 @@ class StructuredGraphResolver:
             lambda projection: self._eligibility_evaluator.revalidate(
                 projection,
                 frame,
-                self._engram.current_claim_projection,
+                self._engram.current_proposition_projection,
             ),
             check,
         )
@@ -1435,11 +1434,11 @@ class StructuredGraphResolver:
         direct_suppression_reasons: set[str] = set()
         for path in execution["complete_paths"]:
             for entry in path:
-                projection = entry["claim"]["projection"]
+                projection = entry["proposition"]["projection"]
                 if not projection["supplied_trust_available"] or not projection["supplied_trust_version_available"]:
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.TRUST_UNAVAILABLE.value)
-                if entry["claim"]["predicate_cardinality"].value == "UNKNOWN":
+                if entry["proposition"]["predicate_cardinality"].value == "UNKNOWN":
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.CARDINALITY_UNKNOWN.value)
                 temporal = frame["temporal_query"]
@@ -1462,15 +1461,15 @@ class StructuredGraphResolver:
             if not path:
                 continue
             terminal = path[-1]
-            base = claim_evidence_record(terminal["claim"]["projection"], terminal["decision"], frame, self.name)
+            base = proposition_evidence_record(terminal["proposition"]["projection"], terminal["decision"], frame, self.name)
             aggregation_inputs = plan["aggregation_inputs"]
             path_steps = tuple(
-                claim_evidence_path_step(
+                proposition_evidence_path_step(
                     position,
-                    entry["claim"]["projection"]["claim_id"],
-                    entry["claim"]["projection"]["subject_entity_id"],
-                    entry["claim"]["projection"]["predicate_id"],
-                    entry["claim"]["projection"]["object_entity_id"],
+                    entry["proposition"]["projection"]["proposition_id"],
+                    entry["proposition"]["projection"]["subject_entity_id"],
+                    entry["proposition"]["projection"]["predicate_id"],
+                    entry["proposition"]["projection"]["object_entity_id"],
                     plan["operator"],
                     entry["step"]["subject_binding"],
                     entry["step"]["object_binding"],
@@ -1492,7 +1491,7 @@ class StructuredGraphResolver:
                 *direct_suppression_reasons,
             }
             records.append(
-                claim_evidence_record_with_changes(
+                proposition_evidence_record_with_changes(
                     base,
                     {
                         "schema_version": 2,
@@ -1501,39 +1500,39 @@ class StructuredGraphResolver:
                     },
                 )
             )
-        records.sort(key=lambda record: record["claim_id"])
+        records.sort(key=lambda record: record["proposition_id"])
         if len(records) > budget["max_evidence"]:
             records = records[: budget["max_evidence"]]
         candidates = []
         if composition_direct and execution["complete_paths"] and budget["max_candidates"]:
             response = phrase_composition_result(plan, execution)
             selected_path = execution["complete_paths"][0]
-            claim_ids = tuple(entry["claim"]["projection"]["claim_id"] for entry in selected_path)
+            proposition_ids = tuple(entry["proposition"]["projection"]["proposition_id"] for entry in selected_path)
             identity_chain = tuple(
                 (
-                    entry["claim"]["projection"]["subject_entity_id"],
-                    entry["claim"]["projection"]["predicate_id"],
-                    entry["claim"]["projection"]["object_entity_id"],
+                    entry["proposition"]["projection"]["subject_entity_id"],
+                    entry["proposition"]["projection"]["predicate_id"],
+                    entry["proposition"]["projection"]["object_entity_id"],
                 )
                 for entry in selected_path
             )
             trust_chain = tuple(
                 (
-                    entry["claim"]["projection"]["supplied_trust"],
-                    entry["claim"]["projection"]["supplied_trust_version"],
+                    entry["proposition"]["projection"]["supplied_trust"],
+                    entry["proposition"]["projection"]["supplied_trust_version"],
                 )
                 for entry in selected_path
             )
             references = tuple(
                 evidence_reference(
-                    evidence_id=claim_id,
+                    evidence_id=proposition_id,
                     resolver=self.name,
-                    kind=EvidenceKind.CLAIM,
+                    kind=EvidenceKind.PROPOSITION,
                     scope=frame["scope"],
                     provenance={"composition_path": True},
                     diagnostics={},
                 )
-                for claim_id in claim_ids
+                for proposition_id in proposition_ids
             )
             composition_id = (
                 "composition:"
@@ -1541,7 +1540,7 @@ class StructuredGraphResolver:
                     json.dumps(
                         {
                             "operator": plan["operator"].value,
-                            "claim_ids": claim_ids,
+                            "proposition_ids": proposition_ids,
                             "diagnostic_id": frame["diagnostic_id"],
                         },
                         sort_keys=True,
@@ -1566,7 +1565,7 @@ class StructuredGraphResolver:
                         "root_entity_id": plan["root_entity_id"],
                         "root_label": plan["root_label"],
                         "predicate_labels": tuple(entry["step"]["predicate_label"] for entry in selected_path),
-                        "claim_ids": claim_ids,
+                        "proposition_ids": proposition_ids,
                         "identity_chain": identity_chain,
                         "trust_chain": trust_chain,
                         "terminal_labels": execution["terminal_labels"],
@@ -1586,7 +1585,7 @@ class StructuredGraphResolver:
         exhausted = set()
 
         def record_bytes() -> int:
-            return _json_size([claim_evidence_record_to_dict(record) for record in records]) if records else 0
+            return _json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
 
         while records and record_bytes() > budget["max_evidence_bytes"]:
             records.pop()
@@ -1611,7 +1610,7 @@ class StructuredGraphResolver:
                 else "graph_composition_evidence" if records else "graph_composition_miss"
             ),
             candidates=tuple(candidates),
-            claim_evidence=tuple(records),
+            proposition_evidence=tuple(records),
             diagnostics={
                 "composition": True,
                 "operator": plan["operator"].value,
@@ -1713,7 +1712,7 @@ class StructuredGraphResolver:
             max_rows=min(MAX_RELATION_PLAN_ROWS, budget["max_evidence"], max(1, remaining_rows // 2)),
         )
 
-        results = self._engram.relation_one_hop_claim_projections(
+        results = self._engram.relation_one_hop_proposition_projections(
             plan["subject_entity_id"],
             plan["predicate_id"],
             row_limit=plan["max_rows"],
@@ -1727,7 +1726,7 @@ class StructuredGraphResolver:
             max_working_memory_bytes=budget["max_working_memory_bytes"],
         )
         graph_rows += len(results)
-        retained: list[tuple[RelationClaimProjection, ClaimEligibilityDecision, float, bool]] = []
+        retained: list[tuple[RelationPropositionProjection, PropositionEligibilityDecision, float, bool]] = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
         for item in results:
@@ -1740,7 +1739,7 @@ class StructuredGraphResolver:
                 continue
             if graph_rows >= budget["max_graph_rows"]:
                 break
-            decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_claim_projection)
+            decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_proposition_projection)
             graph_rows += 1
             if decision["revalidated"]:
                 revalidation_rows += 1
@@ -1751,22 +1750,22 @@ class StructuredGraphResolver:
             type_match, type_match_available = object_type_match(plan["expected_object_type"], item["object_type"])
             retained.append((item, decision, type_match, type_match_available))
 
-        selection = select_relation_claims(
+        selection = select_relation_propositions(
             tuple(item for item, _decision, _type_match, _type_match_available in retained),
             frame["temporal_query"],
         )
         records = []
         ambiguous_result = not selection["direct_answer"]
         for item, decision, type_match, type_match_available in retained:
-            base = claim_evidence_record(item["projection"], decision, frame, self.name)
+            base = proposition_evidence_record(item["projection"], decision, frame, self.name)
             values = dict(base["features"]["values"])
             values.update({"entity_match": subject["score"], "relation_match": predicate["score"]})
             unavailable = set(base["features"]["unavailable"])
             reasons = set(base["selection_reasons"])
             reasons.update({"entity_resolved", "predicate_resolved", "relation_plan_match"})
             reasons.add(selection["reason"].value)
-            if item["projection"]["claim_id"] in selection["conflict_claim_ids"]:
-                reasons.add("relation_conflicting_claim")
+            if item["projection"]["proposition_id"] in selection["conflict_proposition_ids"]:
+                reasons.add("relation_conflicting_proposition")
             if not type_match_available:
                 unavailable.add("object_type_match")
                 reasons.add("object_type_unavailable")
@@ -1775,7 +1774,7 @@ class StructuredGraphResolver:
                 reasons.add("object_type_match" if type_match else "object_type_mismatch")
             reasons.add("relation_result_ambiguous" if ambiguous_result else "relation_result_unique")
             records.append(
-                claim_evidence_record_with_changes(
+                proposition_evidence_record_with_changes(
                     base,
                     {
                         "features": feature_set(values, tuple(sorted(unavailable - set(values)))),
@@ -1783,17 +1782,17 @@ class StructuredGraphResolver:
                     },
                 )
             )
-        records.sort(key=lambda record: record["claim_id"])
+        records.sort(key=lambda record: record["proposition_id"])
         candidates = []
         if selection["direct_answer"] and budget["max_candidates"]:
             item, _, type_match, type_match_available = next(
-                value for value in retained if value[0]["projection"]["claim_id"] == selection["selected_claim_id"]
+                value for value in retained if value[0]["projection"]["proposition_id"] == selection["selected_proposition_id"]
             )
             if not type_match_available or type_match != 0.0:
                 reference = evidence_reference(
-                    evidence_id=item["projection"]["claim_id"],
+                    evidence_id=item["projection"]["proposition_id"],
                     resolver=self.name,
-                    kind=EvidenceKind.CLAIM,
+                    kind=EvidenceKind.PROPOSITION,
                     scope=frame["scope"],
                     provenance={"relation_plan": True},
                     diagnostics={},
@@ -1809,8 +1808,8 @@ class StructuredGraphResolver:
                 )
                 candidates.append(
                     resolution_candidate(
-                        candidate_id=_candidate_id(CandidateSource.UTILITY, item["projection"]["claim_id"], frame["diagnostic_id"]),
-                        statement_id=item["projection"]["claim_id"],
+                        candidate_id=_candidate_id(CandidateSource.UTILITY, item["projection"]["proposition_id"], frame["diagnostic_id"]),
+                        statement_id=item["projection"]["proposition_id"],
                         response=response,
                         source=CandidateSource.UTILITY,
                         features=feature_set(values, unavailable),
@@ -1833,7 +1832,7 @@ class StructuredGraphResolver:
                         },
                         diagnostics={
                             "template_id": plan["template_id"].value,
-                            "ranking_claim_ids": selection["ranking_claim_ids"],
+                            "ranking_proposition_ids": selection["ranking_proposition_ids"],
                             "trust_version": selection["trust_version"],
                             "trust_version_available": selection["trust_version_available"],
                         },
@@ -1842,7 +1841,7 @@ class StructuredGraphResolver:
         exhausted = set()
 
         def record_bytes() -> int:
-            return _json_size([claim_evidence_record_to_dict(record) for record in records]) if records else 0
+            return _json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
 
         while records and record_bytes() > budget["max_evidence_bytes"]:
             records.pop()
@@ -1862,16 +1861,16 @@ class StructuredGraphResolver:
             resolver=self.name,
             state=ResolverState.COMPLETED,
             reason_code=(
-                "relation_claim_candidate"
+                "relation_proposition_candidate"
                 if candidates
                 else (
-                    "relation_claim_conflict"
-                    if selection["conflict_claim_ids"]
-                    else "relation_claim_evidence" if records else "relation_graph_miss"
+                    "relation_proposition_conflict"
+                    if selection["conflict_proposition_ids"]
+                    else "relation_proposition_evidence" if records else "relation_graph_miss"
                 )
             ),
             candidates=tuple(candidates),
-            claim_evidence=tuple(records),
+            proposition_evidence=tuple(records),
             diagnostics={
                 "entity_status": subject["status"].value,
                 "predicate_status": predicate["status"].value,
@@ -1882,8 +1881,8 @@ class StructuredGraphResolver:
                 "ambiguous_result": ambiguous_result,
                 "selection_reason": selection["reason"].value,
                 "predicate_cardinality": selection["cardinality"].value,
-                "conflict_claim_ids": selection["conflict_claim_ids"],
-                "ranking_claim_ids": selection["ranking_claim_ids"],
+                "conflict_proposition_ids": selection["conflict_proposition_ids"],
+                "ranking_proposition_ids": selection["ranking_proposition_ids"],
                 "trust_version": selection["trust_version"],
                 "trust_version_available": selection["trust_version_available"],
             },
@@ -1943,7 +1942,7 @@ class StructuredGraphResolver:
             if relation_result:
                 result = relation_result[0]
                 return result
-            projections = self._engram.structured_claim_projections(
+            projections = self._engram.structured_proposition_projections(
                 frame["resolved_text"],
                 row_limit=min(budget["max_graph_rows"] // 2, budget["max_evidence"]),
                 cooperative_check=cooperative_check,
@@ -1962,19 +1961,19 @@ class StructuredGraphResolver:
                 reason = initial["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
-            decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_claim_projection)
+            decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_proposition_projection)
             if decision["revalidated"]:
                 revalidation_rows += 1
             if not decision["eligible"]:
                 reason = decision["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
-            records.append(claim_evidence_record(projection, decision, frame, self.name))
-        records.sort(key=lambda record: record["claim_id"])
+            records.append(proposition_evidence_record(projection, decision, frame, self.name))
+        records.sort(key=lambda record: record["proposition_id"])
         exhausted = set()
 
         def record_bytes() -> int:
-            result = _json_size([claim_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = _json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
             return result
 
         while records and record_bytes() > budget["max_evidence_bytes"]:
@@ -1983,7 +1982,7 @@ class StructuredGraphResolver:
         while records and record_bytes() > budget["max_output_bytes"]:
             records.pop()
             exhausted.add("output_bytes")
-        working_memory = _json_size([claim_projection_to_dict(projection) for projection in projections]) + record_bytes()
+        working_memory = _json_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
         if working_memory > budget["max_working_memory_bytes"]:
             result = _memory_exhausted_result(self.name)
             return result
@@ -1991,8 +1990,8 @@ class StructuredGraphResolver:
         result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
-            reason_code="structured_claim_evidence" if records else "structured_graph_miss",
-            claim_evidence=tuple(records),
+            reason_code="structured_proposition_evidence" if records else "structured_graph_miss",
+            proposition_evidence=tuple(records),
             diagnostics={
                 "discovery_rows": len(projections),
                 "revalidation_rows": revalidation_rows,
@@ -2014,7 +2013,7 @@ class StructuredGraphResolver:
 
 
 class SupportSemanticResolver:
-    """Pure fixed-vector adapter for support candidates and full Claim evidence."""
+    """Pure fixed-vector adapter for support candidates and full Proposition evidence."""
 
     def __init__(self, engram, clock_ns: Callable[[], int], eligibility_evaluator: object = ()) -> None:
         self.name = SUPPORT_SEMANTIC_RESOLVER_NAME
@@ -2022,12 +2021,12 @@ class SupportSemanticResolver:
         self._engram = engram
         self._clock_ns = clock_ns
         if eligibility_evaluator == ():
-            selected_evaluator = ClaimEligibilityEvaluator(getattr(engram, "claim_visibility_authority", ()))
-        elif isinstance(eligibility_evaluator, ClaimEligibilityEvaluator):
+            selected_evaluator = PropositionEligibilityEvaluator(getattr(engram, "proposition_visibility_authority", ()))
+        elif isinstance(eligibility_evaluator, PropositionEligibilityEvaluator):
             selected_evaluator = eligibility_evaluator
         else:
-            raise InvalidRequestError("support semantic eligibility_evaluator must be ClaimEligibilityEvaluator")
-        self._eligibility_evaluator: ClaimEligibilityEvaluator = selected_evaluator
+            raise InvalidRequestError("support semantic eligibility_evaluator must be PropositionEligibilityEvaluator")
+        self._eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: QueryFrame) -> bool:
         graph = self._engram.config.get("graph") or {}
@@ -2053,13 +2052,13 @@ class SupportSemanticResolver:
     ) -> ResolverResult:
         """Resolve semantic candidates while honoring caller cancellation."""
         _run_cooperative_check(cooperative_check)
-        claim_capacity = bool(
+        proposition_capacity = bool(
             budget["max_graph_rows"] and budget["max_evidence"] and budget["max_evidence_bytes"] and budget["max_output_bytes"]
         )
         if (
             not budget["max_vector_results"]
             or not budget["max_working_memory_bytes"]
-            or (not budget["max_candidates"] and not claim_capacity)
+            or (not budget["max_candidates"] and not proposition_capacity)
         ):
             dimensions = tuple(
                 name
@@ -2092,13 +2091,13 @@ class SupportSemanticResolver:
             candidate_limit = min(budget["max_candidates"], budget["max_vector_results"])
             _run_cooperative_check(cooperative_check)
             legacy_rows = (
-                self._engram.graph_vector_claims(frame["resolved_text"], limit=candidate_limit)[:candidate_limit]
+                self._engram.graph_vector_propositions(frame["resolved_text"], limit=candidate_limit)[:candidate_limit]
                 if candidate_limit
                 else []
             )
             _run_cooperative_check(cooperative_check)
             matches = (
-                self._engram.vector_supported_claim_match_components(
+                self._engram.vector_supported_proposition_match_components(
                     legacy_rows,
                     limit=candidate_limit,
                     statement_filter=statement_filter,
@@ -2110,7 +2109,7 @@ class SupportSemanticResolver:
             )
             remaining_vector_results = max(0, budget["max_vector_results"] - len(legacy_rows))
             projections = (
-                self._engram.graph_vector_claim_projections(
+                self._engram.graph_vector_proposition_projections(
                     frame["resolved_text"],
                     limit=remaining_vector_results,
                     cooperative_check=cooperative_check,
@@ -2131,14 +2130,14 @@ class SupportSemanticResolver:
             artifact = self._engram.response_repository.get_artifact(str(statement["id"]))
             references = tuple(
                 evidence_reference(
-                    evidence_id=claim_id,
+                    evidence_id=reference.get("id", ""),
                     resolver=self.name,
                     kind=EvidenceKind.SUPPORT,
                     scope=frame["scope"],
                     provenance={"support_linked": True},
                     diagnostics={"semantic_match": True},
                 )
-                for claim_id in artifact["support_claim_ids"][: max(0, budget["max_evidence"] - evidence_count)]
+                for reference in artifact["support_references"][: max(0, budget["max_evidence"] - evidence_count)]
             )
             evidence_count += len(references)
             candidate = resolution_candidate(
@@ -2163,7 +2162,7 @@ class SupportSemanticResolver:
                     "generation": artifact["generation"],
                     "source_label": artifact["provenance"]["source_label"],
                 },
-                diagnostics={"support_count": len(artifact["support_claim_ids"])},
+                diagnostics={"support_count": len(artifact["support_references"])},
             )
             candidates.append(candidate)
             accounting.append(accounting_observation(candidate["statement_id"]))
@@ -2173,7 +2172,7 @@ class SupportSemanticResolver:
         revalidation_rows = 0
         exhausted = set()
         remaining_evidence = max(0, budget["max_evidence"] - evidence_count)
-        if claim_capacity and remaining_evidence:
+        if proposition_capacity and remaining_evidence:
             for projection in projections:
                 _run_cooperative_check(cooperative_check)
                 initial = self._eligibility_evaluator.evaluate(projection, frame)
@@ -2185,21 +2184,21 @@ class SupportSemanticResolver:
                     exhausted.add("graph_rows")
                     break
                 revalidation_attempts += 1
-                decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_claim_projection)
+                decision = self._eligibility_evaluator.revalidate(projection, frame, self._engram.current_proposition_projection)
                 if decision["revalidated"]:
                     revalidation_rows += 1
                 if not decision["eligible"]:
                     reason = decision["reason"].value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
-                records.append(claim_evidence_record(projection, decision, frame, self.name))
+                records.append(proposition_evidence_record(projection, decision, frame, self.name))
                 if len(records) >= remaining_evidence:
                     break
-        records.sort(key=lambda record: record["claim_id"])
+        records.sort(key=lambda record: record["proposition_id"])
 
         def evidence_values() -> list[dict[str, object]]:
             result = [evidence_reference_to_dict(reference) for candidate in candidates for reference in candidate["evidence"]] + [
-                claim_evidence_record_to_dict(record) for record in records
+                proposition_evidence_record_to_dict(record) for record in records
             ]
             return result
 
@@ -2210,7 +2209,7 @@ class SupportSemanticResolver:
 
         def output_bytes() -> int:
             values = [candidate_to_dict(candidate) for candidate in candidates] + [
-                claim_evidence_record_to_dict(record) for record in records
+                proposition_evidence_record_to_dict(record) for record in records
             ]
             result = _json_size(values) if values else 0
             return result
@@ -2241,7 +2240,7 @@ class SupportSemanticResolver:
         if working_memory > budget["max_working_memory_bytes"]:
             result = _memory_exhausted_result(self.name)
             return result
-        selected_reason = "support_semantic_candidates" if candidates else "semantic_claim_evidence"
+        selected_reason = "support_semantic_candidates" if candidates else "semantic_proposition_evidence"
         if not candidates and not records:
             selected_reason = "support_semantic_miss"
         result = resolver_result(
@@ -2249,7 +2248,7 @@ class SupportSemanticResolver:
             state=ResolverState.COMPLETED,
             reason_code=selected_reason,
             candidates=tuple(candidates),
-            claim_evidence=tuple(records),
+            proposition_evidence=tuple(records),
             accounting=tuple(accounting),
             diagnostics={
                 "projection_rows": len(projections),
@@ -2399,18 +2398,18 @@ def execution_report_with_changes(value: object, changes: object) -> ExecutionRe
     return result
 
 
-def execution_report_canonical_claim_evidence(value: object, cooperative_check=()) -> tuple:
-    """Return deterministic Claim-only evidence without creating candidacy or accounting."""
+def execution_report_canonical_proposition_evidence(value: object, cooperative_check=()) -> tuple:
+    """Return deterministic Proposition-only evidence without creating candidacy or accounting."""
     current = validate_execution_report(value)
     if cooperative_check != () and not callable(cooperative_check):
         raise InvalidRequestError("cooperative_check must be callable")
     records = tuple(
         record
         for resolver_result in current["results"]
-        if resolver_result["resolver"] in CLAIM_EVIDENCE_PRODUCERS
-        for record in resolver_result["claim_evidence"]
+        if resolver_result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
+        for record in resolver_result["proposition_evidence"]
     )
-    result = canonicalize_claim_evidence(records, cooperative_check) if cooperative_check else canonicalize_claim_evidence(records)
+    result = canonicalize_proposition_evidence(records, cooperative_check) if cooperative_check else canonicalize_proposition_evidence(records)
     return result
 
 
@@ -2424,7 +2423,7 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
     """Bound one executor-validated result without revalidating its nested records."""
     candidates = list(result["candidates"][: lease["max_candidates"]])
     evidence = list(result["evidence"])
-    claim_evidence = list(result["claim_evidence"])
+    proposition_evidence = list(result["proposition_evidence"])
     exhausted = set(result["consumption"]["exhausted_dimensions"])
     if len(candidates) < len(result["candidates"]):
         exhausted.add("candidates")
@@ -2441,28 +2440,28 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         exhausted.add("evidence")
     evidence = retained_evidence
     remaining_evidence -= len(evidence)
-    retained_claim_evidence = claim_evidence[:remaining_evidence]
-    if len(retained_claim_evidence) < len(claim_evidence):
+    retained_proposition_evidence = proposition_evidence[:remaining_evidence]
+    if len(retained_proposition_evidence) < len(proposition_evidence):
         exhausted.add("evidence")
-    claim_evidence = retained_claim_evidence
+    proposition_evidence = retained_proposition_evidence
 
     candidate_evidence_sizes = [
         [_json_size(_trusted_evidence_reference_to_dict(reference)) for reference in candidate["evidence"]]
         for candidate in candidates
     ]
     evidence_sizes = [_json_size(_trusted_evidence_reference_to_dict(reference)) for reference in evidence]
-    claim_evidence_sizes = [_json_size(_trusted_claim_evidence_record_to_dict(record)) for record in claim_evidence]
+    proposition_evidence_sizes = [_json_size(_trusted_proposition_evidence_record_to_dict(record)) for record in proposition_evidence]
     flattened_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
         *evidence_sizes,
-        *claim_evidence_sizes,
+        *proposition_evidence_sizes,
     ]
     evidence_size = _json_array_size(flattened_evidence_sizes) if flattened_evidence_sizes else 0
     evidence_count = len(flattened_evidence_sizes)
     while evidence_size > lease["max_evidence_bytes"]:
-        if claim_evidence:
-            claim_evidence.pop()
-            removed_size = claim_evidence_sizes.pop()
+        if proposition_evidence:
+            proposition_evidence.pop()
+            removed_size = proposition_evidence_sizes.pop()
         elif evidence:
             evidence.pop()
             removed_size = evidence_sizes.pop()
@@ -2483,13 +2482,13 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
             candidates[index] = _trusted_candidate_with_changes(candidate, {"evidence": candidate["evidence"][: len(sizes)]})
 
     candidate_sizes = [_json_size(_trusted_candidate_to_dict(candidate)) for candidate in candidates]
-    output_item_sizes = [*candidate_sizes, *evidence_sizes, *claim_evidence_sizes]
+    output_item_sizes = [*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes]
     bounded_output_size = _json_array_size(output_item_sizes) if output_item_sizes else 0
     output_count = len(output_item_sizes)
     while bounded_output_size > lease["max_output_bytes"] and output_count:
-        if claim_evidence:
-            claim_evidence.pop()
-            removed_size = claim_evidence_sizes.pop()
+        if proposition_evidence:
+            proposition_evidence.pop()
+            removed_size = proposition_evidence_sizes.pop()
         elif evidence:
             evidence.pop()
             removed_size = evidence_sizes.pop()
@@ -2511,7 +2510,7 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
     retained_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
         *evidence_sizes,
-        *claim_evidence_sizes,
+        *proposition_evidence_sizes,
     ]
     evidence_bytes = _json_array_size(retained_evidence_sizes) if retained_evidence_sizes else 0
     diagnostic_bytes = _json_size(dict(diagnostics)) if diagnostics else 0
@@ -2524,7 +2523,7 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
     estimated_memory = max(
         candidate_bytes
         + (_json_array_size(evidence_sizes) if evidence_sizes else 0)
-        + (_json_array_size(claim_evidence_sizes) if claim_evidence_sizes else 0)
+        + (_json_array_size(proposition_evidence_sizes) if proposition_evidence_sizes else 0)
         + diagnostic_bytes,
         result["consumption"]["working_memory_bytes"],
     )
@@ -2532,11 +2531,11 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         exhausted.add("working_memory_bytes")
         candidates = []
         evidence = []
-        claim_evidence = []
+        proposition_evidence = []
         candidate_sizes = []
         candidate_evidence_sizes = []
         evidence_sizes = []
-        claim_evidence_sizes = []
+        proposition_evidence_sizes = []
         accounting = ()
         diagnostics = MappingProxyType({})
         candidate_bytes = 0
@@ -2549,11 +2548,11 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         candidates=len(candidates),
         graph_rows=graph_rows,
         vector_results=vector_results,
-        evidence=len(evidence) + len(claim_evidence) + sum(len(candidate["evidence"]) for candidate in candidates),
+        evidence=len(evidence) + len(proposition_evidence) + sum(len(candidate["evidence"]) for candidate in candidates),
         evidence_bytes=evidence_bytes,
         output_bytes=(
-            _json_array_size([*candidate_sizes, *evidence_sizes, *claim_evidence_sizes])
-            if candidate_sizes or evidence_sizes or claim_evidence_sizes
+            _json_array_size([*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes])
+            if candidate_sizes or evidence_sizes or proposition_evidence_sizes
             else 0
         ),
         diagnostic_bytes=diagnostic_bytes,
@@ -2566,7 +2565,7 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         {
             "candidates": tuple(candidates),
             "evidence": tuple(evidence),
-            "claim_evidence": tuple(claim_evidence),
+            "proposition_evidence": tuple(proposition_evidence),
             "accounting": accounting,
             "diagnostics": diagnostics,
             "consumption": consumption,
@@ -3050,43 +3049,43 @@ class ResolutionOrchestrator:
         def evidence_check() -> None:
             _run_cooperative_check(cooperative_check)
 
-        unexpected_claim_records = any(
-            result["claim_evidence"] and result["resolver"] not in CLAIM_EVIDENCE_PRODUCERS for result in execution["results"]
+        unexpected_proposition_records = any(
+            result["proposition_evidence"] and result["resolver"] not in PROPOSITION_EVIDENCE_PRODUCERS for result in execution["results"]
         )
-        if unexpected_claim_records:
-            append_reason("claim_evidence_untrusted_producer")
-        raw_claim_records = tuple(
+        if unexpected_proposition_records:
+            append_reason("proposition_evidence_untrusted_producer")
+        raw_proposition_records = tuple(
             record
             for result in execution["results"]
-            if result["resolver"] in CLAIM_EVIDENCE_PRODUCERS
-            for record in result["claim_evidence"]
+            if result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
+            for record in result["proposition_evidence"]
         )
         full_producer_available = any(
-            result["resolver"] in CLAIM_EVIDENCE_PRODUCERS
+            result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
             and result["state"] == ResolverState.COMPLETED
-            and result["claim_evidence"]
+            and result["proposition_evidence"]
             for result in execution["results"]
         )
         if outcome != ResolutionOutcome.ANSWER and full_producer_available:
-            evidence_diagnostics["input_count"] = len(raw_claim_records)
+            evidence_diagnostics["input_count"] = len(raw_proposition_records)
             remaining_working_memory = max(
                 0,
                 frame["budget"]["max_working_memory_bytes"]
                 - execution["consumption"]["working_memory_bytes"]
                 - decision["working_memory_bytes"],
             )
-            if _working_size(raw_claim_records) * 2 > remaining_working_memory:
+            if _working_size(raw_proposition_records) * 2 > remaining_working_memory:
                 orchestration_exhausted.add("working_memory_bytes")
-                append_reason("claim_evidence_memory_exhausted")
+                append_reason("proposition_evidence_memory_exhausted")
             else:
                 try:
-                    normalized_records = canonicalize_claim_evidence(raw_claim_records, evidence_check)
+                    normalized_records = canonicalize_proposition_evidence(raw_proposition_records, evidence_check)
                     if any(
                         record["disclosure"]["scope"] != frame["scope"]
                         or record["validity"]["evaluation_time"] != frame["eligibility_context"]["evaluation_time"]
                         for record in normalized_records
                     ):
-                        raise InvalidRequestError("Claim evidence is not bound to the current frame")
+                        raise InvalidRequestError("Proposition evidence is not bound to the current frame")
                     usefulness_decisions = []
                     included_records = []
                     reason_counts: dict[str, int] = {}
@@ -3100,7 +3099,7 @@ class ResolutionOrchestrator:
                             included_records.append(record)
                     evidence_check()
                 except InvalidRequestError:
-                    append_reason("claim_evidence_conflict")
+                    append_reason("proposition_evidence_conflict")
                 else:
                     package_source_records = tuple(included_records)
                     evidence_working_memory = (
@@ -3132,19 +3131,19 @@ class ResolutionOrchestrator:
                         evidence_diagnostics["available"] = True
                     else:
                         orchestration_exhausted.add("evidence_bytes")
-                        append_reason("claim_evidence_bytes_exhausted")
+                        append_reason("proposition_evidence_bytes_exhausted")
                     if evidence_working_memory > remaining_working_memory:
                         evidence_package_available = False
                         evidence_package = empty_evidence_package()
                         orchestration_exhausted.add("working_memory_bytes")
-                        append_reason("claim_evidence_memory_exhausted")
+                        append_reason("proposition_evidence_memory_exhausted")
                         evidence_diagnostics["available"] = False
                     elif evidence_package["records"]:
-                        append_reason("claim_evidence_included")
+                        append_reason("proposition_evidence_included")
                         if outcome == ResolutionOutcome.MISS:
                             outcome = ResolutionOutcome.EVIDENCE
                     elif normalized_records:
-                        append_reason("claim_evidence_excluded")
+                        append_reason("proposition_evidence_excluded")
         accepted_statement_id = (
             selected["statement_id"]
             if outcome == ResolutionOutcome.ANSWER and selected["source"] == CandidateSource.EXACT and accept_exact
@@ -3180,7 +3179,7 @@ class ResolutionOrchestrator:
             append_reason("diagnostics_truncated")
             compact = {
                 "diagnostic_id": frame["diagnostic_id"],
-                "claim_evidence": {
+                "proposition_evidence": {
                     "policy_version": self._evidence_policy["policy_version"],
                     "available": evidence_package_available,
                     "input_count": evidence_diagnostics["input_count"],
@@ -3202,12 +3201,12 @@ class ResolutionOrchestrator:
                 "plan": _trusted_resolution_plan_to_dict(plan),
                 "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution["reservations"]],
                 "fusion": decision["report"],
-                "claim_evidence": evidence_diagnostics,
+                "proposition_evidence": evidence_diagnostics,
                 "accounting": accounting_finalization_to_dict(accounting_preview),
             }
         )
         resolver_results = tuple(
-            _trusted_resolver_result_with_changes(result, {"claim_evidence": ()}) if result["claim_evidence"] else result
+            _trusted_resolver_result_with_changes(result, {"proposition_evidence": ()}) if result["proposition_evidence"] else result
             for result in execution["results"]
         )
         response_evidence = decision["evidence"]
@@ -3241,7 +3240,7 @@ class ResolutionOrchestrator:
                         "candidate_count": decision["report"]["candidate_count"],
                         "output_truncated": True,
                     },
-                    "claim_evidence": {
+                    "proposition_evidence": {
                         "policy_version": self._evidence_policy["policy_version"],
                         "available": evidence_package_available,
                         "input_count": evidence_diagnostics["input_count"],
@@ -3314,7 +3313,7 @@ class ResolutionOrchestrator:
                 "truncated": evidence_package["truncated"],
             }
         )
-        visible_evidence_diagnostics = frame_diagnostics.get("claim_evidence", {})
+        visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
         if isinstance(visible_evidence_diagnostics, dict):
             for name in ("available", "retained_count", "omitted_count"):
                 if name in visible_evidence_diagnostics:

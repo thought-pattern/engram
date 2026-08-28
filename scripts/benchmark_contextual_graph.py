@@ -15,7 +15,7 @@ if str(REPOSITORY) not in sys.path:
 
 from engram.constants import VERSION, ExpectedObjectType
 from engram.core import Engram
-from engram.graph import ClaimProjectionQuery, claim_projection, relation_claim_projection_from_graph_row
+from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
 from engram.service import EngramCore
 from engram.spacy_setup import get_nlp
@@ -25,9 +25,9 @@ DEFAULT_MANIFEST = Path("eval/section8-relation-followup-v1.json")
 DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark-2026-08-20.json")
 
 
-def _claim_row(claim_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:
+def _proposition_row(proposition_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:
     return {
-        "claim_id": claim_id,
+        "proposition_id": proposition_id,
         "subject_entity_id": subject_id,
         "predicate_id": predicate_id,
         "object_entity_id": object_id,
@@ -83,10 +83,10 @@ class BenchmarkGraph:
             ("predicate:located", "located", ("locate",), "PLACE"),
         )
         definitions = (
-            ("claim:ada-place", "entity:ada-lovelace", "predicate:birth-place", "entity:london", "London", "PLACE"),
-            ("claim:ada-date", "entity:ada-lovelace", "predicate:birth-date", "entity:1815", "1815", "DATE"),
+            ("proposition:ada-place", "entity:ada-lovelace", "predicate:birth-place", "entity:london", "London", "PLACE"),
+            ("proposition:ada-date", "entity:ada-lovelace", "predicate:birth-date", "entity:1815", "1815", "DATE"),
             (
-                "claim:ada-employer",
+                "proposition:ada-employer",
                 "entity:ada-lovelace",
                 "predicate:employer",
                 "entity:bletchley-park",
@@ -94,7 +94,7 @@ class BenchmarkGraph:
                 "PLACE",
             ),
             (
-                "claim:rfc-superseded",
+                "proposition:rfc-superseded",
                 "entity:rfc-7231",
                 "predicate:supersedes",
                 "entity:rfc-9110",
@@ -102,7 +102,7 @@ class BenchmarkGraph:
                 "ENTITY",
             ),
             (
-                "claim:ada-uses",
+                "proposition:ada-uses",
                 "entity:ada-lovelace",
                 "predicate:uses",
                 "entity:analytical-engine",
@@ -111,14 +111,14 @@ class BenchmarkGraph:
             ),
         )
         self.results = {
-            claim_id: relation_claim_projection_from_graph_row(
+            proposition_id: relation_proposition_projection_from_graph_row(
                 {
-                    **_claim_row(claim_id, subject_id, predicate_id, object_id),
+                    **_proposition_row(proposition_id, subject_id, predicate_id, object_id),
                     "object_label": object_label,
                     "object_type": object_type,
                 }
             )
-            for claim_id, subject_id, predicate_id, object_id, object_label, object_type in definitions
+            for proposition_id, subject_id, predicate_id, object_id, object_label, object_type in definitions
         }
 
     def canonical_entity_matches(self, surface: str, *, limit: int):
@@ -154,7 +154,7 @@ class BenchmarkGraph:
                 )
         return values[:limit]
 
-    def relation_one_hop_claim_projections(
+    def relation_one_hop_proposition_projections(
         self,
         subject_entity_id: str,
         predicate_id: str,
@@ -171,14 +171,14 @@ class BenchmarkGraph:
             and result["projection"]["predicate_id"] == predicate_id
         ][:limit]
 
-    def claim_projection_by_id(self, claim_id: str):
-        result = self.results.get(claim_id)
+    def proposition_projection_by_id(self, proposition_id: str):
+        result = self.results.get(proposition_id)
         if not result:
             return []
         values = dict(result["projection"])
         values.update(
             {
-                "projection_id": ClaimProjectionQuery.BY_ID_V1,
+                "projection_id": PropositionProjectionQuery.BY_ID_V1,
                 "structured_match": 0.0,
                 "structured_match_available": False,
                 "semantic_similarity": 0.0,
@@ -187,7 +187,7 @@ class BenchmarkGraph:
                 "vector_index_id_available": False,
             }
         )
-        return [claim_projection(**values)]
+        return [proposition_projection(**values)]
 
 
 def _percentile(values: list[float], fraction: float) -> float:

@@ -48,7 +48,7 @@ DEFAULT_QUALITY_REQUESTS = {
     "scope": "What is the retention policy?",
     "policy": "Disclose the approved policy.",
     "stale": "Return the superseded Atlas endpoint.",
-    "unsupported": "Construct an unbounded proof over every Claim.",
+    "unsupported": "Construct an unbounded proof over every Proposition.",
     "negative": "Recall the completed exact miss for unknown topic Zephyr-17.",
     "dependency_failure": "Resolve Atlas while the graph is unavailable.",
 }
@@ -74,7 +74,7 @@ def accepted_artifact(
         tier=Tier.STATIC,
         lifecycle=lifecycle,
         scope=scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",
@@ -94,7 +94,7 @@ def core_with_artifacts(*artifacts, mode: RolloutMode = RolloutMode.REGULATED_DI
     config = engram_config(rollout=rollout_config(default_mode=mode))
     engine = Engram(config)
     engine.response_repository = ArtifactRepository(artifacts)
-    persistence.synchronize_response_compatibility_views(engine, ())
+    persistence.synchronize_response_statement_projections(engine, ())
     result = EngramCore(engine, checkpoint_on_mutation=False)
     return result
 
@@ -374,7 +374,7 @@ def run_quality_probes(
         f"section16:{probe_prefix}:correction-supersede",
         f"{partition} later-correction probe",
     )
-    persistence.synchronize_response_compatibility_views(correction_core.engram, (original["statement_id"],))
+    persistence.synchronize_response_statement_projections(correction_core.engram, (original["statement_id"],))
     corrected_resolution = correction_core.resolve_request(
         correction_request,
         f"section16:{probe_prefix}:correction-resolved",

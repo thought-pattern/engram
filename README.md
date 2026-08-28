@@ -32,8 +32,7 @@ gRPC ---------/
 facade. It owns the shared `Engram` instance, per-user conversation runtimes,
 persistence lifecycle, and regulated-cache proposal state. The CLI, MCP, and
 gRPC servers translate their interface inputs into calls on that core. The lower-level
-`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available
-and backward compatible.
+`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available.
 
 ## Integration guides
 
@@ -50,9 +49,9 @@ and backward compatible.
 - [Accepted responses](documentation/artifacts/contracts-v1.md) — authority,
   lifecycle, eligibility, mutation coordination, persistence, and compatibility.
 - [Resolution results](documentation/evidence/resolution-result-v1.md) — unified
-  result, Claim evidence, budgets, truncation, and adapter mapping.
+  result, Proposition evidence, budgets, truncation, and adapter mapping.
 - [Graph retrieval](documentation/graph-retrieval.md) — contextual, temporal,
-  one-hop, and composed Claim retrieval.
+  one-hop, and composed Proposition retrieval.
 - [Local resolvers](documentation/local-resolvers.md) — symbolic rewrites,
   sparse and semantic retrieval, reranking, and deterministic utilities.
 - [Deployment and rollback](documentation/operations/deployment-and-rollback-v1.md)
@@ -653,18 +652,44 @@ All off by default; each is a config flag.
 A catch-all `*` pattern is considered only after the lemma and stem fallbacks
 fail to find a more specific match.
 
-## Knowledge Graph (optional)
+## Knowledge Graph schema administration
 
 ENGRAM can recall canonical facts from an optional MemGraph store. Runtime
 access is read-only, and graph readiness is reported separately from local
 service readiness.
 
-Apply the sample schema (`schema.cypher`) before enabling the graph:
+For a standalone Engram-managed Memgraph, apply only Engram's independently
+installable corrected recall schema:
 
 ```bash
-python scripts/setup_schema.py            # uses config.yml graph.host / graph.port
-python scripts/setup_schema.py --check    # preview the statements
+python scripts/setup_schema.py --check
+python scripts/setup_schema.py --apply
+python scripts/setup_schema.py --verify
+python scripts/verify_schema.py --deployment standalone
+python scripts/reset_schema.py          # dry-run only; empty graph required
+python scripts/reset_schema.py --apply
 ```
+
+For a Tapestry-managed Memgraph, never run Engram's installer or reset command.
+Tapestry owns that deployment's DDL. Verify it through Engram's read-only gate:
+
+```bash
+python scripts/verify_schema.py --deployment tapestry_managed
+```
+
+Standalone mode requires Engram ownership and an exact catalog.
+`tapestry_managed` requires Tapestry ownership, state `accepted`, matching
+representation/support/scratch contracts, one matching store epoch, and every
+Engram-required catalog definition while allowing the Tapestry superset. Crossed
+owners, mixed metadata, partial catalogs, unavailable reads, and incompatible
+vector shapes fail closed. Static `--check` needs no configuration, Tapestry
+checkout, service, or database.
+
+Engram's graph-facing queries, decoders, and accepted-response support values
+use the corrected Proposition/Assertion contracts. The repository-wide Tapestry
+cutover is still in progress, so the managed Engram service remains stopped
+until the standing Tapestry graph reaches its administrative `accepted` state.
+Local Engram operation without graph recall is unaffected.
 
 Configure the connection in `config.yml`:
 
@@ -675,8 +700,14 @@ graph:
   username: ""
   password: ""
   enabled: true
+  deployment_mode: tapestry_managed
+  visibility_scope:
+    kind: global
+    company_id: {}
+    customer_id: {}
+    engagement_id: {}
   vector_enabled: true
-  vector_index_name: claim_premise_embeddings
+  vector_index_name: proposition_embeddings
   vector_model: all-MiniLM-L6-v2
   vector_model_path: data/artifacts/models/all-MiniLM-L6-v2
   vector_dimension: 384

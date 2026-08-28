@@ -68,6 +68,8 @@ from engram.resolution import (
     resolution_budget_with_changes,
 )
 
+from .support_fixtures import PROPOSITION_REFERENCE_A
+
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 SCOPE = scope_key(namespace="tenant-a", context_fingerprint="context-a")
@@ -90,8 +92,8 @@ def frame(engine: object = ()) -> QueryFrame:
     return result
 
 
-def support_reference(claim_id: str = "claim-1") -> EvidenceReference:
-    result = evidence_reference(claim_id, "support_semantic", EvidenceKind.SUPPORT, SCOPE)
+def support_reference(proposition_id: str = "proposition-1") -> EvidenceReference:
+    result = evidence_reference(proposition_id, "support_semantic", EvidenceKind.SUPPORT, SCOPE)
     return result
 
 
@@ -134,7 +136,7 @@ def supported_pair(statement_id: str = "stmt-1", *, semantic: float = 0.92, lexi
             statement_id,
             CandidateSource.SUPPORT_SEMANTIC,
             {"semantic_score": semantic, "support_coverage": 1.0},
-            evidence=(support_reference(f"claim:{statement_id}"),),
+            evidence=(support_reference(f"proposition:{statement_id}"),),
             diagnostics={"semantic_trace": "sensitive-value"},
         ),
     )
@@ -157,7 +159,7 @@ def artifact(
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=SCOPE,
-        support_claim_ids=("claim-artifact",),
+        support_references=(PROPOSITION_REFERENCE_A,),
         valid_from="",
         valid_from_available=False,
         valid_until=valid_until,
@@ -253,7 +255,7 @@ def test_resolver_scores_use_source_specific_normalization() -> None:
 
 def test_deduplication_retains_contributions_diagnostics_and_evidence() -> None:
     values = supported_pair()
-    duplicate_evidence = candidate_with_changes(values[0], {"evidence": (support_reference("claim:stmt-1"),)})
+    duplicate_evidence = candidate_with_changes(values[0], {"evidence": (support_reference("proposition:stmt-1"),)})
 
     decision = conformance_fusion().decide(frame(), (duplicate_evidence, values[1]))
 
@@ -552,7 +554,7 @@ def test_explicit_mismatch_uses_conservative_aggregation() -> None:
 
 def test_order_invariance_canonicalizes_candidates_and_evidence() -> None:
     lexical, semantic = supported_pair()
-    extra = support_reference("claim-extra")
+    extra = support_reference("proposition-extra")
     semantic = candidate_with_changes(semantic, {"evidence": (*semantic["evidence"], extra)})
     engine = conformance_fusion()
 
@@ -583,7 +585,7 @@ def test_candidate_and_evidence_identity_conflicts_abstain_deterministically() -
     lexical, semantic = supported_pair()
     conflicting_id = candidate_with_changes(semantic, {"candidate_id": lexical["candidate_id"]})
     candidate_conflict = conformance_fusion().decide(frame(), (lexical, conflicting_id))
-    reference = support_reference("claim-conflict")
+    reference = support_reference("proposition-conflict")
     reference_variant = evidence_reference_with_changes(reference, {"resolver": "different-resolver"})
     semantic = candidate_with_changes(semantic, {"evidence": (reference, reference_variant)})
     evidence_conflict = conformance_fusion().decide(frame(), (lexical, semantic))
@@ -610,7 +612,7 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
         "stmt-artifact",
         CandidateSource.SUPPORT_SEMANTIC,
         {"semantic_score": 0.95, "support_coverage": 1.0},
-        evidence=(support_reference("claim-stale"),),
+        evidence=(support_reference("proposition-stale"),),
     )
 
     generation_decision = fusion.decide(frame(engine), (stale_generation,))

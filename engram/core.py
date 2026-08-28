@@ -34,7 +34,7 @@ from engram.constants import (
     LEARNED_ACKNOWLEDGMENTS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
-    MAX_STRUCTURED_CLAIM_PROJECTION_TERMS,
+    MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
     PERSISTENCE_STATUS_SCHEMA_VERSION,
     PERSISTENCE_VERSION,
     REPETITION_ESCAPE_RESPONSE,
@@ -66,16 +66,16 @@ from engram.feedback import FeedbackStore
 from engram.graph import (
     CanonicalEntityMatch,
     CanonicalPredicateMatch,
-    ClaimProjection,
-    ClaimProjectionQuery,
-    RelationClaimProjection,
+    PropositionProjection,
+    PropositionProjectionQuery,
+    RelationPropositionProjection,
     canonical_entity_match_from_graph_row,
     canonical_predicate_match_from_graph_row,
-    claim_projection_to_dict,
     create_graph_client,
     is_write_cypher,
-    validate_claim_projection,
-    validate_relation_claim_projection,
+    proposition_projection_to_dict,
+    validate_proposition_projection,
+    validate_relation_proposition_projection,
 )
 from engram.identity import ScopedRetrievalKey
 from engram.indexes import (
@@ -360,6 +360,8 @@ class Engram:
                 port=graph_config["port"],
                 username=graph_config["username"],
                 password=graph_config.get("password", ""),
+                deployment_mode=graph_config.get("deployment_mode", ""),
+                visibility_scope=graph_config.get("visibility_scope", {}),
             )
         if graph_config.get("vector_enabled"):
             try:
@@ -535,8 +537,8 @@ class Engram:
             raise ValueError(f"query embedding dimension {len(vector)} does not match configured graph dimension {dimension}")
         return vector
 
-    def graph_vector_claims(self, text: str, *, limit: int = 0) -> list:
-        """Return active semantic Claim hits for ``text``.
+    def graph_vector_propositions(self, text: str, *, limit: int = 0) -> list:
+        """Return active semantic Proposition hits for ``text``.
 
         The method fails soft because vector recall augments the deterministic
         keyword path; a model, index, or graph outage must not make Engram
@@ -547,7 +549,7 @@ class Engram:
         if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
             result = []
             return result
-        search = getattr(client, "vector_search_claims", ())
+        search = getattr(client, "vector_search_propositions", ())
         if not callable(search):
             result = []
             return result
@@ -566,21 +568,21 @@ class Engram:
             result = []
             return result
 
-    def graph_vector_claim_projections(
+    def graph_vector_proposition_projections(
         self,
         text: str,
         *,
         limit: int = 0,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[ClaimProjection]:
-        """Return strictly decoded wire-safe ANN Claim projections."""
+    ) -> list[PropositionProjection]:
+        """Return strictly decoded wire-safe ANN Proposition projections."""
         graph_config = self.config.get("graph") or {}
         client = self.graph_client
         if not client or not graph_config.get("enabled") or not graph_config.get("vector_enabled"):
             result = []
             return result
-        search = getattr(client, "vector_search_claim_projections", ())
+        search = getattr(client, "vector_search_proposition_projections", ())
         if not callable(search):
             result = []
             return result
@@ -597,11 +599,11 @@ class Engram:
                 min_similarity=float(graph_config["vector_min_similarity"]),
             )
             if not isinstance(rows, list) or len(rows) > row_limit:
-                raise ValueError("vector Claim projection boundary returned an invalid collection")
-            validated_rows = [validate_claim_projection(row) for row in rows]
+                raise ValueError("vector Proposition projection boundary returned an invalid collection")
+            validated_rows = [validate_proposition_projection(row) for row in rows]
             _require_working_memory(
                 _estimate_working_bytes(embedding)
-                + _estimate_working_bytes([claim_projection_to_dict(row) for row in validated_rows]),
+                + _estimate_working_bytes([proposition_projection_to_dict(row) for row in validated_rows]),
                 max_working_memory_bytes,
             )
             _run_cooperative_check(cooperative_check)
@@ -610,23 +612,23 @@ class Engram:
             raise
         except Exception as err:
             logger.warning(
-                "Vector Claim projection unavailable; omitting response-less evidence (%s)",
+                "Vector Proposition projection unavailable; omitting response-less evidence (%s)",
                 type(err).__name__,
             )
             result = []
             return result
 
-    def current_claim_projection(self, claim_id: str) -> tuple[ClaimProjection, ...]:
-        """Re-read one canonical Claim through the fixed by-ID capability."""
+    def current_proposition_projection(self, proposition_id: str) -> tuple[PropositionProjection, ...]:
+        """Re-read one canonical Proposition through the fixed by-ID capability."""
         client = self.graph_client
-        lookup = getattr(client, "claim_projection_by_id", ())
+        lookup = getattr(client, "proposition_projection_by_id", ())
         if not client or not callable(lookup):
             result = ()
             return result
-        rows = lookup(claim_id)
+        rows = lookup(proposition_id)
         if not isinstance(rows, list) or len(rows) > 1:
-            raise ValueError("Claim projection revalidation boundary returned an invalid collection")
-        result = tuple(validate_claim_projection(row) for row in rows)
+            raise ValueError("Proposition projection revalidation boundary returned an invalid collection")
+        result = tuple(validate_proposition_projection(row) for row in rows)
         return result
 
     def warm_vector_recall(self) -> bool:
@@ -636,9 +638,9 @@ class Engram:
             result = False
             return result
         client = self.graph_client
-        search = getattr(client, "vector_search_claims", ())
+        search = getattr(client, "vector_search_propositions", ())
         if not client or not callable(search):
-            raise RuntimeError("configured graph client lacks vector Claim search")
+            raise RuntimeError("configured graph client lacks vector Proposition search")
         embedding = self._encode_graph_query("Engram vector recall readiness")
         search(
             embedding,
@@ -663,10 +665,10 @@ class Engram:
         result = index_state_exact_lookup(state, key)
         return result
 
-    def support_lookup(self, claim_ids: tuple[str, ...]) -> SupportLookupResult:
-        """Find statements supported by the supplied matched Claim IDs."""
+    def support_lookup(self, proposition_ids: tuple[str, ...]) -> SupportLookupResult:
+        """Find statements supported by the supplied matched Proposition IDs."""
         state = self.index_snapshot()
-        result = index_state_support_lookup(state, claim_ids)
+        result = index_state_support_lookup(state, proposition_ids)
         return result
 
     def check_indexes(self) -> IndexCheckReport:
@@ -883,10 +885,10 @@ class Engram:
             result = self._index_owner.remove(statement_id)
             return result
 
-    def update_index_support(self, statement_id: str, support_claim_ids: tuple[str, ...]) -> IndexState:
-        """Atomically replace only one projection's support Claim IDs."""
+    def update_index_support(self, statement_id: str, support_references: tuple[dict, ...]) -> IndexState:
+        """Atomically replace one projection's ordered typed support references."""
         with self.mutation_lock:
-            result = self._index_owner.update_support(statement_id, support_claim_ids)
+            result = self._index_owner.update_support(statement_id, support_references)
             return result
 
     def _replace_statement_index_projection(self, statement_value: dict) -> None:
@@ -907,7 +909,7 @@ class Engram:
         limit: int,
         statement_filter=(),
     ) -> list[tuple[dict, float]]:
-        """Rank scoped cached responses through their KG support Claims."""
+        """Rank scoped cached responses through their KG support Propositions."""
         result = [
             (match["statement"], match["retrieval_score"])
             for match in self.vector_supported_match_components(
@@ -927,10 +929,10 @@ class Engram:
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
-        """Return support matches with raw similarity separate from legacy ranking."""
+        """Return support matches with raw similarity separate from response ranking."""
         _run_cooperative_check(cooperative_check)
-        rows = self.graph_vector_claims(text, limit=limit)
-        result = self.vector_supported_claim_match_components(
+        rows = self.graph_vector_propositions(text, limit=limit)
+        result = self.vector_supported_proposition_match_components(
             rows,
             limit=limit,
             statement_filter=statement_filter,
@@ -939,7 +941,7 @@ class Engram:
         )
         return result
 
-    def vector_supported_claim_match_components(
+    def vector_supported_proposition_match_components(
         self,
         rows: list[dict],
         *,
@@ -948,10 +950,10 @@ class Engram:
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
-        """Apply the legacy support intersection to already-discovered Claim hits."""
+        """Intersect discovered Proposition hits with typed response support."""
         _run_cooperative_check(cooperative_check)
         _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
-        support_scores = {str(row.get("claim_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("claim_id")}
+        support_scores = {str(row.get("proposition_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("proposition_id")}
         result = self._vector_supported_match_components_from_scores(
             support_scores,
             source_working_bytes=_estimate_working_bytes(rows),
@@ -996,8 +998,8 @@ class Engram:
         seen_statement_ids = set()
         retained_bytes = source_working_bytes + _estimate_working_bytes(support_scores)
         with self.statement_lock:
-            for claim_id in scan_plan["queried_claim_ids"]:
-                for statement_id in reversed(state["claim_to_statements"].get(claim_id, ())):
+            for record_id in scan_plan["queried_record_ids"]:
+                for statement_id in reversed(state["record_to_statements"].get(record_id, ())):
                     _run_cooperative_check(cooperative_check)
                     if statement_id in seen_statement_ids:
                         continue
@@ -1011,9 +1013,9 @@ class Engram:
                     if statement_filter and not statement_filter(statement_value):
                         continue
                     similarities = [
-                        support_scores[support_id]
-                        for support_id in state["statement_to_claims"].get(statement_id, ())
-                        if support_id in support_scores
+                        support_scores[reference.get("id", "")]
+                        for reference in state["statement_to_references"].get(statement_id, ())
+                        if reference.get("id", "") in support_scores
                     ]
                     if not similarities:
                         continue
@@ -1065,7 +1067,7 @@ class Engram:
         if not entities:
             # Keyword fallback: match a canonical Entity whose primary label
             # contains a query keyword, then return the surface triples of the
-            # claims it is the subject of.
+            # propositions it is the subject of.
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             if not keywords:
                 result = ""
@@ -1077,11 +1079,11 @@ class Engram:
             if facts:
                 formatted = format_graph_facts(facts)
                 return formatted
-            vector_facts = graph_records_to_facts(self.graph_vector_claims(text, limit=5))
+            vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
             result = format_graph_facts(vector_facts) if vector_facts else ""
             return result
 
-        # Query the canonical graph for each entity. The Claim node carries the
+        # Query the canonical graph for each entity. The Proposition node carries the
         # rendered subject/predicate/object projection, so one query covers the
         # entity in either the subject or object role.
         facts = []
@@ -1092,7 +1094,7 @@ class Engram:
         if facts:
             formatted = format_graph_facts(facts)
             return formatted
-        vector_facts = graph_records_to_facts(self.graph_vector_claims(text, limit=5))
+        vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
         result = format_graph_facts(vector_facts) if vector_facts else ""
         return result
 
@@ -1554,15 +1556,15 @@ class Engram:
         result = [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
         return result
 
-    def structured_claim_projections(
+    def structured_proposition_projections(
         self,
         text: str,
         *,
         row_limit: int = 10,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[ClaimProjection]:
-        """Run only fixed structured Claim projections and reject conflicting rows."""
+    ) -> list[PropositionProjection]:
+        """Run only fixed structured Proposition projections and reject conflicting rows."""
         if not isinstance(row_limit, int) or isinstance(row_limit, bool) or not 0 <= row_limit <= 1_000:
             raise ValueError("row_limit must be an integer from 0 through 1000")
         if (
@@ -1572,25 +1574,25 @@ class Engram:
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
         client = self.graph_client
-        search = getattr(client, "structured_claim_projections", ())
+        search = getattr(client, "structured_proposition_projections", ())
         if not row_limit or not client or not callable(search):
             result = []
             return result
         _run_cooperative_check(cooperative_check)
-        requests: list[tuple[ClaimProjectionQuery, str]] = []
+        requests: list[tuple[PropositionProjectionQuery, str]] = []
         entities = extract_entities(text)
         if entities:
             requests.extend(
-                (ClaimProjectionQuery.STRUCTURED_ENTITY_V1, str(entity["text"]))
-                for entity in entities[:MAX_STRUCTURED_CLAIM_PROJECTION_TERMS]
+                (PropositionProjectionQuery.STRUCTURED_ENTITY_V1, str(entity["text"]))
+                for entity in entities[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
         else:
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             requests.extend(
-                (ClaimProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
-                for keyword in keywords[:MAX_STRUCTURED_CLAIM_PROJECTION_TERMS]
+                (PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
+                for keyword in keywords[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
-        retained: dict[str, ClaimProjection] = {}
+        retained: dict[str, PropositionProjection] = {}
         for projection_id, value in requests:
             _run_cooperative_check(cooperative_check)
             remaining = row_limit - len(retained)
@@ -1598,19 +1600,19 @@ class Engram:
                 break
             rows = search(value, projection_id=projection_id, limit=remaining)
             if not isinstance(rows, list) or len(rows) > remaining:
-                raise ValueError("structured Claim projection boundary returned an invalid collection")
-            validated_rows = [validate_claim_projection(row) for row in rows]
+                raise ValueError("structured Proposition projection boundary returned an invalid collection")
+            validated_rows = [validate_proposition_projection(row) for row in rows]
             for row in validated_rows:
-                claim_id = row["claim_id"]
-                if claim_id in retained and retained[claim_id] != row:
-                    raise ValueError(f"conflicting structured Claim projections for Claim ID: {claim_id}")
-                retained[claim_id] = row
+                proposition_id = row["proposition_id"]
+                if proposition_id in retained and retained[proposition_id] != row:
+                    raise ValueError(f"conflicting structured Proposition projections for Proposition ID: {proposition_id}")
+                retained[proposition_id] = row
             _run_cooperative_check(cooperative_check)
             _require_working_memory(
-                _estimate_working_bytes([claim_projection_to_dict(projection) for projection in retained.values()]),
+                _estimate_working_bytes([proposition_projection_to_dict(projection) for projection in retained.values()]),
                 max_working_memory_bytes,
             )
-        result = [retained[claim_id] for claim_id in sorted(retained)]
+        result = [retained[proposition_id] for proposition_id in sorted(retained)]
         return result
 
     def canonical_entity_matches(
@@ -1653,7 +1655,7 @@ class Engram:
         _run_cooperative_check(cooperative_check)
         return result
 
-    def relation_one_hop_claim_projections(
+    def relation_one_hop_proposition_projections(
         self,
         subject_entity_id: str,
         predicate_id: str,
@@ -1662,14 +1664,14 @@ class Engram:
         include_historical: bool = False,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[RelationClaimProjection]:
-        """Run the fixed one-hop Claim template and enforce its output boundary."""
+    ) -> list[RelationPropositionProjection]:
+        """Run the fixed one-hop Proposition template and enforce its output boundary."""
         if isinstance(row_limit, bool) or not isinstance(row_limit, int) or not 0 <= row_limit <= MAX_RELATION_PLAN_ROWS:
             raise ValueError(f"relation row_limit must be an integer from 0 through {MAX_RELATION_PLAN_ROWS}")
         if not isinstance(include_historical, bool):
             raise ValueError("relation include_historical must be a boolean")
         client = self.graph_client
-        search = getattr(client, "relation_one_hop_claim_projections", ())
+        search = getattr(client, "relation_one_hop_proposition_projections", ())
         if not row_limit or not client or not callable(search):
             return []
         _run_cooperative_check(cooperative_check)
@@ -1681,17 +1683,17 @@ class Engram:
         )
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise ValueError("relation one-hop boundary returned an invalid collection")
-        result = [validate_relation_claim_projection(row) for row in rows]
+        result = [validate_relation_proposition_projection(row) for row in rows]
         if any(
             row["projection"]["subject_entity_id"] != subject_entity_id or row["projection"]["predicate_id"] != predicate_id
             for row in result
         ):
-            raise ValueError("relation one-hop boundary returned a Claim outside the requested canonical binding")
+            raise ValueError("relation one-hop boundary returned a Proposition outside the requested canonical binding")
         _require_working_memory(
             _estimate_working_bytes(
                 [
                     {
-                        "projection": claim_projection_to_dict(row["projection"]),
+                        "projection": proposition_projection_to_dict(row["projection"]),
                         "object_label": row["object_label"],
                         "object_type": row["object_type"].value,
                         "predicate_cardinality": row["predicate_cardinality"].value,

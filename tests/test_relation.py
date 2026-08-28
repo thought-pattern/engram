@@ -4,19 +4,19 @@ from datetime import UTC, datetime
 
 import pytest
 
-from engram.constants import CLAIM_PROJECTION_FIELDS, CanonicalResolutionStatus, ExpectedObjectType, RelationPlanTemplate
+from engram.constants import PROPOSITION_PROJECTION_FIELDS, CanonicalResolutionStatus, ExpectedObjectType, RelationPlanTemplate
 from engram.contextual import enrich_query_frame
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import (
     CanonicalEntityMatch,
     CanonicalPredicateMatch,
-    ClaimProjection,
-    ClaimProjectionQuery,
     MemGraphConnection,
-    RelationClaimProjection,
-    claim_projection,
-    relation_claim_projection_from_graph_row,
+    PropositionProjection,
+    PropositionProjectionQuery,
+    RelationPropositionProjection,
+    proposition_projection,
+    relation_proposition_projection_from_graph_row,
 )
 from engram.identity import entity_reference, query_identity, scope_key
 from engram.relation import (
@@ -34,9 +34,9 @@ NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 
 
-def _claim_row(claim_id: str = "claim:ada-birthplace", object_id: str = "entity:london") -> dict[str, object]:
+def _proposition_row(proposition_id: str = "proposition:ada-birthplace", object_id: str = "entity:london") -> dict[str, object]:
     return {
-        "claim_id": claim_id,
+        "proposition_id": proposition_id,
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",
         "object_entity_id": object_id,
@@ -66,26 +66,26 @@ def _claim_row(claim_id: str = "claim:ada-birthplace", object_id: str = "entity:
 
 
 def _relation_result(
-    claim_id: str = "claim:ada-birthplace",
+    proposition_id: str = "proposition:ada-birthplace",
     object_id: str = "entity:london",
     object_label: str = "London",
     object_type: str = "PLACE",
     predicate_cardinality: str = "SINGLE",
-) -> RelationClaimProjection:
+) -> RelationPropositionProjection:
     row = {
-        **_claim_row(claim_id, object_id),
+        **_proposition_row(proposition_id, object_id),
         "object_label": object_label,
         "object_type": object_type,
         "predicate_cardinality": predicate_cardinality,
     }
-    return relation_claim_projection_from_graph_row(row)
+    return relation_proposition_projection_from_graph_row(row)
 
 
-def _current(result: RelationClaimProjection) -> ClaimProjection:
+def _current(result: RelationPropositionProjection) -> PropositionProjection:
     values = dict(result["projection"])
     values.update(
         {
-            "projection_id": ClaimProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID_V1,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -94,7 +94,7 @@ def _current(result: RelationClaimProjection) -> ClaimProjection:
             "vector_index_id_available": False,
         }
     )
-    return claim_projection(**values)
+    return proposition_projection(**values)
 
 
 def _frame(engine: Engram, text: str):
@@ -152,7 +152,7 @@ def _predicate_match(
 class RelationGraph:
     available = True
 
-    def __init__(self, results: tuple[RelationClaimProjection, ...] = ()) -> None:
+    def __init__(self, results: tuple[RelationPropositionProjection, ...] = ()) -> None:
         self.results = list(results or (_relation_result(),))
         self.one_hop_calls: list[tuple[str, str, int, bool]] = []
 
@@ -162,12 +162,12 @@ class RelationGraph:
     def canonical_predicate_matches(self, surface, *, limit):
         return [_predicate_match()][:limit] if surface.casefold() in {"born", "bear", "born in"} else []
 
-    def relation_one_hop_claim_projections(self, subject_entity_id, predicate_id, *, limit, include_historical=False):
+    def relation_one_hop_proposition_projections(self, subject_entity_id, predicate_id, *, limit, include_historical=False):
         self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
         return self.results[:limit]
 
-    def claim_projection_by_id(self, claim_id):
-        return [_current(result) for result in self.results if result["projection"]["claim_id"] == claim_id]
+    def proposition_projection_by_id(self, proposition_id):
+        return [_current(result) for result in self.results if result["projection"]["proposition_id"] == proposition_id]
 
 
 class ChangingRelationGraph(RelationGraph):
@@ -175,14 +175,14 @@ class ChangingRelationGraph(RelationGraph):
         super().__init__()
         self.current_reads = 0
 
-    def claim_projection_by_id(self, claim_id):
+    def proposition_projection_by_id(self, proposition_id):
         self.current_reads += 1
-        rows = super().claim_projection_by_id(claim_id)
+        rows = super().proposition_projection_by_id(proposition_id)
         if self.current_reads < 2 or not rows:
             return rows
         values = dict(rows[0])
         values["object_entity_id"] = "entity:changed"
-        return [claim_projection(**values)]
+        return [proposition_projection(**values)]
 
 
 def test_subject_resolution_reports_tied_canonical_entities_as_ambiguous() -> None:
@@ -214,7 +214,7 @@ def test_subject_resolution_uses_named_entity_and_alias_evidence(monkeypatch) ->
     assert {"alias", "named_entity"}.issubset(result["evidence"])
 
 
-def test_subject_resolution_accepts_claim_edge_surface_evidence() -> None:
+def test_subject_resolution_accepts_proposition_edge_surface_evidence() -> None:
     engine = Engram()
     frame = _frame(engine, "Where was Lovelace born?")
 
@@ -297,7 +297,7 @@ def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() ->
 
     plan = one_hop_query_plan(subject, predicate, ExpectedObjectType.PLACE, max_rows=3)
 
-    assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_CLAIM_V1
+    assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_PROPOSITION_V1
     assert set(plan) == {
         "schema_version",
         "template_id",
@@ -328,7 +328,7 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
         captured.update({"query": query, "parameters": parameters})
         return [
             {
-                **_claim_row(),
+                **_proposition_row(),
                 "object_label": "London",
                 "object_type": "PLACE",
                 "predicate_cardinality": "SINGLE",
@@ -337,14 +337,14 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
 
     client._execute_read_query = execute
 
-    result = client.relation_one_hop_claim_projections(
+    result = client.relation_one_hop_proposition_projections(
         "entity:ada-lovelace",
         "predicate:birth-place",
         limit=10,
     )
 
     assert len(result) == 1
-    assert result[0]["projection"]["projection_id"] == ClaimProjectionQuery.RELATION_ONE_HOP_V1
+    assert result[0]["projection"]["projection_id"] == PropositionProjectionQuery.RELATION_ONE_HOP_V1
     assert captured["parameters"] == {
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",
@@ -354,7 +354,7 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
     assert "entity:ada-lovelace" not in captured["query"]
     assert "predicate:birth-place" not in captured["query"]
     assert "CALL " not in captured["query"]
-    assert set(_claim_row()) == CLAIM_PROJECTION_FIELDS
+    assert set(_proposition_row()) == PROPOSITION_PROJECTION_FIELDS
 
 
 def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> None:
@@ -394,7 +394,7 @@ def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> No
         {"surface": "born", "limit": 2},
     ]
     assert all(parameters["surface"] not in query for query, parameters in captured)
-    assert "edge.surface_form" in captured[0][0]
+    assert "binding.surface_form" in captured[0][0]
     assert "predicate.synonyms" in captured[1][0]
     assert "predicate.label" in captured[1][0]
 
@@ -404,7 +404,7 @@ def test_core_one_hop_boundary_rejects_a_result_outside_the_requested_binding() 
     engine._graph_client = RelationGraph()
 
     with pytest.raises(ValueError, match="requested canonical binding"):
-        engine.relation_one_hop_claim_projections(
+        engine.relation_one_hop_proposition_projections(
             "entity:other",
             "predicate:birth-place",
             row_limit=10,
@@ -419,12 +419,12 @@ def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evide
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, _lease(frame))
 
-    assert result["reason_code"] == "relation_claim_candidate"
+    assert result["reason_code"] == "relation_proposition_candidate"
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["response"] == "Ada Lovelace — birth place: London."
     assert result["candidates"][0]["features"]["values"]["object_type_match"] == 1.0
-    assert len(result["claim_evidence"]) == 1
-    record = result["claim_evidence"][0]
+    assert len(result["proposition_evidence"]) == 1
+    record = result["proposition_evidence"][0]
     assert record["features"]["values"]["entity_match"] == 1.0
     assert record["features"]["values"]["relation_match"] == 0.92
     assert {"relation_plan_match", "relation_result_unique", "object_type_match"}.issubset(record["selection_reasons"])
@@ -442,12 +442,12 @@ def test_relation_resolver_requests_history_and_keeps_open_bounds_as_evidence() 
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, True)]
     assert result["candidates"] == ()
     assert result["diagnostics"]["selection_reason"] == "relation_temporal_bounds_open"
-    assert result["claim_evidence"][0]["validity"]["requested_start"] == "2024-01-01T00:00:00Z"
-    assert result["claim_evidence"][0]["validity"]["requested_end"] == "2025-01-01T00:00:00Z"
+    assert result["proposition_evidence"][0]["validity"]["requested_start"] == "2024-01-01T00:00:00Z"
+    assert result["proposition_evidence"][0]["validity"]["requested_end"] == "2025-01-01T00:00:00Z"
 
 
 def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_results() -> None:
-    second = _relation_result("claim:ada-other-place", "entity:oxford", "Oxford")
+    second = _relation_result("proposition:ada-other-place", "entity:oxford", "Oxford")
     engine = Engram()
     engine._graph_client = RelationGraph((_relation_result(), second))
     frame = _frame(engine, "Where was Ada Lovelace born?")
@@ -455,18 +455,18 @@ def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_res
     ambiguous = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, _lease(frame))
 
     assert ambiguous["candidates"] == ()
-    assert ambiguous["reason_code"] == "relation_claim_conflict"
+    assert ambiguous["reason_code"] == "relation_proposition_conflict"
     assert ambiguous["diagnostics"]["selection_reason"] == "relation_conflict_single_value"
-    assert ambiguous["diagnostics"]["conflict_claim_ids"] == (
-        "claim:ada-birthplace",
-        "claim:ada-other-place",
+    assert ambiguous["diagnostics"]["conflict_proposition_ids"] == (
+        "proposition:ada-birthplace",
+        "proposition:ada-other-place",
     )
-    assert len(ambiguous["claim_evidence"]) == 2
+    assert len(ambiguous["proposition_evidence"]) == 2
     assert all(
-        {"relation_result_ambiguous", "relation_conflict_single_value", "relation_conflicting_claim"}.issubset(
+        {"relation_result_ambiguous", "relation_conflict_single_value", "relation_conflicting_proposition"}.issubset(
             record["selection_reasons"]
         )
-        for record in ambiguous["claim_evidence"]
+        for record in ambiguous["proposition_evidence"]
     )
 
     mismatch_engine = Engram()
@@ -475,8 +475,8 @@ def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_res
     mismatch = StructuredGraphResolver(mismatch_engine, lambda: START_NS).resolve(mismatch_frame, _lease(mismatch_frame))
 
     assert mismatch["candidates"] == ()
-    assert mismatch["claim_evidence"][0]["features"]["values"]["object_type_match"] == 0.0
-    assert "object_type_mismatch" in mismatch["claim_evidence"][0]["selection_reasons"]
+    assert mismatch["proposition_evidence"][0]["features"]["values"]["object_type_match"] == 0.0
+    assert "object_type_mismatch" in mismatch["proposition_evidence"][0]["selection_reasons"]
 
 
 def test_core_keeps_unique_graph_phrase_as_evidence_not_an_unsupported_answer() -> None:
@@ -499,7 +499,7 @@ def test_core_keeps_unique_graph_phrase_as_evidence_not_an_unsupported_answer() 
     assert result["evidence_package"]["retained_count"] == 1
 
 
-def test_fusion_suppresses_relation_phrase_if_current_claim_changes_after_discovery() -> None:
+def test_fusion_suppresses_relation_phrase_if_current_proposition_changes_after_discovery() -> None:
     engine = Engram()
     graph = ChangingRelationGraph()
     engine._graph_client = graph

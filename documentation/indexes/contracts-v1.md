@@ -1,4 +1,4 @@
-# Exact, alias, and Claim-support index contracts, version 1
+# Exact, alias, and typed-support index contracts, version 1
 
 ## Status and boundary
 
@@ -6,9 +6,9 @@
 `IndexProjection` values. Accepted-response storage and lifecycle policy remain
 with the artifact repository; adapters own transport exposure.
 
-All public records are immutable dataclasses with concrete fields. Empty strings
-and tuples represent absence. Mappings inside `IndexState` are copied into
-read-only mapping proxies before publication.
+All public records are native dictionaries with concrete fields. Empty strings,
+tuples, and dictionaries represent contract-specific absence. Mappings inside
+`IndexState` are copied into read-only mapping proxies before publication.
 
 ## `IndexProjection`
 
@@ -26,7 +26,24 @@ The version-1 projection carries only derived-index input:
       "representation": "Who acquired GitHub?"
     }
   ],
-  "support_claim_ids": ["claim-1"],
+  "support_references": [
+    {
+      "schema_version": "tapestry-engram-support-v1",
+      "record_kind": "proposition",
+      "id": "prp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state_revision": 0,
+      "support_revision": 0,
+      "representation_contract": "tapestry-ke-representation-v1",
+      "visibility_scope": {
+        "kind": "global",
+        "company_id": {},
+        "customer_id": {},
+        "engagement_id": {}
+      },
+      "dependency_state_digest": "dep_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "store_epoch": "store-epoch"
+    }
+  ],
   "direct_answer_eligible": true,
   "exclusion_reason": "",
   "normalization_version": 1
@@ -35,9 +52,12 @@ The version-1 projection carries only derived-index input:
 
 The strict dictionary and deterministic compact JSON codecs reject malformed or
 unsupported values. Retrieval keys reuse `ScopedRetrievalKey` and retain source
-spelling plus `canonical`/`alias` provenance. Claim IDs are bounded opaque strings.
+spelling plus `canonical`/`alias` provenance. Support values are ordered,
+duplicate-free, exact `tapestry-engram-support-v1` mappings for durable
+Assertions or Propositions. Engram validates their shape but does not interpret
+their epistemic state.
 
-For persistence version 1, `projection_from_statement` projects
+`projection_from_statement` projects
 `template.tapestry.support`, emits an empty retrieval-key set, and reports
 `missing_identity`; malformed support reports
 `malformed_support`.
@@ -50,8 +70,8 @@ One state owns all six maps as a unit:
 | --- | --- |
 | `retrieval_to_owners` | Every indexable owner of a scoped key, including ineligible owners, with generation and provenance. |
 | `statement_to_retrieval` | Exact inverse of retrieval ownership after within-artifact key deduplication. |
-| `claim_to_statements` | Sorted statement IDs for each support Claim. |
-| `statement_to_claims` | Exact inverse of Claim support. |
+| `record_to_statements` | Sorted statement IDs for each durable support-record ID. |
+| `statement_to_references` | Exact inverse containing each statement's ordered typed support mappings. |
 | `direct_retrieval` | Only one eligible owner; absent for zero owners, ineligible-only ownership, or collisions. |
 | `projections` | Validated source projections used to check and reproduce this disposable state. |
 
@@ -59,17 +79,17 @@ One state owns all six maps as a unit:
 the statement ID, generation, original representation, and canonical/alias provenance. `COLLISION` returns bounded sorted
 owner IDs and an empty selected statement.
 
-`support_lookup` accepts bounded matched Claim IDs and returns sorted `SupportMatch` values containing each statement and the
-specific queried Claims that reached it. Its result records `scanned_edge_count`, `complete`, `reason`, `omitted_edge_count`,
+`support_lookup` accepts bounded matched Assertion or Proposition IDs and returns sorted `SupportMatch` values containing each statement and the
+specific queried record IDs that reached it. Its result records `scanned_edge_count`, `complete`, `reason`, `omitted_edge_count`,
 and post-scan `omitted_match_count`.
-The default traversal bound is 100,000 Claim-to-statement edges. When the complete
+The default traversal bound is 100,000 support-record-to-statement edges. When the complete
 matched fan-out exceeds the bound, lookup returns `complete=false`,
 `reason=scan_limit_exceeded`, an empty match set, and the omitted edge count.
-Runtime work is proportional to queried Claim IDs and their reached fan-out.
+Runtime work is proportional to queried record IDs and their reached fan-out.
 
 The support-aware vector path obtains one immutable state, validates the complete fan-out against
 `graph.vector_support_scan_limit`, filters statement existence and caller scope while scanning, calculates each statement's
-maximum matched-Claim score, and maintains only the requested top-k candidates. Output truncation therefore occurs after
+maximum matched-Proposition score, and maintains only the requested top-k candidates. Output truncation therefore occurs after
 eligibility and scoring. Exceeding the scan bound produces a diagnostic warning
 and abstention.
 
@@ -93,7 +113,7 @@ Within-artifact duplicate keys retain canonical provenance when one duplicate is
 one key remain visible in ownership and collision reports but are omitted from direct lookup. Reports expose at most 1,000
 issues, collisions, or lookup owners and record omitted counts.
 
-The reproducible fixture [classification-v1.json](../../tests/fixtures/indexes/classification-v1.json) covers legacy missing identity, a canonical/alias
+The reproducible fixture [classification-v1.json](../../tests/fixtures/indexes/classification-v1.json) covers a statement missing retrieval identity, a canonical/alias
 cross-artifact collision, an unsupported schema, and malformed support.
 
 ## Mutation, concurrency, and repair
@@ -128,17 +148,17 @@ modified.
 | Value | Limit |
 | --- | ---: |
 | Statement ID | 256 UTF-8 bytes |
-| Support Claim ID | 256 UTF-8 bytes |
+| Support record ID | 256 UTF-8 bytes |
 | Retrieval keys per projection | 33 |
-| Support Claim IDs per projection or lookup | 256 |
+| Support references per projection or record IDs per lookup | 256 |
 | Exclusion reason | 128 UTF-8 bytes |
 | Report items per category | 1,000 |
 | Report detail | 512 characters |
 | Owner IDs returned by one lookup/collision | 1,000 |
-| Default support scan | 100,000 Claim-to-statement edges |
-| Configurable support scan | 1 through 1,000,000 Claim-to-statement edges |
+| Default support scan | 100,000 support-record-to-statement edges |
+| Configurable support scan | 1 through 1,000,000 support-record-to-statement edges |
 
-Exact lookup is expected O(1) relative to corpus size. Support lookup is O(matched Claim IDs plus reached fan-out). Rebuild is
+Exact lookup is expected O(1) relative to corpus size. Support lookup is O(matched record IDs plus reached fan-out). Rebuild is
 O(projections + retrieval edges + support edges, with deterministic sorting). Immutable mutation copies top-level maps,
 updates only the named projection edges, and refreshes diagnostics.
 

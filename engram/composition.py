@@ -14,7 +14,7 @@ from engram.constants import (
     MAX_COMPOSITION_BRANCHES,
     MAX_COMPOSITION_CANDIDATES_PER_STEP,
     MAX_COMPOSITION_HOPS,
-    MAX_COMPOSITION_PATH_CLAIMS,
+    MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_COMPOSITION_ROWS,
     CanonicalResolutionStatus,
     CompositionReason,
@@ -24,8 +24,8 @@ from engram.constants import (
     QueryOperator,
 )
 from engram.errors import InvalidRequestError
-from engram.evidence import ClaimEligibilityDecision, validate_claim_eligibility_decision
-from engram.graph import ClaimProjection, RelationClaimProjection, validate_relation_claim_projection
+from engram.evidence import PropositionEligibilityDecision, validate_proposition_eligibility_decision
+from engram.graph import PropositionProjection, RelationPropositionProjection, validate_relation_proposition_projection
 from engram.relation import CanonicalResolution, canonical_resolution, validate_canonical_resolution
 from engram.resolution import validate_query_frame
 
@@ -165,7 +165,7 @@ def composition_plan(
     max_rows: object = MAX_COMPOSITION_ROWS,
     max_branches: object = MAX_COMPOSITION_BRANCHES,
     max_candidates_per_step: object = MAX_COMPOSITION_CANDIDATES_PER_STEP,
-    max_path_claims: object = MAX_COMPOSITION_PATH_CLAIMS,
+    max_path_propositions: object = MAX_COMPOSITION_PATH_PROPOSITIONS,
     schema_version: object = COMPOSITION_CONTRACT_SCHEMA_VERSION,
 ) -> CompositionPlan:
     """Build one closed graph plan and reject underconstrained or cyclic bindings."""
@@ -186,7 +186,7 @@ def composition_plan(
         1,
         MAX_COMPOSITION_CANDIDATES_PER_STEP,
     )
-    path_limit = _integer(max_path_claims, "composition plan max_path_claims", 1, MAX_COMPOSITION_PATH_CLAIMS)
+    path_limit = _integer(max_path_propositions, "composition plan max_path_propositions", 1, MAX_COMPOSITION_PATH_PROPOSITIONS)
     branches = tuple(sorted({step["branch"] for step in normalized_steps}))
     if branches != tuple(range(len(branches))) or len(branches) > branch_limit:
         raise InvalidRequestError("composition plan branches must be contiguous and bounded")
@@ -273,7 +273,7 @@ def composition_plan(
         "max_rows": row_limit,
         "max_branches": branch_limit,
         "max_candidates_per_step": candidate_limit,
-        "max_path_claims": path_limit,
+        "max_path_propositions": path_limit,
     }
     return result
 
@@ -293,7 +293,7 @@ def validate_composition_plan(value: object) -> CompositionPlan:
         max_rows=value["max_rows"],
         max_branches=value["max_branches"],
         max_candidates_per_step=value["max_candidates_per_step"],
-        max_path_claims=value["max_path_claims"],
+        max_path_propositions=value["max_path_propositions"],
         schema_version=value["schema_version"],
     )
 
@@ -313,7 +313,7 @@ def composition_plan_to_dict(value: object) -> dict[str, object]:
         "max_rows": plan["max_rows"],
         "max_branches": plan["max_branches"],
         "max_candidates_per_step": plan["max_candidates_per_step"],
-        "max_path_claims": plan["max_path_claims"],
+        "max_path_propositions": plan["max_path_propositions"],
     }
 
 
@@ -340,7 +340,7 @@ def composition_plan_from_dict(value: object) -> CompositionPlan:
         max_rows=value["max_rows"],
         max_branches=value["max_branches"],
         max_candidates_per_step=value["max_candidates_per_step"],
-        max_path_claims=value["max_path_claims"],
+        max_path_propositions=value["max_path_propositions"],
         schema_version=value["schema_version"],
     )
 
@@ -592,7 +592,7 @@ _TraversalState = dict
 
 
 def _path_key(path: CompositionPath) -> tuple[str, ...]:
-    return tuple(entry["claim"]["projection"]["claim_id"] for entry in path)
+    return tuple(entry["proposition"]["projection"]["proposition_id"] for entry in path)
 
 
 def _ordered_paths(paths: list[CompositionPath]) -> tuple[CompositionPath, ...]:
@@ -602,9 +602,9 @@ def _ordered_paths(paths: list[CompositionPath]) -> tuple[CompositionPath, ...]:
 
 def execute_composition_plan(
     plan: object,
-    query: Callable[[str, str, int], list[RelationClaimProjection]],
-    evaluate: Callable[[ClaimProjection], ClaimEligibilityDecision],
-    revalidate: Callable[[ClaimProjection], ClaimEligibilityDecision],
+    query: Callable[[str, str, int], list[RelationPropositionProjection]],
+    evaluate: Callable[[PropositionProjection], PropositionEligibilityDecision],
+    revalidate: Callable[[PropositionProjection], PropositionEligibilityDecision],
     cooperative_check: Callable[[], object] = lambda: None,
 ) -> CompositionExecution:
     """Execute fixed one-hop capabilities sequentially under declared non-time bounds."""
@@ -660,8 +660,8 @@ def execute_composition_plan(
                 if not isinstance(raw_rows, list) or len(raw_rows) > query_limit:
                     raise InvalidRequestError("composition query returned an invalid collection")
                 graph_rows += len(raw_rows)
-                rows = [validate_relation_claim_projection(value) for value in raw_rows]
-                rows.sort(key=lambda value: value["projection"]["claim_id"])
+                rows = [validate_relation_proposition_projection(value) for value in raw_rows]
+                rows.sort(key=lambda value: value["projection"]["proposition_id"])
                 if len(rows) == sentinel_limit:
                     truncated = True
                     branch_truncated = True
@@ -675,8 +675,8 @@ def execute_composition_plan(
                     cooperative_check()
                     projection = item["projection"]
                     if projection["subject_entity_id"] != state["entity_id"] or projection["predicate_id"] != step["predicate_id"]:
-                        raise InvalidRequestError("composition query returned a Claim outside the requested binding")
-                    initial = validate_claim_eligibility_decision(evaluate(projection))
+                        raise InvalidRequestError("composition query returned a Proposition outside the requested binding")
+                    initial = validate_proposition_eligibility_decision(evaluate(projection))
                     if not initial["eligible"]:
                         continue
                     if graph_rows >= current["max_rows"]:
@@ -686,7 +686,7 @@ def execute_composition_plan(
                         if state["path"]:
                             partial_paths.append(state["path"])
                         break
-                    decision = validate_claim_eligibility_decision(revalidate(projection))
+                    decision = validate_proposition_eligibility_decision(revalidate(projection))
                     graph_rows += 1
                     if not decision["eligible"] or not decision["revalidated"]:
                         continue
@@ -706,11 +706,11 @@ def execute_composition_plan(
                         continue
                     entry: CompositionPathEntry = {
                         "step": step,
-                        "claim": item,
+                        "proposition": item,
                         "decision": decision,
                     }
                     path = (*state["path"], entry)
-                    if len(path) > current["max_path_claims"]:
+                    if len(path) > current["max_path_propositions"]:
                         truncated = True
                         branch_truncated = True
                         reasons.add(CompositionReason.PATH_LIMIT)
@@ -752,9 +752,9 @@ def execute_composition_plan(
     else:
         reasons.add(CompositionReason.NO_PATH)
 
-    raw_terminal_ids = tuple(path[-1]["claim"]["projection"]["object_entity_id"] for path in complete)
-    raw_terminal_labels = tuple(path[-1]["claim"]["object_label"] for path in complete)
-    raw_terminal_types = tuple(path[-1]["claim"]["object_type"] for path in complete)
+    raw_terminal_ids = tuple(path[-1]["proposition"]["projection"]["object_entity_id"] for path in complete)
+    raw_terminal_labels = tuple(path[-1]["proposition"]["object_label"] for path in complete)
+    raw_terminal_types = tuple(path[-1]["proposition"]["object_type"] for path in complete)
     terminal_values: dict[str, tuple[str, ExpectedObjectType]] = {}
     terminal_consistent = True
     for entity_id, label, object_type in zip(
@@ -816,7 +816,7 @@ def execute_composition_plan(
             truth_available = True
         direct = truth_available
     elif operator == GraphCompositionOperator.COUNT:
-        terminal_cardinalities = tuple(path[-1]["claim"]["predicate_cardinality"] for path in complete)
+        terminal_cardinalities = tuple(path[-1]["proposition"]["predicate_cardinality"] for path in complete)
         if any(value == PredicateCardinality.UNKNOWN for value in terminal_cardinalities):
             reasons.add(CompositionReason.CARDINALITY_UNKNOWN)
         elif len(terminal_ids) != len(raw_terminal_ids):

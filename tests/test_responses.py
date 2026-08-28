@@ -58,7 +58,7 @@ def artifact(
         tier=tier,
         lifecycle=lifecycle,
         scope=scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",

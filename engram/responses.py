@@ -48,6 +48,7 @@ from engram.repository import (
     repository_state_with_artifact_updates,
     validate_tier_admission_policy,
 )
+from engram.support import validate_support_reference
 
 
 def utc_receipt_clock() -> str:
@@ -342,14 +343,12 @@ class AcceptedResponseService:
             support_records = metadata.get("support", [])
             if not isinstance(support_records, list) or not all(isinstance(record, dict) for record in support_records):
                 raise InvalidRequestError("learn response metadata support must be an array of objects")
-            support_claim_ids = tuple(
-                sorted(
-                    {
-                        response_audit_text(record.get("claim_id", ""), "learn response support claim_id", 256, allow_empty=False)
-                        for record in support_records
-                    }
+            try:
+                support_references = tuple(
+                    validate_support_reference(record) for record in support_records
                 )
-            )
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
             artifact = cached_response_artifact(
                 statement_id=f"response_{uuid5(NAMESPACE_URL, f'engram:LearnResponse:{request_id}').hex}",
                 generation=1,
@@ -359,7 +358,7 @@ class AcceptedResponseService:
                 tier=Tier.DYNAMIC,
                 lifecycle=LifecycleState.ACTIVE,
                 scope=scope,
-                support_claim_ids=support_claim_ids,
+                support_references=support_references,
                 valid_from="",
                 valid_from_available=False,
                 valid_until="",

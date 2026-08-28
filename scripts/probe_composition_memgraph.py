@@ -52,7 +52,7 @@ def run(config_path: str) -> dict[str, object]:
         if len(entities) == 1:
             for predicate_id in sorted(predicates):
                 rows, elapsed_ms = _timed(
-                    lambda predicate_id=predicate_id: engine.relation_one_hop_claim_projections(
+                    lambda predicate_id=predicate_id: engine.relation_one_hop_proposition_projections(
                         entities[0]["canonical_id"],
                         predicate_id,
                         row_limit=4,
@@ -63,9 +63,9 @@ def run(config_path: str) -> dict[str, object]:
                         "subject_entity_id": entities[0]["canonical_id"],
                         "predicate_id": predicate_id,
                         "elapsed_ms": elapsed_ms,
-                        "claims": [
+                        "propositions": [
                             {
-                                "claim_id": row["projection"]["claim_id"],
+                                "proposition_id": row["projection"]["proposition_id"],
                                 "object_entity_id": row["projection"]["object_entity_id"],
                                 "object_label": row["object_label"],
                                 "object_type": row["object_type"].value,
@@ -80,7 +80,7 @@ def run(config_path: str) -> dict[str, object]:
         for subject_id in sorted(second_hop_subjects)[:4]:
             for predicate_id in sorted(predicates):
                 rows, elapsed_ms = _timed(
-                    lambda subject_id=subject_id, predicate_id=predicate_id: engine.relation_one_hop_claim_projections(
+                    lambda subject_id=subject_id, predicate_id=predicate_id: engine.relation_one_hop_proposition_projections(
                         subject_id,
                         predicate_id,
                         row_limit=4,
@@ -93,9 +93,9 @@ def run(config_path: str) -> dict[str, object]:
                             "subject_label": second_hop_subjects[subject_id],
                             "predicate_id": predicate_id,
                             "elapsed_ms": elapsed_ms,
-                            "claims": [
+                            "propositions": [
                                 {
-                                    "claim_id": row["projection"]["claim_id"],
+                                    "proposition_id": row["projection"]["proposition_id"],
                                     "object_entity_id": row["projection"]["object_entity_id"],
                                     "object_label": row["object_label"],
                                     "object_type": row["object_type"].value,
@@ -124,7 +124,7 @@ def run(config_path: str) -> dict[str, object]:
                     "outcome": result["outcome"].value,
                     "responses": [candidate["response"] for candidate in result["response_candidates"]],
                     "evidence_paths": [
-                        [step["claim_id"] for step in record["path"] if isinstance(step, dict)]
+                        [step["proposition_id"] for step in record["path"] if isinstance(step, dict)]
                         for record in result["evidence_package"]["records"]
                     ],
                     "structured_reason": structured["reason_code"],

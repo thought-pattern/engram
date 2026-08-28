@@ -62,10 +62,17 @@ def test_load_config_values_enum_fields_by_name(tmp_path):
 
 
 def test_load_config_values_graph_mapping(tmp_path):
-    cfg = load_config(_write(tmp_path, "graph:\n  host: db\n  port: 7777\n  enabled: true\n"))
+    cfg = load_config(
+        _write(
+            tmp_path,
+            "graph:\n  host: db\n  port: 7777\n  enabled: true\n"
+            "  deployment_mode: tapestry_managed\n",
+        )
+    )
     assert cfg["graph"]["host"] == "db"
     assert cfg["graph"]["port"] == 7777
     assert cfg["graph"]["enabled"] is True
+    assert cfg["graph"]["deployment_mode"] == "tapestry_managed"
 
 
 def test_load_config_values_unknown_key_raises(tmp_path):

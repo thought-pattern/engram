@@ -457,7 +457,7 @@ class EngramCore:
         self._resolution_accounting = ResolutionAccountingFinalizer(
             self.engram,
             self._response_mutations,
-            lambda previous_ids: persistence.synchronize_response_compatibility_views(self.engram, previous_ids),
+            lambda previous_ids: persistence.synchronize_response_statement_projections(self.engram, previous_ids),
         )
         default_fusion_policy = fusion_policy()
         fusion_policy_value = policy_fingerprint(default_fusion_policy)
@@ -1173,7 +1173,7 @@ class EngramCore:
                             "external regulator marked the observed candidate generation stale",
                         )
                         if not lifecycle["replayed"]:
-                            persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                            persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
                     except (ConflictError, ResourceNotFoundError, InvalidRequestError):
                         lifecycle_status = LifecycleHandoffStatus.CONFLICTED
@@ -1614,7 +1614,7 @@ class EngramCore:
                     accounting_request_id("response-query", request_id),
                 )
                 if not accounting["replayed"]:
-                    persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                    persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                 self._dirty = bool(self.store_path and not accounting["durable"])
             else:
                 self._dirty = True
@@ -1709,7 +1709,7 @@ class EngramCore:
                             "external regulator marked the observed proposal candidate generation stale",
                         )
                         if not lifecycle["replayed"]:
-                            persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                            persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
                     except (ConflictError, ResourceNotFoundError, InvalidRequestError):
                         lifecycle_status = LifecycleHandoffStatus.CONFLICTED
@@ -1755,7 +1755,7 @@ class EngramCore:
                         accounting_request_id("response-hit", proposal_id),
                     )
                     if not accounting["replayed"]:
-                        persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                        persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                     self._dirty = bool(self.store_path and not accounting["durable"])
                 else:
                     self._checkpoint()
@@ -1816,7 +1816,7 @@ class EngramCore:
                 raise LifecycleError("response mutation receipt result is malformed")
             learned = receipt["result_code"].value != "REJECTED_CAPACITY"
             if learned and not mutation["replayed"]:
-                persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                 self.engram.eviction_count += len(evicted_statement_ids)
             if learned:
                 sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
@@ -1868,7 +1868,7 @@ class EngramCore:
                     reason,
                 )
                 if not mutation["replayed"]:
-                    persistence.synchronize_response_compatibility_views(self.engram, previous_response_ids)
+                    persistence.synchronize_response_statement_projections(self.engram, previous_response_ids)
                     self.regulated_metrics["retired"] += 1
                 else:
                     self.regulated_metrics["idempotent_retries"] += 1

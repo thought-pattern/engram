@@ -21,7 +21,7 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.errors import InvalidRequestError
-from engram.graph import CanonicalEntityMatch, CanonicalPredicateMatch, RelationClaimProjection, validate_relation_claim_projection
+from engram.graph import CanonicalEntityMatch, CanonicalPredicateMatch, RelationPropositionProjection, validate_relation_proposition_projection
 from engram.identity import normalize_retrieval_key
 from engram.resolution import validate_query_frame
 from engram.spacy_setup import get_nlp
@@ -33,7 +33,7 @@ CanonicalResolution = dict
 OneHopQueryPlan = dict
 
 
-RelationClaimSelection = dict
+RelationPropositionSelection = dict
 
 
 def _text(value: object, name: str, *, allow_empty: bool = False) -> str:
@@ -350,7 +350,7 @@ def one_hop_query_plan(
     expected_object_type: object,
     *,
     max_rows: object = MAX_RELATION_PLAN_ROWS,
-    template_id: object = RelationPlanTemplate.ONE_HOP_CLAIM_V1,
+    template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
     schema_version: object = RELATION_CONTRACT_SCHEMA_VERSION,
 ) -> OneHopQueryPlan:
     """Compile only the fixed one-hop template; Cypher and procedures are not inputs."""
@@ -358,7 +358,7 @@ def one_hop_query_plan(
     relation = validate_canonical_resolution(predicate)
     if entity["status"] != CanonicalResolutionStatus.SELECTED or relation["status"] != CanonicalResolutionStatus.SELECTED:
         raise InvalidRequestError("one-hop query plan requires selected entity and Predicate identities")
-    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_CLAIM_V1:
+    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION_V1:
         raise InvalidRequestError("one-hop query plan template is unsupported")
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("one-hop query plan expected object type is unsupported")
@@ -372,7 +372,7 @@ def one_hop_query_plan(
         raise InvalidRequestError(f"one-hop query plan max_rows must be from 1 through {MAX_RELATION_PLAN_ROWS}")
     result: OneHopQueryPlan = {
         "schema_version": RELATION_CONTRACT_SCHEMA_VERSION,
-        "template_id": RelationPlanTemplate.ONE_HOP_CLAIM_V1,
+        "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
         "subject_entity_id": entity["canonical_id"],
         "predicate_id": relation["canonical_id"],
         "expected_object_type": expected_object_type,
@@ -422,7 +422,7 @@ def object_type_match(expected: object, actual: object) -> tuple[float, bool]:
 
 
 def _projection_interval(
-    item: RelationClaimProjection,
+    item: RelationPropositionProjection,
     axis: TemporalAxis,
 ) -> tuple[str, bool, str, bool]:
     projection = item["projection"]
@@ -451,7 +451,7 @@ def _projection_interval(
     return result
 
 
-def _intervals_overlap(first: RelationClaimProjection, second: RelationClaimProjection, axis: TemporalAxis) -> bool:
+def _intervals_overlap(first: RelationPropositionProjection, second: RelationPropositionProjection, axis: TemporalAxis) -> bool:
     first_lower, first_lower_available, first_upper, first_upper_available = _projection_interval(first, axis)
     second_lower, second_lower_available, second_upper, second_upper_available = _projection_interval(second, axis)
     first_starts_before_second_ends = (
@@ -471,22 +471,22 @@ def _intervals_overlap(first: RelationClaimProjection, second: RelationClaimProj
 def _relation_selection(
     *,
     direct_answer: bool,
-    selected_claim_id: str,
-    evidence_claim_ids: tuple[str, ...],
-    conflict_claim_ids: tuple[str, ...],
-    ranking_claim_ids: tuple[str, ...],
+    selected_proposition_id: str,
+    evidence_proposition_ids: tuple[str, ...],
+    conflict_proposition_ids: tuple[str, ...],
+    ranking_proposition_ids: tuple[str, ...],
     reason: RelationSelectionReason,
     cardinality: PredicateCardinality,
     trust_version: int = 0,
     trust_version_available: bool = False,
-) -> RelationClaimSelection:
-    result: RelationClaimSelection = {
+) -> RelationPropositionSelection:
+    result: RelationPropositionSelection = {
         "direct_answer": direct_answer,
-        "selected_claim_id": selected_claim_id,
-        "selected_claim_id_available": bool(selected_claim_id),
-        "evidence_claim_ids": evidence_claim_ids,
-        "conflict_claim_ids": conflict_claim_ids,
-        "ranking_claim_ids": ranking_claim_ids,
+        "selected_proposition_id": selected_proposition_id,
+        "selected_proposition_id_available": bool(selected_proposition_id),
+        "evidence_proposition_ids": evidence_proposition_ids,
+        "conflict_proposition_ids": conflict_proposition_ids,
+        "ranking_proposition_ids": ranking_proposition_ids,
         "reason": reason,
         "cardinality": cardinality,
         "trust_version": trust_version,
@@ -495,21 +495,21 @@ def _relation_selection(
     return result
 
 
-def select_relation_claims(items: object, temporal_query: object) -> RelationClaimSelection:
-    """Select one direct one-hop Claim or preserve bounded evidence conservatively."""
+def select_relation_propositions(items: object, temporal_query: object) -> RelationPropositionSelection:
+    """Select one direct one-hop Proposition or preserve bounded evidence conservatively."""
     if not isinstance(items, tuple) or len(items) > MAX_RELATION_PLAN_ROWS:
         raise InvalidRequestError(f"relation selection items must be a tuple of at most {MAX_RELATION_PLAN_ROWS} values")
-    validated = tuple(validate_relation_claim_projection(item) for item in items)
+    validated = tuple(validate_relation_proposition_projection(item) for item in items)
     temporal: TemporalQuery = validate_temporal_query(temporal_query)
-    evidence_claim_ids = tuple(sorted(item["projection"]["claim_id"] for item in validated))
+    evidence_proposition_ids = tuple(sorted(item["projection"]["proposition_id"] for item in validated))
     if not validated:
         result = _relation_selection(
             direct_answer=False,
-            selected_claim_id="",
-            evidence_claim_ids=(),
-            conflict_claim_ids=(),
-            ranking_claim_ids=(),
-            reason=RelationSelectionReason.NO_ELIGIBLE_CLAIM,
+            selected_proposition_id="",
+            evidence_proposition_ids=(),
+            conflict_proposition_ids=(),
+            ranking_proposition_ids=(),
+            reason=RelationSelectionReason.NO_ELIGIBLE_PROPOSITION,
             cardinality=PredicateCardinality.UNKNOWN,
         )
         return result
@@ -522,13 +522,13 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
         for item in validated:
             lower, lower_available, _upper, _upper_available = _projection_interval(item, temporal["axis"])
             if not lower_available:
-                ranking_claim_ids = tuple(sorted(evidence_claim_ids))
+                ranking_proposition_ids = tuple(sorted(evidence_proposition_ids))
                 result = _relation_selection(
                     direct_answer=False,
-                    selected_claim_id="",
-                    evidence_claim_ids=evidence_claim_ids,
-                    conflict_claim_ids=(),
-                    ranking_claim_ids=ranking_claim_ids,
+                    selected_proposition_id="",
+                    evidence_proposition_ids=evidence_proposition_ids,
+                    conflict_proposition_ids=(),
+                    ranking_proposition_ids=ranking_proposition_ids,
                     reason=RelationSelectionReason.LATEST_BOUND_UNAVAILABLE,
                     cardinality=cardinality,
                 )
@@ -537,14 +537,14 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
         latest = max(value for value, _item in lower_values)
         considered = tuple(item for value, item in lower_values if value == latest)
 
-    ranking_claim_ids = tuple(
-        item["projection"]["claim_id"]
+    ranking_proposition_ids = tuple(
+        item["projection"]["proposition_id"]
         for item in sorted(
             validated,
             key=lambda item: (
                 not item["projection"]["supplied_trust_available"],
                 -item["projection"]["supplied_trust"],
-                item["projection"]["claim_id"],
+                item["projection"]["proposition_id"],
             ),
         )
     )
@@ -555,8 +555,8 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
             if first["projection"]["object_entity_id"] != second["projection"]["object_entity_id"] and _intervals_overlap(
                 first, second, temporal["axis"]
             ):
-                conflict_ids.add(first["projection"]["claim_id"])
-                conflict_ids.add(second["projection"]["claim_id"])
+                conflict_ids.add(first["projection"]["proposition_id"])
+                conflict_ids.add(second["projection"]["proposition_id"])
     normalized_conflict_ids = tuple(sorted(conflict_ids))
     if len(objects) > 1:
         if cardinality == PredicateCardinality.MULTI:
@@ -575,10 +575,10 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
             reason = RelationSelectionReason.BOUNDED_MULTIPLE_PERIODS
         result = _relation_selection(
             direct_answer=False,
-            selected_claim_id="",
-            evidence_claim_ids=evidence_claim_ids,
-            conflict_claim_ids=normalized_conflict_ids,
-            ranking_claim_ids=ranking_claim_ids,
+            selected_proposition_id="",
+            evidence_proposition_ids=evidence_proposition_ids,
+            conflict_proposition_ids=normalized_conflict_ids,
+            ranking_proposition_ids=ranking_proposition_ids,
             reason=reason,
             cardinality=cardinality,
         )
@@ -600,10 +600,10 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
         if has_open_bounds:
             result = _relation_selection(
                 direct_answer=False,
-                selected_claim_id="",
-                evidence_claim_ids=evidence_claim_ids,
-                conflict_claim_ids=(),
-                ranking_claim_ids=ranking_claim_ids,
+                selected_proposition_id="",
+                evidence_proposition_ids=evidence_proposition_ids,
+                conflict_proposition_ids=(),
+                ranking_proposition_ids=ranking_proposition_ids,
                 reason=RelationSelectionReason.TEMPORAL_BOUNDS_OPEN,
                 cardinality=cardinality,
             )
@@ -612,10 +612,10 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
     if any(not item["projection"]["supplied_trust_available"] for item in considered):
         result = _relation_selection(
             direct_answer=False,
-            selected_claim_id="",
-            evidence_claim_ids=evidence_claim_ids,
-            conflict_claim_ids=(),
-            ranking_claim_ids=ranking_claim_ids,
+            selected_proposition_id="",
+            evidence_proposition_ids=evidence_proposition_ids,
+            conflict_proposition_ids=(),
+            ranking_proposition_ids=ranking_proposition_ids,
             reason=RelationSelectionReason.TRUST_UNAVAILABLE,
             cardinality=cardinality,
         )
@@ -624,10 +624,10 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
     if len(trust_versions) != 1:
         result = _relation_selection(
             direct_answer=False,
-            selected_claim_id="",
-            evidence_claim_ids=evidence_claim_ids,
-            conflict_claim_ids=(),
-            ranking_claim_ids=ranking_claim_ids,
+            selected_proposition_id="",
+            evidence_proposition_ids=evidence_proposition_ids,
+            conflict_proposition_ids=(),
+            ranking_proposition_ids=ranking_proposition_ids,
             reason=RelationSelectionReason.TRUST_VERSION_INCOMPARABLE,
             cardinality=cardinality,
         )
@@ -635,9 +635,9 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
     trust_version = next(iter(trust_versions))
     ranked_considered = sorted(
         considered,
-        key=lambda item: (-item["projection"]["supplied_trust"], item["projection"]["claim_id"]),
+        key=lambda item: (-item["projection"]["supplied_trust"], item["projection"]["proposition_id"]),
     )
-    selected_claim_id = ranked_considered[0]["projection"]["claim_id"]
+    selected_proposition_id = ranked_considered[0]["projection"]["proposition_id"]
     unique_trust_leader = len(ranked_considered) > 1 and (
         ranked_considered[0]["projection"]["supplied_trust"] > ranked_considered[1]["projection"]["supplied_trust"]
     )
@@ -649,10 +649,10 @@ def select_relation_claims(items: object, temporal_query: object) -> RelationCla
         reason = RelationSelectionReason.SELECTED_UNIQUE
     result = _relation_selection(
         direct_answer=True,
-        selected_claim_id=selected_claim_id,
-        evidence_claim_ids=evidence_claim_ids,
-        conflict_claim_ids=(),
-        ranking_claim_ids=ranking_claim_ids,
+        selected_proposition_id=selected_proposition_id,
+        evidence_proposition_ids=evidence_proposition_ids,
+        conflict_proposition_ids=(),
+        ranking_proposition_ids=ranking_proposition_ids,
         reason=reason,
         cardinality=cardinality,
         trust_version=trust_version,

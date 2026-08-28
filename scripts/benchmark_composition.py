@@ -15,8 +15,8 @@ if str(REPOSITORY) not in sys.path:
 from engram.composition import composition_plan, composition_step, execute_composition_plan
 from engram.constants import ExpectedObjectType, GraphCompositionOperator
 from engram.core import Engram
-from engram.evidence import ClaimEligibilityEvaluator
-from engram.graph import ClaimProjectionQuery, claim_projection, relation_claim_projection_from_graph_row
+from engram.evidence import PropositionEligibilityEvaluator
+from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import scope_key
 from engram.resolution import QueryFrameBuilder
 from scripts.benchmark_metadata import benchmark_source_state
@@ -43,11 +43,11 @@ def _percentile(values: list[float], fraction: float) -> float:
 
 def _relation(raw: list[object]):
     if len(raw) != 7 or not all(isinstance(value, str) for value in raw):
-        raise ValueError("composition corpus Claims must be seven-string lists")
-    claim_id, subject_id, predicate_id, object_id, label, object_type, cardinality = raw
-    return relation_claim_projection_from_graph_row(
+        raise ValueError("composition corpus Propositions must be seven-string lists")
+    proposition_id, subject_id, predicate_id, object_id, label, object_type, cardinality = raw
+    return relation_proposition_projection_from_graph_row(
         {
-            "claim_id": claim_id,
+            "proposition_id": proposition_id,
             "subject_entity_id": subject_id,
             "predicate_id": predicate_id,
             "object_entity_id": object_id,
@@ -84,7 +84,7 @@ def _current(item):
     values = dict(item["projection"])
     values.update(
         {
-            "projection_id": ClaimProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID_V1,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -93,7 +93,7 @@ def _current(item):
             "vector_index_id_available": False,
         }
     )
-    return claim_projection(**values)
+    return proposition_projection(**values)
 
 
 def _branches(case: dict[str, object]) -> list[list[list[str]]]:
@@ -151,21 +151,21 @@ def _plan(case: dict[str, object]):
     )
 
 
-def _run_case(case: dict[str, object], frame, evaluator: ClaimEligibilityEvaluator) -> dict[str, object]:
+def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEvaluator) -> dict[str, object]:
     started = time.perf_counter_ns()
     plan = _plan(case)
-    raw_claims = case["claims"]
-    if not isinstance(raw_claims, list):
-        raise ValueError("composition corpus claims must be a list")
-    claims = tuple(_relation(value) for value in raw_claims if isinstance(value, list))
-    if len(claims) != len(raw_claims):
-        raise ValueError("composition corpus Claim entries must be lists")
+    raw_propositions = case["propositions"]
+    if not isinstance(raw_propositions, list):
+        raise ValueError("composition corpus propositions must be a list")
+    propositions = tuple(_relation(value) for value in raw_propositions if isinstance(value, list))
+    if len(propositions) != len(raw_propositions):
+        raise ValueError("composition corpus Proposition entries must be lists")
     rows = {}
     current = {}
-    for item in claims:
+    for item in propositions:
         projection = item["projection"]
         rows.setdefault((projection["subject_entity_id"], projection["predicate_id"]), []).append(item)
-        current[projection["claim_id"]] = _current(item)
+        current[projection["proposition_id"]] = _current(item)
     raw_failures = case.get("fail_queries", [])
     if not isinstance(raw_failures, list) or not all(isinstance(value, str) for value in raw_failures):
         raise ValueError("composition corpus fail_queries must be a string list")
@@ -183,7 +183,7 @@ def _run_case(case: dict[str, object], frame, evaluator: ClaimEligibilityEvaluat
         lambda projection: evaluator.revalidate(
             projection,
             frame,
-            lambda claim_id: (current[claim_id],),
+            lambda proposition_id: (current[proposition_id],),
         ),
     )
     elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
@@ -198,11 +198,11 @@ def _run_case(case: dict[str, object], frame, evaluator: ClaimEligibilityEvaluat
         "truncated": execution["truncated"],
         "reasons": [reason.value for reason in execution["reasons"]],
         "graph_rows": execution["graph_rows"],
-        "complete_claim_paths": [
-            [entry["claim"]["projection"]["claim_id"] for entry in path] for path in execution["complete_paths"]
+        "complete_proposition_paths": [
+            [entry["proposition"]["projection"]["proposition_id"] for entry in path] for path in execution["complete_paths"]
         ],
-        "partial_claim_paths": [
-            [entry["claim"]["projection"]["claim_id"] for entry in path] for path in execution["partial_paths"]
+        "partial_proposition_paths": [
+            [entry["proposition"]["projection"]["proposition_id"] for entry in path] for path in execution["partial_paths"]
         ],
     }
     raw_expected = case["expected"]
@@ -220,7 +220,7 @@ def _run_case(case: dict[str, object], frame, evaluator: ClaimEligibilityEvaluat
         and 1 <= plan["max_rows"] <= 64
         and 1 <= plan["max_branches"] <= 4
         and 1 <= plan["max_candidates_per_step"] <= 8
-        and 1 <= plan["max_path_claims"] <= 2
+        and 1 <= plan["max_path_propositions"] <= 2
         and execution["graph_rows"] <= plan["max_rows"]
     )
     useful_evidence = execution["direct_result"] or bool(execution["complete_paths"] or execution["partial_paths"])
@@ -241,7 +241,7 @@ def run(corpus_path: Path) -> dict[str, object]:
         "What is connected to the root?",
         scope_key(namespace="public"),
     )
-    evaluator = ClaimEligibilityEvaluator()
+    evaluator = PropositionEligibilityEvaluator()
     results = []
     for split in ("development", "held_out"):
         raw_cases = corpus[split]

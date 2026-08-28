@@ -6,6 +6,8 @@ from engram.identity import build_scoped_retrieval_key, scope_key
 from engram.indexes import ExactLookupOutcome, IndexIssueReason
 from engram.service import EngramCore
 
+from .support_fixtures import PROPOSITION_REFERENCE_A, REFERENCE_IDS
+
 
 def _baseline_engram() -> Engram:
     result = Engram(
@@ -44,14 +46,18 @@ def test_section2_exact_lookup_does_not_invent_a_legacy_key() -> None:
     assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in engram.index_snapshot()["build_report"]["issues"]}
 
 
-def test_section2_claim_support_reverse_index_preserves_current_metadata() -> None:
+def test_section2_proposition_support_reverse_index_preserves_current_metadata() -> None:
     engram = _baseline_engram()
     statement_id = engram.store(
-        "A response supported by a synthetic Claim.",
+        "A response supported by a synthetic Proposition.",
         keyword_source="synthetic support",
-        template={"tapestry": {"support": [{"claim_id": "claim-synthetic"}]}},
+        template={"tapestry": {"support": [PROPOSITION_REFERENCE_A]}},
     )
 
     state = engram.index_snapshot()
-    assert state["claim_to_statements"] == {"claim-synthetic": (statement_id,)}
-    assert state["statement_to_claims"] == {statement_id: ("claim-synthetic",)}
+    assert state["record_to_statements"] == {
+        REFERENCE_IDS.get("proposition_a", ""): (statement_id,)
+    }
+    assert state["statement_to_references"] == {
+        statement_id: (PROPOSITION_REFERENCE_A,)
+    }

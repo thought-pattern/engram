@@ -55,7 +55,7 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     class BlockingGraph:
         available = True
 
-        def structured_claim_projections(self, _value, *, projection_id, limit):
+        def structured_proposition_projections(self, _value, *, projection_id, limit):
             entered.set()
             assert release.wait(timeout=5)
             return []

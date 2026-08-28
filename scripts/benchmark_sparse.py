@@ -89,7 +89,7 @@ def _artifact(raw: Mapping[str, object], namespace: str) -> CachedResponseArtifa
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=selected_scope,
-        support_claim_ids=(),
+        support_references=(),
         valid_from="",
         valid_from_available=False,
         valid_until="",
@@ -151,7 +151,7 @@ def _existing_idf(artifacts: tuple[CachedResponseArtifact, ...]) -> Callable[[st
     engine.response_repository = ArtifactRepository(artifacts)
     from engram import persistence
 
-    persistence.synchronize_response_compatibility_views(engine, ())
+    persistence.synchronize_response_statement_projections(engine, ())
 
     def search(text: str, limit: int) -> list[tuple[str, float]]:
         result = engine.query_candidates(text, limit=limit, max_working_memory_bytes=32 * 1024 * 1024)

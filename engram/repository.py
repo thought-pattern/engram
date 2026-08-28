@@ -188,14 +188,14 @@ def _thaw_mapping(value: object) -> dict[str, object]:
     return thawed
 
 
-def compatibility_statement_from_artifact(artifact: CachedResponseArtifact) -> Mapping[str, object]:
-    """Derive the complete legacy statement shape without sharing authority."""
+def statement_projection_from_artifact(artifact: CachedResponseArtifact) -> Mapping[str, object]:
+    """Project an accepted response into Engram's local matcher record."""
 
     try:
         artifact = validate_cached_response_artifact(artifact)
     except InvalidRequestError as error:
         raise InvalidRequestError("compatibility source must be a CachedResponseArtifact") from error
-    support = [{"claim_id": claim_id} for claim_id in artifact["support_claim_ids"]]
+    support = [dict(reference) for reference in artifact["support_references"]]
     last_hit = (
         datetime.fromisoformat(artifact["statistics"]["last_hit"][:-1] + "+00:00")
         if artifact["statistics"]["last_hit_available"]
@@ -257,7 +257,7 @@ def _context_required_projection(artifact: CachedResponseArtifact) -> IndexProje
         artifact["statement_id"],
         artifact["generation"],
         retrieval_representation_bindings(artifact["retrieval"], artifact["scope"]),
-        artifact["support_claim_ids"],
+        artifact["support_references"],
         False,
         exclusion_reason,
     )
@@ -489,7 +489,7 @@ def build_repository_state(
         if len(artifact_map) > MAX_REPOSITORY_ARTIFACTS:
             raise InvalidRequestError(f"repository artifacts exceed the limit of {MAX_REPOSITORY_ARTIFACTS}")
     statements = {
-        statement_id: compatibility_statement_from_artifact(artifact) for statement_id, artifact in sorted(artifact_map.items())
+        statement_id: statement_projection_from_artifact(artifact) for statement_id, artifact in sorted(artifact_map.items())
     }
     projections = tuple(_context_required_projection(artifact) for artifact in artifact_map.values())
     state = repository_state(
@@ -546,7 +546,7 @@ def check_repository_state(state: RepositoryState) -> RepositoryCheckReport:
     for statement_id, artifact in artifacts.items():
         if statement_id not in statements or statement_id not in index_state["projections"]:
             continue
-        expected_statement = compatibility_statement_from_artifact(artifact)
+        expected_statement = statement_projection_from_artifact(artifact)
         if _thaw_value(statements[statement_id]) != _thaw_value(expected_statement):
             issues.append(f"compatibility_statement_mismatch:{statement_id}")
         projection = index_state["projections"][statement_id]
@@ -554,7 +554,7 @@ def check_repository_state(state: RepositoryState) -> RepositoryCheckReport:
             issues.append(f"projection_identity_mismatch:{statement_id}")
         if projection["retrieval_keys"] != retrieval_representation_bindings(artifact["retrieval"], artifact["scope"]):
             issues.append(f"projection_retrieval_mismatch:{statement_id}")
-        if projection["support_claim_ids"] != artifact["support_claim_ids"]:
+        if projection["support_references"] != artifact["support_references"]:
             issues.append(f"projection_support_mismatch:{statement_id}")
     index_report = check_index_state(index_state)
     if not index_report["consistent"]:
