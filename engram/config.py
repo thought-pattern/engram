@@ -1,23 +1,16 @@
 """Configuration for ENGRAM.
 
-Configurations are plain dicts built by the factory functions below.
+Configurations are plain dictionaries returned by validating normalizers.
 """
 
-import math
-import os
-from types import NoneType
+from math import isfinite as math_isfinite
+from os import path as os_path
 
-import yaml
+from yaml import safe_load as yaml_safe_load
 
-from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, EvictionPolicy, RolloutMode, SessionOverflow
+from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, RolloutMode, SessionOverflow
 from engram.scope import validate_visibility_scope
-from engram.utilities import UtilityConfig, utility_config
-
-SparseConfig = dict
-SemanticConfig = dict
-RerankerConfig = dict
-RolloutConfig = dict
-
+from engram.utilities import utility_config
 
 EMPTY_SPARSE_CONFIG = EMPTY_CONFIG
 EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
@@ -91,14 +84,14 @@ def graph_config(
     if (
         not isinstance(vector_min_similarity, (int, float))
         or isinstance(vector_min_similarity, bool)
-        or not math.isfinite(vector_min_similarity)
+        or not math_isfinite(vector_min_similarity)
         or not 0.0 <= vector_min_similarity <= 1.0
     ):
         raise ValueError("graph vector_min_similarity must be between 0 and 1")
     if (
         not isinstance(vector_weight, (int, float))
         or isinstance(vector_weight, bool)
-        or not math.isfinite(vector_weight)
+        or not math_isfinite(vector_weight)
         or not 0.0 <= vector_weight <= 1.0
     ):
         raise ValueError("graph vector_weight must be between 0 and 1")
@@ -130,8 +123,8 @@ def sparse_config(
     max_query_terms: int = 64,
     max_posting_visits: int = 100_000,
     max_prefix_expansions: int = 64,
-) -> SparseConfig:
-    """Build configuration for the rebuildable local sparse index."""
+) -> dict:
+    """Build configuration for request-local sparse retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("sparse enabled must be a boolean")
     if not isinstance(include_response_text, bool):
@@ -143,7 +136,7 @@ def sparse_config(
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"sparse {name} must be an integer from 1 through {maximum}")
-    result: SparseConfig = {
+    result: dict = {
         "enabled": enabled,
         "include_response_text": include_response_text,
         "max_query_terms": max_query_terms,
@@ -168,7 +161,7 @@ def semantic_config(
     max_records: int = 100_000,
     max_scan_records: int = 100_000,
     min_similarity: float = 0.45,
-) -> SemanticConfig:
+) -> dict:
     """Build configuration for offline standalone semantic retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("semantic enabled must be a boolean")
@@ -203,13 +196,13 @@ def semantic_config(
     if (
         not isinstance(min_similarity, (int, float))
         or isinstance(min_similarity, bool)
-        or not math.isfinite(min_similarity)
+        or not math_isfinite(min_similarity)
         or not 0.0 <= min_similarity <= 1.0
     ):
         raise ValueError("semantic min_similarity must be between 0 and 1")
     if enabled and (not model_path.strip() or not model_version.strip() or not artifact_sha256):
         raise ValueError("enabled semantic retrieval requires model_path, model_version, and artifact_sha256")
-    result: SemanticConfig = {
+    result: dict = {
         "enabled": enabled,
         "model_path": model_path.strip(),
         "model_id": model_id.strip(),
@@ -235,7 +228,7 @@ def reranker_config(
     shortlist_size: int = 8,
     max_input_bytes: int = 65_536,
     max_model_time_ms: int = 25,
-) -> RerankerConfig:
+) -> dict:
     """Build the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
         raise ValueError("reranker enabled must be a boolean")
@@ -250,7 +243,7 @@ def reranker_config(
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"reranker {name} must be an integer from 1 through {maximum}")
-    result: RerankerConfig = {
+    result: dict = {
         "enabled": enabled,
         "implementation": implementation,
         "model_version": model_version.strip(),
@@ -265,7 +258,7 @@ def rollout_config(
     policy_version: str = "rollout-v1",
     default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
     namespaces: dict = EMPTY_CONFIG,
-) -> RolloutConfig:
+) -> dict:
     """Build the small namespace rollout policy used by unified resolution."""
     if not isinstance(policy_version, str) or not policy_version.strip():
         raise ValueError("rollout policy_version must be a non-empty string")
@@ -284,7 +277,7 @@ def rollout_config(
             selected_namespaces[namespace] = mode if isinstance(mode, RolloutMode) else RolloutMode(mode)
         except (TypeError, ValueError) as error:
             raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from error
-    result: RolloutConfig = {
+    result: dict = {
         "policy_version": policy_version.strip(),
         "default_mode": default_mode,
         "namespaces": selected_namespaces,
@@ -311,10 +304,6 @@ def engram_config(
     retrieval_rewrites_enabled: bool = False,
     learn_user_facts: bool = True,
     srai_depth_limit: int = 100,
-    # Eviction settings
-    eviction_policy: EvictionPolicy = EvictionPolicy.FIFO,
-    protect_static: bool = True,  # Legacy option; STATIC is always protected
-    min_hit_rate: float = 0.0,  # Protect categories above this hit rate
     # Matching enhancements
     use_stemming: bool = True,  # Enable stemmed matching (run matches running)
     use_lemmatization: bool = True,  # Enable WordNet-lemmatized matching (precise)
@@ -331,13 +320,13 @@ def engram_config(
     # Knowledge Graph settings
     graph: dict = EMPTY_CONFIG,
     # Rebuildable local sparse retrieval
-    sparse: SparseConfig = EMPTY_SPARSE_CONFIG,
+    sparse: dict = EMPTY_SPARSE_CONFIG,
     # Rebuildable local standalone semantic retrieval and optional reranking
-    semantic: SemanticConfig = EMPTY_SEMANTIC_CONFIG,
-    reranker: RerankerConfig = EMPTY_RERANKER_CONFIG,
-    rollout: RolloutConfig = EMPTY_ROLLOUT_CONFIG,
+    semantic: dict = EMPTY_SEMANTIC_CONFIG,
+    reranker: dict = EMPTY_RERANKER_CONFIG,
+    rollout: dict = EMPTY_ROLLOUT_CONFIG,
     # Allow-listed deterministic utility operations
-    utility: UtilityConfig = EMPTY_UTILITY_CONFIG,
+    utility: dict = EMPTY_UTILITY_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
@@ -360,11 +349,11 @@ def engram_config(
         raise ValueError("session_ttl_seconds must be positive")
 
     weights = (weight_base, weight_recency, weight_hit_rate)
-    if any(not math.isfinite(weight) or weight < 0 for weight in weights):
+    if any(not math_isfinite(weight) or weight < 0 for weight in weights):
         raise ValueError("scoring weights must be finite and non-negative")
     if sum(weights) <= 0:
         raise ValueError("scoring weights must sum to a positive value")
-    if not math.isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
+    if not math_isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
         raise ValueError("recency_half_life_seconds must be finite and positive")
     if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
         raise ValueError("srai_depth_limit must be an integer")
@@ -374,10 +363,6 @@ def engram_config(
         raise ValueError("max_synonyms_per_word must be an integer")
     if max_synonyms_per_word < 0:
         raise ValueError("max_synonyms_per_word must be non-negative")
-    if not math.isfinite(min_hit_rate) or not 0 <= min_hit_rate <= 1:
-        raise ValueError("min_hit_rate must be between 0 and 1")
-    if protect_static is False:
-        raise ValueError("static statements are always protected from eviction")
     if not isinstance(retrieval_rewrites_enabled, bool):
         raise ValueError("retrieval_rewrites_enabled must be a boolean")
 
@@ -395,8 +380,6 @@ def engram_config(
         "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
         "learn_user_facts": learn_user_facts,
         "srai_depth_limit": srai_depth_limit,
-        "eviction_policy": eviction_policy,
-        "min_hit_rate": min_hit_rate,
         "use_stemming": use_stemming,
         "use_lemmatization": use_lemmatization,
         "use_synonyms": use_synonyms,
@@ -422,25 +405,24 @@ def config_to_dict(config: dict) -> dict:
 
     Enums are written by value and the stopword set as a sorted list, so the
     result round-trips through JSON. Graph credentials are runtime-only and
-    deliberately omitted so cache persistence cannot retain secrets.
+    deliberately omitted because runtime credentials are not configuration exports.
     """
     data = dict(config)
-    data["eviction_policy"] = config["eviction_policy"].value
-    data["session_overflow"] = config["session_overflow"].value
-    data["stopwords"] = sorted(config["stopwords"])
-    graph = config.get("graph") or {}
+    data["session_overflow"] = config.get("session_overflow", SessionOverflow.REJECT).value
+    data["stopwords"] = sorted(config.get("stopwords", set()))
+    graph = config.get("graph", {}) or {}
     data["graph"] = {key: value for key, value in graph.items() if key != "password"}
-    data["sparse"] = dict(config.get("sparse") or sparse_config())
-    data["semantic"] = dict(config.get("semantic") or semantic_config())
-    data["reranker"] = dict(config.get("reranker") or reranker_config())
-    rollout = config.get("rollout") or rollout_config()
+    data["sparse"] = dict(config.get("sparse", {}) or sparse_config())
+    data["semantic"] = dict(config.get("semantic", {}) or semantic_config())
+    data["reranker"] = dict(config.get("reranker", {}) or reranker_config())
+    rollout = config.get("rollout", {}) or rollout_config()
     data["rollout"] = {
         "policy_version": rollout["policy_version"],
         "default_mode": rollout["default_mode"].value,
         "namespaces": {namespace: mode.value for namespace, mode in rollout["namespaces"].items()},
     }
-    data["utility"] = dict(config.get("utility") or utility_config())
-    data["utility"]["plugins"] = list(data["utility"]["plugins"])
+    data["utility"] = dict(config.get("utility", {}) or utility_config())
+    data.get("utility", {})["plugins"] = list(data.get("utility", {})["plugins"])
     return data
 
 
@@ -454,54 +436,40 @@ def config_from_dict(data: dict) -> dict:
     if not isinstance(data, dict):
         raise ValueError("serialized config must be an object")
     params = dict(data)
-    if "eviction_policy" in params:
-        params["eviction_policy"] = EvictionPolicy(params["eviction_policy"])
     if "session_overflow" in params:
-        params["session_overflow"] = SessionOverflow(params["session_overflow"])
+        params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
     if "stopwords" in params:
-        params["stopwords"] = set(params["stopwords"])
+        params["stopwords"] = set(params.get("stopwords", set()))
     if "graph" in params:
-        if isinstance(params["graph"], NoneType):
-            params["graph"] = {}
-        elif not isinstance(params["graph"], dict):
+        if not isinstance(params.get("graph", {}), dict):
             raise ValueError("serialized graph config must be an object")
-        elif params["graph"]:
-            params["graph"] = graph_config(**params["graph"])
+        if params.get("graph", {}):
+            params["graph"] = graph_config(**params.get("graph", {}))
     if "sparse" in params:
-        if isinstance(params["sparse"], NoneType):
-            params["sparse"] = {}
-        elif not isinstance(params["sparse"], dict):
+        if not isinstance(params.get("sparse", {}), dict):
             raise ValueError("serialized sparse config must be an object")
-        elif params["sparse"]:
-            params["sparse"] = sparse_config(**params["sparse"])
+        if params.get("sparse", {}):
+            params["sparse"] = sparse_config(**params.get("sparse", {}))
     if "semantic" in params:
-        if isinstance(params["semantic"], NoneType):
-            params["semantic"] = {}
-        elif not isinstance(params["semantic"], dict):
+        if not isinstance(params.get("semantic", {}), dict):
             raise ValueError("serialized semantic config must be an object")
-        elif params["semantic"]:
-            params["semantic"] = semantic_config(**params["semantic"])
+        if params.get("semantic", {}):
+            params["semantic"] = semantic_config(**params.get("semantic", {}))
     if "reranker" in params:
-        if isinstance(params["reranker"], NoneType):
-            params["reranker"] = {}
-        elif not isinstance(params["reranker"], dict):
+        if not isinstance(params.get("reranker", {}), dict):
             raise ValueError("serialized reranker config must be an object")
-        elif params["reranker"]:
-            params["reranker"] = reranker_config(**params["reranker"])
+        if params.get("reranker", {}):
+            params["reranker"] = reranker_config(**params.get("reranker", {}))
     if "rollout" in params:
-        if isinstance(params["rollout"], NoneType):
-            params["rollout"] = {}
-        elif not isinstance(params["rollout"], dict):
+        if not isinstance(params.get("rollout", {}), dict):
             raise ValueError("serialized rollout config must be an object")
-        elif params["rollout"]:
-            params["rollout"] = rollout_config(**params["rollout"])
+        if params.get("rollout", {}):
+            params["rollout"] = rollout_config(**params.get("rollout", {}))
     if "utility" in params:
-        if isinstance(params["utility"], NoneType):
-            params["utility"] = {}
-        elif not isinstance(params["utility"], dict):
+        if not isinstance(params.get("utility", {}), dict):
             raise ValueError("serialized utility config must be an object")
-        elif params["utility"]:
-            params["utility"] = utility_config(**params["utility"])
+        if params.get("utility", {}):
+            params["utility"] = utility_config(**params.get("utility", {}))
     config = engram_config(**params)
     return config
 
@@ -510,8 +478,8 @@ def load_config(path: str = "config.yml") -> dict:
     """Build a config dict from a YAML file.
 
     A missing or empty file returns the ``engram_config`` defaults. Scalar keys
-    map straight through; ``eviction_policy`` and ``session_overflow`` are given
-    by their string value, and a ``graph`` mapping is built with ``graph_config``.
+    map straight through; ``session_overflow`` is given by its string value,
+    and a ``graph`` mapping is built with ``graph_config``.
     An unknown key raises ValueError naming the key and the file -- a config
     typo should fail loudly, not be dropped.
 
@@ -521,18 +489,16 @@ def load_config(path: str = "config.yml") -> dict:
     Returns:
         A validated config dict.
     """
-    if not os.path.exists(path):
+    if not os_path.exists(path):
         config = engram_config()
         return config
 
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml_safe_load(f)
     if not data:
         config = engram_config()
         return config
 
-    if "eviction_policy" in data:
-        data["eviction_policy"] = EvictionPolicy(data["eviction_policy"])
     if "session_overflow" in data:
         data["session_overflow"] = SessionOverflow(data["session_overflow"])
     if "graph" in data and data["graph"]:

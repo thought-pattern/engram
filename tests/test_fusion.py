@@ -1,18 +1,12 @@
 """Section 5 feature, fusion, eligibility, ambiguity, and policy conformance."""
 
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from json import dumps as json_dumps
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.artifacts import (
-    CachedResponseArtifact,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
-)
+from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -47,15 +41,12 @@ from engram.fusion import (
     permissive_candidate_authority,
     policy_fingerprint,
 )
-from engram.identity import ScopeKey, build_retrieval_representation, build_standalone_identity, scope_key
+from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution import (
-    Candidate,
     CandidateSource,
     EvidenceKind,
-    EvidenceReference,
     ExpectedObjectType,
-    QueryFrame,
     QueryFrameBuilder,
     ResolutionOutcome,
     candidate as resolution_candidate,
@@ -73,6 +64,7 @@ from .support_fixtures import PROPOSITION_REFERENCE_A
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 SCOPE = scope_key(namespace="tenant-a", context_fingerprint="context-a")
+EMPTY_TEST_MAPPING = {}
 
 
 def conformance_fusion() -> CandidateFusionEngine:
@@ -80,7 +72,7 @@ def conformance_fusion() -> CandidateFusionEngine:
     return result
 
 
-def frame(engine: object = ()) -> QueryFrame:
+def frame(engine: object = ()) -> dict:
     selected = engine if isinstance(engine, Engram) else Engram()
     budget = capture_resolution_budget(lambda: START_NS)
     result = QueryFrameBuilder(selected, lambda: START_NS, lambda: NOW).build(
@@ -92,7 +84,7 @@ def frame(engine: object = ()) -> QueryFrame:
     return result
 
 
-def support_reference(proposition_id: str = "proposition-1") -> EvidenceReference:
+def support_reference(proposition_id: str = "proposition-1") -> dict:
     result = evidence_reference(proposition_id, "support_semantic", EvidenceKind.SUPPORT, SCOPE)
     return result
 
@@ -100,15 +92,15 @@ def support_reference(proposition_id: str = "proposition-1") -> EvidenceReferenc
 def candidate(
     statement_id: str,
     source: CandidateSource,
-    features: Mapping[str, float],
+    features: dict[str, float],
     *,
     response: str = "Supported response",
-    evidence: tuple[EvidenceReference, ...] = (),
-    scope: ScopeKey = SCOPE,
+    evidence: tuple[dict, ...] = (),
+    scope: dict = SCOPE,
     lifecycle: LifecycleState = LifecycleState.ACTIVE,
-    provenance: Mapping[str, object] = {},
-    diagnostics: Mapping[str, object] = {},
-) -> Candidate:
+    provenance: dict[str, object] = EMPTY_TEST_MAPPING,
+    diagnostics: dict[str, object] = EMPTY_TEST_MAPPING,
+) -> dict:
     result = resolution_candidate(
         candidate_id=f"candidate:{source.value}:{statement_id}",
         statement_id=statement_id,
@@ -128,8 +120,8 @@ def supported_pair(statement_id: str = "stmt-1", *, semantic: float = 0.92, lexi
     result = (
         candidate(
             statement_id,
-            CandidateSource.LEXICAL,
-            {"lexical_score": lexical, "recency": 0.9},
+            CandidateSource.SPARSE,
+            {"sparse_score": lexical},
             diagnostics={"lexical_trace": "sensitive-value"},
         ),
         candidate(
@@ -148,8 +140,8 @@ def artifact(
     response: str = "Supported response",
     valid_until: str = "",
     valid_until_available: bool = False,
-    metadata: Mapping[str, object] = {},
-) -> CachedResponseArtifact:
+    metadata: dict[str, object] = EMPTY_TEST_MAPPING,
+) -> dict:
     result = cached_response_artifact(
         statement_id="stmt-artifact",
         generation=1,
@@ -164,8 +156,6 @@ def artifact(
         valid_from_available=False,
         valid_until=valid_until,
         valid_until_available=valid_until_available,
-        knowledge_epoch=0,
-        knowledge_epoch_available=False,
         superseded_by="",
         provenance=artifact_provenance("released", "regulator", "2026-08-14T12:00:00Z"),
         statistics=artifact_statistics(query_count=4, hit_count=3),
@@ -174,7 +164,7 @@ def artifact(
     return result
 
 
-def report_candidates(decision) -> list[Mapping[str, object]]:
+def report_candidates(decision) -> list[dict[str, object]]:
     values = decision["report"]["candidates"]
     assert isinstance(values, list)
     result = values
@@ -193,7 +183,7 @@ def report_reason_codes(decision, index: int = 0) -> tuple[str, ...]:
 def test_feature_specification_is_closed_bounded_and_concrete() -> None:
     definitions = feature_definitions()
     assert set(definitions) == set(FusionFeature)
-    assert len(FusionFeature) == 13
+    assert len(FusionFeature) == 12
     assert all(definition["minimum"] == 0.0 and definition["maximum"] == 1.0 for definition in definitions.values())
     assert all(definition["meaning"] and definition["unavailable_meaning"] for definition in definitions.values())
     empty = empty_normalized_feature_set()
@@ -207,7 +197,7 @@ def test_policy_codec_is_closed_versioned_and_fingerprinted() -> None:
     policy = fusion_policy()
 
     assert fusion_policy_from_json(fusion_policy_to_json(policy)) == policy
-    assert policy_fingerprint(policy) == "1f9d19acaedc277b4916bc366e74dc8c03d921e335acd21ac7fc2f1b449d963c"
+    assert policy_fingerprint(policy) == "f1c09a8f7e87cca3ac7b1bcf5712b0c7c622ac2988c1a97f41f4dbe400dce72d"
     assert policy["answer_threshold"] == 0.78
     assert policy["evidence_threshold"] == 0.35
     assert policy["ambiguity_margin"] == 0.12
@@ -215,7 +205,6 @@ def test_policy_codec_is_closed_versioned_and_fingerprinted() -> None:
     assert policy["require_support_for_non_exact"] is True
     assert policy["weights"] == {
         FusionFeature.EXACT: 1.0,
-        FusionFeature.PATTERN: 0.75,
         FusionFeature.LEXICAL: 1.0,
         FusionFeature.SEMANTIC: 1.0,
         FusionFeature.ENTITY: 0.4,
@@ -230,24 +219,20 @@ def test_policy_codec_is_closed_versioned_and_fingerprinted() -> None:
     }
     invalid = fusion_policy_to_dict(policy)
     invalid["unknown"] = True
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
         fusion_policy_from_dict(invalid)
-    with pytest.raises(InvalidRequestError, match="unsupported"):
+    with pytest_raises(InvalidRequestError, match="unsupported"):
         fusion_policy_with_changes(policy, {"formula_version": 2})
-    with pytest.raises(InvalidRequestError, match="between 0 and 1"):
+    with pytest_raises(InvalidRequestError, match="between 0 and 1"):
         fusion_policy_with_changes(policy, {"answer_threshold": 1.1})
 
 
 def test_resolver_scores_use_source_specific_normalization() -> None:
     exact = normalize_candidate_features(candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}))
-    pattern = normalize_candidate_features(candidate("pattern", CandidateSource.PATTERN, {"pattern_specificity": 4.0}))
-    lexical = normalize_candidate_features(candidate("lexical", CandidateSource.LEXICAL, {"lexical_score": 0.7}))
-    semantic = normalize_candidate_features(
-        candidate("semantic", CandidateSource.SUPPORT_SEMANTIC, {"semantic_score": 0.8, "legacy_retrieval_score": 999.0})
-    )
+    lexical = normalize_candidate_features(candidate("sparse", CandidateSource.SPARSE, {"sparse_score": 0.7}))
+    semantic = normalize_candidate_features(candidate("semantic", CandidateSource.SUPPORT_SEMANTIC, {"semantic_score": 0.8}))
 
     assert exact["values"][FusionFeature.EXACT] == 1.0
-    assert pattern["values"][FusionFeature.PATTERN] == 0.5
     assert lexical["values"][FusionFeature.LEXICAL] == 0.7
     assert semantic["values"][FusionFeature.SEMANTIC] == 0.8
     assert FusionFeature.LEXICAL not in semantic["available"]
@@ -273,7 +258,7 @@ def test_deduplication_retains_contributions_diagnostics_and_evidence() -> None:
         assert isinstance(diagnostic_fields, list) and all(isinstance(value, str) for value in diagnostic_fields)
         fields.add(tuple(diagnostic_fields))
     assert fields == {("lexical_trace",), ("semantic_trace",)}
-    assert "sensitive-value" not in json.dumps(dict(decision["report"]))
+    assert "sensitive-value" not in json_dumps(dict(decision["report"]))
     assert decision["working_memory_bytes"] > 0
     assert fusion_decision_from_json(fusion_decision_to_json(decision)) == decision
 
@@ -298,10 +283,10 @@ def test_transparent_fusion_answers_only_supported_independent_agreement() -> No
 
 def test_fusion_fast_path_still_rejects_malformed_public_candidates() -> None:
     malformed_data: dict[str, object] = dict(supported_pair()[0])
-    malformed_data["source"] = "lexical"
+    malformed_data["source"] = "removed_source"
     malformed = malformed_data
 
-    with pytest.raises(InvalidRequestError, match="candidate source"):
+    with pytest_raises(InvalidRequestError, match="candidate source"):
         conformance_fusion().decide(frame(), (malformed,))
 
 
@@ -357,7 +342,7 @@ def test_close_distinct_candidates_abstain_even_above_answer_threshold() -> None
     assert decision["report"]["top_two_margin"] < fusion_policy()["ambiguity_margin"]
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("changed", "expected_reason"),
     [
         ({"scope": scope_key(namespace="other")}, FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH),
@@ -418,7 +403,7 @@ def test_exact_candidate_remains_safe_single_source_answer() -> None:
     assert decision["reason_codes"] == ("answer_exact_eligible", "answer_no_runner_up")
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("artifact_value", "candidate_response", "expected_reason"),
     [
         (
@@ -482,7 +467,7 @@ def test_feature_roles_and_internal_contract_codecs_are_complete() -> None:
         and isinstance(definition["role"], FusionFeatureRole)
         for definition in feature_definitions().values()
     )
-    raw = candidate("codec", CandidateSource.LEXICAL, {"lexical_score": 0.7})
+    raw = candidate("codec", CandidateSource.SPARSE, {"sparse_score": 0.7})
     normalized = normalize_candidate_features(raw)
     eligibility = candidate_eligibility(
         feature_values={FusionFeature.HISTORY: 0.5},
@@ -502,12 +487,12 @@ def test_feature_roles_and_internal_contract_codecs_are_complete() -> None:
 
 
 def test_normalization_rejects_cross_source_spoofing_and_keeps_priority_distinct() -> None:
-    lexical = normalize_candidate_features(
+    sparse = normalize_candidate_features(
         candidate(
-            "lexical-spoof",
-            CandidateSource.LEXICAL,
+            "sparse-spoof",
+            CandidateSource.SPARSE,
             {
-                "lexical_score": 0.4,
+                "sparse_score": 0.4,
                 "exact_match": 1.0,
                 "semantic_score": 1.0,
                 "priority": 999.0,
@@ -519,15 +504,15 @@ def test_normalization_rejects_cross_source_spoofing_and_keeps_priority_distinct
         candidate(
             "semantic-spoof",
             CandidateSource.SUPPORT_SEMANTIC,
-            {"semantic_score": 0.8, "lexical_score": 1.0, "vector_weight": 99.0, "legacy_retrieval_score": 99.0},
+            {"semantic_score": 0.8, "sparse_score": 1.0, "vector_weight": 99.0},
         )
     )
 
-    assert lexical["available"] == (FusionFeature.LEXICAL,)
-    assert lexical["values"][FusionFeature.LEXICAL] == 0.4
+    assert sparse["available"] == (FusionFeature.LEXICAL,)
+    assert sparse["values"][FusionFeature.LEXICAL] == 0.4
     assert semantic["available"] == (FusionFeature.SEMANTIC,)
     assert semantic["values"][FusionFeature.SEMANTIC] == 0.8
-    assert FusionFeature.HISTORY not in lexical["available"]
+    assert FusionFeature.HISTORY not in sparse["available"]
 
 
 def test_explicit_mismatch_uses_conservative_aggregation() -> None:
@@ -577,7 +562,7 @@ def test_per_candidate_filtering_preserves_valid_independent_group() -> None:
 
     assert decision["outcome"] == ResolutionOutcome.ANSWER
     report = report_candidates(decision)[0]
-    assert report["sources"] == ["support_semantic", "lexical"]
+    assert report["sources"] == ["support_semantic", "sparse"]
     assert FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH.value in report_reason_codes(decision)
 
 
@@ -596,7 +581,7 @@ def test_candidate_and_evidence_identity_conflicts_abstain_deterministically() -
     assert FusionPolicyReason.EVIDENCE_REFERENCE_CONFLICT.value in report_reason_codes(evidence_conflict)
 
 
-def test_authority_revalidates_generation_support_and_legacy_response() -> None:
+def test_authority_revalidates_artifact_generation_and_support() -> None:
     accepted = artifact()
     engine = Engram()
     engine.response_repository = ArtifactRepository((accepted,))
@@ -607,7 +592,7 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
         {"exact_match": 1.0},
         provenance={"generation": 0},
     )
-    lexical = candidate("stmt-artifact", CandidateSource.LEXICAL, {"lexical_score": 0.95})
+    lexical = candidate("stmt-artifact", CandidateSource.SPARSE, {"sparse_score": 0.95})
     stale_support = candidate(
         "stmt-artifact",
         CandidateSource.SUPPORT_SEMANTIC,
@@ -622,19 +607,6 @@ def test_authority_revalidates_generation_support_and_legacy_response() -> None:
     assert FusionPolicyReason.AUTHORITATIVE_GENERATION_MISMATCH.value in report_reason_codes(generation_decision)
     assert support_decision["outcome"] == ResolutionOutcome.EVIDENCE
     assert FusionPolicyReason.SUPPORT_REFERENCE_STALE.value in report_reason_codes(support_decision)
-
-    legacy_engine = Engram()
-    legacy_id = legacy_engine.store("Current legacy response")
-    legacy_fusion = CandidateFusionEngine(authority=EngramCandidateAuthority(legacy_engine))
-    changed = candidate(
-        legacy_id,
-        CandidateSource.LEXICAL,
-        {"lexical_score": 0.9},
-        response="Changed legacy response",
-    )
-    legacy_decision = legacy_fusion.decide(frame(legacy_engine), (changed,))
-    assert legacy_decision["outcome"] == ResolutionOutcome.MISS
-    assert FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH.value in report_reason_codes(legacy_decision)
 
 
 def test_explicit_conflict_and_fusion_memory_exhaustion_are_typed() -> None:
@@ -674,7 +646,7 @@ def test_explicit_fusion_memory_allowance_is_concrete_and_enforced() -> None:
     assert exhausted["outcome"] == ResolutionOutcome.MISS
     assert exhausted["reason_codes"] == (FusionPolicyReason.FUSION_MEMORY_EXHAUSTED.value,)
     assert exhausted["working_memory_bytes"] == required - 1
-    with pytest.raises(InvalidRequestError, match="requires availability"):
+    with pytest_raises(InvalidRequestError, match="requires availability"):
         engine.decide(selected_frame, (), working_memory_limit=1)
 
 

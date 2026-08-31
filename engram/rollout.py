@@ -1,13 +1,11 @@
 """Small policy-versioned rollout controls for unified resolution."""
 
 from collections import Counter
-from collections.abc import Mapping
 
 from engram.config import rollout_config
 from engram.constants import RolloutMode
 from engram.resolution import (
     ResolutionOutcome,
-    ResolutionResult,
     budget_consumption_with_changes,
     empty_candidate,
     empty_evidence_package,
@@ -17,9 +15,9 @@ from engram.resolution import (
 )
 
 
-def select_rollout(config: Mapping[str, object], namespace: str) -> dict[str, object]:
+def select_rollout(config: dict[str, object], namespace: str) -> dict[str, object]:
     """Select the exact namespace override or the configured default."""
-    policy = config.get("rollout") or rollout_config()
+    policy = config.get("rollout", {}) or rollout_config()
     namespaces = policy["namespaces"]
     result = {
         "policy_version": policy["policy_version"],
@@ -29,9 +27,9 @@ def select_rollout(config: Mapping[str, object], namespace: str) -> dict[str, ob
     return result
 
 
-def rollout_status(config: Mapping[str, object]) -> dict[str, object]:
+def rollout_status(config: dict[str, object]) -> dict[str, object]:
     """Return fixed-cardinality rollout state without namespace labels."""
-    policy = config.get("rollout") or rollout_config()
+    policy = config.get("rollout", {}) or rollout_config()
     namespaces = policy["namespaces"]
     default_mode = policy["default_mode"]
     counts = Counter(namespaces.values())
@@ -44,18 +42,18 @@ def rollout_status(config: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
-def apply_rollout(result: ResolutionResult, selection: Mapping[str, object]) -> ResolutionResult:
+def apply_rollout(result: dict, selection: dict[str, object]) -> dict:
     """Apply output visibility for a selected rollout mode."""
     current = validate_resolution_result(result)
-    mode = selection["mode"]
+    mode = selection.get("mode", RolloutMode.DISABLED)
     if mode == RolloutMode.REGULATED_DIRECT_ANSWER:
         return current
 
     reason = f"rollout_{mode.value}"
     diagnostics = {
-        "policy_version": selection["policy_version"],
+        "policy_version": selection.get("policy_version", ""),
         "mode": mode.value,
-        "namespace_override": selection["namespace_override"],
+        "namespace_override": selection.get("namespace_override", False),
     }
     reasons = tuple(dict.fromkeys((*current["reason_codes"], reason)))
     changes: dict[str, object] = {

@@ -5,6 +5,8 @@ from engram.pattern import PatternMatcher, match_pattern, normalize_pattern, pat
 """Tests for normalize_pattern function."""
 
 
+
+
 def test_normalize_pattern_lowercase():
     assert normalize_pattern("HELLO") == "hello"
 
@@ -214,7 +216,6 @@ def test_zero_or_more_wildcards_hash_only_pattern():
 
 def test_zero_or_more_wildcards_caret_priority_over_hash():
     """^ should have higher priority than #."""
-    from engram.pattern import pattern_to_regex
 
     _, hash_score = pattern_to_regex("HELLO #")
     _, caret_score = pattern_to_regex("HELLO ^")
@@ -223,7 +224,6 @@ def test_zero_or_more_wildcards_caret_priority_over_hash():
 
 def test_zero_or_more_wildcards_caret_priority_over_underscore():
     """^ should have higher priority than _."""
-    from engram.pattern import pattern_to_regex
 
     _, underscore_score = pattern_to_regex("HELLO _")
     _, caret_score = pattern_to_regex("HELLO ^")

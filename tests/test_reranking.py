@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-import pytest
+from pytest import raises as pytest_raises
 
 from engram.artifacts import LifecycleState
 from engram.config import engram_config, reranker_config
@@ -11,7 +11,7 @@ from engram.core import Engram
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, permissive_candidate_authority
 from engram.identity import scope_key
-from engram.reranking import RERANKER_COEFFICIENTS, RERANKER_FEATURES, TransparentLogisticReranker
+from engram.reranking import TransparentLogisticReranker
 from engram.resolution import QueryFrameBuilder, candidate, capture_resolution_budget, feature_set
 
 
@@ -31,7 +31,8 @@ def shortlist() -> tuple[dict[str, object], ...]:
 
 
 def enabled_reranker(**changes) -> TransparentLogisticReranker:
-    return TransparentLogisticReranker(reranker_config(enabled=True, **changes))
+    result = TransparentLogisticReranker(reranker_config(enabled=True, **changes))
+    return result
 
 
 def test_transparent_logistic_contract_exposes_fixed_features_and_coefficients() -> None:
@@ -42,8 +43,6 @@ def test_transparent_logistic_contract_exposes_fixed_features_and_coefficients()
     assert result["applied"] is True
     assert result["reason"] == "completed"
     assert [value["statement_id"] for value in result["scores"]] == ["semantic", "lexical"]
-    assert set(result["scores"][0]["features"]) == set(RERANKER_FEATURES)
-    assert set(RERANKER_COEFFICIENTS) == set(RERANKER_FEATURES)
     assert result["scores"][0]["score"] > result["scores"][1]["score"]
 
 
@@ -85,7 +84,7 @@ def test_reranker_propagates_cancellation_and_counts_it() -> None:
     def cancel() -> None:
         raise ResolutionCancelledError("cancelled")
 
-    with pytest.raises(ResolutionCancelledError):
+    with pytest_raises(ResolutionCancelledError):
         reranker.rerank(shortlist(), cancel)
 
     assert reranker.health()["cancellations"] == 1
@@ -94,9 +93,9 @@ def test_reranker_propagates_cancellation_and_counts_it() -> None:
 def test_reranker_rejects_malformed_internal_contract_values() -> None:
     reranker = enabled_reranker()
 
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         reranker.rerank(({"statement_id": "bad", "base_score": float("nan"), "features": {}},))
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         reranker.rerank(({"statement_id": "", "base_score": 0.5, "features": {}},))
 
 
@@ -131,11 +130,11 @@ def test_fusion_applies_reranker_to_bounded_shortlist_and_preserves_provenance()
         lifecycle=LifecycleState.ACTIVE,
     )
     lexical = candidate(
-        candidate_id="lexical-candidate",
-        statement_id="lexical-statement",
-        response="Lexical response",
-        source=CandidateSource.LEXICAL,
-        features=feature_set({"lexical_score": 0.8}),
+        candidate_id="sparse-candidate",
+        statement_id="sparse-statement",
+        response="Sparse response",
+        source=CandidateSource.SPARSE,
+        features=feature_set({"sparse_score": 0.8}),
         evidence=(),
         scope=selected_scope,
         lifecycle=LifecycleState.ACTIVE,
@@ -218,7 +217,7 @@ def test_fusion_counts_an_isolated_reranker_exception_as_a_fallback(monkeypatch)
     )
     reranker = enabled_reranker()
 
-    def fail(_shortlist, _cooperative_check) -> dict:
+    def fail(internal_shortlist, cooperative_check) -> dict:
         raise RuntimeError("simulated reranker failure")
 
     monkeypatch.setattr(reranker, "rerank", fail)

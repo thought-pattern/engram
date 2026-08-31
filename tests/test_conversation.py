@@ -1,23 +1,19 @@
-"""Tests for the shared persistent conversation runtime."""
+"""Tests for the shared process-local conversation runtime."""
 
-import json
-
-import pytest
+from pytest import raises as pytest_raises
 
 from engram.constants import Tier
 from engram.conversation import ConversationRuntime, ConversationTurnPlanner
 from engram.core import Engram
 
 
-def test_runtime_records_initial_bot_text_and_one_observable_turn(tmp_path) -> None:
+def test_runtime_records_initial_bot_text_and_one_observable_turn() -> None:
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
-    transcript = tmp_path / "runtime-transcript.json"
     runtime = ConversationRuntime(
         engram,
         user_id="Codex",
         initial_bot_text=".",
-        transcript_path=transcript,
     )
 
     event = runtime.send("hello")
@@ -26,16 +22,15 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn(tmp_path) -> N
     assert event["response"] == "Hello!"
     assert event["context_changes"]["previous_response"]["before"] == "."
     assert runtime.inspect()["session"]["response_history"] == ["Hello!", "."]
-    saved = json.loads(transcript.read_text(encoding="utf-8"))
-    assert saved["turns"] == [event]
+    assert runtime.report()["turns"] == [event]
 
 
 def test_runtime_rejects_empty_or_batch_input() -> None:
     runtime = ConversationRuntime(Engram(), user_id="0")
 
-    with pytest.raises(ValueError, match="one non-empty string"):
+    with pytest_raises(ValueError, match="one non-empty string"):
         runtime.send("")
-    with pytest.raises(ValueError, match="one non-empty string"):
+    with pytest_raises(ValueError, match="one non-empty string"):
         runtime.send(["first", "second"])
 
 
@@ -55,22 +50,16 @@ def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
     assert snapshot["learned_unique_texts"] == ["Sushi is good."]
 
 
-def test_runtime_writes_json_and_markdown_reports(tmp_path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_runtime_returns_report_without_writing_files() -> None:
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
     runtime = ConversationRuntime(engram, user_id="agent", initial_bot_text=".")
     runtime.send("hello")
 
-    output = runtime.write_report("reports/adaptive-chat")
+    report = runtime.report()
 
-    report = json.loads((tmp_path / "reports" / "adaptive-chat.json").read_text(encoding="utf-8"))
-    markdown = (tmp_path / "reports" / "adaptive-chat.md").read_text(encoding="utf-8")
-    assert output["summary"]["exchanges"] == 1
-    assert output["json"] == "reports/adaptive-chat.json"
-    assert output["markdown"] == "reports/adaptive-chat.md"
+    assert report["summary"]["exchanges"] == 1
     assert report["user_id"] == "agent"
-    assert "**Interlocutor:** hello" in markdown
 
 
 def test_turn_planner_preserves_messages_and_reserves_the_farewell() -> None:
@@ -86,17 +75,17 @@ def test_turn_planner_preserves_messages_and_reserves_the_farewell() -> None:
     assert planner.next_message("Nor does this one.") == "Goodbye, and thank you."
     assert planner.turn_count == 4
     assert planner.remaining_turns == 0
-    with pytest.raises(StopIteration):
+    with pytest_raises(StopIteration):
         planner.next_message()
 
 
 def test_turn_planner_rejects_exhaustion_and_unapproved_repeats() -> None:
-    with pytest.raises(ValueError, match="unapproved repeated"):
+    with pytest_raises(ValueError, match="unapproved repeated"):
         ConversationTurnPlanner(["Echo.", "echo"], total_turns=3, farewell="Goodbye.")
 
     planner = ConversationTurnPlanner(["Only planned thought."], total_turns=4, farewell="Goodbye.")
     assert planner.next_message() == "Only planned thought."
-    with pytest.raises(RuntimeError, match="exhausted"):
+    with pytest_raises(RuntimeError, match="exhausted"):
         planner.next_message()
 
 

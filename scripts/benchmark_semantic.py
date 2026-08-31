@@ -1,57 +1,59 @@
 """Benchmark Section 13 semantic retrieval and transparent reranking."""
 
-import argparse
-import importlib.util
-import json
-import math
-import statistics
-import sys
-import time
+from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
 from datetime import UTC, datetime
+from importlib import util as importlib_util
+from json import dumps as json_dumps, loads as json_loads
+from math import ceil as math_ceil
 from pathlib import Path
+from statistics import fmean as statistics_fmean
+from sys import path as sys_path
+from time import perf_counter_ns as time_perf_counter_ns
 
-import psutil
+from psutil import Process as psutil_Process
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys_path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.config import reranker_config, semantic_config, sparse_config
 from engram.constants import Tier
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.reranking import TransparentLogisticReranker
-from engram.semantic import StandaloneSemanticIndexOwner, model_artifact_sha256
-from engram.sparse import SparseIndexOwner
+from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
+from engram.sparse import search_sparse_artifacts
 from scripts.benchmark_metadata import benchmark_source_state
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def parse_args() -> argparse_Namespace:
+    parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default="eval/section13-semantic-v1.json")
     parser.add_argument(
         "--manifest",
         default="data/artifacts/models/all-MiniLM-L6-v2-826711e5.engram-model.json",
     )
     parser.add_argument("--output", default="eval/results/semantic/benchmark-2026-08-22.json")
-    return parser.parse_args()
+    result = parser.parse_args()
+    return result
 
 
 def percentile(values: list[float], quantile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1))
-    return ordered[index]
+    index = max(0, min(len(ordered) - 1, math_ceil(quantile * len(ordered)) - 1))
+    result = ordered[index]
+    return result
 
 
 def artifact(value: dict) -> dict:
-    request = str(value["canonical"])
+    request = str(value.get("canonical", ""))
     selected_scope = scope_key(namespace="semantic-benchmark")
-    return cached_response_artifact(
-        statement_id=str(value["statement_id"]),
+    result = cached_response_artifact(
+        statement_id=str(value.get("statement_id", "")),
         generation=1,
-        response=str(value["response"]),
+        response=str(value.get("response", "")),
         query_identity=build_standalone_identity(request, selected_scope),
-        retrieval=build_retrieval_representation(request, tuple(value["aliases"])),
+        retrieval=build_retrieval_representation(request, tuple(value.get("aliases", []))),
         tier=Tier.STATIC,
         lifecycle=LifecycleState.ACTIVE,
         scope=selected_scope,
@@ -60,36 +62,38 @@ def artifact(value: dict) -> dict:
         valid_from_available=False,
         valid_until="",
         valid_until_available=False,
-        knowledge_epoch=0,
-        knowledge_epoch_available=False,
         superseded_by="",
         provenance=artifact_provenance("section13-benchmark", "engineering", "2026-08-22T00:00:00Z"),
         statistics=artifact_statistics(),
         metadata={},
     )
+    return result
 
 
 def rank(statement_ids: list[str], expected: str) -> int:
-    return statement_ids.index(expected) + 1 if expected in statement_ids else 0
+    result = statement_ids.index(expected) + 1 if expected in statement_ids else 0
+    return result
 
 
 def partition_metrics(rows: list[dict]) -> dict:
     positives = [row for row in rows if row["expected_statement_id"]]
     reciprocal = [1.0 / row["rank"] if row["rank"] else 0.0 for row in positives]
     false_answers = [row for row in rows if row["top_statement_id"] and row["top_statement_id"] != row["expected_statement_id"]]
-    return {
+    result = {
         "query_count": len(rows),
         "positive_count": len(positives),
         "recall_at_1": sum(row["rank"] == 1 for row in positives) / len(positives) if positives else 0.0,
         "recall_at_3": sum(0 < row["rank"] <= 3 for row in positives) / len(positives) if positives else 0.0,
-        "mrr": statistics.fmean(reciprocal) if reciprocal else 0.0,
+        "mrr": statistics_fmean(reciprocal) if reciprocal else 0.0,
         "false_answer_rate": len(false_answers) / len(rows) if rows else 0.0,
     }
+    return result
 
 
 def evaluate_rows(rows: list[dict]) -> dict:
     partitions = sorted({str(row["partition"]) for row in rows})
-    return {partition: partition_metrics([row for row in rows if row["partition"] == partition]) for partition in partitions}
+    result = {partition: partition_metrics([row for row in rows if row["partition"] == partition]) for partition in partitions}
+    return result
 
 
 def main() -> int:
@@ -97,8 +101,8 @@ def main() -> int:
     corpus_path = Path(args.corpus)
     manifest_path = Path(args.manifest)
     output_path = Path(args.output)
-    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    corpus = json_loads(corpus_path.read_text(encoding="utf-8"))
+    manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
     model_path = Path(manifest["model_path"])
     actual_checksum = model_artifact_sha256(model_path)
     if actual_checksum != manifest["artifact_sha256"]:
@@ -115,29 +119,28 @@ def main() -> int:
         min_similarity=0.45,
     )
     artifacts = tuple(artifact(value) for value in corpus["documents"])
-    process = psutil.Process()
+    process = psutil_Process()
     rss_before = process.memory_info().rss
-    cold_started = time.perf_counter_ns()
-    semantic = StandaloneSemanticIndexOwner(semantic_settings)
-    cold_start_ms = (time.perf_counter_ns() - cold_started) / 1_000_000
+    cold_started = time_perf_counter_ns()
+    semantic = StandaloneSemanticRetriever(semantic_settings)
+    cold_start_ms = (time_perf_counter_ns() - cold_started) / 1_000_000
     if not semantic.available:
         raise SystemExit(f"native semantic model unavailable: {semantic.last_error}")
     rss_after_model = process.memory_info().rss
-    build_started = time.perf_counter_ns()
-    semantic_state = semantic.rebuild(artifacts, 2)
-    build_ms = (time.perf_counter_ns() - build_started) / 1_000_000
-    rss_after_index = process.memory_info().rss
-    sparse = SparseIndexOwner(sparse_config(enabled=True))
-    sparse.rebuild(artifacts, 2)
+    sparse_settings = sparse_config(enabled=True)
     reranker = TransparentLogisticReranker(reranker_config(enabled=True, shortlist_size=8))
     selected_scope = scope_key(namespace="semantic-benchmark")
+    request_local_started = time_perf_counter_ns()
     semantic.search(
         "semantic benchmark warmup",
         selected_scope,
+        artifacts,
         limit=8,
         max_vector_results=8,
         max_working_memory_bytes=16_777_216,
     )
+    request_local_embedding_ms = (time_perf_counter_ns() - request_local_started) / 1_000_000
+    rss_after_request = process.memory_info().rss
     semantic_rows = []
     sparse_rows = []
     reranker_rows = []
@@ -145,19 +148,21 @@ def main() -> int:
     reranker_latencies = []
     drift_max = 0.0
     for query in corpus["queries"]:
-        started = time.perf_counter_ns()
+        started = time_perf_counter_ns()
         semantic_result = semantic.search(
             query["text"],
             selected_scope,
+            artifacts,
             limit=8,
             max_vector_results=8,
             max_working_memory_bytes=16_777_216,
         )
-        semantic_ms = (time.perf_counter_ns() - started) / 1_000_000
+        semantic_ms = (time_perf_counter_ns() - started) / 1_000_000
         semantic_latencies.append(semantic_ms)
         repeated = semantic.search(
             query["text"],
             selected_scope,
+            artifacts,
             limit=8,
             max_vector_results=8,
             max_working_memory_bytes=16_777_216,
@@ -181,9 +186,11 @@ def main() -> int:
                 "candidate_ids": semantic_ids,
             }
         )
-        sparse_result = sparse.search(
+        sparse_result = search_sparse_artifacts(
+            artifacts,
             query["text"],
             selected_scope,
+            sparse_settings,
             limit=8,
             max_working_memory_bytes=16_777_216,
         )
@@ -211,9 +218,9 @@ def main() -> int:
             }
             for value in semantic_result["matches"]
         )
-        rerank_started = time.perf_counter_ns()
+        rerank_started = time_perf_counter_ns()
         reranked = reranker.rerank(shortlist)
-        rerank_ms = (time.perf_counter_ns() - rerank_started) / 1_000_000
+        rerank_ms = (time_perf_counter_ns() - rerank_started) / 1_000_000
         reranker_latencies.append(rerank_ms)
         reranked_ids = [value["statement_id"] for value in reranked["scores"]] if reranked["applied"] else semantic_ids
         reranker_rows.append(
@@ -239,28 +246,28 @@ def main() -> int:
         "engineering_holdout_recall_at_1": holdout_semantic["recall_at_1"],
         "engineering_holdout_recall_delta_vs_sparse": holdout_semantic["recall_at_1"] - holdout_sparse["recall_at_1"],
         "engineering_holdout_false_answer_rate": holdout_semantic["false_answer_rate"],
-        "peak_memory_mib": max(rss_after_model, rss_after_index) / 1_048_576,
+        "peak_memory_mib": max(rss_after_model, rss_after_request) / 1_048_576,
     }
     semantic_checks = {
-        "engineering_holdout_recall_at_1": semantic_gate_values["engineering_holdout_recall_at_1"]
+        "engineering_holdout_recall_at_1": semantic_gate_values.get("engineering_holdout_recall_at_1", 0.0)
         >= gates["semantic"]["engineering_holdout_recall_at_1_min"],
-        "engineering_holdout_recall_delta_vs_sparse": semantic_gate_values["engineering_holdout_recall_delta_vs_sparse"]
+        "engineering_holdout_recall_delta_vs_sparse": semantic_gate_values.get("engineering_holdout_recall_delta_vs_sparse", 0.0)
         >= gates["semantic"]["engineering_holdout_recall_delta_vs_sparse_min"],
-        "engineering_holdout_false_answer_rate": semantic_gate_values["engineering_holdout_false_answer_rate"]
+        "engineering_holdout_false_answer_rate": semantic_gate_values.get("engineering_holdout_false_answer_rate", 0.0)
         <= gates["semantic"]["engineering_holdout_false_answer_rate_max"],
-        "peak_memory_mib": semantic_gate_values["peak_memory_mib"] <= gates["semantic"]["peak_memory_mib_max"],
+        "peak_memory_mib": semantic_gate_values.get("peak_memory_mib", 0.0) <= gates["semantic"]["peak_memory_mib_max"],
     }
     reranker_gate_values = {
         "engineering_holdout_recall_delta": holdout_reranker["recall_at_1"] - holdout_semantic["recall_at_1"],
         "engineering_holdout_false_answer_delta": holdout_reranker["false_answer_rate"] - holdout_semantic["false_answer_rate"],
-        "peak_memory_mib": max(0, process.memory_info().rss - rss_after_index) / 1_048_576,
+        "peak_memory_mib": max(0, process.memory_info().rss - rss_after_request) / 1_048_576,
     }
     reranker_checks = {
-        "engineering_holdout_recall_delta": reranker_gate_values["engineering_holdout_recall_delta"]
+        "engineering_holdout_recall_delta": reranker_gate_values.get("engineering_holdout_recall_delta", 0.0)
         >= gates["reranker"]["engineering_holdout_recall_delta_min"],
-        "engineering_holdout_false_answer_delta": reranker_gate_values["engineering_holdout_false_answer_delta"]
+        "engineering_holdout_false_answer_delta": reranker_gate_values.get("engineering_holdout_false_answer_delta", 0.0)
         <= gates["reranker"]["engineering_holdout_false_answer_delta_max"],
-        "peak_memory_mib": reranker_gate_values["peak_memory_mib"] <= gates["reranker"]["peak_memory_mib_max"],
+        "peak_memory_mib": reranker_gate_values.get("peak_memory_mib", 0.0) <= gates["reranker"]["peak_memory_mib_max"],
     }
     artifact_bytes = sum(
         value.stat().st_size
@@ -276,7 +283,6 @@ def main() -> int:
             "version": corpus["corpus_version"],
             "query_count": len(corpus["queries"]),
             "evaluation_role": corpus["evaluation_role"],
-            "section16_release_eligible": corpus["section16_release_eligible"],
         },
         "artifact": {
             **{
@@ -290,7 +296,7 @@ def main() -> int:
             "native": {
                 "available": True,
                 "cold_start_ms": cold_start_ms,
-                "index_build_ms": build_ms,
+                "request_local_embedding_ms": request_local_embedding_ms,
                 "query_p50_ms": percentile(semantic_latencies, 0.50),
                 "query_p95_ms": percentile(semantic_latencies, 0.95),
                 "query_p99_ms": percentile(semantic_latencies, 0.99),
@@ -299,14 +305,14 @@ def main() -> int:
                 "throughput_queries_per_second": len(semantic_latencies) / elapsed_query_seconds if elapsed_query_seconds else 0.0,
                 "rss_before_mib": rss_before / 1_048_576,
                 "rss_after_model_mib": rss_after_model / 1_048_576,
-                "rss_after_index_mib": rss_after_index / 1_048_576,
-                "record_count": semantic_state["record_count"],
+                "rss_after_request_mib": rss_after_request / 1_048_576,
+                "artifact_count": len(artifacts),
                 "maximum_repeated_score_drift": drift_max,
                 "metrics": semantic_metrics,
             },
             "onnx": {
                 "available": False,
-                "runtime_available": bool(importlib.util.find_spec("onnxruntime") and importlib.util.find_spec("optimum")),
+                "runtime_available": bool(importlib_util.find_spec("onnxruntime") and importlib_util.find_spec("optimum")),
                 "reason": "no approved pre-provisioned ONNX artifact",
             },
             "quantized": {
@@ -340,17 +346,18 @@ def main() -> int:
                 "values": reranker_gate_values,
                 "checks": reranker_checks,
                 "passed": all(reranker_checks.values()),
-                "positive_value_observed": reranker_gate_values["engineering_holdout_recall_delta"] > 0.0,
+                "positive_value_observed": reranker_gate_values.get("engineering_holdout_recall_delta", 0.0) > 0.0,
                 "promoted_for_opt_in_component_use": all(reranker_checks.values())
-                and reranker_gate_values["engineering_holdout_recall_delta"] > 0.0,
+                and reranker_gate_values.get("engineering_holdout_recall_delta", 0.0) > 0.0,
             },
         },
         "queries": {"sparse": sparse_rows, "semantic": semantic_rows, "reranker": reranker_rows},
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"output": output_path.as_posix(), "gates": result["gates"]}, sort_keys=True))
-    return 0 if result["gates"]["semantic"]["passed"] and result["gates"]["reranker"]["passed"] else 1
+    output_path.write_text(json_dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json_dumps({"output": output_path.as_posix(), "gates": result.get("gates", {})}, sort_keys=True))
+    result = 0 if result.get("gates", {})["semantic"]["passed"] and result.get("gates", {})["reranker"]["passed"] else 1
+    return result
 
 
 if __name__ == "__main__":

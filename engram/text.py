@@ -1,7 +1,7 @@
 """Text processing for ENGRAM."""
 
-import re
 from functools import lru_cache
+from re import UNICODE as UNICODE, finditer as re_finditer, sub as re_sub
 from threading import Lock
 
 from nltk.corpus import wordnet, words
@@ -28,7 +28,19 @@ from engram.lexical import select_lexical_terms
 from engram.nltk_data import ensure_resource
 from engram.spacy_setup import get_nlp
 
-_wordnet_reader_lock = Lock()
+nltk_reader_lock = Lock()
+
+
+@lru_cache(maxsize=1)
+def initialize_nltk_readers() -> bool:
+    """Load shared lazy corpus readers before concurrent request handling."""
+    ensure_resource("corpora/words", "words")
+    ensure_resource("corpora/wordnet", "wordnet")
+    ensure_resource("corpora/omw-1.4", "omw-1.4")
+    with nltk_reader_lock:
+        words.ensure_loaded()
+        wordnet.ensure_loaded()
+    return True
 
 
 @lru_cache(maxsize=4096)
@@ -55,10 +67,10 @@ def normalize(text: str) -> str:
 
     # Protect intra-word hyphens while removing other punctuation.
     placeholder = "\x00"
-    result = re.sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
+    result = re_sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
     result = result.replace(placeholder, "-")
-    result = re.sub(r"\s+", " ", result)
+    result = re_sub(r"\s+", " ", result)
     trimmed = result.strip()
     return trimmed
 
@@ -74,7 +86,7 @@ def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
     if not captures or not source_text:
         return captures
 
-    source_matches = list(re.finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=re.UNICODE))
+    source_matches = list(re_finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=UNICODE))
     source_words = [normalize(match.group(0)) for match in source_matches]
     restored: list[str] = []
     search_start = 0
@@ -188,7 +200,7 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
 
 
 @lru_cache(maxsize=1)
-def _ensure_tagger() -> None:
+def ensure_tagger() -> None:
     """Check the locally provisioned POS tagger data used after startup preflight."""
 
     ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
@@ -215,7 +227,7 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
         result = []
         return result
 
-    _ensure_tagger()
+    ensure_tagger()
     tokens = word_tokenize(text)
     tagged = pos_tag(tokens)
 
@@ -288,7 +300,7 @@ def get_stemmer() -> PorterStemmer:
 def get_lemmatizer() -> WordNetLemmatizer:
     """Get or create the module-level WordNet lemmatizer."""
 
-    ensure_resource("corpora/wordnet", "wordnet")
+    initialize_nltk_readers()
     lemmatizer = WordNetLemmatizer()
     return lemmatizer
 
@@ -425,13 +437,13 @@ def normalize_with_stemming(text: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _known_words() -> set:
+def known_words() -> set:
     """English word set used to gate spelling correction.
 
     A token found here is a real word and is never "corrected" -- unknown real
     words are the lemma/stem fallbacks' job, not the spell corrector's.
     """
-    ensure_resource("corpora/words", "words")
+    initialize_nltk_readers()
     word_set = {w.lower() for w in words.words()}
     return word_set
 
@@ -444,17 +456,17 @@ def is_known_word(word: str) -> bool:
     as typos. Checking the verb and noun lemmas closes that gap.
     """
     lowered = word.lower()
-    if lowered in _known_words():
+    if lowered in known_words():
         result = True
         return result
-    if lemmatize_word(lowered, "v") in _known_words():
+    if lemmatize_word(lowered, "v") in known_words():
         result = True
         return result
-    known = lemmatize_word(lowered, "n") in _known_words()
+    known = lemmatize_word(lowered, "n") in known_words()
     return known
 
 
-def _correct_token(token: str, vocabulary: set) -> str:
+def correct_token(token: str, vocabulary: set) -> str:
     """Correct one out-of-vocabulary token toward the vocabulary, or keep it.
 
     Conservative by design: short tokens, vocabulary tokens, and real English
@@ -509,7 +521,7 @@ def correct_spelling(text: str, vocabulary) -> str:
     if not text or not vocabulary:
         return text
 
-    corrected = [_correct_token(token, vocabulary) for token in text.split()]
+    corrected = [correct_token(token, vocabulary) for token in text.split()]
     result = " ".join(corrected)
     return result
 
@@ -538,7 +550,7 @@ def first_clause(text: str) -> str:
     if not text or not text.strip():
         return text
 
-    _ensure_tagger()
+    ensure_tagger()
     tokens = word_tokenize(text)
     tagged = pos_tag(tokens)
 
@@ -606,11 +618,10 @@ def extract_name(text: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _ensure_wordnet() -> None:
+def ensure_wordnet() -> None:
     """Ensure WordNet data is available, fetching into the local data dir."""
 
-    ensure_resource("corpora/wordnet", "wordnet")
-    ensure_resource("corpora/omw-1.4", "omw-1.4")
+    initialize_nltk_readers()
 
 
 @lru_cache(maxsize=4096)
@@ -630,8 +641,8 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     synonyms = {word.lower()}
     # NLTK's shared reader opens and closes its zipped corpus around each read;
     # concurrent access can trip its internal file-handle assertion.
-    with _wordnet_reader_lock:
-        _ensure_wordnet()
+    with nltk_reader_lock:
+        ensure_wordnet()
         wordnet_reader = wordnet
         for syn in wordnet_reader.synsets(word):
             for lemma in syn.lemmas():

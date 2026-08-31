@@ -1,19 +1,16 @@
 """Transport-neutral facade tests shared by CLI, MCP, and future adapters."""
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event as threading_Event
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram import service as service_module
-from engram.config import engram_config
 from engram.constants import RESOLUTION_RESULT_FIELDS, Tier
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
     InvalidRequestError,
     LifecycleError,
-    PersistenceError,
     ResolutionCancelledError,
     ResourceNotFoundError,
 )
@@ -21,46 +18,46 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore, open_engram_core
 
 
-def test_core_preserves_relative_store_path() -> None:
-    core = EngramCore(store_path="state/engram.json", checkpoint_on_mutation=False)
+def test_core_reports_process_memory_operation() -> None:
+    core = EngramCore()
 
-    assert core.store_path == "state/engram.json"
-    assert core.status()["store_path"] == "state/engram.json"
+    assert core.status()["memory_only"] is True
 
 
 def test_resolution_reuses_the_plan_built_for_negative_lookup(monkeypatch) -> None:
     core = EngramCore()
-    original = core._resolver_registry.plan
+    original = core.resolver_registry.plan
     calls = 0
 
     def plan(frame, configured_names=()):
         nonlocal calls
         calls += 1
-        return original(frame, configured_names)
+        result = original(frame, configured_names)
+        return result
 
-    monkeypatch.setattr(core._resolver_registry, "plan", plan)
+    monkeypatch.setattr(core.resolver_registry, "plan", plan)
 
     result = core.resolve_request("unmatched request", "single-plan", configured_resolvers=("exact",))
 
     assert result["outcome"].value == "MISS"
     assert calls == 1
-    core.close(flush=False)
+    core.close()
 
 
 def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     engine = Engram()
-    entered = threading.Event()
-    release = threading.Event()
+    entered = threading_Event()
+    release = threading_Event()
 
     class BlockingGraph:
         available = True
 
-        def structured_proposition_projections(self, _value, *, projection_id, limit):
+        def structured_proposition_projections(self, internal_value, *, projection_id, limit):
             entered.set()
             assert release.wait(timeout=5)
             return []
 
-    engine._graph_client = BlockingGraph()
+    engine.internal_graph_client = BlockingGraph()
     core = EngramCore(engine)
 
     with ThreadPoolExecutor(max_workers=5) as executor:
@@ -105,7 +102,7 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
 
         graph = graph_future.result(timeout=5)
         same_user = same_user_future.result(timeout=5)
-        with pytest.raises(ConflictError, match="different input"):
+        with pytest_raises(ConflictError, match="different input"):
             conflicting_retry_future.result(timeout=5)
 
     assert status["ready"] is True
@@ -115,20 +112,20 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     assert graph_future.done() is True
 
 
-def test_legacy_chat_graph_execution_does_not_hold_the_core_lock() -> None:
+def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
     engine = Engram()
-    entered = threading.Event()
-    release = threading.Event()
+    entered = threading_Event()
+    release = threading_Event()
 
     class BlockingGraph:
         available = True
 
-        def execute_read(self, _query, _parameters=()):
+        def execute(self, internal_query, internal_parameters=()):
             entered.set()
             assert release.wait(timeout=5)
             return []
 
-    engine._graph_client = BlockingGraph()
+    engine.internal_graph_client = BlockingGraph()
     engine.pattern_matcher.clear()
     core = EngramCore(engine)
     core.start_conversation(user_id="graph-user")
@@ -141,14 +138,14 @@ def test_legacy_chat_graph_execution_does_not_hold_the_core_lock() -> None:
         local_future = executor.submit(
             core.resolve_request,
             "ordinary local request",
-            "local-during-legacy-graph",
+            "local-during-conversation-graph",
             user_id="local-user",
             configured_resolvers=("exact",),
         )
         same_user_future = executor.submit(
             core.resolve_request,
             "same user local request",
-            "same-user-during-legacy-graph",
+            "same-user-during-conversation-graph",
             user_id="graph-user",
             configured_resolvers=("exact",),
         )
@@ -174,10 +171,10 @@ def test_unified_resolution_cancellation_is_transient_and_not_cached() -> None:
     def cancel() -> None:
         raise ResolutionCancelledError("caller cancelled resolution")
 
-    with pytest.raises(ResolutionCancelledError, match="caller cancelled"):
+    with pytest_raises(ResolutionCancelledError, match="caller cancelled"):
         core.resolve_request("What is Engram?", "resolution-cancelled", cancellation_check=cancel)
 
-    assert "resolution-cancelled" not in core._resolution_requests
+    assert "resolution-cancelled" not in core.resolution_requests
     retry = core.resolve_request("What is Engram?", "resolution-cancelled", configured_resolvers=("exact",))
     assert retry["outcome"].value == "MISS"
 
@@ -207,14 +204,13 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
     stopped = core.stop_conversation("Alice")
 
     assert stopped["user_id"] == "Alice"
-    with pytest.raises(ValueError, match="Alice"):
+    with pytest_raises(ValueError, match="Alice"):
         core.get_conversation("Alice")
     assert core.chat("Carol", "Hello")["user_id"] == "Carol"
 
 
-def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_zero(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    core = EngramCore(store_path=store)
+def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_zero() -> None:
+    core = EngramCore()
     core.start_conversation("0", initial_bot_text="Explicit zero context.")
 
     first_start = core.start_conversation("")
@@ -231,7 +227,6 @@ def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_ze
     stopped = core.stop_conversation("")
     assert stopped["user_id"] == ""
     assert first_session_id not in core.engram.sessions
-    assert first_session_id not in open_engram_core(store_path=store).engram.sessions
 
     second_start = core.start_conversation("")
     second_runtime = core.get_conversation("")
@@ -268,13 +263,13 @@ def test_regulated_cache_does_not_require_a_chat_conversation() -> None:
     assert core.engram.sessions["Carol"]["previous_response"] == "Support is open from nine to five."
 
 
-@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
 def test_regulated_mapping_arguments_reject_falsey_non_objects(invalid) -> None:
     core = EngramCore()
 
-    with pytest.raises(InvalidRequestError, match="required_metadata must be an object"):
+    with pytest_raises(InvalidRequestError, match="required_metadata must be an object"):
         core.propose("What is cached?", "proposal-invalid-metadata", required_metadata=invalid)
-    with pytest.raises(InvalidRequestError, match="metadata must be an object"):
+    with pytest_raises(InvalidRequestError, match="metadata must be an object"):
         core.learn_response("What is cached?", "A cached answer.", "learn-invalid-metadata", metadata=invalid)
 
 
@@ -288,13 +283,13 @@ def test_regulated_mapping_arguments_copy_concrete_empty_objects() -> None:
     assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
 
 
-@pytest.mark.parametrize("field", ["identity", "budget"])
-@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+@pytest_mark.parametrize("field", ["identity", "budget"])
+@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
 def test_unified_python_api_rejects_falsey_non_mapping_absence(field, invalid) -> None:
     core = EngramCore()
     arguments = {field: invalid}
 
-    with pytest.raises(InvalidRequestError, match=f"{field} must be an object"):
+    with pytest_raises(InvalidRequestError, match=f"{field} must be an object"):
         core.resolve_request("What is Engram?", f"invalid-{field}-{type(invalid).__name__}", **arguments)
 
 
@@ -322,7 +317,7 @@ def test_unified_python_api_accepts_mapping_absence_and_authoritative_identity()
 
 
 def test_unified_python_api_candidate_feedback_uses_keyed_records() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     learned = core.learn_response(
         "What is Engram?",
         "Engram is a bounded retrieval system.",
@@ -350,7 +345,7 @@ def test_unified_python_api_candidate_feedback_uses_keyed_records() -> None:
 
 
 def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
 
     learned = core.learn_response(
         "What is cached?",
@@ -374,30 +369,37 @@ def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -
     assert artifact["provenance"]["source_label"] == "actor:test"
     assert artifact["metadata"] == {"actor_version": "actor-7"}
     assert core.engram.sessions["Alice"]["previous_response"] == artifact["response"]
-    assert core.engram.response_repository.check()["consistent"] is True
 
 
-def test_learn_response_exact_retry_survives_restart_without_second_checkpoint(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    first = EngramCore(Engram(), store_path=store)
-    created = first.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
-    durable_before = store.read_bytes()
+def test_restart_discards_receipts_responses_and_conversations() -> None:
+    first_engram = Engram()
+    first_engram.load_static_data([{"pattern": "HELLO", "response": "Hello from static data."}])
+    first = EngramCore(first_engram)
+    created = first.learn_response("What is cached?", "Process-local response.", "learn-restart", user_id="Alice")
+    first.engram.store("Process-local statement.", tier=Tier.DYNAMIC)
+    first.start_conversation("Alice")
 
-    restored = open_engram_core(store_path=store)
-    replay = restored.learn_response("What persists?", "Persistent exact response.", "learn-restart", user_id="Alice")
+    restarted_engram = Engram()
+    restarted_engram.load_static_data([{"pattern": "HELLO", "response": "Hello from static data."}])
+    restarted = EngramCore(restarted_engram)
 
-    assert replay["statement_id"] == created["statement_id"]
-    assert replay["idempotent"] is True
-    assert store.read_bytes() == durable_before
-    assert restored.status()["last_checkpoint_at"] == ""
-    assert restored.engram.sessions["Alice"]["previous_response"] == "Persistent exact response."
+    assert restarted.engram.pattern_query("hello")[2] == "Hello from static data."
+    assert [statement for statement in restarted.engram.statements if statement.get("tier") == Tier.DYNAMIC] == []
+    assert restarted.engram.response_repository.snapshot()["artifacts"] == {}
+    assert restarted.engram.mutation_receipts.next_sequence == 1
+    assert restarted.engram.sessions == {}
+    assert restarted.proposals == {}
+    assert restarted.proposal_requests == {}
+    recreated = restarted.learn_response("What is cached?", "Process-local response.", "learn-restart", user_id="Alice")
+    assert recreated["statement_id"] == created["statement_id"]
+    assert recreated["idempotent"] is False
 
 
 def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     original = core.learn_response("What is current?", "Original exact response.", "learn-original")
 
-    with pytest.raises(ConflictError, match=original["statement_id"]):
+    with pytest_raises(ConflictError, match=original["statement_id"]):
         core.learn_response("What is current?", "Implicit replacement.", "learn-replacement")
 
     artifact = core.engram.response_repository.get_artifact(original["statement_id"])
@@ -406,27 +408,24 @@ def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -
     assert artifact["generation"] == 1
 
 
-def test_proposal_and_resolution_accounting_remain_artifact_view_equivalent() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+def test_proposal_and_resolution_accounting_mutate_only_the_artifact() -> None:
+    core = EngramCore()
     learned = core.learn_response("What is counted?", "Counted response.", "learn-counted")
-    epoch_after_commit = core.engram.namespace_epochs.get("")["knowledge_epoch"]
 
     proposal = core.propose("What is counted?", "proposal-counted")
     core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
 
     artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
-    compatibility = core.engram.get_statement(learned["statement_id"])
     assert artifact["generation"] == 3
-    assert artifact["statistics"]["query_count"] == compatibility["query_count"] == 1
-    assert artifact["statistics"]["hit_count"] == compatibility["hit_count"] == 1
+    assert artifact["statistics"]["query_count"] == 1
+    assert artifact["statistics"]["hit_count"] == 1
+    assert core.engram.get_statement(learned["statement_id"]) == {}
     assert artifact["statistics"]["last_hit_available"] is True
-    assert core.engram.namespace_epochs.get("")["knowledge_epoch"] == epoch_after_commit
-    assert core.engram.response_repository.check()["consistent"] is True
     assert core.engram.mutation_receipts.next_sequence == 4
 
 
 def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     learned = core.learn_response("What has a bounded receipt?", "A bounded receipt.", "learn-bounded-receipt")
     external_request_id = "r" * 256
 
@@ -439,106 +438,59 @@ def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None
     assert len(accounting_ids) == 2
     assert all(len(request_id.encode("utf-8")) <= 256 for request_id in accounting_ids)
     assert all(external_request_id not in request_id for request_id in accounting_ids)
-    assert core.engram.response_repository.check()["consistent"] is True
 
 
-def test_core_flush_restores_shared_state_but_not_transient_proposals(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    core = EngramCore(Engram(), store_path=store)
-    learned = core.learn_response("What persists?", "The answer persists.", "learn-persist")
-    proposal = core.propose("What persists?", "proposal-before-restart")
-    assert store.exists()
+def test_transient_proposals_do_not_cross_process_restart() -> None:
+    core = EngramCore()
+    learned = core.learn_response("What is cached?", "The process-local answer.", "learn-process")
+    proposal = core.propose("What is cached?", "proposal-before-restart")
 
-    restored = open_engram_core(store_path=store)
-    recalled = restored.propose("What persists?", "proposal-after-restart")
+    restarted = open_engram_core()
 
-    assert recalled["candidates"][0]["statement_id"] == learned["statement_id"]
-    with pytest.raises(ValueError, match="expired"):
-        restored.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-
-
-def test_core_open_restores_stored_config_unless_explicitly_overridden(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    stored_config = engram_config(capacity=37, use_synonyms=False)
-    core = EngramCore(Engram(config=stored_config), store_path=store)
-    assert core.flush() is True
-
-    restored = open_engram_core(store_path=store)
-
-    assert restored.engram.config["capacity"] == 37
-    assert restored.engram.config["use_synonyms"] is False
-
-    override = engram_config(capacity=41, use_synonyms=True)
-    overridden = open_engram_core(config=override, store_path=store)
-
-    assert overridden.engram.config["capacity"] == 41
-    assert overridden.engram.config["use_synonyms"] is True
+    assert restarted.engram.response_repository.snapshot().get("artifacts") == {}
+    with pytest_raises(ResourceNotFoundError, match="proposal"):
+        restarted.resolve(
+            proposal.get("proposal_id", ""),
+            "accepted",
+            statement_id=learned.get("statement_id", ""),
+        )
 
 
-def test_core_without_store_reports_that_flush_was_skipped() -> None:
-    assert EngramCore().flush() is False
-
-
-@pytest.mark.parametrize("invalid", [[], (), "", 0, False])
+@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
 def test_core_open_rejects_falsey_non_object_config(invalid) -> None:
-    with pytest.raises(InvalidRequestError, match="config must be an object"):
+    with pytest_raises(InvalidRequestError, match="config must be an object"):
         open_engram_core(config=invalid)
 
 
-def test_core_checkpoints_each_durable_mutation(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    engram = Engram()
-    engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
-    core = EngramCore(engram, store_path=store)
+def test_process_mutations_are_immediately_visible_to_the_owned_core() -> None:
+    engine = Engram()
+    engine.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
+    core = EngramCore(engine)
 
     core.start_conversation("Alice")
-    assert "Alice" in open_engram_core(store_path=store).engram.sessions
-
     core.chat("Alice", "hello")
-    assert open_engram_core(store_path=store).engram.sessions["Alice"]["previous_response"] == "Hello!"
-
     core.set_predicate("Alice", "mood", "curious")
-    assert open_engram_core(store_path=store).engram.sessions["Alice"]["predicates"]["mood"] == "curious"
-
     fact = core.add_fact("Tokyo is the capital of Japan.", source_label="research")
-    assert open_engram_core(store_path=store).engram.get_statement(fact["id"])["source_label"] == "research"
+    learned = core.learn_response("What is cached?", "A cached answer.", "learn-process")
 
-    learned = core.learn_response("What is cached?", "A cached answer.", "learn-checkpoint")
-    proposal = core.propose("What is cached?", "proposal-checkpoint")
-    proposed_state = open_engram_core(store_path=store).engram.get_statement(learned["statement_id"])
-    assert proposed_state["query_count"] == 1
-
-    core.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-    accepted_state = open_engram_core(store_path=store).engram.get_statement(learned["statement_id"])
-    assert accepted_state["hit_count"] == 1
-
-    core.retire_response(learned["statement_id"], "superseded", "retire-checkpoint")
-    restored_retired = open_engram_core(store_path=store).engram
-    assert restored_retired.response_repository.get_artifact(learned["statement_id"])["lifecycle"].value == "RETIRED"
-
-
-def test_context_manager_flushes_when_mutation_checkpointing_is_disabled(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-
-    with EngramCore(Engram(), store_path=store, checkpoint_on_mutation=False) as core:
-        fact = core.add_fact("A deferred fact.")
-        assert not store.exists()
-
-    assert open_engram_core(store_path=store).engram.get_statement(fact["id"])["text"] == "A deferred fact."
+    assert core.engram.sessions.get("Alice", {}).get("previous_response") == "Hello!"
+    assert core.engram.sessions.get("Alice", {}).get("predicates", {}).get("mood") == "curious"
+    assert core.engram.get_statement(fact.get("id", "")).get("source_label") == "research"
+    assert core.engram.response_repository.get_artifact(learned.get("statement_id", "")).get("response") == "A cached answer."
 
 
 def test_core_exposes_stable_request_and_resource_errors() -> None:
     core = EngramCore()
 
-    with pytest.raises(ResourceNotFoundError, match="Alice"):
+    with pytest_raises(ResourceNotFoundError, match="Alice"):
         core.chat("Alice", "hello")
-    with pytest.raises(InvalidRequestError, match="limit"):
+    with pytest_raises(InvalidRequestError, match="limit"):
         core.propose("question", "bad-limit", limit=0)
-    with pytest.raises(ResourceNotFoundError, match="proposal"):
+    with pytest_raises(ResourceNotFoundError, match="proposal"):
         core.resolve("missing", "accepted", statement_id="missing")
 
     core.start_conversation("Alice")
-    with pytest.raises(ConflictError, match="already active"):
+    with pytest_raises(ConflictError, match="already active"):
         core.start_conversation("Alice")
 
 
@@ -555,12 +507,10 @@ def test_close_is_idempotent_and_blocks_subsequent_operations() -> None:
     assert status["state"] == "closed"
     assert status["ready"] is False
     assert status["healthy"] is False
-    with pytest.raises(LifecycleError, match="closed"):
+    with pytest_raises(LifecycleError, match="closed"):
         core.start_conversation("Carol")
-    with pytest.raises(LifecycleError, match="closed"):
+    with pytest_raises(LifecycleError, match="closed"):
         core.add_fact("A fact after closure.")
-    with pytest.raises(LifecycleError, match="closed"):
-        core.flush()
 
 
 def test_close_waits_for_an_active_core_operation() -> None:
@@ -570,8 +520,8 @@ def test_close_waits_for_an_active_core_operation() -> None:
     core.start_conversation("Alice")
     runtime = core.get_conversation("Alice")
     original_send = runtime.send
-    entered = threading.Event()
-    release = threading.Event()
+    entered = threading_Event()
+    release = threading_Event()
 
     def delayed_send(text: str) -> dict:
         entered.set()
@@ -583,67 +533,10 @@ def test_close_waits_for_an_active_core_operation() -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
         chat_future = executor.submit(core.chat, "Alice", "hello")
         assert entered.wait(timeout=5)
-        close_future = executor.submit(core.close, flush=False)
+        close_future = executor.submit(core.close)
         assert close_future.done() is False
         release.set()
         assert chat_future.result(timeout=5)["response"] == "Hello!"
         assert close_future.result(timeout=5) is True
 
     assert core.status()["state"] == "closed"
-
-
-def test_checkpoint_failure_reports_degraded_state_and_recovers(tmp_path, monkeypatch) -> None:
-    store = tmp_path / "engram.json"
-    core = EngramCore(Engram(), store_path=store)
-    real_save = service_module.persistence.save_response_state
-
-    def fail_save(engram, state, path) -> None:
-        raise OSError("disk unavailable")
-
-    monkeypatch.setattr(service_module.persistence, "save_response_state", fail_save)
-    with pytest.raises(PersistenceError) as failure:
-        core.learn_response("What is cached?", "A durable answer.", "learn-degraded")
-
-    assert failure.value.state_changed is False
-    assert failure.value.operation == "store checkpoint"
-    degraded = core.status()
-    assert degraded["state"] == "running"
-    assert degraded["ready"] is True
-    assert degraded["healthy"] is False
-    assert degraded["durability"] == "degraded"
-    assert degraded["dirty"] is False
-    assert degraded["last_persistence_error"] == "OSError"
-
-    monkeypatch.setattr(service_module.persistence, "save_response_state", real_save)
-    retry = core.learn_response("What is cached?", "A durable answer.", "learn-degraded")
-
-    assert retry["idempotent"] is False
-    recovered = core.status()
-    assert recovered["healthy"] is True
-    assert recovered["durability"] == "healthy"
-    assert recovered["dirty"] is False
-    assert recovered["last_checkpoint_at"]
-    assert recovered["last_persistence_error"] == ""
-    assert open_engram_core(store_path=store).engram.get_statement(retry["statement_id"])["text"] == "A durable answer."
-
-
-def test_failed_close_returns_core_to_running_for_flush_recovery(tmp_path, monkeypatch) -> None:
-    store = tmp_path / "engram.json"
-    core = EngramCore(Engram(), store_path=store, checkpoint_on_mutation=False)
-    core.add_fact("Pending state.")
-    real_save = service_module.persistence.save
-
-    def fail_save(engram, path) -> None:
-        raise OSError("read only")
-
-    monkeypatch.setattr(service_module.persistence, "save", fail_save)
-    with pytest.raises(PersistenceError) as failure:
-        core.close()
-
-    assert failure.value.state_changed is True
-    assert core.status()["state"] == "running"
-    assert core.status()["durability"] == "degraded"
-
-    monkeypatch.setattr(service_module.persistence, "save", real_save)
-    assert core.close() is True
-    assert open_engram_core(store_path=store).engram.statements[0]["text"] == "Pending state."

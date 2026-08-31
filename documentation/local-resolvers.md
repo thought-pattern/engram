@@ -2,9 +2,10 @@
 
 **Status:** Current implemented behavior
 
-Engram provides four optional local resolver families in addition to exact, pattern,
-and lexical retrieval. Configuration enables each family separately. All contribute
-through the common candidate/fusion contract and leave authoritative data unchanged.
+Engram provides sparse, standalone semantic, reranking, and deterministic utility
+capabilities in addition to exact artifact lookup and graph-backed evidence. The
+conversational statement/keyword matcher is separate and never contributes an
+accepted-response candidate. Configuration enables each optional capability separately.
 
 ## Symbolic retrieval rewrites
 
@@ -22,16 +23,15 @@ rollback.
 
 ## Fielded sparse retrieval
 
-The optional `fielded_bm25_v1` index is an in-memory projection of active
-accepted-response artifacts. It indexes canonical requests, aliases, entities,
-relation, keywords, and technical identifiers. Response text is included only when
-explicitly configured.
+For each request, the fielded BM25 scorer builds bounded working documents directly
+from the current active accepted-response artifact snapshot. It reads canonical
+requests, aliases, entities, relation, keywords, and technical identifiers. Response
+text is included only when explicitly configured. Its working documents and
+postings belong to that request and are discarded with its result.
 
 The scorer combines fixed field weights with bounded phrase, proximity, prefix,
-character-trigram, and exact technical-identifier signals. Index generations publish
-atomically, incremental updates replace affected postings, and consistency can be
-checked against a clean rebuild. Startup rebuilds the in-memory index. Set
-`sparse.enabled: false` to roll back.
+character-trigram, and exact technical-identifier signals. Set `sparse.enabled: false`
+to disable it.
 
 ## Standalone semantic retrieval and reranking
 
@@ -44,9 +44,10 @@ version, payload checksum, license, backend, and dimension. Provision explicitly
 python scripts/provision_semantic_model.py
 ```
 
-The in-memory exact cosine index is rebuilt from authoritative artifacts and bounded
-by configured record and scan limits. Artifact, checksum, model, or dimension
-failure affects only semantic retrieval.
+Each request embeds the bounded current artifact snapshot and performs exact cosine
+comparison within configured record and scan limits. The embeddings are
+request-local working values. Artifact, checksum, model, or dimension failure
+affects only semantic retrieval.
 
 The optional `transparent_logistic_v1` reranker scores only the already fused bounded
 shortlist with fixed visible coefficients. Failure preserves
@@ -66,7 +67,7 @@ Disable `utility.enabled` or remove one configured plugin to roll back.
 
 ## Status and verification
 
-`core.status().components` reports enablement and readiness for sparse, semantic,
-reranker, and utility components through fixed identifiers.
+`core.status()["components"]` reports enablement and readiness for sparse,
+semantic, reranker, and utility components through fixed identifiers.
 Relevant coverage is in `tests/test_rewrite.py`, `tests/test_sparse.py`,
 `tests/test_semantic.py`, `tests/test_reranking.py`, and `tests/test_utilities.py`.

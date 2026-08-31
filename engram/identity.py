@@ -5,10 +5,10 @@ literal constants and error types. Identity construction therefore performs no
 graph access, model loading, resource download, or transport work.
 """
 
-import json
-import re
-import unicodedata
 from collections.abc import Mapping
+from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from re import Match as re_Match, fullmatch as re_fullmatch, search as re_search
+from unicodedata import category as unicodedata_category, normalize as unicodedata_normalize
 
 from engram.constants import (
     DEFAULT_CONTRACTIONS,
@@ -16,27 +16,27 @@ from engram.constants import (
     EMPTY_RELATION_REFERENCE,
     EMPTY_SCOPE_KEY,
     ENTITY_REFERENCE_FIELDS,
-    IDENTITY_ALLOWED_RAW_WHITESPACE as _ALLOWED_RAW_WHITESPACE,
-    IDENTITY_AUXILIARIES as _AUXILIARIES,
-    IDENTITY_CANONICAL_ID_RE as _CANONICAL_ID_RE,
-    IDENTITY_COMPARISON_OPERATOR_RE as _COMPARISON_OPERATOR_RE,
-    IDENTITY_COMPARISON_PHRASES as _COMPARISON_PHRASES,
-    IDENTITY_CONTRACTION_RE as _CONTRACTION_RE,
-    IDENTITY_CURRENT_TERMS as _CURRENT_TERMS,
-    IDENTITY_DIRECT_LOOKUP_LEADS as _DIRECT_LOOKUP_LEADS,
-    IDENTITY_ENTITY_EXCLUDED_WORDS as _ENTITY_EXCLUDED_WORDS,
-    IDENTITY_HISTORICAL_TERMS as _HISTORICAL_TERMS,
-    IDENTITY_LOCATION_TERMS as _LOCATION_TERMS,
-    IDENTITY_NEGATION_TERMS as _NEGATION_TERMS,
-    IDENTITY_OPERATOR_TOKENS as _OPERATOR_TOKENS,
-    IDENTITY_PUNCTUATION_TRANSLATION as _PUNCTUATION_TRANSLATION,
+    IDENTITY_ALLOWED_RAW_WHITESPACE,
+    IDENTITY_AUXILIARIES,
+    IDENTITY_CANONICAL_ID_RE,
+    IDENTITY_COMPARISON_OPERATOR_RE,
+    IDENTITY_COMPARISON_PHRASES,
+    IDENTITY_CONTRACTION_RE,
+    IDENTITY_CURRENT_TERMS,
+    IDENTITY_DIRECT_LOOKUP_LEADS,
+    IDENTITY_ENTITY_EXCLUDED_WORDS,
+    IDENTITY_HISTORICAL_TERMS,
+    IDENTITY_LOCATION_TERMS,
+    IDENTITY_NEGATION_TERMS,
+    IDENTITY_OPERATOR_TOKENS,
+    IDENTITY_PUNCTUATION_TRANSLATION,
     IDENTITY_QUALIFIER_FIELDS,
-    IDENTITY_QUOTED_SPAN_RE as _QUOTED_SPAN_RE,
-    IDENTITY_RELATION_HINTS as _RELATION_HINTS,
+    IDENTITY_QUOTED_SPAN_RE,
+    IDENTITY_RELATION_HINTS,
     IDENTITY_SCHEMA_VERSION,
-    IDENTITY_TECHNICAL_PATTERNS as _TECHNICAL_PATTERNS,
-    IDENTITY_TECHNICAL_PUNCTUATION as _TECHNICAL_PUNCTUATION,
-    IDENTITY_TITLE_SEQUENCE_RE as _TITLE_SEQUENCE_RE,
+    IDENTITY_TECHNICAL_PATTERNS,
+    IDENTITY_TECHNICAL_PUNCTUATION,
+    IDENTITY_TITLE_SEQUENCE_RE,
     MAX_CANONICAL_FORM_BYTES,
     MAX_CANONICAL_ID_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
@@ -69,43 +69,43 @@ from engram.lexical import select_lexical_terms
 from engram.temporal import parse_temporal_query
 
 
-def _byte_length(value: str) -> int:
+def byte_length(value: str) -> int:
     result = len(value) if value.isascii() else len(value.encode("utf-8"))
     return result
 
 
-def _require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise IdentityValidationError(f"{name} must be a string")
     if not allow_empty and not value:
         raise IdentityValidationError(f"{name} must be a non-empty string")
-    if _byte_length(value) > maximum_bytes:
+    if byte_length(value) > maximum_bytes:
         raise IdentityValidationError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
     if value.isascii():
         if value and not value.isprintable():
             raise IdentityValidationError(f"{name} contains a control or surrogate character")
-    elif any(unicodedata.category(character) in {"Cc", "Cs"} for character in value):
+    elif any(unicodedata_category(character) in {"Cc", "Cs"} for character in value):
         raise IdentityValidationError(f"{name} contains a control or surrogate character")
     return value
 
 
-def _require_raw_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def require_raw_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise IdentityValidationError(f"{name} must be a string")
     if not allow_empty and not value.strip():
         raise IdentityValidationError(f"{name} must contain non-whitespace text")
-    if _byte_length(value) > maximum_bytes:
+    if byte_length(value) > maximum_bytes:
         raise IdentityValidationError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
     if value.isascii() and (not value or value.isprintable()):
         return value
     for character in value:
-        category = unicodedata.category(character)
-        if category in {"Cc", "Cs"} and character not in _ALLOWED_RAW_WHITESPACE:
+        category = unicodedata_category(character)
+        if category in {"Cc", "Cs"} and character not in IDENTITY_ALLOWED_RAW_WHITESPACE:
             raise IdentityValidationError(f"{name} contains a control or surrogate character")
     return value
 
 
-def _require_version(value: object, expected: int, name: str) -> int:
+def require_version(value: object, expected: int, name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise IdentityValidationError(f"{name} must be an integer")
     if value != expected:
@@ -113,20 +113,20 @@ def _require_version(value: object, expected: int, name: str) -> int:
     return value
 
 
-def _require_mapping(value: object, name: str) -> Mapping[str, object]:
+def require_mapping(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise IdentityValidationError(f"{name} must be an object")
     return value
 
 
-def _require_list(value: object, name: str) -> list[object]:
+def require_list(value: object, name: str) -> list[object]:
     if not isinstance(value, list):
         raise IdentityValidationError(f"{name} must be an array")
     result = list(value)
     return result
 
 
-def _require_exact_keys(data: Mapping[str, object], expected: set[str], name: str) -> None:
+def require_exact_keys(data: dict[str, object], expected: set[str], name: str) -> None:
     actual = set(data)
     missing = expected - actual
     extra = actual - expected
@@ -136,75 +136,71 @@ def _require_exact_keys(data: Mapping[str, object], expected: set[str], name: st
         raise IdentityValidationError(f"{name} has unsupported fields: {', '.join(sorted(str(key) for key in extra))}")
 
 
-def _load_json_object(value: str, name: str) -> Mapping[str, object]:
-    _require_raw_text(value, name, MAX_IDENTITY_JSON_BYTES, allow_empty=False)
+def load_json_object(value: str, name: str) -> dict[str, object]:
+    require_raw_text(value, name, MAX_IDENTITY_JSON_BYTES, allow_empty=False)
     try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError as error:
+        decoded = json_loads(value)
+    except json_JSONDecodeError as error:
         raise IdentityValidationError(f"{name} is not valid JSON: {error.msg}") from error
-    result = _require_mapping(decoded, name)
+    result = require_mapping(decoded, name)
     return result
 
 
-def _dump_json(data: dict[str, object]) -> str:
-    result = json.dumps(data, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+def dump_json(data: dict[str, object]) -> str:
+    result = json_dumps(data, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
     return result
 
 
-def _expand_contraction(match: re.Match) -> str:
+def expand_contraction(match: re_Match) -> str:
     result = DEFAULT_CONTRACTIONS[match.group(0)]
     return result
 
 
-def _clean_normalized_token(token: str) -> str:
+def clean_normalized_token(token: str) -> str:
     cleaned = token.strip("'")
     cleaned = cleaned.rstrip(".")
-    if cleaned.endswith(":") and not re.fullmatch(r"[a-z]:", cleaned):
+    if cleaned.endswith(":") and not re_fullmatch(r"[a-z]:", cleaned):
         cleaned = cleaned.rstrip(":")
     return cleaned
 
 
 def normalize_retrieval_key(text: str, normalization_version: int = RETRIEVAL_NORMALIZATION_VERSION) -> str:
     """Normalize one identity or retrieval representation with version 1 rules."""
-    _require_version(normalization_version, RETRIEVAL_NORMALIZATION_VERSION, "normalization_version")
-    raw = _require_raw_text(text, "retrieval text", MAX_RETRIEVAL_REPRESENTATION_BYTES, allow_empty=True)
-    normalized = unicodedata.normalize("NFKC", raw).translate(_PUNCTUATION_TRANSLATION).casefold()
-    normalized = _CONTRACTION_RE.sub(_expand_contraction, normalized)
+    require_version(normalization_version, RETRIEVAL_NORMALIZATION_VERSION, "normalization_version")
+    raw = require_raw_text(text, "retrieval text", MAX_RETRIEVAL_REPRESENTATION_BYTES, allow_empty=True)
+    normalized = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION).casefold()
+    normalized = IDENTITY_CONTRACTION_RE.sub(expand_contraction, normalized)
     characters = []
     for index, character in enumerate(normalized):
         is_not_equal = character == "!" and index + 1 < len(normalized) and normalized[index + 1] == "="
-        if character.isalnum() or character.isspace() or character in _TECHNICAL_PUNCTUATION or is_not_equal:
+        if character.isalnum() or character.isspace() or character in IDENTITY_TECHNICAL_PUNCTUATION or is_not_equal:
             characters.append(character)
         else:
             characters.append(" ")
     collapsed = " ".join("".join(characters).split())
-    tokens = [_clean_normalized_token(token) for token in collapsed.split()]
+    tokens = [clean_normalized_token(token) for token in collapsed.split()]
     result = " ".join(token for token in tokens if token)
     return result
 
 
-def _validate_canonical_id(value: object, name: str) -> str:
-    canonical_id = _require_text(value, name, MAX_CANONICAL_ID_BYTES, allow_empty=True)
-    if canonical_id and not _CANONICAL_ID_RE.fullmatch(canonical_id):
+def validate_canonical_id(value: object, name: str) -> str:
+    canonical_id = require_text(value, name, MAX_CANONICAL_ID_BYTES, allow_empty=True)
+    if canonical_id and not IDENTITY_CANONICAL_ID_RE.fullmatch(canonical_id):
         raise IdentityValidationError(f"{name} must use a URI-like scheme and contain no whitespace")
     return canonical_id
-
-
-ScopeKey = dict
-ScopeKeySignature = tuple[int, str, str]
 
 
 def scope_key(
     namespace: object = "",
     context_fingerprint: object = "",
     schema_version: object = SCOPE_SCHEMA_VERSION,
-) -> ScopeKey:
+) -> dict:
     """Build one versioned exact eligibility boundary."""
 
-    result: ScopeKey = {
-        "schema_version": _require_version(schema_version, SCOPE_SCHEMA_VERSION, "scope schema_version"),
-        "namespace": _require_text(namespace, "scope namespace", MAX_NAMESPACE_BYTES, allow_empty=True),
-        "context_fingerprint": _require_text(
+    result: dict = {
+        "schema_version": require_version(schema_version, SCOPE_SCHEMA_VERSION, "scope schema_version"),
+        "namespace": require_text(namespace, "scope namespace", MAX_NAMESPACE_BYTES, allow_empty=True),
+        "context_fingerprint": require_text(
             context_fingerprint,
             "scope context_fingerprint",
             MAX_CONTEXT_FINGERPRINT_BYTES,
@@ -214,11 +210,11 @@ def scope_key(
     return result
 
 
-def validate_scope_key(value: object) -> ScopeKey:
+def validate_scope_key(value: object) -> dict:
     """Validate and copy one scope-key dictionary."""
 
-    data = _require_mapping(value, "ScopeKey")
-    _require_exact_keys(data, SCOPE_KEY_FIELDS, "ScopeKey")
+    data = require_mapping(value, "ScopeKey")
+    require_exact_keys(data, SCOPE_KEY_FIELDS, "ScopeKey")
     result = scope_key(
         namespace=data.get("namespace", ()),
         context_fingerprint=data.get("context_fingerprint", ()),
@@ -227,7 +223,7 @@ def validate_scope_key(value: object) -> ScopeKey:
     return result
 
 
-def scope_key_signature(value: object) -> ScopeKeySignature:
+def scope_key_signature(value: object) -> tuple:
     """Return the hashable exact signature for one validated scope."""
 
     scope = validate_scope_key(value)
@@ -247,45 +243,42 @@ def scope_key_to_json(value: object) -> str:
     """Serialize one scope key to canonical JSON."""
 
     serialized = scope_key_to_dict(value)
-    result = _dump_json(serialized)
+    result = dump_json(serialized)
     return result
 
 
-def scope_key_from_dict(value: object) -> ScopeKey:
+def scope_key_from_dict(value: object) -> dict:
     """Decode one scope key from its exact dictionary form."""
 
     result = validate_scope_key(value)
     return result
 
 
-def scope_key_from_json(value: str) -> ScopeKey:
+def scope_key_from_json(value: str) -> dict:
     """Decode one scope key from canonical JSON."""
 
-    decoded = _load_json_object(value, "ScopeKey JSON")
+    decoded = load_json_object(value, "ScopeKey JSON")
     result = scope_key_from_dict(decoded)
     return result
 
 
-EntityReference = dict
-
-
-def entity_reference(surface: object, canonical_id: object = "") -> EntityReference:
+def entity_reference(surface: object, canonical_id: object = "") -> dict:
     """Build one validated entity-reference dictionary."""
 
-    validated_surface = _require_text(surface, "entity surface", MAX_IDENTITY_SURFACE_BYTES, allow_empty=False)
-    validated_canonical_id = _validate_canonical_id(canonical_id, "entity canonical_id")
-    result: EntityReference = {
+    validated_surface = require_text(surface, "entity surface", MAX_IDENTITY_SURFACE_BYTES, allow_empty=False)
+    validated_canonical_id = validate_canonical_id(canonical_id, "entity canonical_id")
+    result: dict = {
         "surface": validated_surface,
         "canonical_id": validated_canonical_id,
     }
     return result
 
 
-def validate_entity_reference(value: object) -> EntityReference:
+def validate_entity_reference(value: object) -> dict:
     """Validate and copy one entity-reference dictionary."""
 
-    data = _require_mapping(value, "EntityReference")
-    _require_exact_keys(data, ENTITY_REFERENCE_FIELDS, "EntityReference")
+    data = require_mapping(value, "EntityReference")
+    require_exact_keys(data, ENTITY_REFERENCE_FIELDS, "EntityReference")
     result = entity_reference(data.get("surface", ()), data.get("canonical_id", ()))
     return result
 
@@ -301,41 +294,38 @@ def entity_reference_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def entity_reference_from_dict(value: object) -> EntityReference:
+def entity_reference_from_dict(value: object) -> dict:
     """Decode one entity reference from its exact serialized form."""
 
     result = validate_entity_reference(value)
     return result
 
 
-def _entity_reference_key(value: object) -> tuple[str, str]:
+def entity_reference_key(value: object) -> tuple[str, str]:
     validated = validate_entity_reference(value)
     result = (validated["surface"], validated["canonical_id"])
     return result
 
 
-RelationReference = dict
-
-
-def relation_reference(surface: object = "", canonical_id: object = "") -> RelationReference:
+def relation_reference(surface: object = "", canonical_id: object = "") -> dict:
     """Build one validated relation-reference dictionary."""
 
-    validated_surface = _require_text(surface, "relation surface", MAX_IDENTITY_SURFACE_BYTES, allow_empty=True)
-    validated_canonical_id = _validate_canonical_id(canonical_id, "relation canonical_id")
+    validated_surface = require_text(surface, "relation surface", MAX_IDENTITY_SURFACE_BYTES, allow_empty=True)
+    validated_canonical_id = validate_canonical_id(canonical_id, "relation canonical_id")
     if validated_canonical_id and not validated_surface:
         raise IdentityValidationError("relation surface is required when relation canonical_id is present")
-    result: RelationReference = {
+    result: dict = {
         "surface": validated_surface,
         "canonical_id": validated_canonical_id,
     }
     return result
 
 
-def validate_relation_reference(value: object) -> RelationReference:
+def validate_relation_reference(value: object) -> dict:
     """Validate and copy one relation-reference dictionary."""
 
-    data = _require_mapping(value, "RelationReference")
-    _require_exact_keys(data, RELATION_REFERENCE_FIELDS, "RelationReference")
+    data = require_mapping(value, "RelationReference")
+    require_exact_keys(data, RELATION_REFERENCE_FIELDS, "RelationReference")
     result = relation_reference(data.get("surface", ()), data.get("canonical_id", ()))
     return result
 
@@ -351,36 +341,33 @@ def relation_reference_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def relation_reference_from_dict(value: object) -> RelationReference:
+def relation_reference_from_dict(value: object) -> dict:
     """Decode one relation reference from its exact serialized form."""
 
     result = validate_relation_reference(value)
     return result
 
 
-IdentityQualifier = dict
-
-
-def identity_qualifier(kind: QualifierKind, value: object) -> IdentityQualifier:
+def identity_qualifier(kind: QualifierKind, value: object) -> dict:
     """Build one validated identity-qualifier dictionary."""
 
     if not isinstance(kind, QualifierKind):
         raise IdentityValidationError("qualifier kind must be a QualifierKind")
-    normalized = _require_text(value, "qualifier value", MAX_QUALIFIER_VALUE_BYTES, allow_empty=False)
+    normalized = require_text(value, "qualifier value", MAX_QUALIFIER_VALUE_BYTES, allow_empty=False)
     if normalize_retrieval_key(normalized) != normalized:
         raise IdentityValidationError("qualifier value must already use retrieval normalization version 1")
-    result: IdentityQualifier = {
+    result: dict = {
         "kind": kind,
         "value": normalized,
     }
     return result
 
 
-def validate_identity_qualifier(value: object) -> IdentityQualifier:
+def validate_identity_qualifier(value: object) -> dict:
     """Validate and copy one identity-qualifier dictionary."""
 
-    data = _require_mapping(value, "IdentityQualifier")
-    _require_exact_keys(data, IDENTITY_QUALIFIER_FIELDS, "IdentityQualifier")
+    data = require_mapping(value, "IdentityQualifier")
+    require_exact_keys(data, IDENTITY_QUALIFIER_FIELDS, "IdentityQualifier")
     kind = data.get("kind", ())
     if not isinstance(kind, QualifierKind):
         raise IdentityValidationError("qualifier kind must be a QualifierKind")
@@ -399,12 +386,12 @@ def identity_qualifier_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def identity_qualifier_from_dict(value: object) -> IdentityQualifier:
+def identity_qualifier_from_dict(value: object) -> dict:
     """Decode one identity qualifier from its exact serialized form."""
 
-    data = _require_mapping(value, "IdentityQualifier")
-    _require_exact_keys(data, IDENTITY_QUALIFIER_FIELDS, "IdentityQualifier")
-    kind_value = _require_text(data.get("kind", ()), "qualifier kind", 32, allow_empty=False)
+    data = require_mapping(value, "IdentityQualifier")
+    require_exact_keys(data, IDENTITY_QUALIFIER_FIELDS, "IdentityQualifier")
+    kind_value = require_text(data.get("kind", ()), "qualifier kind", 32, allow_empty=False)
     try:
         kind = QualifierKind(kind_value)
     except ValueError as error:
@@ -413,14 +400,10 @@ def identity_qualifier_from_dict(value: object) -> IdentityQualifier:
     return result
 
 
-def _identity_qualifier_key(value: object) -> tuple[QualifierKind, str]:
+def identity_qualifier_key(value: object) -> tuple[QualifierKind, str]:
     validated = validate_identity_qualifier(value)
     result = (validated["kind"], validated["value"])
     return result
-
-
-ScopedRetrievalKey = dict
-ScopedRetrievalKeySignature = tuple[int, int, ScopeKeySignature, str]
 
 
 def scoped_retrieval_key(
@@ -428,24 +411,24 @@ def scoped_retrieval_key(
     normalized_key: object,
     normalization_version: object = RETRIEVAL_NORMALIZATION_VERSION,
     schema_version: object = SCOPED_RETRIEVAL_KEY_SCHEMA_VERSION,
-) -> ScopedRetrievalKey:
+) -> dict:
     """Build one validated exact-index retrieval key."""
 
     try:
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise IdentityValidationError("scoped retrieval key scope must be a ScopeKey") from error
-    validated_schema_version = _require_version(
+    validated_schema_version = require_version(
         schema_version,
         SCOPED_RETRIEVAL_KEY_SCHEMA_VERSION,
         "scoped retrieval key schema_version",
     )
-    validated_normalization_version = _require_version(
+    validated_normalization_version = require_version(
         normalization_version,
         RETRIEVAL_NORMALIZATION_VERSION,
         "normalization_version",
     )
-    validated_normalized_key = _require_text(
+    validated_normalized_key = require_text(
         normalized_key,
         "normalized retrieval key",
         MAX_RETRIEVAL_REPRESENTATION_BYTES,
@@ -453,7 +436,7 @@ def scoped_retrieval_key(
     )
     if normalize_retrieval_key(validated_normalized_key, validated_normalization_version) != validated_normalized_key:
         raise IdentityValidationError("normalized retrieval key does not match its normalization version")
-    result: ScopedRetrievalKey = {
+    result: dict = {
         "schema_version": validated_schema_version,
         "normalization_version": validated_normalization_version,
         "scope": validated_scope,
@@ -466,7 +449,7 @@ def build_scoped_retrieval_key(
     scope: object,
     representation: str,
     normalization_version: int = RETRIEVAL_NORMALIZATION_VERSION,
-) -> ScopedRetrievalKey:
+) -> dict:
     """Normalize one representation and build its exact-index key."""
 
     normalized = normalize_retrieval_key(representation, normalization_version)
@@ -480,11 +463,11 @@ def build_scoped_retrieval_key(
     return result
 
 
-def validate_scoped_retrieval_key(value: object) -> ScopedRetrievalKey:
+def validate_scoped_retrieval_key(value: object) -> dict:
     """Validate and copy one exact-index retrieval key."""
 
-    data = _require_mapping(value, "ScopedRetrievalKey")
-    _require_exact_keys(data, SCOPED_RETRIEVAL_KEY_FIELDS, "ScopedRetrievalKey")
+    data = require_mapping(value, "ScopedRetrievalKey")
+    require_exact_keys(data, SCOPED_RETRIEVAL_KEY_FIELDS, "ScopedRetrievalKey")
     result = scoped_retrieval_key(
         schema_version=data.get("schema_version", ()),
         normalization_version=data.get("normalization_version", ()),
@@ -494,7 +477,7 @@ def validate_scoped_retrieval_key(value: object) -> ScopedRetrievalKey:
     return result
 
 
-def scoped_retrieval_key_signature(value: object) -> ScopedRetrievalKeySignature:
+def scoped_retrieval_key_signature(value: object) -> tuple:
     """Return the hashable exact signature for one validated retrieval key."""
 
     key = validate_scoped_retrieval_key(value)
@@ -502,14 +485,18 @@ def scoped_retrieval_key_signature(value: object) -> ScopedRetrievalKeySignature
     return result
 
 
-def trusted_scoped_retrieval_key_signature(value: ScopedRetrievalKey) -> ScopedRetrievalKeySignature:
+def trusted_scoped_retrieval_key_signature(value: dict) -> tuple:
     """Return a signature for a key already validated inside a locked boundary."""
 
     result = (
-        value["schema_version"],
-        value["normalization_version"],
-        (value["scope"]["schema_version"], value["scope"]["namespace"], value["scope"]["context_fingerprint"]),
-        value["normalized_key"],
+        value.get("schema_version", 0),
+        value.get("normalization_version", 0),
+        (
+            value.get("scope", {})["schema_version"],
+            value.get("scope", {})["namespace"],
+            value.get("scope", {})["context_fingerprint"],
+        ),
+        value.get("normalized_key", ""),
     )
     return result
 
@@ -531,40 +518,37 @@ def scoped_retrieval_key_to_json(value: object) -> str:
     """Serialize one exact-index retrieval key to canonical JSON."""
 
     serialized = scoped_retrieval_key_to_dict(value)
-    result = _dump_json(serialized)
+    result = dump_json(serialized)
     return result
 
 
-def scoped_retrieval_key_from_dict(value: object) -> ScopedRetrievalKey:
+def scoped_retrieval_key_from_dict(value: object) -> dict:
     """Decode one exact-index retrieval key from its dictionary form."""
 
-    data = _require_mapping(value, "ScopedRetrievalKey")
-    _require_exact_keys(data, SCOPED_RETRIEVAL_KEY_FIELDS, "ScopedRetrievalKey")
+    data = require_mapping(value, "ScopedRetrievalKey")
+    require_exact_keys(data, SCOPED_RETRIEVAL_KEY_FIELDS, "ScopedRetrievalKey")
     result = scoped_retrieval_key(
         schema_version=data.get("schema_version", ()),
         normalization_version=data.get("normalization_version", ()),
-        scope=scope_key_from_dict(_require_mapping(data.get("scope", ()), "scoped retrieval key scope")),
+        scope=scope_key_from_dict(require_mapping(data.get("scope", ()), "scoped retrieval key scope")),
         normalized_key=data.get("normalized_key", ()),
     )
     return result
 
 
-def scoped_retrieval_key_from_json(value: str) -> ScopedRetrievalKey:
+def scoped_retrieval_key_from_json(value: str) -> dict:
     """Decode one exact-index retrieval key from canonical JSON."""
 
-    decoded = _load_json_object(value, "ScopedRetrievalKey JSON")
+    decoded = load_json_object(value, "ScopedRetrievalKey JSON")
     result = scoped_retrieval_key_from_dict(decoded)
     return result
-
-
-RetrievalKeyBinding = dict
 
 
 def retrieval_key_binding(
     key: object,
     origin: object,
     representation: object,
-) -> RetrievalKeyBinding:
+) -> dict:
     """Build one validated scoped retrieval-key binding dictionary."""
 
     try:
@@ -573,7 +557,7 @@ def retrieval_key_binding(
         raise IdentityValidationError("retrieval binding key must be a ScopedRetrievalKey") from error
     if not isinstance(origin, RetrievalOrigin):
         raise IdentityValidationError("retrieval binding origin must be a RetrievalOrigin")
-    validated_representation = _require_raw_text(
+    validated_representation = require_raw_text(
         representation,
         "retrieval binding representation",
         MAX_RETRIEVAL_REPRESENTATION_BYTES,
@@ -581,7 +565,7 @@ def retrieval_key_binding(
     )
     if normalize_retrieval_key(validated_representation, validated_key["normalization_version"]) != validated_key["normalized_key"]:
         raise IdentityValidationError("retrieval binding representation does not produce its scoped key")
-    result: RetrievalKeyBinding = {
+    result: dict = {
         "key": validated_key,
         "origin": origin,
         "representation": validated_representation,
@@ -589,11 +573,11 @@ def retrieval_key_binding(
     return result
 
 
-def validate_retrieval_key_binding(value: object) -> RetrievalKeyBinding:
+def validate_retrieval_key_binding(value: object) -> dict:
     """Validate and copy one scoped retrieval-key binding dictionary."""
 
-    data = _require_mapping(value, "RetrievalKeyBinding")
-    _require_exact_keys(data, RETRIEVAL_KEY_BINDING_FIELDS, "RetrievalKeyBinding")
+    data = require_mapping(value, "RetrievalKeyBinding")
+    require_exact_keys(data, RETRIEVAL_KEY_BINDING_FIELDS, "RetrievalKeyBinding")
     try:
         result = retrieval_key_binding(data.get("key", ()), data.get("origin", ()), data.get("representation", ()))
     except IdentityValidationError as error:
@@ -601,28 +585,25 @@ def validate_retrieval_key_binding(value: object) -> RetrievalKeyBinding:
     return result
 
 
-RetrievalRepresentation = dict
-
-
 def retrieval_representation(
     canonical: object,
     aliases: object = (),
     normalization_version: object = RETRIEVAL_NORMALIZATION_VERSION,
     schema_version: object = RETRIEVAL_REPRESENTATION_SCHEMA_VERSION,
-) -> RetrievalRepresentation:
+) -> dict:
     """Build one validated canonical retrieval representation dictionary."""
 
-    validated_schema_version = _require_version(
+    validated_schema_version = require_version(
         schema_version,
         RETRIEVAL_REPRESENTATION_SCHEMA_VERSION,
         "retrieval representation schema_version",
     )
-    validated_normalization_version = _require_version(
+    validated_normalization_version = require_version(
         normalization_version,
         RETRIEVAL_NORMALIZATION_VERSION,
         "normalization_version",
     )
-    validated_canonical = _require_raw_text(
+    validated_canonical = require_raw_text(
         canonical,
         "retrieval canonical representation",
         MAX_RETRIEVAL_REPRESENTATION_BYTES,
@@ -639,7 +620,7 @@ def retrieval_representation(
     seen = {canonical_key}
     validated_aliases = []
     for index, alias in enumerate(aliases):
-        validated_alias = _require_raw_text(
+        validated_alias = require_raw_text(
             alias,
             f"retrieval alias {index}",
             MAX_RETRIEVAL_REPRESENTATION_BYTES,
@@ -652,7 +633,7 @@ def retrieval_representation(
             continue
         seen.add(normalized)
         validated_aliases.append(validated_alias)
-    result: RetrievalRepresentation = {
+    result: dict = {
         "canonical": validated_canonical,
         "aliases": tuple(validated_aliases),
         "normalization_version": validated_normalization_version,
@@ -661,11 +642,11 @@ def retrieval_representation(
     return result
 
 
-def validate_retrieval_representation(value: object) -> RetrievalRepresentation:
+def validate_retrieval_representation(value: object) -> dict:
     """Validate and copy one retrieval-representation dictionary."""
 
-    data = _require_mapping(value, "RetrievalRepresentation")
-    _require_exact_keys(data, RETRIEVAL_REPRESENTATION_FIELDS, "RetrievalRepresentation")
+    data = require_mapping(value, "RetrievalRepresentation")
+    require_exact_keys(data, RETRIEVAL_REPRESENTATION_FIELDS, "RetrievalRepresentation")
     result = retrieval_representation(
         canonical=data.get("canonical", ()),
         aliases=data.get("aliases", ()),
@@ -692,14 +673,14 @@ def retrieval_representation_to_json(value: object) -> str:
     """Serialize one validated retrieval representation to canonical JSON."""
 
     serialized = retrieval_representation_to_dict(value)
-    result = _dump_json(serialized)
+    result = dump_json(serialized)
     return result
 
 
 def retrieval_representation_bindings(
     value: object,
-    scope: ScopeKey,
-) -> tuple[RetrievalKeyBinding, ...]:
+    scope: dict,
+) -> tuple[dict, ...]:
     """Build scoped canonical and alias bindings for one representation."""
 
     validated_scope = validate_scope_key(scope)
@@ -723,12 +704,12 @@ def retrieval_representation_bindings(
     return result
 
 
-def retrieval_representation_from_dict(value: object) -> RetrievalRepresentation:
+def retrieval_representation_from_dict(value: object) -> dict:
     """Decode one retrieval representation from its exact serialized form."""
 
-    data = _require_mapping(value, "RetrievalRepresentation")
-    _require_exact_keys(data, RETRIEVAL_REPRESENTATION_FIELDS, "RetrievalRepresentation")
-    aliases = _require_list(data.get("aliases", ()), "retrieval aliases")
+    data = require_mapping(value, "RetrievalRepresentation")
+    require_exact_keys(data, RETRIEVAL_REPRESENTATION_FIELDS, "RetrievalRepresentation")
+    aliases = require_list(data.get("aliases", ()), "retrieval aliases")
     validated_aliases = []
     for alias in aliases:
         if not isinstance(alias, str):
@@ -743,15 +724,12 @@ def retrieval_representation_from_dict(value: object) -> RetrievalRepresentation
     return result
 
 
-def retrieval_representation_from_json(value: str) -> RetrievalRepresentation:
+def retrieval_representation_from_json(value: str) -> dict:
     """Decode one retrieval representation from canonical JSON."""
 
-    decoded = _load_json_object(value, "RetrievalRepresentation JSON")
+    decoded = load_json_object(value, "RetrievalRepresentation JSON")
     result = retrieval_representation_from_dict(decoded)
     return result
-
-
-QueryIdentity = dict
 
 
 def query_identity(
@@ -764,16 +742,16 @@ def query_identity(
     scope: object = EMPTY_SCOPE_KEY,
     normalization_version: object = RETRIEVAL_NORMALIZATION_VERSION,
     schema_version: object = IDENTITY_SCHEMA_VERSION,
-) -> QueryIdentity:
+) -> dict:
     """Build one validated semantic query-identity dictionary."""
 
-    validated_schema_version = _require_version(schema_version, IDENTITY_SCHEMA_VERSION, "identity schema_version")
-    validated_normalization_version = _require_version(
+    validated_schema_version = require_version(schema_version, IDENTITY_SCHEMA_VERSION, "identity schema_version")
+    validated_normalization_version = require_version(
         normalization_version,
         RETRIEVAL_NORMALIZATION_VERSION,
         "normalization_version",
     )
-    validated_canonical_form = _require_text(
+    validated_canonical_form = require_text(
         canonical_form,
         "identity canonical_form",
         MAX_CANONICAL_FORM_BYTES,
@@ -791,7 +769,7 @@ def query_identity(
         validated_entities = tuple(validate_entity_reference(entity) for entity in entities)
     except IdentityValidationError as error:
         raise IdentityValidationError("identity entities must be a tuple of EntityReference values") from error
-    entity_keys = tuple(_entity_reference_key(entity) for entity in validated_entities)
+    entity_keys = tuple(entity_reference_key(entity) for entity in validated_entities)
     if len(set(entity_keys)) != len(entity_keys):
         raise IdentityValidationError("identity entities must be unique")
     try:
@@ -806,7 +784,7 @@ def query_identity(
         validated_qualifiers = tuple(validate_identity_qualifier(qualifier) for qualifier in qualifiers)
     except IdentityValidationError as error:
         raise IdentityValidationError("identity qualifiers must be a tuple of IdentityQualifier values") from error
-    qualifier_keys = tuple(_identity_qualifier_key(qualifier) for qualifier in validated_qualifiers)
+    qualifier_keys = tuple(identity_qualifier_key(qualifier) for qualifier in validated_qualifiers)
     if len(set(qualifier_keys)) != len(qualifier_keys):
         raise IdentityValidationError("identity qualifiers must be unique")
     if not isinstance(lexical_terms, tuple):
@@ -815,7 +793,7 @@ def query_identity(
         raise IdentityValidationError(f"identity lexical_terms exceed the limit of {MAX_LEXICAL_TERMS}")
     validated_lexical_terms = []
     for index, term in enumerate(lexical_terms):
-        validated_term = _require_text(
+        validated_term = require_text(
             term,
             f"identity lexical term {index}",
             MAX_LEXICAL_TERM_BYTES,
@@ -832,7 +810,7 @@ def query_identity(
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise IdentityValidationError("identity scope must be a ScopeKey") from error
-    result: QueryIdentity = {
+    result: dict = {
         "canonical_form": validated_canonical_form,
         "operator": operator,
         "entities": validated_entities,
@@ -846,11 +824,11 @@ def query_identity(
     return result
 
 
-def validate_query_identity(value: object) -> QueryIdentity:
+def validate_query_identity(value: object) -> dict:
     """Validate and copy one semantic query-identity dictionary."""
 
-    data = _require_mapping(value, "QueryIdentity")
-    _require_exact_keys(data, QUERY_IDENTITY_FIELDS, "QueryIdentity")
+    data = require_mapping(value, "QueryIdentity")
+    require_exact_keys(data, QUERY_IDENTITY_FIELDS, "QueryIdentity")
     operator = data.get("operator", ())
     scope = data.get("scope", ())
     if not isinstance(operator, QueryOperator):
@@ -891,23 +869,23 @@ def query_identity_to_json(value: object) -> str:
     """Serialize one validated query identity to canonical JSON."""
 
     serialized = query_identity_to_dict(value)
-    result = _dump_json(serialized)
+    result = dump_json(serialized)
     return result
 
 
-def query_identity_from_dict(value: object) -> QueryIdentity:
+def query_identity_from_dict(value: object) -> dict:
     """Decode one query identity from its exact serialized form."""
 
-    data = _require_mapping(value, "QueryIdentity")
-    _require_exact_keys(data, QUERY_IDENTITY_FIELDS, "QueryIdentity")
-    operator_value = _require_text(data.get("operator", ()), "identity operator", 32, allow_empty=False)
+    data = require_mapping(value, "QueryIdentity")
+    require_exact_keys(data, QUERY_IDENTITY_FIELDS, "QueryIdentity")
+    operator_value = require_text(data.get("operator", ()), "identity operator", 32, allow_empty=False)
     try:
         operator = QueryOperator(operator_value)
     except ValueError as error:
         raise IdentityValidationError(f"unsupported identity operator: {operator_value}") from error
-    entities = _require_list(data.get("entities", ()), "identity entities")
-    qualifiers = _require_list(data.get("qualifiers", ()), "identity qualifiers")
-    lexical_terms = _require_list(data.get("lexical_terms", ()), "identity lexical_terms")
+    entities = require_list(data.get("entities", ()), "identity entities")
+    qualifiers = require_list(data.get("qualifiers", ()), "identity qualifiers")
+    lexical_terms = require_list(data.get("lexical_terms", ()), "identity lexical_terms")
     validated_lexical_terms = []
     for term in lexical_terms:
         if not isinstance(term, str):
@@ -918,21 +896,21 @@ def query_identity_from_dict(value: object) -> QueryIdentity:
         normalization_version=data.get("normalization_version", ()),
         canonical_form=data.get("canonical_form", ()),
         operator=operator,
-        entities=tuple(entity_reference_from_dict(_require_mapping(entity, "identity entity")) for entity in entities),
-        relation=relation_reference_from_dict(_require_mapping(data.get("relation", ()), "identity relation")),
+        entities=tuple(entity_reference_from_dict(require_mapping(entity, "identity entity")) for entity in entities),
+        relation=relation_reference_from_dict(require_mapping(data.get("relation", ()), "identity relation")),
         qualifiers=tuple(
-            identity_qualifier_from_dict(_require_mapping(qualifier, "identity qualifier")) for qualifier in qualifiers
+            identity_qualifier_from_dict(require_mapping(qualifier, "identity qualifier")) for qualifier in qualifiers
         ),
         lexical_terms=tuple(validated_lexical_terms),
-        scope=scope_key_from_dict(_require_mapping(data.get("scope", ()), "identity scope")),
+        scope=scope_key_from_dict(require_mapping(data.get("scope", ()), "identity scope")),
     )
     return result
 
 
-def query_identity_from_json(value: str) -> QueryIdentity:
+def query_identity_from_json(value: str) -> dict:
     """Decode one query identity from canonical JSON."""
 
-    decoded = _load_json_object(value, "QueryIdentity JSON")
+    decoded = load_json_object(value, "QueryIdentity JSON")
     result = query_identity_from_dict(decoded)
     return result
 
@@ -957,7 +935,7 @@ def extract_operator(request: str) -> QueryOperator:
         "how": QueryOperator.HOW,
     }
     if first in direct:
-        result = direct[first]
+        result = direct.get(first, QueryOperator.UNKNOWN)
         return result
     if first == "count" or normalized.startswith("number of "):
         result = QueryOperator.COUNT
@@ -968,14 +946,14 @@ def extract_operator(request: str) -> QueryOperator:
     if normalized.startswith(("is there ", "are there ")) or normalized.endswith(" exist"):
         result = QueryOperator.EXISTS
         return result
-    if normalized.startswith(_DIRECT_LOOKUP_LEADS):
+    if normalized.startswith(IDENTITY_DIRECT_LOOKUP_LEADS):
         result = QueryOperator.LOOKUP
         return result
     result = QueryOperator.UNKNOWN
     return result
 
 
-def extract_qualifiers(request: str, operator: QueryOperator) -> tuple[IdentityQualifier, ...]:
+def extract_qualifiers(request: str, operator: QueryOperator) -> tuple[dict, ...]:
     """Extract explicit identity-bearing qualifiers without lexical filtering."""
     if not isinstance(operator, QueryOperator):
         raise IdentityValidationError("qualifier extraction operator must be a QueryOperator")
@@ -984,40 +962,40 @@ def extract_qualifiers(request: str, operator: QueryOperator) -> tuple[IdentityQ
     qualifiers = []
 
     for token in tokens:
-        if token in _NEGATION_TERMS:
+        if token in IDENTITY_NEGATION_TERMS:
             qualifiers.append(identity_qualifier(QualifierKind.NEGATION, token))
             break
     for token in tokens:
-        if token in _CURRENT_TERMS:
+        if token in IDENTITY_CURRENT_TERMS:
             qualifiers.append(identity_qualifier(QualifierKind.CURRENT, token))
             break
     for token in tokens:
-        if token in _HISTORICAL_TERMS:
+        if token in IDENTITY_HISTORICAL_TERMS:
             qualifiers.append(identity_qualifier(QualifierKind.HISTORICAL, token))
             break
 
-    temporal_match = re.search(r"\b(?:as of|before|after|since|until|during|in)\s+(?:the\s+)?(?:year\s+)?\d{4}\b", normalized)
+    temporal_match = re_search(r"\b(?:as of|before|after|since|until|during|in)\s+(?:the\s+)?(?:year\s+)?\d{4}\b", normalized)
     if temporal_match:
         qualifiers.append(identity_qualifier(QualifierKind.TEMPORAL, temporal_match.group(0)))
 
-    comparison_match = _COMPARISON_OPERATOR_RE.search(normalized)
+    comparison_match = IDENTITY_COMPARISON_OPERATOR_RE.search(normalized)
     comparison = comparison_match.group(0) if comparison_match else ""
     if not comparison:
-        comparison = next((phrase.strip() for phrase in _COMPARISON_PHRASES if phrase in f" {normalized} "), "")
+        comparison = next((phrase.strip() for phrase in IDENTITY_COMPARISON_PHRASES if phrase in f" {normalized} "), "")
     if comparison or operator == QueryOperator.COMPARE:
         qualifiers.append(identity_qualifier(QualifierKind.COMPARISON, comparison or operator.value))
 
     if operator in {QueryOperator.HOW_MANY, QueryOperator.COUNT} or "number of" in normalized or "amount of" in normalized:
         qualifiers.append(identity_qualifier(QualifierKind.QUANTITY, operator.value))
 
-    location = next((token for token in tokens if token in _LOCATION_TERMS), "")
+    location = next((token for token in tokens if token in IDENTITY_LOCATION_TERMS), "")
     if operator == QueryOperator.WHERE or location:
         qualifiers.append(identity_qualifier(QualifierKind.LOCATION, location or operator.value))
 
     unique_qualifiers = []
     seen_qualifiers = set()
     for qualifier in qualifiers:
-        qualifier_key = _identity_qualifier_key(qualifier)
+        qualifier_key = identity_qualifier_key(qualifier)
         if qualifier_key not in seen_qualifiers:
             seen_qualifiers.add(qualifier_key)
             unique_qualifiers.append(qualifier)
@@ -1025,22 +1003,24 @@ def extract_qualifiers(request: str, operator: QueryOperator) -> tuple[IdentityQ
     return result
 
 
-def extract_entities_and_identifiers(request: str) -> tuple[EntityReference, ...]:
+def extract_entities_and_identifiers(request: str) -> tuple[dict, ...]:
     """Extract explicit surfaces and technical identifiers without graph access."""
-    raw = _require_raw_text(request, "identity request", MAX_CANONICAL_FORM_BYTES, allow_empty=False)
-    normalized_unicode = unicodedata.normalize("NFKC", raw).translate(_PUNCTUATION_TRANSLATION)
+    raw = require_raw_text(request, "identity request", MAX_CANONICAL_FORM_BYTES, allow_empty=False)
+    normalized_unicode = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION)
     candidates: list[tuple[int, int, str]] = []
-    for pattern in _TECHNICAL_PATTERNS:
+    for pattern in IDENTITY_TECHNICAL_PATTERNS:
         candidates.extend((match.start(), match.end(), match.group(0)) for match in pattern.finditer(normalized_unicode))
-    candidates.extend((match.start(1), match.end(1), match.group(1)) for match in _QUOTED_SPAN_RE.finditer(normalized_unicode))
-    for match in _TITLE_SEQUENCE_RE.finditer(normalized_unicode):
+    candidates.extend(
+        (match.start(1), match.end(1), match.group(1)) for match in IDENTITY_QUOTED_SPAN_RE.finditer(normalized_unicode)
+    )
+    for match in IDENTITY_TITLE_SEQUENCE_RE.finditer(normalized_unicode):
         surface = match.group(0).strip()
         surface_parts = surface.split()
-        while surface_parts and normalize_retrieval_key(surface_parts[0]).rstrip(".") in _ENTITY_EXCLUDED_WORDS:
+        while surface_parts and normalize_retrieval_key(surface_parts[0]).rstrip(".") in IDENTITY_ENTITY_EXCLUDED_WORDS:
             surface_parts = surface_parts[1:]
         surface = " ".join(surface_parts)
         words = normalize_retrieval_key(surface).split()
-        if words and not all(word in _ENTITY_EXCLUDED_WORDS for word in words):
+        if words and not all(word in IDENTITY_ENTITY_EXCLUDED_WORDS for word in words):
             surface_start = normalized_unicode.find(surface, match.start(), match.end())
             candidates.append((surface_start, surface_start + len(surface), surface))
 
@@ -1068,7 +1048,7 @@ def extract_entities_and_identifiers(request: str) -> tuple[EntityReference, ...
 def extract_lexical_terms(request: str) -> tuple[str, ...]:
     """Derive bounded retrieval terms separately from semantic identity fields."""
     normalized = normalize_retrieval_key(request)
-    stopwords = DEFAULT_STOPWORDS | _OPERATOR_TOKENS | _AUXILIARIES
+    stopwords = DEFAULT_STOPWORDS | IDENTITY_OPERATOR_TOKENS | IDENTITY_AUXILIARIES
     terms = select_lexical_terms(
         [token.strip("'") for token in normalized.split()],
         set(stopwords),
@@ -1082,8 +1062,8 @@ def extract_lexical_terms(request: str) -> tuple[str, ...]:
 def extract_relation_surface(
     request: str,
     operator: QueryOperator,
-    entities: tuple[EntityReference, ...],
-) -> RelationReference:
+    entities: tuple[dict, ...],
+) -> dict:
     """Extract a main relation only when simple surface evidence supports one."""
     if not isinstance(operator, QueryOperator):
         raise IdentityValidationError("relation extraction operator must be a QueryOperator")
@@ -1100,20 +1080,20 @@ def extract_relation_surface(
 
     normalized = normalize_retrieval_key(request)
     tokens = normalized.split()
-    if tokens and tokens[0] in _OPERATOR_TOKENS:
+    if tokens and tokens[0] in IDENTITY_OPERATOR_TOKENS:
         tokens = tokens[1:]
     if not tokens:
         result = relation_reference()
         return result
 
-    auxiliary_index = next((index for index, token in enumerate(tokens) if token in _AUXILIARIES), -1)
+    auxiliary_index = next((index for index, token in enumerate(tokens) if token in IDENTITY_AUXILIARIES), -1)
     if auxiliary_index >= 0:
         tail = [token for token in tokens[auxiliary_index + 1 :] if token not in DEFAULT_STOPWORDS]
         if not tail:
             result = relation_reference()
             return result
         candidate = next(
-            (token for token in tail if token in _RELATION_HINTS),
+            (token for token in tail if token in IDENTITY_RELATION_HINTS),
             "",
         )
         if candidate:
@@ -1122,19 +1102,19 @@ def extract_relation_surface(
         result = relation_reference()
         return result
 
-    content = [token for token in tokens if token not in DEFAULT_STOPWORDS and token not in _OPERATOR_TOKENS]
-    candidate = next((token for token in content if token in _RELATION_HINTS), "")
+    content = [token for token in tokens if token not in DEFAULT_STOPWORDS and token not in IDENTITY_OPERATOR_TOKENS]
+    candidate = next((token for token in content if token in IDENTITY_RELATION_HINTS), "")
     result = relation_reference(surface=candidate)
     return result
 
 
-def build_standalone_identity(request: str, scope: object = EMPTY_SCOPE_KEY) -> QueryIdentity:
+def build_standalone_identity(request: str, scope: object = EMPTY_SCOPE_KEY) -> dict:
     """Build a conservative identity from request surfaces with no external I/O."""
     try:
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise IdentityValidationError("standalone identity scope must be a ScopeKey") from error
-    raw = _require_raw_text(request, "identity request", MAX_CANONICAL_FORM_BYTES, allow_empty=False)
+    raw = require_raw_text(request, "identity request", MAX_CANONICAL_FORM_BYTES, allow_empty=False)
     canonical_form = normalize_retrieval_key(raw)
     if not canonical_form:
         raise IdentityValidationError("identity request normalizes to an empty canonical form")
@@ -1159,16 +1139,16 @@ def build_standalone_identity(request: str, scope: object = EMPTY_SCOPE_KEY) -> 
     return result
 
 
-def build_retrieval_representation(request: str, aliases: tuple[str, ...] = ()) -> RetrievalRepresentation:
+def build_retrieval_representation(request: str, aliases: tuple[str, ...] = ()) -> dict:
     """Build the non-executable retrieval representations for one response."""
     result = retrieval_representation(canonical=request, aliases=aliases)
     return result
 
 
 def validate_authoritative_identity(
-    identity: QueryIdentity,
-    retrieval: RetrievalRepresentation,
-) -> QueryIdentity:
+    identity: dict,
+    retrieval: dict,
+) -> dict:
     """Validate cross-contract consistency without rewriting authoritative data."""
     try:
         validated_identity = validate_query_identity(identity)
@@ -1189,9 +1169,9 @@ def validate_authoritative_identity(
 
 
 def load_authoritative_identity(
-    identity: Mapping[str, object],
-    retrieval: Mapping[str, object],
-) -> tuple[QueryIdentity, RetrievalRepresentation]:
+    identity: dict[str, object],
+    retrieval: dict[str, object],
+) -> tuple[dict, dict]:
     """Decode and validate authoritative JSON-compatible identity contracts."""
     decoded_identity = query_identity_from_dict(identity)
     decoded_retrieval = retrieval_representation_from_dict(retrieval)

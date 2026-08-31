@@ -1,13 +1,13 @@
 """Section 3 durable mutation receipt tests."""
 
-import threading
+from json import loads as json_loads
+from threading import Barrier as threading_Barrier, Thread as threading_Thread
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.mutations import (
     MutationOperation,
-    MutationReceipt,
     MutationReceiptLedger,
     MutationResultCode,
     ReceiptCompletionState,
@@ -29,7 +29,7 @@ def completed_receipt(
     sequence=1,
     payload_signature="",
     result_code=MutationResultCode.CREATED,
-) -> MutationReceipt:
+) -> dict:
     signature = payload_signature or canonical_payload_signature({"response": "Exact response", "tier": "DYNAMIC"})
     receipt = mutation_receipt(
         sequence=sequence,
@@ -45,7 +45,7 @@ def completed_receipt(
     return receipt
 
 
-def prepared_receipt(request_id="request-1", sequence=1) -> MutationReceipt:
+def prepared_receipt(request_id="request-1", sequence=1) -> dict:
     receipt = mutation_receipt(
         sequence=sequence,
         request_id=request_id,
@@ -68,11 +68,11 @@ def test_canonical_payload_signature_is_order_independent_unicode_exact_and_conc
     assert first.startswith("sha256:")
     assert len(first) == 71
     assert first != canonical_payload_signature({"z": ["e", True], "a": {"count": 1}})
-    with pytest.raises(InvalidRequestError, match="unsupported JSON"):
-        canonical_payload_signature({"missing": None})
+    with pytest_raises(InvalidRequestError, match="unsupported JSON"):
+        canonical_payload_signature(json_loads('{"missing": null}'))
 
 
-def test_receipt_codec_round_trip_is_deterministic_and_deeply_immutable() -> None:
+def test_receipt_codec_round_trip_is_deterministic_and_deeply_isolated() -> None:
     source = {"statement_id": "stmt-1", "nested": {"items": [1, "é"]}}
     receipt = completed_receipt()
     receipt = mutation_receipt(
@@ -87,15 +87,15 @@ def test_receipt_codec_round_trip_is_deterministic_and_deeply_immutable() -> Non
         receipt["created_at"],
     )
     encoded = mutation_receipt_to_json(receipt)
-    source["nested"]["items"].append("late")
+    source.get("nested", {})["items"].append("late")
     restored = mutation_receipt_from_json(encoded)
 
     assert restored == receipt
     assert mutation_receipt_to_json(restored) == encoded
     assert mutation_receipt_to_dict(restored)["result"] == {"nested": {"items": [1, "é"]}, "statement_id": "stmt-1"}
     assert "\\u00e9" not in encoded
-    with pytest.raises(TypeError):
-        receipt["result"]["new"] = "value"
+    receipt["result"]["new"] = "value"
+    assert "new" not in restored["result"]
 
 
 def test_exact_completed_retry_replays_original_receipt() -> None:
@@ -125,7 +125,7 @@ def test_changed_payload_or_operation_conflicts_without_receipt_disclosure() -> 
     assert changed_payload["outcome"] == ReceiptLookupOutcome.CONFLICT
     assert changed_operation["outcome"] == ReceiptLookupOutcome.CONFLICT
     assert changed_payload["receipt_available"] is False
-    with pytest.raises(ResourceNotFoundError, match="not available"):
+    with pytest_raises(ResourceNotFoundError, match="not available"):
         receipt_lookup_receipt(changed_payload)
 
 
@@ -141,7 +141,7 @@ def test_prepared_receipt_reports_in_progress_and_can_only_advance_to_completed(
         ReceiptLookupOutcome.REPLAY
     )
 
-    with pytest.raises(ConflictError, match="cannot be changed"):
+    with pytest_raises(ConflictError, match="cannot be changed"):
         ledger.record(
             completed_receipt(
                 payload_signature=completed["payload_signature"],
@@ -153,7 +153,7 @@ def test_prepared_receipt_reports_in_progress_and_can_only_advance_to_completed(
 def test_new_request_requires_exact_next_sequence() -> None:
     ledger = MutationReceiptLedger()
     receipt = completed_receipt(sequence=2)
-    with pytest.raises(ConflictError, match="expected 1, received 2"):
+    with pytest_raises(ConflictError, match="expected 1, received 2"):
         ledger.record(receipt)
     assert ledger.lookup(receipt["request_id"], receipt["operation"], receipt["payload_signature"])["outcome"] == (
         ReceiptLookupOutcome.NEW
@@ -178,7 +178,7 @@ def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon(
     assert ledger.lookup("request-1", receipts[0]["operation"], receipts[0]["payload_signature"])["outcome"] == (
         ReceiptLookupOutcome.NEW
     )
-    with pytest.raises(ConflictError, match="pruned"):
+    with pytest_raises(ConflictError, match="pruned"):
         ledger.record(completed_receipt("request-2", 5))
 
 
@@ -204,7 +204,7 @@ def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
     ledger = MutationReceiptLedger()
     first = completed_receipt("request-a", 1)
     second = completed_receipt("request-b", 1)
-    barrier = threading.Barrier(3)
+    barrier = threading_Barrier(3)
     successes = []
     conflicts = []
 
@@ -215,7 +215,7 @@ def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
         except ConflictError as error:
             conflicts.append(str(error))
 
-    threads = [threading.Thread(target=record, args=(receipt,)) for receipt in (first, second)]
+    threads = [threading_Thread(target=record, args=(receipt,)) for receipt in (first, second)]
     for thread in threads:
         thread.start()
     barrier.wait()
@@ -234,9 +234,9 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
         "before_generation": 0,
         "after_generation": 1,
     }
-    with pytest.raises(InvalidRequestError, match="exist before or after"):
+    with pytest_raises(InvalidRequestError, match="exist before or after"):
         artifact_generation_change("stmt-1", 0, 0)
-    with pytest.raises(InvalidRequestError, match="unique"):
+    with pytest_raises(InvalidRequestError, match="unique"):
         mutation_receipt(
             receipt["sequence"],
             receipt["request_id"],
@@ -250,7 +250,7 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
         )
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("call", "message"),
     [
         (lambda: MutationReceiptLedger(max_receipts=0), "positive bounded integer"),
@@ -270,5 +270,5 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
     ],
 )
 def test_receipt_boundaries_reject_wrong_or_malformed_values(call, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+    with pytest_raises(InvalidRequestError, match=message):
         call()

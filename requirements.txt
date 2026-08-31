@@ -88,7 +88,6 @@ rich==15.0.0
 rpds-py==2026.6.3
 shellingham==1.5.4
 smart-open==8.0.1
-spacy-legacy==3.0.12
 spacy-loggers==1.0.5
 tqdm==4.70.0
 truststore==0.10.4

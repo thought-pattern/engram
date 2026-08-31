@@ -5,15 +5,14 @@ threads at once and then assert the core invariants: no exceptions escaped,
 the statement index is consistent, and the metrics counters saw every event.
 """
 
-import threading
+from threading import Thread as threading_Thread
 
-from engram import pipeline
+from engram import pipeline, sessions
 from engram.constants import Tier
 from engram.core import Engram
 
 THREADS = 4
 ITERATIONS = 25
-
 
 def test_concurrent_flows_hold_invariants() -> None:
     engram = Engram()
@@ -34,7 +33,7 @@ def test_concurrent_flows_hold_invariants() -> None:
         except Exception as err:
             errors.append(err)
 
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    threads = [threading_Thread(target=worker, args=(n,)) for n in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -53,7 +52,6 @@ def test_concurrent_flows_hold_invariants() -> None:
 
 
 def test_concurrent_session_updates() -> None:
-    from engram import sessions
 
     engram = Engram()
     errors: list[Exception] = []
@@ -61,14 +59,14 @@ def test_concurrent_session_updates() -> None:
     def worker(n: int) -> None:
         try:
             for i in range(ITERATIONS):
-                session_id = sessions.create_session(engram, session_id=f"sess_{n}_{i}")
+                session_id = sessions.start_session(engram, session_id=f"sess_{n}_{i}")
                 sessions.update_session_context(engram, session_id, f"response {n} {i}")
                 sessions.get_session(engram, session_id, create_if_missing=False)
                 sessions.delete_session(engram, session_id)
         except Exception as err:
             errors.append(err)
 
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    threads = [threading_Thread(target=worker, args=(n,)) for n in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -96,7 +94,7 @@ def test_concurrent_user_chat_contexts_are_isolated() -> None:
         except Exception as err:
             errors.append(err)
 
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    threads = [threading_Thread(target=worker, args=(n,)) for n in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -121,7 +119,7 @@ def test_concurrent_speakers_store_one_copy_of_the_same_fact() -> None:
         except Exception as err:
             errors.append(err)
 
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    threads = [threading_Thread(target=worker, args=(n,)) for n in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:

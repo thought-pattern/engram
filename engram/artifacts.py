@@ -2,15 +2,14 @@
 
 Section 3 owns these transport-neutral types.  This first slice establishes
 the lifecycle vocabulary and policies without depending on storage tier,
-residency, persistence, indexes, or adapters.
+residency, indexes, or adapters.
 """
 
-import json
-import math
-import unicodedata
 from collections.abc import Mapping
 from datetime import datetime
-from types import MappingProxyType
+from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from math import isfinite as math_isfinite
+from unicodedata import category as unicodedata_category
 
 from engram.constants import (
     ARTIFACT_PROVENANCE_FIELDS,
@@ -46,9 +45,6 @@ from engram.constants import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError, LifecycleError
 from engram.identity import (
-    QueryIdentity,
-    RetrievalRepresentation,
-    ScopeKey,
     query_identity_from_dict,
     query_identity_to_dict,
     retrieval_representation_from_dict,
@@ -63,7 +59,7 @@ from engram.identity import (
 from engram.support import validate_support_references
 
 
-def _require_exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[str, object]:
+def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
     actual = set(value)
@@ -74,25 +70,25 @@ def _require_exact_mapping(value: object, name: str, keys: set[str]) -> Mapping[
     return value
 
 
-def _require_mapping(value: object, name: str) -> Mapping[str, object]:
+def require_mapping(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
     return value
 
 
-def _require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if not allow_empty and not value:
         raise InvalidRequestError(f"{name} must not be empty")
     if len(value.encode("utf-8")) > maximum_bytes:
         raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(unicodedata.category(character) in {"Cc", "Cs"} for character in value):
+    if any(unicodedata_category(character) in {"Cc", "Cs"} for character in value):
         raise InvalidRequestError(f"{name} contains a control or surrogate character")
     return value
 
 
-def _require_response(value: object) -> str:
+def require_response(value: object) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError("artifact response must be a string")
     if not value:
@@ -100,40 +96,40 @@ def _require_response(value: object) -> str:
     if len(value.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise InvalidRequestError(f"artifact response exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
     for character in value:
-        if unicodedata.category(character) == "Cs":
+        if unicodedata_category(character) == "Cs":
             raise InvalidRequestError("artifact response contains a surrogate character")
-        if unicodedata.category(character) == "Cc" and character not in "\t\n\r":
+        if unicodedata_category(character) == "Cc" and character not in "\t\n\r":
             raise InvalidRequestError("artifact response contains an unsupported control character")
     return value
 
 
-def _require_bool(value: object, name: str) -> bool:
+def require_bool(value: object, name: str) -> bool:
     if not isinstance(value, bool):
         raise InvalidRequestError(f"{name} must be a boolean")
     return value
 
 
-def _require_positive_int(value: object, name: str) -> int:
+def require_positive_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise InvalidRequestError(f"{name} must be a positive integer")
     return value
 
 
-def _require_nonnegative_int(value: object, name: str) -> int:
+def require_nonnegative_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise InvalidRequestError(f"{name} must be a nonnegative integer")
     return value
 
 
-def _require_schema_version(value: object, expected: int, name: str) -> int:
-    version = _require_positive_int(value, name)
+def require_schema_version(value: object, expected: int, name: str) -> int:
+    version = require_positive_int(value, name)
     if version != expected:
         raise InvalidRequestError(f"unsupported {name}: {version}; expected {expected}")
     return version
 
 
-def _require_canonical_utc_timestamp(value: object, name: str, *, allow_empty: bool) -> str:
-    text = _require_text(value, name, MAX_TIMESTAMP_BYTES, allow_empty=allow_empty)
+def require_canonical_utc_timestamp(value: object, name: str, *, allow_empty: bool) -> str:
+    text = require_text(value, name, MAX_TIMESTAMP_BYTES, allow_empty=allow_empty)
     if not text:
         return text
     if not text.endswith("Z"):
@@ -148,9 +144,9 @@ def _require_canonical_utc_timestamp(value: object, name: str, *, allow_empty: b
     return text
 
 
-def _require_present_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
-    presence = _require_bool(available, f"{name}_available")
-    text = _require_canonical_utc_timestamp(value, name, allow_empty=not presence)
+def require_present_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
+    presence = require_bool(available, f"{name}_available")
+    text = require_canonical_utc_timestamp(value, name, allow_empty=not presence)
     if presence and not text:
         raise InvalidRequestError(f"{name} must not be empty when {name}_available is true")
     if not presence and text:
@@ -159,7 +155,7 @@ def _require_present_timestamp(value: object, available: object, name: str) -> t
     return result
 
 
-def _freeze_json_value(value: object, name: str, depth: int, item_count: list[int]) -> object:
+def freeze_json_value(value: object, name: str, depth: int, item_count: list[int]) -> object:
     if depth > MAX_METADATA_DEPTH:
         raise InvalidRequestError(f"{name} exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
     item_count[0] += 1
@@ -168,87 +164,80 @@ def _freeze_json_value(value: object, name: str, depth: int, item_count: list[in
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        result = _require_text(value, name, MAX_METADATA_STRING_BYTES, allow_empty=True)
+        result = require_text(value, name, MAX_METADATA_STRING_BYTES, allow_empty=True)
         return result
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
+        if not math_isfinite(value):
             raise InvalidRequestError(f"{name} must not contain a non-finite number")
         return value
     if isinstance(value, Mapping):
         validated_items = []
         for key, item in value.items():
-            validated_key = _require_text(key, f"{name} key", MAX_METADATA_KEY_BYTES, allow_empty=False)
+            validated_key = require_text(key, f"{name} key", MAX_METADATA_KEY_BYTES, allow_empty=False)
             validated_items.append((validated_key, item))
         frozen = {}
         for validated_key, item in sorted(validated_items, key=lambda pair: pair[0]):
-            frozen[validated_key] = _freeze_json_value(item, f"{name}.{validated_key}", depth + 1, item_count)
-        result = MappingProxyType(frozen)
+            frozen[validated_key] = freeze_json_value(item, f"{name}.{validated_key}", depth + 1, item_count)
+        result = dict(frozen)
         return result
     if isinstance(value, (list, tuple)):
-        result = tuple(
-            _freeze_json_value(item, f"{name}[{position}]", depth + 1, item_count) for position, item in enumerate(value)
-        )
+        result = tuple(freeze_json_value(item, f"{name}[{position}]", depth + 1, item_count) for position, item in enumerate(value))
         return result
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
 
-def _freeze_metadata(value: object) -> Mapping[str, object]:
+def freeze_metadata(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError("artifact metadata must be an object")
-    frozen = _freeze_json_value(value, "artifact metadata", 0, [0])
+    frozen = freeze_json_value(value, "artifact metadata", 0, [0])
     if not isinstance(frozen, Mapping):
         raise InvalidRequestError("artifact metadata must be an object")
-    encoded = json.dumps(_thaw_json_value(frozen), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    encoded = json_dumps(thaw_json_value(frozen), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     if len(encoded.encode("utf-8")) > MAX_METADATA_BYTES:
         raise InvalidRequestError(f"artifact metadata exceeds the UTF-8 limit of {MAX_METADATA_BYTES} bytes")
     return frozen
 
 
-def _thaw_json_value(value: object) -> object:
+def thaw_json_value(value: object) -> object:
     if isinstance(value, Mapping):
-        result = {key: _thaw_json_value(item) for key, item in value.items()}
+        result = {key: thaw_json_value(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
-        result = [_thaw_json_value(item) for item in value]
+        result = [thaw_json_value(item) for item in value]
         return result
     return value
 
 
-def _json_text(value: Mapping[str, object]) -> str:
-    result = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+def json_text(value: dict[str, object]) -> str:
+    result = json_dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return result
 
 
-ArtifactProvenance = dict
-ArtifactStatistics = dict
-CachedResponseArtifact = dict
-
-
-def validate_artifact_provenance(value: object) -> ArtifactProvenance:
+def validate_artifact_provenance(value: object) -> dict:
     """Validate and copy bounded accepted-response provenance."""
 
-    data = _require_exact_mapping(value, "ArtifactProvenance", ARTIFACT_PROVENANCE_FIELDS)
-    result: ArtifactProvenance = {
-        "schema_version": _require_schema_version(
+    data = require_exact_mapping(value, "ArtifactProvenance", ARTIFACT_PROVENANCE_FIELDS)
+    result: dict = {
+        "schema_version": require_schema_version(
             data["schema_version"],
             ARTIFACT_PROVENANCE_SCHEMA_VERSION,
             "artifact provenance schema_version",
         ),
-        "source_label": _require_text(
+        "source_label": require_text(
             data["source_label"],
             "artifact provenance source_label",
             MAX_SOURCE_LABEL_BYTES,
             allow_empty=True,
         ),
-        "caller_id": _require_text(
+        "caller_id": require_text(
             data["caller_id"],
             "artifact provenance caller_id",
             MAX_CALLER_ID_BYTES,
             allow_empty=True,
         ),
-        "accepted_at": _require_canonical_utc_timestamp(
+        "accepted_at": require_canonical_utc_timestamp(
             data["accepted_at"],
             "artifact provenance accepted_at",
             allow_empty=False,
@@ -262,7 +251,7 @@ def artifact_provenance(
     caller_id: str,
     accepted_at: str,
     schema_version: int = ARTIFACT_PROVENANCE_SCHEMA_VERSION,
-) -> ArtifactProvenance:
+) -> dict:
     """Construct bounded accepted-response provenance."""
 
     raw_provenance = {
@@ -283,30 +272,30 @@ def artifact_provenance_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def artifact_provenance_from_dict(value: object) -> ArtifactProvenance:
+def artifact_provenance_from_dict(value: object) -> dict:
     """Decode bounded accepted-response provenance."""
 
     result = validate_artifact_provenance(value)
     return result
 
 
-def validate_artifact_statistics(value: object) -> ArtifactStatistics:
+def validate_artifact_statistics(value: object) -> dict:
     """Validate and copy authoritative response statistics."""
 
-    data = _require_exact_mapping(value, "ArtifactStatistics", ARTIFACT_STATISTICS_FIELDS)
-    last_hit, last_hit_available = _require_present_timestamp(
+    data = require_exact_mapping(value, "ArtifactStatistics", ARTIFACT_STATISTICS_FIELDS)
+    last_hit, last_hit_available = require_present_timestamp(
         data["last_hit"],
         data["last_hit_available"],
         "artifact statistics last_hit",
     )
-    result: ArtifactStatistics = {
-        "schema_version": _require_schema_version(
+    result: dict = {
+        "schema_version": require_schema_version(
             data["schema_version"],
             ARTIFACT_STATISTICS_SCHEMA_VERSION,
             "artifact statistics schema_version",
         ),
-        "hit_count": _require_nonnegative_int(data["hit_count"], "artifact statistics hit_count"),
-        "query_count": _require_nonnegative_int(data["query_count"], "artifact statistics query_count"),
+        "hit_count": require_nonnegative_int(data["hit_count"], "artifact statistics hit_count"),
+        "query_count": require_nonnegative_int(data["query_count"], "artifact statistics query_count"),
         "last_hit": last_hit,
         "last_hit_available": last_hit_available,
     }
@@ -319,7 +308,7 @@ def artifact_statistics(
     last_hit: str = "",
     last_hit_available: bool = False,
     schema_version: int = ARTIFACT_STATISTICS_SCHEMA_VERSION,
-) -> ArtifactStatistics:
+) -> dict:
     """Construct authoritative response statistics."""
 
     raw_statistics = {
@@ -341,21 +330,21 @@ def artifact_statistics_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def artifact_statistics_from_dict(value: object) -> ArtifactStatistics:
+def artifact_statistics_from_dict(value: object) -> dict:
     """Decode authoritative response statistics."""
 
     result = validate_artifact_statistics(value)
     return result
 
 
-def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
+def validate_cached_response_artifact(value: object) -> dict:
     """Validate and defensively copy one accepted-response artifact."""
 
-    data = _require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
-    schema_version = _require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version")
-    statement_id = _require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
-    generation = _require_positive_int(data["generation"], "artifact generation")
-    response = _require_response(data["response"])
+    data = require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
+    schema_version = require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version")
+    statement_id = require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
+    generation = require_positive_int(data["generation"], "artifact generation")
+    response = require_response(data["response"])
     try:
         query_identity = validate_query_identity(data["query_identity"])
     except IdentityValidationError as error:
@@ -368,7 +357,7 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
     tier = data["tier"]
     if not isinstance(tier, Tier):
         raise InvalidRequestError("artifact tier must be a Tier")
-    lifecycle = _require_lifecycle(data["lifecycle"], "artifact lifecycle")
+    lifecycle = require_lifecycle(data["lifecycle"], "artifact lifecycle")
     try:
         scope = validate_scope_key(data["scope"])
     except IdentityValidationError as error:
@@ -384,21 +373,17 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
         support_references = validate_support_references(raw_support)
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
-    valid_from, valid_from_available = _require_present_timestamp(
+    valid_from, valid_from_available = require_present_timestamp(
         data["valid_from"],
         data["valid_from_available"],
         "artifact valid_from",
     )
-    valid_until, valid_until_available = _require_present_timestamp(
+    valid_until, valid_until_available = require_present_timestamp(
         data["valid_until"],
         data["valid_until_available"],
         "artifact valid_until",
     )
-    knowledge_epoch = _require_nonnegative_int(data["knowledge_epoch"], "artifact knowledge_epoch")
-    knowledge_epoch_available = _require_bool(data["knowledge_epoch_available"], "artifact knowledge_epoch_available")
-    if not knowledge_epoch_available and knowledge_epoch != 0:
-        raise InvalidRequestError("artifact knowledge_epoch must be 0 when unavailable")
-    superseded_by = _require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
+    superseded_by = require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
     if lifecycle == LifecycleState.ACTIVE and superseded_by:
         raise InvalidRequestError("an ACTIVE artifact must not name superseded_by")
     if lifecycle == LifecycleState.SUPERSEDED and not superseded_by:
@@ -407,8 +392,8 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
         raise InvalidRequestError("artifact superseded_by must not reference itself")
     provenance = validate_artifact_provenance(data["provenance"])
     statistics = validate_artifact_statistics(data["statistics"])
-    metadata = _freeze_metadata(data["metadata"])
-    result: CachedResponseArtifact = {
+    metadata = freeze_metadata(data["metadata"])
+    result: dict = {
         "schema_version": schema_version,
         "statement_id": statement_id,
         "generation": generation,
@@ -423,8 +408,6 @@ def validate_cached_response_artifact(value: object) -> CachedResponseArtifact:
         "valid_from_available": valid_from_available,
         "valid_until": valid_until,
         "valid_until_available": valid_until_available,
-        "knowledge_epoch": knowledge_epoch,
-        "knowledge_epoch_available": knowledge_epoch_available,
         "superseded_by": superseded_by,
         "provenance": provenance,
         "statistics": statistics,
@@ -437,24 +420,22 @@ def cached_response_artifact(
     statement_id: str,
     generation: int,
     response: str,
-    query_identity: QueryIdentity,
-    retrieval: RetrievalRepresentation,
+    query_identity: dict,
+    retrieval: dict,
     tier: Tier,
     lifecycle: LifecycleState,
-    scope: ScopeKey,
+    scope: dict,
     support_references: tuple[dict, ...],
     valid_from: str,
     valid_from_available: bool,
     valid_until: str,
     valid_until_available: bool,
-    knowledge_epoch: int,
-    knowledge_epoch_available: bool,
     superseded_by: str,
-    provenance: ArtifactProvenance,
-    statistics: Mapping[str, object] = EMPTY_MAPPING,
-    metadata: Mapping[str, object] = EMPTY_MAPPING,
+    provenance: dict,
+    statistics: dict[str, object] = EMPTY_MAPPING,
+    metadata: dict[str, object] = EMPTY_MAPPING,
     schema_version: int = ARTIFACT_SCHEMA_VERSION,
-) -> CachedResponseArtifact:
+) -> dict:
     """Construct one authoritative accepted-response artifact."""
 
     if not isinstance(statistics, Mapping):
@@ -475,8 +456,6 @@ def cached_response_artifact(
         "valid_from_available": valid_from_available,
         "valid_until": valid_until,
         "valid_until_available": valid_until_available,
-        "knowledge_epoch": knowledge_epoch,
-        "knowledge_epoch_available": knowledge_epoch_available,
         "superseded_by": superseded_by,
         "provenance": provenance,
         "statistics": selected_statistics,
@@ -505,12 +484,10 @@ def cached_response_artifact_to_dict(value: object) -> dict[str, object]:
         "valid_from_available": artifact["valid_from_available"],
         "valid_until": artifact["valid_until"],
         "valid_until_available": artifact["valid_until_available"],
-        "knowledge_epoch": artifact["knowledge_epoch"],
-        "knowledge_epoch_available": artifact["knowledge_epoch_available"],
         "superseded_by": artifact["superseded_by"],
         "provenance": artifact_provenance_to_dict(artifact["provenance"]),
         "statistics": artifact_statistics_to_dict(artifact["statistics"]),
-        "metadata": _thaw_json_value(artifact["metadata"]),
+        "metadata": thaw_json_value(artifact["metadata"]),
     }
     return result
 
@@ -519,16 +496,16 @@ def cached_response_artifact_to_json(value: object) -> str:
     """Serialize one accepted-response artifact to canonical JSON."""
 
     data = cached_response_artifact_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def cached_response_artifact_from_dict(value: object) -> CachedResponseArtifact:
+def cached_response_artifact_from_dict(value: object) -> dict:
     """Decode one accepted-response artifact from its wire dictionary."""
 
-    data = _require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
-    tier_value = _require_text(data["tier"], "artifact tier", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
-    lifecycle_value = _require_text(data["lifecycle"], "artifact lifecycle", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
+    data = require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
+    tier_value = require_text(data["tier"], "artifact tier", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
+    lifecycle_value = require_text(data["lifecycle"], "artifact lifecycle", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
     try:
         tier = Tier(tier_value)
     except ValueError as error:
@@ -540,30 +517,28 @@ def cached_response_artifact_from_dict(value: object) -> CachedResponseArtifact:
     raw_support = data["support_references"]
     if not isinstance(raw_support, list):
         raise InvalidRequestError("artifact support_references must be an array")
-    metadata = _require_mapping(data["metadata"], "artifact metadata")
-    query_identity = _require_mapping(data["query_identity"], "artifact query_identity")
-    retrieval = _require_mapping(data["retrieval"], "artifact retrieval")
-    scope = _require_mapping(data["scope"], "artifact scope")
-    provenance = _require_mapping(data["provenance"], "artifact provenance")
-    statistics = _require_mapping(data["statistics"], "artifact statistics")
+    metadata = require_mapping(data["metadata"], "artifact metadata")
+    query_identity = require_mapping(data["query_identity"], "artifact query_identity")
+    retrieval = require_mapping(data["retrieval"], "artifact retrieval")
+    scope = require_mapping(data["scope"], "artifact scope")
+    provenance = require_mapping(data["provenance"], "artifact provenance")
+    statistics = require_mapping(data["statistics"], "artifact statistics")
     result = cached_response_artifact(
-        schema_version=_require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version"),
-        statement_id=_require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
-        generation=_require_positive_int(data["generation"], "artifact generation"),
-        response=_require_response(data["response"]),
+        schema_version=require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version"),
+        statement_id=require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
+        generation=require_positive_int(data["generation"], "artifact generation"),
+        response=require_response(data["response"]),
         query_identity=query_identity_from_dict(query_identity),
         retrieval=retrieval_representation_from_dict(retrieval),
         tier=tier,
         lifecycle=lifecycle,
         scope=scope_key_from_dict(scope),
         support_references=tuple(raw_support),
-        valid_from=_require_canonical_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
-        valid_from_available=_require_bool(data["valid_from_available"], "artifact valid_from_available"),
-        valid_until=_require_canonical_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),
-        valid_until_available=_require_bool(data["valid_until_available"], "artifact valid_until_available"),
-        knowledge_epoch=_require_nonnegative_int(data["knowledge_epoch"], "artifact knowledge_epoch"),
-        knowledge_epoch_available=_require_bool(data["knowledge_epoch_available"], "artifact knowledge_epoch_available"),
-        superseded_by=_require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True),
+        valid_from=require_canonical_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
+        valid_from_available=require_bool(data["valid_from_available"], "artifact valid_from_available"),
+        valid_until=require_canonical_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),
+        valid_until_available=require_bool(data["valid_until_available"], "artifact valid_until_available"),
+        superseded_by=require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True),
         provenance=artifact_provenance_from_dict(provenance),
         statistics=artifact_statistics_from_dict(statistics),
         metadata=metadata,
@@ -571,14 +546,14 @@ def cached_response_artifact_from_dict(value: object) -> CachedResponseArtifact:
     return result
 
 
-def cached_response_artifact_from_json(value: str) -> CachedResponseArtifact:
+def cached_response_artifact_from_json(value: str) -> dict:
     """Decode one accepted-response artifact from canonical JSON."""
 
     if not isinstance(value, str):
         raise InvalidRequestError("CachedResponseArtifact JSON must be a string")
     try:
-        data = json.loads(value)
-    except json.JSONDecodeError as error:
+        data = json_loads(value)
+    except json_JSONDecodeError as error:
         raise InvalidRequestError("CachedResponseArtifact JSON is malformed") from error
     if not isinstance(data, Mapping):
         raise InvalidRequestError("CachedResponseArtifact JSON must contain an object")
@@ -586,47 +561,42 @@ def cached_response_artifact_from_json(value: str) -> CachedResponseArtifact:
     return result
 
 
-LifecycleBaseDecision = dict
-LifecycleTransitionDecision = dict
-HistoricalKeyReuseDecision = dict
-
-
-def _require_lifecycle(value: object, name: str) -> LifecycleState:
+def require_lifecycle(value: object, name: str) -> LifecycleState:
     if not isinstance(value, LifecycleState):
         raise InvalidRequestError(f"{name} must be a LifecycleState")
     return value
 
 
-def _require_operation(value: object) -> LifecycleOperation:
+def require_operation(value: object) -> LifecycleOperation:
     if not isinstance(value, LifecycleOperation):
         raise InvalidRequestError("lifecycle operation must be a LifecycleOperation")
     return value
 
 
-def _require_lifecycle_decision_reason(value: object, name: str) -> LifecycleDecisionReason:
+def require_lifecycle_decision_reason(value: object, name: str) -> LifecycleDecisionReason:
     if not isinstance(value, LifecycleDecisionReason):
         raise InvalidRequestError(f"{name} must be a LifecycleDecisionReason")
     return value
 
 
-def _require_historical_key_reuse_reason(value: object) -> HistoricalKeyReuseReason:
+def require_historical_key_reuse_reason(value: object) -> HistoricalKeyReuseReason:
     if not isinstance(value, HistoricalKeyReuseReason):
         raise InvalidRequestError("historical key reuse reason must be a HistoricalKeyReuseReason")
     return value
 
 
-def validate_lifecycle_base_decision(value: object) -> LifecycleBaseDecision:
+def validate_lifecycle_base_decision(value: object) -> dict:
     """Validate and copy one lifecycle-only eligibility decision."""
 
-    data = _require_exact_mapping(value, "LifecycleBaseDecision", LIFECYCLE_BASE_DECISION_FIELDS)
-    lifecycle = _require_lifecycle(data["lifecycle"], "lifecycle decision lifecycle")
-    direct_answer_eligible = _require_bool(data["direct_answer_eligible"], "lifecycle decision direct_answer_eligible")
-    reason = _require_lifecycle_decision_reason(data["reason"], "lifecycle decision reason")
+    data = require_exact_mapping(value, "LifecycleBaseDecision", LIFECYCLE_BASE_DECISION_FIELDS)
+    lifecycle = require_lifecycle(data["lifecycle"], "lifecycle decision lifecycle")
+    direct_answer_eligible = require_bool(data["direct_answer_eligible"], "lifecycle decision direct_answer_eligible")
+    reason = require_lifecycle_decision_reason(data["reason"], "lifecycle decision reason")
     expected_eligible = lifecycle == LifecycleState.ACTIVE
     expected_reason = LifecycleDecisionReason.ELIGIBLE if expected_eligible else LIFECYCLE_INELIGIBLE_REASONS[lifecycle]
     if direct_answer_eligible != expected_eligible or reason != expected_reason:
         raise InvalidRequestError("LifecycleBaseDecision fields do not match lifecycle policy")
-    result: LifecycleBaseDecision = {
+    result: dict = {
         "lifecycle": lifecycle,
         "direct_answer_eligible": direct_answer_eligible,
         "reason": reason,
@@ -646,7 +616,7 @@ def lifecycle_base_decision_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def _lifecycle_transition_outcome(
+def lifecycle_transition_outcome(
     current: LifecycleState,
     target: LifecycleState,
     operation: LifecycleOperation,
@@ -664,19 +634,19 @@ def _lifecycle_transition_outcome(
     return result
 
 
-def validate_lifecycle_transition_decision(value: object) -> LifecycleTransitionDecision:
+def validate_lifecycle_transition_decision(value: object) -> dict:
     """Validate and copy one lifecycle transition decision."""
 
-    data = _require_exact_mapping(value, "LifecycleTransitionDecision", LIFECYCLE_TRANSITION_DECISION_FIELDS)
-    current = _require_lifecycle(data["current"], "current lifecycle")
-    target = _require_lifecycle(data["target"], "target lifecycle")
-    operation = _require_operation(data["operation"])
-    allowed = _require_bool(data["allowed"], "lifecycle transition allowed")
-    reason = _require_lifecycle_decision_reason(data["reason"], "lifecycle transition reason")
-    expected_allowed, expected_reason = _lifecycle_transition_outcome(current, target, operation)
+    data = require_exact_mapping(value, "LifecycleTransitionDecision", LIFECYCLE_TRANSITION_DECISION_FIELDS)
+    current = require_lifecycle(data["current"], "current lifecycle")
+    target = require_lifecycle(data["target"], "target lifecycle")
+    operation = require_operation(data["operation"])
+    allowed = require_bool(data["allowed"], "lifecycle transition allowed")
+    reason = require_lifecycle_decision_reason(data["reason"], "lifecycle transition reason")
+    expected_allowed, expected_reason = lifecycle_transition_outcome(current, target, operation)
     if allowed != expected_allowed or reason != expected_reason:
         raise InvalidRequestError("LifecycleTransitionDecision fields do not match transition policy")
-    result: LifecycleTransitionDecision = {
+    result: dict = {
         "current": current,
         "target": target,
         "operation": operation,
@@ -700,16 +670,16 @@ def lifecycle_transition_decision_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def validate_historical_key_reuse_decision(value: object) -> HistoricalKeyReuseDecision:
+def validate_historical_key_reuse_decision(value: object) -> dict:
     """Validate and copy one historical retrieval-key reuse decision."""
 
-    data = _require_exact_mapping(value, "HistoricalKeyReuseDecision", HISTORICAL_KEY_REUSE_DECISION_FIELDS)
-    allowed = _require_bool(data["allowed"], "historical key reuse allowed")
-    reason = _require_historical_key_reuse_reason(data["reason"])
+    data = require_exact_mapping(value, "HistoricalKeyReuseDecision", HISTORICAL_KEY_REUSE_DECISION_FIELDS)
+    allowed = require_bool(data["allowed"], "historical key reuse allowed")
+    reason = require_historical_key_reuse_reason(data["reason"])
     expected_allowed = reason == HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
     if allowed != expected_allowed:
         raise InvalidRequestError("HistoricalKeyReuseDecision allowed does not match reason")
-    result: HistoricalKeyReuseDecision = {"allowed": allowed, "reason": reason}
+    result: dict = {"allowed": allowed, "reason": reason}
     return result
 
 
@@ -721,10 +691,10 @@ def historical_key_reuse_decision_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def lifecycle_base_eligibility(lifecycle: LifecycleState) -> LifecycleBaseDecision:
-    """Evaluate lifecycle alone; temporal and epoch checks are later stages."""
+def lifecycle_base_eligibility(lifecycle: LifecycleState) -> dict:
+    """Evaluate lifecycle alone; temporal checks are applied later."""
 
-    state = _require_lifecycle(lifecycle, "lifecycle")
+    state = require_lifecycle(lifecycle, "lifecycle")
     if state == LifecycleState.ACTIVE:
         raw_decision = {
             "lifecycle": state,
@@ -745,13 +715,13 @@ def lifecycle_transition_decision(
     current: LifecycleState,
     target: LifecycleState,
     operation: LifecycleOperation,
-) -> LifecycleTransitionDecision:
+) -> dict:
     """Return the version 1 legal-transition decision without mutating state."""
 
-    current_state = _require_lifecycle(current, "current lifecycle")
-    target_state = _require_lifecycle(target, "target lifecycle")
-    named_operation = _require_operation(operation)
-    allowed, reason = _lifecycle_transition_outcome(current_state, target_state, named_operation)
+    current_state = require_lifecycle(current, "current lifecycle")
+    target_state = require_lifecycle(target, "target lifecycle")
+    named_operation = require_operation(operation)
+    allowed, reason = lifecycle_transition_outcome(current_state, target_state, named_operation)
     raw_decision = {
         "current": current_state,
         "target": target_state,
@@ -767,7 +737,7 @@ def require_lifecycle_transition(
     current: LifecycleState,
     target: LifecycleState,
     operation: LifecycleOperation,
-) -> LifecycleTransitionDecision:
+) -> dict:
     """Return a legal decision or raise a stable lifecycle error."""
 
     decision = lifecycle_transition_decision(current, target, operation)
@@ -784,7 +754,7 @@ def historical_key_reuse_decision(
     explicit_replacement: bool,
     expected_statement_id: str,
     expected_generation: int,
-) -> HistoricalKeyReuseDecision:
+) -> dict:
     """Apply the v1 policy for a retrieval key already present in history.
 
     Repository collision checks remain responsible for verifying that the
@@ -818,5 +788,5 @@ def historical_key_reuse_decision(
 def lifecycle_after_capacity_eviction(lifecycle: LifecycleState) -> LifecycleState:
     """Confirm that capacity eviction cannot perform a lifecycle transition."""
 
-    state = _require_lifecycle(lifecycle, "lifecycle")
+    state = require_lifecycle(lifecycle, "lifecycle")
     return state

@@ -1,20 +1,12 @@
-"""Eviction policies for ENGRAM.
-
-This module provides eviction functionality for managing the capacity
-of the statement store by removing DYNAMIC tier statements based on
-various policies (FIFO, LRU, LFU, HIT_RATE).
-"""
+"""Least-recently-used eviction for ENGRAM process memory."""
 
 from datetime import datetime
 
-from engram.constants import EvictionPolicy, Tier
-from engram.models import statement_hit_rate
+from engram.constants import Tier
 
 
 def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
     """Get DYNAMIC statements eligible for eviction.
-
-    Filters out statements that are protected by min_hit_rate threshold.
 
     Args:
         engram: Engram instance.
@@ -26,16 +18,6 @@ def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
     candidates = []
     for idx, stmt in enumerate(engram.statements):
         if stmt.get("tier", "") == Tier.DYNAMIC:
-            # min_hit_rate protects proven performers only. A statement with no
-            # query history has no evidence either way (its hit rate defaults to
-            # 0.5) and stays evictable -- otherwise any threshold below 0.5
-            # would protect every untouched statement and disable eviction.
-            if (
-                engram.config.get("min_hit_rate", 0) > 0
-                and stmt.get("query_count", 0) > 0
-                and statement_hit_rate(stmt) >= engram.config.get("min_hit_rate", 0.0)
-            ):
-                continue
             candidates.append((idx, stmt))
     return candidates
 
@@ -95,17 +77,13 @@ def evict_statement_at(engram, idx: int) -> bool:
     for i, s in enumerate(engram.statements):
         engram.statement_index[s.get("id", "")] = i
 
-    engram._remove_index_projection_if_present(stmt["id"])
     engram.eviction_count += 1
     result = True
     return result
 
 
 def evict_dynamic(engram) -> bool:
-    """Evict a DYNAMIC statement based on configured policy.
-
-    Selects a candidate based on the eviction policy (FIFO, LRU, LFU, HIT_RATE)
-    and removes it from the store.
+    """Evict the least-recently-used DYNAMIC statement.
 
     Args:
         engram: Engram instance.
@@ -119,57 +97,21 @@ def evict_dynamic(engram) -> bool:
         result = False
         return result
 
-    policy = engram.config.get("eviction_policy", False)
-    target_idx: int
+    def lru_key(item: tuple[int, dict]) -> tuple[datetime, int, str]:
+        _, statement = item
+        last_hit = statement.get("last_hit", False)
+        last_used = last_hit or statement.get("created_at", False)
+        key = (last_used, 1 if last_hit else 0, str(statement.get("id", "")))
+        return key
 
-    if policy == EvictionPolicy.FIFO:
-        # First-in, first-out: evict oldest (first in list)
-        target_idx = candidates[0][0]
-
-    elif policy == EvictionPolicy.LRU:
-        # Least recently used: evict statement with oldest last_hit.
-        # Statements never hit use created_at as fallback, and lose timestamp
-        # ties to statements that were actually used -- clock resolution can
-        # make a hit land in the same tick as another statement's creation.
-        def lru_key(item: tuple[int, dict]) -> tuple[datetime, int]:
-            _, stmt = item
-            last_used = stmt.get("last_hit", False) or stmt.get("created_at", False)
-            was_hit = 1 if stmt.get("last_hit", False) else 0
-            key = (last_used, was_hit)
-            return key
-
-        target_idx = min(candidates, key=lru_key)[0]
-
-    elif policy == EvictionPolicy.LFU:
-        # Least frequently used: evict statement with lowest hit_count
-        # Ties broken by oldest created_at
-        def lfu_key(item: tuple[int, dict]) -> tuple[int, datetime]:
-            _, stmt = item
-            key = (stmt.get("hit_count", 0), stmt.get("created_at", False))
-            return key
-
-        target_idx = min(candidates, key=lfu_key)[0]
-
-    elif policy == EvictionPolicy.HIT_RATE:
-        # Lowest hit rate: evict statement with lowest hit_rate
-        # Ties broken by oldest created_at
-        def hit_rate_key(item: tuple[int, dict]) -> tuple[float, datetime]:
-            _, stmt = item
-            key = (statement_hit_rate(stmt), stmt.get("created_at", False))
-            return key
-
-        target_idx = min(candidates, key=hit_rate_key)[0]
-
-    else:
-        # Default to FIFO
-        target_idx = candidates[0][0]
+    target_idx = min(candidates, key=lru_key)[0]
 
     evicted = evict_statement_at(engram, target_idx)
     return evicted
 
 
 def evict(engram) -> bool:
-    """Manually evict a DYNAMIC statement based on configured policy.
+    """Manually evict the least-recently-used DYNAMIC statement.
 
     Thread-safe wrapper around evict_dynamic.
 

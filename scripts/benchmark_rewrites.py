@@ -1,16 +1,16 @@
 """Measure the frozen Section 11 engineering promotion corpus."""
 
-import argparse
-import json
-import statistics
-import sys
-import time
+from argparse import ArgumentParser as argparse_ArgumentParser
 from collections import Counter
+from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
+from statistics import median as statistics_median
+from sys import path as sys_path
+from time import perf_counter_ns as time_perf_counter_ns
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY))
+if str(REPOSITORY) not in sys_path:
+    sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants import QueryOperator
 from engram.identity import build_scoped_retrieval_key, scope_key, scoped_retrieval_key_to_json
@@ -21,13 +21,14 @@ DEFAULT_CORPUS = Path("eval/section11-rewrite-v1.json")
 DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark-2026-08-20.json")
 
 
-def _percentile(values: list[float], fraction: float) -> float:
+def internal_percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, max(0, int((len(ordered) - 1) * fraction)))]
+    result = ordered[min(len(ordered) - 1, max(0, int((len(ordered) - 1) * fraction)))]
+    return result
 
 
-def _load(path: Path) -> dict[str, object]:
-    decoded = json.loads(path.read_text(encoding="utf-8"))
+def internal_load(path: Path) -> dict[str, object]:
+    decoded = json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(decoded, dict) or decoded.get("schema_version") != 1:
         raise ValueError("rewrite benchmark corpus must be a schema-1 object")
     if not isinstance(decoded.get("cases"), list) or not isinstance(decoded.get("gates"), dict):
@@ -38,7 +39,7 @@ def _load(path: Path) -> dict[str, object]:
 def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[str, object]:
     if repeats < 30:
         raise ValueError("rewrite benchmark requires at least 30 repeats")
-    corpus = _load(corpus_path)
+    corpus = internal_load(corpus_path)
     cases = corpus["cases"]
     gates = corpus["gates"]
     if not isinstance(cases, list) or not isinstance(gates, dict):
@@ -77,7 +78,7 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
             baseline_hits += baseline_key == expected_key
             rewritten_hits += rewritten_key == expected_key
             signature = scoped_retrieval_key_to_json(expected_key)
-            prior = final_owners.get(signature)
+            prior = final_owners.get(signature, "")
             if prior and prior != case_id:
                 semantic_collisions += 1
             final_owners[signature] = case_id
@@ -98,14 +99,14 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         for raw_case in cases:
             if not isinstance(raw_case, dict):
                 continue
-            started = time.perf_counter_ns()
+            started = time_perf_counter_ns()
             engine.rewrite(
                 str(raw_case["input"]),
                 operator=QueryOperator(str(raw_case["operator"])),
                 subject=str(raw_case["subject"]),
                 inherited_subject=raw_case["inherited_subject"] is True,
             )
-            latencies_ms.append((time.perf_counter_ns() - started) / 1_000_000)
+            latencies_ms.append((time_perf_counter_ns() - started) / 1_000_000)
     negatives = len(cases) - positive
     baseline_recall = baseline_hits / positive
     rewritten_recall = rewritten_hits / positive
@@ -113,12 +114,12 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
     collision_rate = semantic_collisions / positive
     false_rate = false_direct_answers / negatives
     verdicts = {
-        "all_cases_pass": all(bool(result["passed"]) for result in results),
+        "all_cases_pass": all(bool(result.get("passed", False)) for result in results),
         "recall_gain": recall_gain >= float(gates["minimum_recall_gain"]),
         "semantic_collision_rate": collision_rate <= float(gates["maximum_semantic_collision_rate"]),
         "false_direct_answer_rate": false_rate <= float(gates["maximum_false_direct_answer_rate"]),
     }
-    return {
+    result = {
         "schema_version": 1,
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
@@ -145,9 +146,9 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         "latency_observation": {
             "samples": len(latencies_ms),
             "repeats": repeats,
-            "p50_ms": statistics.median(latencies_ms),
-            "p95_ms": _percentile(latencies_ms, 0.95),
-            "p99_ms": _percentile(latencies_ms, 0.99),
+            "p50_ms": statistics_median(latencies_ms),
+            "p95_ms": internal_percentile(latencies_ms, 0.95),
+            "p99_ms": internal_percentile(latencies_ms, 0.99),
             "maximum_ms": max(latencies_ms),
             "timing_gate_applied": False,
         },
@@ -155,21 +156,23 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         "verdicts": verdicts,
         "passed": all(verdicts.values()),
         "cases": results,
-        "release_authority": "component engineering promotion only; Section 16 project qualification owns release authority",
+        "release_authority": "component capability evidence only; release qualification owns the release decision",
     }
+    return result
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     report = benchmark(args.corpus, args.repeats)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"passed": report["passed"], "accuracy": report["accuracy"], "latency": report["latency_observation"]}))
-    return 0 if report["passed"] else 1
+    args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json_dumps({"passed": report["passed"], "accuracy": report["accuracy"], "latency": report["latency_observation"]}))
+    result = 0 if report["passed"] else 1
+    return result
 
 
 if __name__ == "__main__":

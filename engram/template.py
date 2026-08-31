@@ -7,9 +7,9 @@ random selection, conditionals, redirects, and more.
 The evaluation context is a plain dict built by ``TemplateContext``.
 """
 
-import random
-import re
 from datetime import datetime
+from random import choice as random_choice
+from re import compile as re_compile, match as re_match
 
 from engram.constants import (
     TEMPLATE_BOT_EXPRESSION,
@@ -33,17 +33,17 @@ from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
 from engram.text import extract_name, first_clause
 
-star_pattern = re.compile(TEMPLATE_STAR_EXPRESSION)
-thatstar_pattern = re.compile(TEMPLATE_THATSTAR_EXPRESSION)
-topicstar_pattern = re.compile(TEMPLATE_TOPICSTAR_EXPRESSION)
-get_pattern = re.compile(TEMPLATE_GET_EXPRESSION)
-bot_pattern = re.compile(TEMPLATE_BOT_EXPRESSION)
-map_pattern = re.compile(TEMPLATE_MAP_EXPRESSION)
-input_pattern = re.compile(TEMPLATE_INPUT_EXPRESSION)
-response_pattern = re.compile(TEMPLATE_RESPONSE_EXPRESSION)
-that_pattern = re.compile(TEMPLATE_THAT_EXPRESSION)
-transform_pattern = re.compile(TEMPLATE_TRANSFORM_EXPRESSION)
-date_format_pattern = re.compile(TEMPLATE_DATE_FORMAT_EXPRESSION)
+star_pattern = re_compile(TEMPLATE_STAR_EXPRESSION)
+thatstar_pattern = re_compile(TEMPLATE_THATSTAR_EXPRESSION)
+topicstar_pattern = re_compile(TEMPLATE_TOPICSTAR_EXPRESSION)
+get_pattern = re_compile(TEMPLATE_GET_EXPRESSION)
+bot_pattern = re_compile(TEMPLATE_BOT_EXPRESSION)
+map_pattern = re_compile(TEMPLATE_MAP_EXPRESSION)
+input_pattern = re_compile(TEMPLATE_INPUT_EXPRESSION)
+response_pattern = re_compile(TEMPLATE_RESPONSE_EXPRESSION)
+that_pattern = re_compile(TEMPLATE_THAT_EXPRESSION)
+transform_pattern = re_compile(TEMPLATE_TRANSFORM_EXPRESSION)
+date_format_pattern = re_compile(TEMPLATE_DATE_FORMAT_EXPRESSION)
 
 
 def template_context(
@@ -111,8 +111,8 @@ def template_context(
 
 def get_star(ctx: dict, index: int) -> str:
     """Get star capture by 1-based index."""
-    if 1 <= index <= len(ctx["stars"]):
-        star = ctx["stars"][index - 1]
+    if 1 <= index <= len(ctx.get("stars", [])):
+        star = ctx.get("stars", [])[index - 1]
         return star
     result = ""
     return result
@@ -120,8 +120,8 @@ def get_star(ctx: dict, index: int) -> str:
 
 def get_thatstar(ctx: dict, index: int) -> str:
     """Get thatstar capture by 1-based index."""
-    if 1 <= index <= len(ctx["thatstars"]):
-        thatstar = ctx["thatstars"][index - 1]
+    if 1 <= index <= len(ctx.get("thatstars", [])):
+        thatstar = ctx.get("thatstars", [])[index - 1]
         return thatstar
     result = ""
     return result
@@ -129,8 +129,8 @@ def get_thatstar(ctx: dict, index: int) -> str:
 
 def get_topicstar(ctx: dict, index: int) -> str:
     """Get topicstar capture by 1-based index."""
-    if 1 <= index <= len(ctx["topicstars"]):
-        topicstar = ctx["topicstars"][index - 1]
+    if 1 <= index <= len(ctx.get("topicstars", [])):
+        topicstar = ctx.get("topicstars", [])[index - 1]
         return topicstar
     result = ""
     return result
@@ -138,16 +138,16 @@ def get_topicstar(ctx: dict, index: int) -> str:
 
 def get_map(ctx: dict, map_name: str, key: str, default: str = "") -> str:
     """Get value from named map."""
-    if map_name in ctx["maps"]:
-        value = ctx["maps"][map_name].get(key.lower(), default)
+    if map_name in ctx.get("maps", {}):
+        value = ctx.get("maps", {})[map_name].get(key.lower(), default)
         return value
     return default
 
 
 def get_input(ctx: dict, index: int = 1) -> str:
     """Get input from history (1-based, 1=most recent)."""
-    if 1 <= index <= len(ctx["input_history"]):
-        value = ctx["input_history"][index - 1]
+    if 1 <= index <= len(ctx.get("input_history", [])):
+        value = ctx.get("input_history", [])[index - 1]
         return value
     result = ""
     return result
@@ -155,8 +155,8 @@ def get_input(ctx: dict, index: int = 1) -> str:
 
 def get_response(ctx: dict, index: int = 1) -> str:
     """Get response from history (1-based, 1=most recent)."""
-    if 1 <= index <= len(ctx["response_history"]):
-        value = ctx["response_history"][index - 1]
+    if 1 <= index <= len(ctx.get("response_history", [])):
+        value = ctx.get("response_history", [])[index - 1]
         return value
     result = ""
     return result
@@ -164,8 +164,8 @@ def get_response(ctx: dict, index: int = 1) -> str:
 
 def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
     """Get that by response and sentence index (1-based)."""
-    if 1 <= response_idx <= len(ctx["that_history"]):
-        sentences = ctx["that_history"][response_idx - 1]
+    if 1 <= response_idx <= len(ctx.get("that_history", [])):
+        sentences = ctx.get("that_history", [])[response_idx - 1]
         if 1 <= sentence_idx <= len(sentences):
             sentence = sentences[sentence_idx - 1]
             return sentence
@@ -177,16 +177,16 @@ def simple_variable_values(context: dict) -> dict[str, str]:
     """Collect concrete values for the centralized simple-variable tokens."""
 
     result = {
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["topic"]: context["predicates"].get("topic", ""),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["input"]: context["input_text"],
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["request"]: context["request_text"],
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["id"]: context["session_id"],
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["size"]: str(context["category_count"]),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["vocabulary"]: str(context["vocabulary_count"]),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["topic"]: context.get("predicates", {}).get("topic", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["input"]: context.get("input_text", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["request"]: context.get("request_text", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["id"]: context.get("session_id", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["size"]: str(context.get("category_count", 0)),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["vocabulary"]: str(context.get("vocabulary_count", 0)),
         TEMPLATE_SIMPLE_VARIABLE_TOKENS["date"]: datetime.now().strftime("%B %d, %Y"),
         TEMPLATE_SIMPLE_VARIABLE_TOKENS["time"]: datetime.now().strftime("%H:%M:%S"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["program"]: context["bot"].get("name", "ENGRAM"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["version"]: context["bot"].get("version", VERSION),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["program"]: context.get("bot", {}).get("name", "ENGRAM"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS["version"]: context.get("bot", {}).get("version", VERSION),
     }
     return result
 
@@ -201,7 +201,7 @@ def apply_word_substitution(text: str, substitutions: dict[str, str]) -> str:
     for word in words:
         lower = word.lower()
         if lower in substitutions:
-            replacement = substitutions[lower]
+            replacement = substitutions.get(lower, "")
             if word.isupper():
                 replacement = replacement.upper()
             elif word[0].isupper():
@@ -225,8 +225,8 @@ class TemplateProcessor:
                 terminates instead of recursing without bound.
         """
         self.srai_limit = srai_limit
-        self._srai_depth = 0
-        self._loop_depth = 0
+        self.srai_depth = 0
+        self.loop_depth = 0
 
     def process(self, template, context: dict) -> str:
         """Process a template and return the output string.
@@ -243,95 +243,94 @@ class TemplateProcessor:
             return result
 
         if isinstance(template, str):
-            result = self._substitute_variables(template, context)
+            result = self.substitute_variables(template, context)
             return result
 
         if isinstance(template, dict):
-            result = self._process_dict_template(template, context)
+            result = self.process_dict_template(template, context)
             return result
 
         if isinstance(template, list):
             # List is treated as sequence
-            result = self._process_sequence(template, context)
+            result = self.process_sequence(template, context)
             return result
 
         result = str(template)
         return result
 
-    def _process_dict_template(self, template: dict, context: dict) -> str:
+    def process_dict_template(self, template: dict, context: dict) -> str:
         """Process a dictionary template."""
 
         if "text" in template:
-            result = self._substitute_variables(str(template["text"]), context)
+            result = self.substitute_variables(str(template.get("text", "")), context)
             return result
 
         if "random" in template:
-            result = self._process_random(template["random"], context)
+            result = self.process_random(template.get("random", []), context)
             return result
 
         if "condition" in template:
-            result = self._process_condition(template["condition"], context)
+            result = self.process_condition(template.get("condition", {}), context)
             return result
 
         if "sequence" in template:
-            result = self._process_sequence(template["sequence"], context)
+            result = self.process_sequence(template.get("sequence", []), context)
             return result
 
         if "redirect" in template:
-            result = self._process_redirect(template["redirect"], context)
+            result = self.process_redirect(template.get("redirect", ""), context)
             return result
 
-        if "sr" in template and template["sr"]:
-            if context["stars"]:
-                result = self._process_redirect(context["stars"][0], context)
+        if "sr" in template and template.get("sr", False):
+            if context.get("stars", []):
+                result = self.process_redirect(context.get("stars", [])[0], context)
                 return result
             result = ""
             return result
 
         if "think" in template:
-            self._process_think(template["think"], context)
+            self.process_think(template.get("think", []), context)
             result = ""
             return result
 
         if "set" in template:
-            self._process_set(template["set"], context)
+            self.process_set(template.get("set", {}), context)
             result = ""
             return result
 
         if "learn" in template:
-            self._process_learn(template["learn"], context)
+            self.process_learn(template.get("learn", {}), context)
             result = ""
             return result
 
-        if "loop" in template and template["loop"]:
+        if "loop" in template and template.get("loop", False):
             result = ""
             return result
 
         if "graph_query" in template:
-            result = self._process_graph_query(template["graph_query"], context)
+            result = self.process_graph_query(template.get("graph_query", {}), context)
             return result
 
         if "triple_query" in template:
-            result = self._process_triple_query(template["triple_query"], context)
+            result = self.process_triple_query(template.get("triple_query", {}), context)
             return result
 
         result = ""
         return result
 
-    def _process_random(self, choices: list, context: dict) -> str:
+    def process_random(self, choices: list, context: dict) -> str:
         """Process random selection."""
         if not choices:
             result = ""
             return result
-        choice = random.choice(choices)
+        choice = random_choice(choices)
         result = self.process(choice, context)
         return result
 
-    def _process_condition(self, condition: dict, context: dict) -> str:
+    def process_condition(self, condition: dict, context: dict) -> str:
         """Process conditional template."""
-        # Support both "var" and "name" for variable name
-        var_name = condition.get("var", condition.get("name", ""))
-        var_value = context["predicates"].get(var_name, "")
+        var_name = condition.get("name", "")
+        var_value = context.get("predicates", {}).get(var_name, "")
 
         if "exists" in condition or "missing" in condition:
             if var_value:
@@ -342,50 +341,48 @@ class TemplateProcessor:
                 return result
 
         if "pattern" in condition:
-            pattern = condition["pattern"]
-            if re.match(pattern, var_value):
+            pattern = condition.get("pattern", "")
+            if re_match(pattern, var_value):
                 result = self.process(condition.get("match", ""), context)
                 return result
             else:
                 result = self.process(condition.get("nomatch", ""), context)
                 return result
 
-        # Support both "cases" and "branches" for value matching
-        cases = condition.get("cases", condition.get("branches", []))
-        if cases:
-            for case in cases:
+        branches = condition.get("branches", [])
+        if branches:
+            for case in branches:
                 if "value" in case:
                     if var_value == case["value"]:
-                        # Support both "template" and "then" for the result
-                        result_template = case.get("template", case.get("then", ""))
+                        result_template = case.get("then", "")
                         result = self.process(result_template, context)
                         # Check for loop (bounded so a predicate that never
                         # changes cannot recurse forever)
-                        if isinstance(result_template, dict) and "loop" in result_template and self._loop_depth < self.srai_limit:
-                            self._loop_depth += 1
+                        if isinstance(result_template, dict) and "loop" in result_template and self.loop_depth < self.srai_limit:
+                            self.loop_depth += 1
                             try:
-                                combined = result + self._process_condition(condition, context)
+                                combined = result + self.process_condition(condition, context)
                             finally:
-                                self._loop_depth -= 1
+                                self.loop_depth -= 1
                             return combined
                         return result
-                elif "default" in case or "then" in case:
-                    result_template = case.get("default", case.get("then", case.get("template", "")))
+                elif "then" in case:
+                    result_template = case.get("then", "")
                     result = self.process(result_template, context)
                     # Check for loop in default (same bound as above)
-                    if isinstance(result_template, dict) and "loop" in result_template and self._loop_depth < self.srai_limit:
-                        self._loop_depth += 1
+                    if isinstance(result_template, dict) and "loop" in result_template and self.loop_depth < self.srai_limit:
+                        self.loop_depth += 1
                         try:
-                            combined = result + self._process_condition(condition, context)
+                            combined = result + self.process_condition(condition, context)
                         finally:
-                            self._loop_depth -= 1
+                            self.loop_depth -= 1
                         return combined
                     return result
 
         result = ""
         return result
 
-    def _process_sequence(self, sequence: list, context: dict) -> str:
+    def process_sequence(self, sequence: list, context: dict) -> str:
         """Process sequence of templates, returning last text output."""
         output_parts = []
         for item in sequence:
@@ -395,84 +392,87 @@ class TemplateProcessor:
         output = " ".join(output_parts) if output_parts else ""
         return output
 
-    def _process_redirect(self, pattern: str, context: dict) -> str:
+    def process_redirect(self, pattern: str, context: dict) -> str:
         """Process redirect (SRAI)."""
-        if self._srai_depth >= self.srai_limit:
+        if self.srai_depth >= self.srai_limit:
             result = ""
             return result
 
-        resolved_pattern = self._substitute_variables(pattern, context)
+        resolved_pattern = self.substitute_variables(pattern, context)
 
-        if context["redirect_fn"]:
-            self._srai_depth += 1
+        redirect = context.get("redirect_fn", ())
+        if redirect:
+            self.srai_depth += 1
             try:
-                response = context["redirect_fn"](resolved_pattern)
+                response = redirect(resolved_pattern)
                 return response
             finally:
-                self._srai_depth -= 1
+                self.srai_depth -= 1
 
         result = ""
         return result
 
-    def _process_think(self, items: list, context: dict) -> None:
+    def process_think(self, items: list, context: dict) -> None:
         """Process think elements (silent, no output)."""
         for item in items:
             self.process(item, context)
 
-    def _process_set(self, set_data: dict, context: dict) -> None:
+    def process_set(self, set_data: dict, context: dict) -> None:
         """Process set variable."""
         name = set_data.get("name", "")
         value = set_data.get("value", "")
         if name:
-            resolved_value = self._substitute_variables(value, context)
-            context["predicates"][name] = resolved_value
+            resolved_value = self.substitute_variables(value, context)
+            context.get("predicates", {})[name] = resolved_value
 
-    def _process_learn(self, learn_data: dict, context: dict) -> None:
+    def process_learn(self, learn_data: dict, context: dict) -> None:
         """Process learn element."""
-        if context["learn_fn"]:
+        learn = context.get("learn_fn", ())
+        if learn:
             resolved = {}
             if "pattern" in learn_data:
-                resolved["pattern"] = self._substitute_variables(learn_data["pattern"], context).upper()
+                resolved["pattern"] = self.substitute_variables(learn_data.get("pattern", ""), context).upper()
             if "template" in learn_data:
-                resolved["template"] = self._resolve_template_vars(learn_data["template"], context)
+                resolved["template"] = self.resolve_template_vars(learn_data.get("template", {}), context)
             if "that" in learn_data:
-                resolved["that"] = self._substitute_variables(learn_data["that"], context)
+                resolved["that"] = self.substitute_variables(learn_data.get("that", ""), context)
             if "topic" in learn_data:
-                resolved["topic"] = self._substitute_variables(learn_data["topic"], context)
+                resolved["topic"] = self.substitute_variables(learn_data.get("topic", ""), context)
             resolved["tier"] = learn_data.get("tier", "DYNAMIC")
 
-            context["learn_fn"](resolved)
+            learn(resolved)
 
-    def _resolve_template_vars(self, template, context: dict):
+    def resolve_template_vars(self, template, context: dict):
         """Recursively resolve variables in a template structure."""
         if isinstance(template, str):
-            resolved = self._substitute_variables(template, context)
+            resolved = self.substitute_variables(template, context)
             return resolved
         elif isinstance(template, dict):
-            resolved = {k: self._resolve_template_vars(v, context) for k, v in template.items()}
+            resolved = {k: self.resolve_template_vars(v, context) for k, v in template.items()}
             return resolved
         elif isinstance(template, list):
-            resolved = [self._resolve_template_vars(item, context) for item in template]
+            resolved = [self.resolve_template_vars(item, context) for item in template]
             return resolved
         return template
 
-    def _process_graph_query(self, query_data: dict, context: dict) -> str:
+    def process_graph_query(self, query_data: dict, context: dict) -> str:
         """Process graph query operation."""
-        if not context["graph_fn"]:
+        graph = context.get("graph_fn", ())
+        if not graph:
             output = self.process(query_data.get("on_failure", ""), context)
             return output
 
-        query = self._substitute_variables(query_data.get("query", ""), context)
+        query = self.substitute_variables(query_data.get("query", ""), context)
         if is_write_cypher(query):
             output = self.process(query_data.get("on_failure", ""), context)
             return output
         params = {}
         for key, value in query_data.get("params", {}).items():
-            params[key] = self._substitute_variables(str(value), context)
+            params[key] = self.substitute_variables(str(value), context)
 
         # Expected graph unavailability is normalized by the graph owner. A
         # callback defect remains visible to its caller.
-        records = context["graph_fn"](query, params)
+        records = graph(query, params)
         if not records:
             records = []
 
@@ -498,7 +498,7 @@ class TemplateProcessor:
 
         success_template = query_data.get("on_success", {"text": "{result}"})
         if isinstance(success_template, dict):
-            context["predicates"]["_graph_result"] = result_str
+            context.get("predicates", {})["_graph_result"] = result_str
             template_copy = success_template.copy()
             if "text" in template_copy:
                 template_copy["text"] = template_copy["text"].replace("{result}", result_str)
@@ -506,13 +506,14 @@ class TemplateProcessor:
             return output
         return result_str
 
-    def _process_triple_query(self, triple_data: dict, context: dict) -> str:
+    def process_triple_query(self, triple_data: dict, context: dict) -> str:
         """Process triple query shorthand operation."""
-        if not context["graph_fn"]:
+        graph = context.get("graph_fn", ())
+        if not graph:
             result = ""
             return result
 
-        subject = self._substitute_variables(triple_data.get("subject", ""), context)
+        subject = self.substitute_variables(triple_data.get("subject", ""), context)
         predicate = triple_data.get("predicate", "")
         obj = triple_data.get("object", "")
 
@@ -529,14 +530,14 @@ class TemplateProcessor:
             result = ""
             return result
 
-        records = context["graph_fn"](query, params)
+        records = graph(query, params)
         if records and graph_single(records):
             value = str(graph_single(records).get("result", ""))
             return value
         result = ""
         return result
 
-    def _substitute_variables(self, text: str, context: dict) -> str:
+    def substitute_variables(self, text: str, context: dict) -> str:
         """Substitute all variables in text."""
         result = text
 
@@ -550,10 +551,10 @@ class TemplateProcessor:
         result = topicstar_pattern.sub(lambda m: get_topicstar(context, int(m.group(1))), result)
 
         # Get predicates: {get:name} or {get:name:default}
-        result = get_pattern.sub(lambda m: context["predicates"].get(m.group(1), m.group(2) or ""), result)
+        result = get_pattern.sub(lambda m: context.get("predicates", {}).get(m.group(1), m.group(2) or ""), result)
 
         # Bot properties: {bot:name}
-        result = bot_pattern.sub(lambda m: context["bot"].get(m.group(1), ""), result)
+        result = bot_pattern.sub(lambda m: context.get("bot", {}).get(m.group(1), ""), result)
 
         # Map lookups: {map:name:key} or {map:name:key:default}
         result = map_pattern.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
@@ -567,8 +568,8 @@ class TemplateProcessor:
         # That history: {that} or {that:M} or {that:M:N}
         def that_sub(m):
             if not m.group(1):
-                if context["that_history"] and context["that_history"][0]:
-                    result = context["that_history"][0][0]
+                if context.get("that_history", []) and context.get("that_history", [])[0]:
+                    result = context.get("that_history", [])[0][0]
                     return result
                 result = ""
                 return result
@@ -595,18 +596,18 @@ class TemplateProcessor:
         result = date_format_pattern.sub(date_format_sub, result)
 
         # Text transforms: {upper:...}, {lower:...}, etc.
-        result = self._apply_transforms(result, context)
+        result = self.apply_transforms(result, context)
 
         return result
 
-    def _apply_transforms(self, text: str, context: dict) -> str:
+    def apply_transforms(self, text: str, context: dict) -> str:
         """Apply text transformation functions."""
 
         def transform(m):
             fn_name = m.group(1)
             content = m.group(2)
 
-            resolved = self._substitute_variables(content, context)
+            resolved = self.substitute_variables(content, context)
 
             if fn_name == "upper":
                 transformed = resolved.upper()
@@ -624,13 +625,13 @@ class TemplateProcessor:
                 transformed = resolved.capitalize()
                 return transformed
             elif fn_name == "person":
-                transformed = apply_word_substitution(resolved, context["person_subs"])
+                transformed = apply_word_substitution(resolved, context.get("person_subs", {}))
                 return transformed
             elif fn_name == "person2":
-                transformed = apply_word_substitution(resolved, context["person2_subs"])
+                transformed = apply_word_substitution(resolved, context.get("person2_subs", {}))
                 return transformed
             elif fn_name == "gender":
-                transformed = apply_word_substitution(resolved, context["gender_subs"])
+                transformed = apply_word_substitution(resolved, context.get("gender_subs", {}))
                 return transformed
             elif fn_name == "normalize":
                 transformed = resolved.upper()

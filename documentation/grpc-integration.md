@@ -1,48 +1,38 @@
-# Engram gRPC Integration
+# Engram gRPC integration
 
-## Status and scope
+## Runtime boundary
 
-Engram provides the unchanged proposal/conversation API in `engram.v1` and a
-separate unified-resolution evidence API in `engram.v2`. The packaged
-`engram-grpc` process creates exactly one `EngramCore`, exposes both services
-through thin protobuf adapters, publishes the standard gRPC health service,
-and closes the core during graceful shutdown.
+Engram exposes one unversioned protobuf package, `engram`, from one source
+contract: [engram.proto](../engram/engram.proto). The contract publishes two
+services from the same generated modules:
 
-Deploy one server process with one JSON store.
+- `engram.EngramService` owns conversation, proposal, response-cache, and
+  status operations.
+- `engram.EngramEvidenceService` owns unified resolution through
+  `ResolveEvidence`.
 
-The v1 contract carries proposal and conversation data. The v2
-`ResolveEvidence` result carries the bounded Proposition evidence package. When
-graph recall is enabled, Engram reads the configured Memgraph instance directly.
-Its corrected read subset understands Tapestry's half-open Proposition times and
-excludes inactive or retrieval-ineligible Propositions. Tapestry deployments use
-the shared root Memgraph schema; standalone deployments use Engram's exact
-independently installable subset.
+These are capabilities of one Engram component, not protocol generations. One
+`engram-grpc` process creates one `EngramCore`, registers both services and the
+standard gRPC health service, and closes the core during graceful shutdown.
 
-The projection carries canonical subject, predicate, and object identity plus
-the Proposition lifecycle, scope, ownership, and support-derived trust inputs.
-Serving uses read-only graph access. Startup verifies the selected deployment
-mode and compatible schema before graph recall becomes ready.
+Engram responses, conversations, proposals, and idempotency records live only
+in bounded process memory. A new service process loads only the STATIC data
+provided to its new core. Restart inherits no dynamic accepted responses,
+learned conversational statements or facts, sessions, proposals, mutation
+receipts, reports, turn diagnostics, or process counters. The running process is
+the complete lifetime of those values. Optional Memgraph access supplies recall
+reads and is not Engram-owned response or conversation state.
 
-## Vector-search boundary
+When graph recall is enabled, startup verifies the selected deployment mode and
+schema before publishing readiness. A Tapestry deployment uses Tapestry's graph
+schema. An independent Engram deployment installs the current Engram recall
+subset through the separate administrative schema command.
 
-When graph vector recall is enabled, `Propose` embeds the request with the
-configured local sentence-transformer and queries Memgraph's Proposition
-vector index. ANN results are intersected with the Proposition identifiers in
-each response's ordered `tapestry-engram-support-v1` mappings. Vector similarity therefore
-helps find a previously verified response whose durable support is semantically
-related to the request. Proposals remain scoped to stored responses. Keyword
-retrieval remains active and the two scores are merged before candidate selection.
-
-Engram's general read-only Cypher guard still rejects `CALL`. The sole exception
-is an internal, fixed `vector_search.search` query with server-owned Cypher and
-index configuration, validated identifiers, bounded results, and active
-canonical Propositions. The same ANN lookup is available as a fallback for conversational
-graph recall after exact canonical label, alias, and keyword lookup misses.
-
-The standalone server enables graph access through `--config-path`. With vectors
-enabled it loads and probes the local embedding model and
-the configured Memgraph vector index before publishing a healthy gRPC service;
-invalid graph, model, index, or dimension configuration fails startup.
+During request resolution, a graph connection, query, or optional vector-index
+failure contributes no graph result. If no local resolver supplies a result,
+`ResolveEvidence` returns the same `MISS` it returns after a successful graph
+query with no rows. Component status may still diagnose the graph failure; it is
+not exposed as a separate unavailable resolution outcome.
 
 ## Installation and launch
 
@@ -51,36 +41,25 @@ python -m pip install -e .
 
 engram-grpc \
   --bind 127.0.0.1:50051 \
-  --store-path state/engram.json \
-  --seed-path data/seed.json \
-  --transcript-directory state/transcripts \
-  --report-directory state/reports
+  --config-path config.yml
 ```
 
 Running the module is equivalent:
 
 ```bash
-python -m engram.grpc_server --bind 127.0.0.1:50051
+python -m engram.grpc_server --bind 127.0.0.1:50051 --config-path config.yml
 ```
 
-The server accepts these deployment options:
+The server accepts these options:
 
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--bind` | `127.0.0.1:50051` | Listen address. |
-| `--store-path` | empty | Persistent JSON store; empty disables store persistence. |
-| `--seed-path` | `data/seed.json` | Seed synchronized at startup; pass an empty value to disable it. |
 | `--config-path` | empty | Engram YAML configuration. |
-| `--transcript-directory` | empty | Server-owned per-user recovery transcript directory. |
-| `--report-directory` | empty | Server-owned output directory required by `FinishConversation`. |
 | `--max-workers` | `10` | Maximum concurrent unary RPC handlers. |
 | `--grace-period` | `10` | Seconds allowed for RPCs to drain during shutdown. |
 | `--tls-cert`, `--tls-key` | empty | PEM certificate/key pair for server TLS. |
 | `--log-level` | `INFO` | Server log level. |
-
-Store, seed, transcript/report locations, binding, and TLS come from server
-configuration. Stable SHA-256-derived transcript and report filenames keep
-caller-owned user labels within their configured directories.
 
 ## Process model
 
@@ -93,79 +72,74 @@ one Engram gRPC server process
      v
 one EngramCore
      |
-     +-- shared Engram knowledge and response cache
-     +-- isolated user conversation contexts
-     +-- bounded in-memory proposal/idempotency records
-     +-- one optional JSON store
+     +-- bounded response and fact memory
+     +-- isolated conversation contexts
+     +-- bounded proposal and idempotency records
+     +-- optional Memgraph recall reads
 ```
 
-Concurrent RPC handlers delegate to the same core. The core serializes state
-transitions and owns chat, retrieval, learning, idempotency, and persistence.
-
-The v2 evidence adapter also connects the gRPC call lifecycle to
-`EngramCore.resolve_request`'s cooperative cancellation callback. A cancellation
-or expired deadline at a cooperative boundary discards the transient resolution,
-permitting retry with the same request ID.
+Concurrent handlers delegate to the same core. The core serializes mutations
+and owns chat, retrieval, learning, idempotency, and eviction. The evidence
+adapter connects the gRPC call lifecycle to `EngramCore.resolve_request`'s
+cooperative cancellation callback. Cancellation or an expired deadline at a
+cooperative boundary discards transient resolution work and permits retry with
+the same request ID.
 
 ## Protocol and generated code
 
-The source contracts are [v1/engram.proto](../engram/v1/engram.proto) and
-[v2/engram.proto](../engram/v2/engram.proto). Generated Python messages, type
-stubs, and service stubs are committed beside each source. RPC requests have
-explicit fields and v1 `Resolve` uses the `RegulatorOutcome` enum. Engram
-conversation, inspection, and cache results use
-`google.protobuf.Struct` because those JSON-ready diagnostic payloads are
-extensible application data.
+The source contract, generated messages, type stubs, and service stubs live
+directly in the `engram` library:
 
-The v2 `ResolutionResult` explicitly versions and names every top-level unified
-result field. Its `EvidencePackage` explicitly carries wire version, records,
-retained/omitted counts, truncation state, and reasons. Complex candidate,
-evidence, diagnostic, resolver, and budget records remain bounded core-owned
-structures carried through `Struct` fields.
+```text
+engram/engram.proto
+engram/engram_pb2.py
+engram/engram_pb2.pyi
+engram/engram_pb2_grpc.py
+```
 
-Install the development dependencies and regenerate after changing the proto:
+RPC requests have explicit fields, and `Resolve` uses the `RegulatorOutcome`
+enum. Conversation, inspection, and cache responses use
+`google.protobuf.Struct` at the external transport boundary. `ResolutionResult`
+names every top-level unified result field, while bounded candidate, evidence,
+diagnostic, resolver, and budget records remain core-owned structures carried
+through `Struct` fields.
+
+Regenerate after changing the Tapestry-dictated contract:
 
 ```bash
 python -m pip install -e ".[dev]"
 python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
-  --grpc_python_out=. engram/v1/engram.proto
-python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. \
-  --grpc_python_out=. engram/v2/engram.proto
+  --grpc_python_out=. engram/engram.proto
 ```
 
-The test suite regenerates the files in a temporary directory and compares
-them byte-for-byte with the committed output. Regenerate with the pinned
-`grpcio-tools` and `protobuf` versions in `pyproject.toml`; the committed stubs
-currently target `grpcio-tools` 1.83.0 and protobuf 7.35.1.
+The network test suite regenerates these files in a temporary directory and
+compares them byte-for-byte with the committed output. The tool versions are
+pinned in `pyproject.toml`.
 
 ## RPC surface
 
-| RPC | Purpose |
-| --- | --- |
-| `StartConversation` | Start an isolated user runtime; an empty `user_id` becomes `"0"`. |
-| `Chat` | Submit one observed chatbot turn. |
-| `InspectConversation` | Return user context, learned knowledge, metrics, and core status. |
-| `FinishConversation` | Flush and write JSON/Markdown reports while the user runtime remains active. |
-| `StopConversation` | Flush and release one user runtime while the server remains active. |
-| `AddFact` | Add a shared, unattributed fact with an opaque source label. |
-| `SetPredicate`, `GetPredicate` | Write/read a caller-owned value in one user context. |
-| `Propose` | Retrieve scoped response-cache candidates and record candidacy. |
-| `Resolve` | Commit one typed Regulator verdict with idempotent accepted credit. |
-| `LearnResponse` | Cache a non-`IDK` Actor answer with scope and metadata. |
-| `RetireResponse` | Retire one dynamic, patternless cached answer. |
-| `GetStatus` | Return lifecycle, readiness, durability, checkpoint, and conversation status. |
-| `Flush` | Explicitly checkpoint the configured store. |
-
-The separate `engram.v2.EngramEvidenceService` has one RPC:
+`engram.EngramService` provides:
 
 | RPC | Purpose |
 | --- | --- |
-| `ResolveEvidence` | Run `EngramCore.resolve_request` and return the versioned ANSWER, EVIDENCE, or MISS result, including the bounded Proposition package when available. |
+| `StartConversation` | Start one isolated conversation; an empty `user_id` receives a fresh anonymous context. |
+| `Chat` | Submit one observed conversation turn. |
+| `InspectConversation` | Return one active conversation and core diagnostics. |
+| `FinishConversation` | Return the current process-local report while the conversation remains active. |
+| `StopConversation` | Release one conversation; an anonymous context is deleted. |
+| `AddFact` | Add one process-memory fact with an opaque source label. |
+| `SetPredicate`, `GetPredicate` | Write or read one conversation-scoped value. |
+| `Propose` | Retrieve scoped response candidates and record candidacy. |
+| `Resolve` | Commit one typed Regulator verdict for one concrete candidate. |
+| `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata. |
+| `RetireResponse` | Remove one dynamic cached response after its owner establishes staleness. |
+| `GetStatus` | Return lifecycle, readiness, component, rollout, and telemetry status. |
 
-`Propose`, `Resolve`, `LearnResponse`, and `RetireResponse` implement the same
-Tapestry contract documented in the
-[Tapestry–Engram integration guide](https://github.com/thought-pattern/tapestry/blob/develop/project/design/engram-integration.md).
-These RPCs operate at service scope outside the chatbot lifecycle.
+`engram.EngramEvidenceService` provides:
+
+| RPC | Purpose |
+| --- | --- |
+| `ResolveEvidence` | Run unified resolution and return an `ANSWER`, `EVIDENCE`, or `MISS` result with the bounded Proposition package when available. |
 
 ## Python client example
 
@@ -173,22 +147,22 @@ These RPCs operate at service scope outside the chatbot lifecycle.
 import grpc
 from google.protobuf.json_format import MessageToDict
 
-from engram.v1 import engram_pb2, engram_pb2_grpc
-from engram.v2 import engram_pb2 as evidence_pb2
-from engram.v2 import engram_pb2_grpc as evidence_pb2_grpc
+from engram import engram_pb2, engram_pb2_grpc
 
 with grpc.insecure_channel("127.0.0.1:50051") as channel:
-    stub = engram_pb2_grpc.EngramServiceStub(channel)
-    stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
-    turn = stub.Chat(
+    conversation = engram_pb2_grpc.EngramServiceStub(channel)
+    conversation.StartConversation(
+        engram_pb2.StartConversationRequest(user_id="Alice")
+    )
+    turn = conversation.Chat(
         engram_pb2.ChatRequest(user_id="Alice", text="Hello, Engram."),
         timeout=5,
     )
-    print(MessageToDict(turn, preserving_proto_field_name=True)["response"])
+    print(MessageToDict(turn, preserving_proto_field_name=True).get("response", ""))
 
-    evidence_stub = evidence_pb2_grpc.EngramEvidenceServiceStub(channel)
-    result = evidence_stub.ResolveEvidence(
-        evidence_pb2.ResolveEvidenceRequest(
+    evidence = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+    result = evidence.ResolveEvidence(
+        engram_pb2.ResolveEvidenceRequest(
             request="What evidence is available?",
             request_id="resolve-1",
             user_id="Alice",
@@ -199,13 +173,11 @@ with grpc.insecure_channel("127.0.0.1:50051") as channel:
 ```
 
 Use `grpc.secure_channel` with matching client credentials when the server is
-launched with `--tls-cert` and `--tls-key`. The built-in TLS option provides
-server authentication and encryption; application authentication and
-authorization remain deployment responsibilities.
+launched with `--tls-cert` and `--tls-key`.
 
-## Error contract
+## Errors, health, and shutdown
 
-Core failures map consistently at the transport boundary:
+Core failures map at the transport boundary:
 
 | Core exception | gRPC status |
 | --- | --- |
@@ -213,86 +185,38 @@ Core failures map consistently at the transport boundary:
 | `ResourceNotFoundError` | `NOT_FOUND` |
 | `ConflictError` | `ABORTED` |
 | `LifecycleError` | `FAILED_PRECONDITION` |
-| `PersistenceError` | `UNAVAILABLE` |
+| Cancellation or expired deadline | `CANCELLED` or `DEADLINE_EXCEEDED` |
 | Unexpected adapter failure | `INTERNAL` with a generic client message |
 
-Every typed failure supplies `engram-error-type` in trailing metadata.
-Persistence failures also supply `engram-operation` and
-`engram-state-changed`. The latter is `true` when the requested mutation was
-already applied to live memory before its checkpoint failed. Client details are
-the generic `Engram persistence failure`; detailed exceptions remain in server logs.
-
-## Health and readiness
+Every typed failure supplies `engram-error-type` in trailing metadata. Detailed
+unexpected exceptions remain in server logs.
 
 The server registers `grpc.health.v1.Health` for the aggregate empty service
-name, `engram.v1.EngramService`, and `engram.v2.EngramEvidenceService`. It
-reports `SERVING` only while the core is both ready and healthy. A degraded
-store, closing core, closed core, or graceful shutdown reports `NOT_SERVING`.
+name, `engram.EngramService`, and `engram.EngramEvidenceService`. It reports
+`SERVING` only while the shared core is ready and healthy. `GetStatus` reports
+process state, readiness, `memory_only`, active conversation count, component
+readiness, rollout state, and bounded telemetry.
 
-`GetStatus` provides the detailed source data: `state`, `ready`, `healthy`,
-`durability`, `dirty`, `last_checkpoint_at`, a redacted exception-class
-`last_persistence_error`, `active_conversations`, `store_path`, and a bounded
-`telemetry` aggregate with fixed outcome, resolver, latency, resource, rebuild,
-durability, and Regulator keys. A bounded `components` object has
-`enabled` and `ready` Booleans for graph, vector, and spaCy. The component
-status contains fixed component identifiers.
+SIGINT and SIGTERM mark health not serving, stop admission, allow in-flight
+calls to drain for `--grace-period`, and close the core. Closing discards all
+remaining process memory and disconnects graph resources. Repeated shutdown is
+idempotent.
 
-## Persistence, retry, and deadlines
-
-With a configured store, successful durable mutations synchronously use the
-core's atomic checkpoint path. Proposals and idempotency records remain
-bounded, five-minute, process-local state.
-
-A checkpoint error leaves the in-memory mutation applied. While degraded, the
-core remains ready and standard health becomes `NOT_SERVING`. Correct the
-store and either call `Flush` or repeat the exact regulated-cache operation
-with the same `request_id`; its idempotency path retries persistence with one
-application and credit.
-
-A v1 handler may complete after a client deadline or cancellation. V2 resolution
-checks cooperative cancellation around graph calls; an executing driver call
-continues until the driver returns. Published work remains applied. Inspect user
-context before repeating an ambiguous chat turn. Regulated-cache calls retain and reuse their logical
-`request_id`. Recovery and ambiguous-outcome handling are described in the
-[deployment and rollback runbook](operations/deployment-and-rollback-v1.md).
-
-After restart, learned responses, facts, user contexts, statistics, and
-retirements come from the last completed checkpoint. Outstanding proposal IDs
-expire; the Actor handles unresolved requests again.
-
-## Graceful shutdown
-
-SIGINT and SIGTERM request shutdown. The process marks health not-serving,
-stops accepting new RPCs, allows in-flight calls to complete within
-`--grace-period`, then calls `EngramCore.close()` for the final checkpoint.
-Repeated server shutdown is idempotent.
-
-If the final checkpoint fails, the process logs the persistence failure and
-exits unsuccessfully. The core's `PersistenceError` still distinguishes
-whether live state differed from the last durable checkpoint. An application
-embedding `EngramGrpcServer` may correct the store and call `stop()` again to
-retry the final checkpoint. The transport remains stopped.
-
-## Security and authority boundaries
+## Security and authority
 
 - Bind to loopback unless remote clients are explicitly required.
 - Use TLS or a trusted encrypted proxy for remote transport.
-- Protect the store, transcripts, and reports as application data. Engram
-  creates service-owned artifact directories with owner-only permissions
-  (`0700`) and writes stores, transcripts, and reports as owner-only files
-  (`0600`).
-- `source_label` and metadata record provenance; deployment policy supplies authorization.
-- Grant `AddFact`, `LearnResponse`, and `RetireResponse` only to callers that
-  may change shared cache content.
-- Runtime graph access remains read-only. Standalone Graph schema setup is the
-  separate explicit `scripts/setup_schema.py --apply` administration path.
-  A Tapestry-managed graph receives no Engram DDL and is inspected with
-  `scripts/verify_schema.py --deployment tapestry_managed`.
+- Treat returned conversation reports as sensitive application data.
+- Grant mutation RPCs only to callers authorized to change Engram process
+  memory.
+- Runtime graph operations issue reads and no writes. This behavior does not
+  require restricted credentials or an interface incapable of mutation. Schema
+  setup is a separate explicit administrative operation.
 
 ## Verification coverage
 
-Network-level tests cover multi-user conversation isolation, shared facts,
-predicates, reports, health, all regulated-cache phases, typed errors,
-checkpoint degradation/recovery, restart behavior, client deadlines,
-in-flight graceful shutdown, TLS configuration validation, and reproducible
-stub generation.
+Network tests cover the complete service descriptors, multi-conversation
+isolation, anonymous cleanup, shared process-memory facts, predicates,
+in-memory reports, health, proposal and verdict operations, evidence
+resolution, typed errors, cancellation, empty-memory restart, graceful
+shutdown, TLS validation, and generated-code reproducibility.

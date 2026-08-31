@@ -1,8 +1,7 @@
 [project]
 name = "engram"
 dynamic = ["version"]
-description = "Keyword-indexed statement store with hit-rate tracking for conversational systems"
-readme = "README.md"
+description = "In-process conversational retrieval and regulated response resolution"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
 authors = [
@@ -34,10 +33,6 @@ dependencies = [
     "tzdata==2026.3",
 ]
 
-# The CLI lives at scripts/cli.py (run: `python scripts/cli.py`). It is not a
-# packaged console entry point; scripts/ is intentionally outside the engram
-# package.
-
 [project.scripts]
 engram-mcp = "engram.mcp_server:main"
 engram-grpc = "engram.grpc_server:console_main"
@@ -64,7 +59,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["v1/*.proto", "v1/*.pyi", "v2/*.proto", "v2/*.pyi", "data/*.json"]
+engram = ["*.proto", "*.pyi", "data/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}
@@ -72,7 +67,7 @@ version = {attr = "engram.constants.VERSION"}
 [tool.ruff]
 line-length = 132
 target-version = "py312"
-extend-exclude = ["engram/v1/engram_pb2*.py", "engram/v1/engram_pb2*.pyi", "engram/v2/engram_pb2*.py", "engram/v2/engram_pb2*.pyi"]
+extend-exclude = ["engram/engram_pb2*.py", "engram/engram_pb2*.pyi"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]
@@ -93,7 +88,7 @@ combine-as-imports = true
 # Generated gRPC method names follow the protobuf service contract.
 "engram/grpc_server.py" = ["N802"]
 # These files are compiler output and are checked for reproducibility in tests.
-"engram/v1/engram_pb2*" = ["ALL"]
+"engram/engram_pb2*" = ["ALL"]
 
 # Black is the formatter of record: `black -l 132 -t py311`. The runtime targets
 # 3.12+ (see requires-python and ruff target-version), but the py311 formatting
@@ -101,7 +96,7 @@ combine-as-imports = true
 [tool.black]
 line-length = 132
 target-version = ["py311"]
-extend-exclude = "engram/v[12]/engram_pb2.*"
+extend-exclude = "engram/engram_pb2.*"
 
 # isort uses the black profile + matching line length so it never disagrees with
 # black (or ruff's own `I` import-order rule) on how to wrap parenthesized imports.
@@ -110,11 +105,11 @@ profile = "black"
 line_length = 132
 known_first_party = ["engram"]
 combine_as_imports = true
-skip_glob = ["engram/v1/engram_pb2*", "engram/v2/engram_pb2*"]
+skip_glob = ["engram/engram_pb2*"]
 
 [tool.vulture]
 paths = ["engram", "scripts", "eval"]
-exclude = ["engram/v1/engram_pb2*.py", "engram/v2/engram_pb2*.py"]
+exclude = ["engram/engram_pb2*.py"]
 min_confidence = 65
 ignore_names = ["exc_type", "exc_value", "traceback"]
 

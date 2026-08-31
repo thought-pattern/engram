@@ -1,14 +1,13 @@
 """Versioned feedback learning and bounded negative-resolution state."""
 
-import hashlib
-import json
-import math
-import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
-from types import MappingProxyType, NoneType
+from hashlib import sha256 as hashlib_sha256
+from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from math import isfinite as math_isfinite
+from threading import RLock as threading_RLock
 
 from engram.constants import (
     DEFAULT_NEGATIVE_MAX_RECORDS,
@@ -79,8 +78,6 @@ from engram.constants import (
 )
 from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError
 from engram.identity import (
-    QueryIdentity,
-    ScopeKey,
     query_identity,
     query_identity_from_dict,
     query_identity_to_dict,
@@ -91,7 +88,6 @@ from engram.identity import (
 )
 from engram.mutations import (
     MutationOperation,
-    MutationReceipt,
     MutationReceiptLedger,
     MutationResultCode,
     ReceiptCompletionState,
@@ -103,7 +99,7 @@ from engram.mutations import (
 )
 
 
-def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool = False) -> str:
+def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if not allow_empty and not value:
@@ -115,28 +111,28 @@ def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool = F
     return value
 
 
-def _integer(value: object, name: str, minimum: int = 0, maximum: int = 9_223_372_036_854_775_807) -> int:
+def internal_integer(value: object, name: str, minimum: int = 0, maximum: int = 9_223_372_036_854_775_807) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise InvalidRequestError(f"{name} must be an integer from {minimum} through {maximum}")
     return value
 
 
-def _number(value: object, name: str, minimum: float, maximum: float) -> float:
+def internal_number(value: object, name: str, minimum: float, maximum: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError(f"{name} must be a number")
     normalized = float(value)
-    if not math.isfinite(normalized) or not minimum <= normalized <= maximum:
+    if not math_isfinite(normalized) or not minimum <= normalized <= maximum:
         raise InvalidRequestError(f"{name} must be finite and from {minimum} through {maximum}")
     return normalized
 
 
-def _boolean(value: object, name: str) -> bool:
+def internal_boolean(value: object, name: str) -> bool:
     if not isinstance(value, bool):
         raise InvalidRequestError(f"{name} must be a boolean")
     return value
 
 
-def _exact_mapping(value: object, name: str, fields: set[str]) -> Mapping[str, object]:
+def exact_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidRequestError(f"{name} must be an object")
     actual = set(value)
@@ -145,27 +141,27 @@ def _exact_mapping(value: object, name: str, fields: set[str]) -> Mapping[str, o
     return value
 
 
-def _json_text(value: object) -> str:
-    result = json.dumps(_thaw_json(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+def json_text(value: object) -> str:
+    result = json_dumps(thaw_json(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return result
 
 
-def _thaw_json(value: object) -> object:
+def thaw_json(value: object) -> object:
     if isinstance(value, Mapping):
-        result = {str(key): _thaw_json(item) for key, item in value.items()}
+        result = {str(key): thaw_json(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
-        result = [_thaw_json(item) for item in value]
+        result = [thaw_json(item) for item in value]
         return result
     return value
 
 
-def _load_json_mapping(value: str, name: str) -> Mapping[str, object]:
+def load_json_mapping(value: str, name: str) -> dict[str, object]:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError as error:
+        decoded = json_loads(value)
+    except json_JSONDecodeError as error:
         raise InvalidRequestError(f"{name} must be valid JSON") from error
     if not isinstance(decoded, Mapping):
         raise InvalidRequestError(f"{name} must contain an object")
@@ -175,11 +171,11 @@ def _load_json_mapping(value: str, name: str) -> Mapping[str, object]:
 def canonical_fingerprint(value: object) -> str:
     """Return one content-only lowercase SHA-256 fingerprint."""
 
-    result = hashlib.sha256(_json_text(value).encode("utf-8")).hexdigest()
+    result = hashlib_sha256(json_text(value).encode("utf-8")).hexdigest()
     return result
 
 
-def _feedback_payload_signature(observations) -> str:
+def feedback_payload_signature(observations) -> str:
     """Hash a bounded observation sequence without the generic receipt item ceiling.
 
     Feedback observations are already strict, bounded contracts.  Hashing each
@@ -189,31 +185,31 @@ def _feedback_payload_signature(observations) -> str:
     retry identity.
     """
 
-    digest = hashlib.sha256(b"engram-feedback-observations-v1\0")
+    digest = hashlib_sha256(b"engram-feedback-observations-v1\0")
     seen_observations: set[str] = set()
     total_bytes = 0
     for observation in observations:
-        complete = _trusted_feedback_observation_to_dict(observation)
-        complete_text = _json_text(complete)
-        complete_fingerprint = hashlib.sha256(complete_text.encode("utf-8")).hexdigest()
+        complete = trusted_feedback_observation_to_dict(observation)
+        complete_text = json_text(complete)
+        complete_fingerprint = hashlib_sha256(complete_text.encode("utf-8")).hexdigest()
         if complete_fingerprint in seen_observations:
             raise InvalidRequestError("feedback observations must be unique")
         seen_observations.add(complete_fingerprint)
 
         complete.pop("observed_at")
-        encoded = _json_text(complete).encode("utf-8")
+        encoded = json_text(complete).encode("utf-8")
         total_bytes += len(encoded)
         if total_bytes > MAX_FEEDBACK_SIGNATURE_BYTES:
             raise InvalidRequestError(
                 f"feedback observations exceed the signature input limit of {MAX_FEEDBACK_SIGNATURE_BYTES} bytes"
             )
-        digest.update(hashlib.sha256(encoded).digest())
+        digest.update(hashlib_sha256(encoded).digest())
     digest.update(len(observations).to_bytes(8, "big"))
     result = f"sha256:{digest.hexdigest()}"
     return result
 
 
-def _fingerprint(value: object, name: str) -> str:
+def internal_fingerprint(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if len(value) != MAX_FINGERPRINT_BYTES or any(character not in "0123456789abcdef" for character in value):
@@ -222,8 +218,8 @@ def _fingerprint(value: object, name: str) -> str:
 
 
 @lru_cache(maxsize=4_096)
-def _parse_timestamp_text(text: str, name: str) -> datetime:
-    _text(text, name, MAX_TIMESTAMP_BYTES)
+def parse_timestamp_text(text: str, name: str) -> datetime:
+    internal_text(text, name, MAX_TIMESTAMP_BYTES)
     if not text.endswith("Z"):
         raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
     try:
@@ -235,62 +231,59 @@ def _parse_timestamp_text(text: str, name: str) -> datetime:
     return parsed
 
 
-def _parse_timestamp(value: object, name: str) -> datetime:
+def parse_timestamp(value: object, name: str) -> datetime:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
-    result = _parse_timestamp_text(value, name)
+    result = parse_timestamp_text(value, name)
     return result
 
 
 def canonical_utc(value: datetime) -> str:
     """Serialize an aware UTC datetime using the repository's canonical form."""
 
-    if not isinstance(value, datetime) or isinstance(value.tzinfo, NoneType):
+    if not isinstance(value, datetime) or value.tzinfo is None:
         raise InvalidRequestError("feedback clock must return an aware datetime")
     result = value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     return result
 
 
-def _bucket_start(value: str, bucket_seconds: int) -> str:
-    parsed = _parse_timestamp(value, "feedback observed_at")
-    epoch_seconds = int(parsed.timestamp())
-    start_seconds = epoch_seconds - (epoch_seconds % bucket_seconds)
+def bucket_start(value: str, bucket_seconds: int) -> str:
+    parsed = parse_timestamp(value, "feedback observed_at")
+    unix_seconds = int(parsed.timestamp())
+    start_seconds = unix_seconds - (unix_seconds % bucket_seconds)
     result = canonical_utc(datetime.fromtimestamp(start_seconds, UTC))
     return result
 
 
-def _diagnostic_id(value: str) -> str:
-    result = f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()[:24]}"
+def internal_diagnostic_id(value: str) -> str:
+    result = f"sha256:{hashlib_sha256(value.encode('utf-8')).hexdigest()[:24]}"
     return result
 
 
 def constraint_fingerprint(
     expected_object_type: str,
-    required_metadata: Mapping[str, object],
+    required_metadata: dict[str, object],
     required_source_label: str,
 ) -> str:
     """Fingerprint the bounded request constraints that affect eligibility."""
 
     if not isinstance(required_metadata, Mapping):
         raise InvalidRequestError("feedback required_metadata must be an object")
-    _text(expected_object_type, "feedback expected_object_type", 64)
-    _text(required_source_label, "feedback required_source_label", 256, allow_empty=True)
+    internal_text(expected_object_type, "feedback expected_object_type", 64)
+    internal_text(required_source_label, "feedback required_source_label", 256, allow_empty=True)
     value = {
         "expected_object_type": expected_object_type,
         "required_metadata": dict(required_metadata),
         "required_source_label": required_source_label,
     }
     try:
-        encoded = _json_text(value).encode("utf-8")
+        encoded = json_text(value).encode("utf-8")
     except (TypeError, ValueError, RecursionError) as error:
         raise InvalidRequestError("feedback constraints must contain bounded JSON values") from error
     if len(encoded) > MAX_CONSTRAINT_JSON_BYTES:
         raise InvalidRequestError(f"feedback constraints exceed the JSON limit of {MAX_CONSTRAINT_JSON_BYTES} bytes")
-    result = hashlib.sha256(encoded).hexdigest()
+    result = hashlib_sha256(encoded).hexdigest()
     return result
-
-
-FeedbackPolicy = dict
 
 
 def feedback_policy(
@@ -304,25 +297,29 @@ def feedback_policy(
     max_statement_records: object = FEEDBACK_MAX_STATEMENT_RECORDS,
     max_relationship_records: object = FEEDBACK_MAX_RELATIONSHIP_RECORDS,
     schema_version: object = FEEDBACK_POLICY_SCHEMA_VERSION,
-) -> FeedbackPolicy:
+) -> dict:
     """Build the hand-authored, unfitted aging and history policy."""
-    version = _integer(schema_version, "feedback policy schema_version", 0)
+    version = internal_integer(schema_version, "feedback policy schema_version", 0)
     if version != FEEDBACK_POLICY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback policy schema_version: {version}")
-    validated_policy_version = _text(policy_version, "feedback policy_version", MAX_VERSION_BYTES)
-    validated_samples = _integer(minimum_verdict_samples, "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES)
-    validated_prior_accept = _number(prior_accept, "feedback prior_accept", 0.0, MAX_FEEDBACK_PRIOR_MASS)
-    validated_prior_reject = _number(prior_reject, "feedback prior_reject", 0.0, MAX_FEEDBACK_PRIOR_MASS)
+    validated_policy_version = internal_text(policy_version, "feedback policy_version", MAX_VERSION_BYTES)
+    validated_samples = internal_integer(
+        minimum_verdict_samples, "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
+    )
+    validated_prior_accept = internal_number(prior_accept, "feedback prior_accept", 0.0, MAX_FEEDBACK_PRIOR_MASS)
+    validated_prior_reject = internal_number(prior_reject, "feedback prior_reject", 0.0, MAX_FEEDBACK_PRIOR_MASS)
     if validated_prior_accept + validated_prior_reject <= 0:
         raise InvalidRequestError("feedback priors must have positive total mass")
-    validated_half_life = _integer(half_life_seconds, "feedback half_life_seconds", 1, MAX_FEEDBACK_HALF_LIFE_SECONDS)
-    validated_bucket_seconds = _integer(bucket_seconds, "feedback bucket_seconds", 1, MAX_FEEDBACK_BUCKET_SECONDS)
-    validated_max_buckets = _integer(max_buckets_per_record, "feedback max_buckets_per_record", 1, MAX_FEEDBACK_BUCKETS)
-    validated_statement_records = _integer(max_statement_records, "feedback max_statement_records", 1, MAX_FEEDBACK_POLICY_RECORDS)
-    validated_relationship_records = _integer(
+    validated_half_life = internal_integer(half_life_seconds, "feedback half_life_seconds", 1, MAX_FEEDBACK_HALF_LIFE_SECONDS)
+    validated_bucket_seconds = internal_integer(bucket_seconds, "feedback bucket_seconds", 1, MAX_FEEDBACK_BUCKET_SECONDS)
+    validated_max_buckets = internal_integer(max_buckets_per_record, "feedback max_buckets_per_record", 1, MAX_FEEDBACK_BUCKETS)
+    validated_statement_records = internal_integer(
+        max_statement_records, "feedback max_statement_records", 1, MAX_FEEDBACK_POLICY_RECORDS
+    )
+    validated_relationship_records = internal_integer(
         max_relationship_records, "feedback max_relationship_records", 1, MAX_FEEDBACK_POLICY_RECORDS
     )
-    result: FeedbackPolicy = {
+    result: dict = {
         "policy_version": validated_policy_version,
         "minimum_verdict_samples": validated_samples,
         "prior_accept": validated_prior_accept,
@@ -337,8 +334,8 @@ def feedback_policy(
     return result
 
 
-def validate_feedback_policy(value: object) -> FeedbackPolicy:
-    data = _exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
+def validate_feedback_policy(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
     result = feedback_policy(
         data["policy_version"],
         data["minimum_verdict_samples"],
@@ -354,7 +351,7 @@ def validate_feedback_policy(value: object) -> FeedbackPolicy:
     return result
 
 
-def feedback_policy_with_changes(value: object, changes: object) -> FeedbackPolicy:
+def feedback_policy_with_changes(value: object, changes: object) -> dict:
     current = validate_feedback_policy(value)
     if not isinstance(changes, Mapping) or not set(changes).issubset(FEEDBACK_POLICY_FIELDS):
         raise InvalidRequestError("feedback policy changes contain invalid fields")
@@ -372,35 +369,39 @@ def feedback_policy_to_dict(value: object) -> dict[str, object]:
 
 def feedback_policy_to_json(value: object) -> str:
     data = feedback_policy_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def feedback_policy_from_dict(value: object) -> FeedbackPolicy:
-    data = _exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
+def feedback_policy_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
     result = feedback_policy(
-        schema_version=_integer(data["schema_version"], "feedback policy schema_version", 0),
-        policy_version=_text(data["policy_version"], "feedback policy_version", MAX_VERSION_BYTES),
-        minimum_verdict_samples=_integer(
+        schema_version=internal_integer(data["schema_version"], "feedback policy schema_version", 0),
+        policy_version=internal_text(data["policy_version"], "feedback policy_version", MAX_VERSION_BYTES),
+        minimum_verdict_samples=internal_integer(
             data["minimum_verdict_samples"], "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
         ),
-        prior_accept=_number(data["prior_accept"], "feedback prior_accept", 0.0, MAX_FEEDBACK_PRIOR_MASS),
-        prior_reject=_number(data["prior_reject"], "feedback prior_reject", 0.0, MAX_FEEDBACK_PRIOR_MASS),
-        half_life_seconds=_integer(data["half_life_seconds"], "feedback half_life_seconds", 1, MAX_FEEDBACK_HALF_LIFE_SECONDS),
-        bucket_seconds=_integer(data["bucket_seconds"], "feedback bucket_seconds", 1, MAX_FEEDBACK_BUCKET_SECONDS),
-        max_buckets_per_record=_integer(data["max_buckets_per_record"], "feedback max_buckets_per_record", 1, MAX_FEEDBACK_BUCKETS),
-        max_statement_records=_integer(
+        prior_accept=internal_number(data["prior_accept"], "feedback prior_accept", 0.0, MAX_FEEDBACK_PRIOR_MASS),
+        prior_reject=internal_number(data["prior_reject"], "feedback prior_reject", 0.0, MAX_FEEDBACK_PRIOR_MASS),
+        half_life_seconds=internal_integer(
+            data["half_life_seconds"], "feedback half_life_seconds", 1, MAX_FEEDBACK_HALF_LIFE_SECONDS
+        ),
+        bucket_seconds=internal_integer(data["bucket_seconds"], "feedback bucket_seconds", 1, MAX_FEEDBACK_BUCKET_SECONDS),
+        max_buckets_per_record=internal_integer(
+            data["max_buckets_per_record"], "feedback max_buckets_per_record", 1, MAX_FEEDBACK_BUCKETS
+        ),
+        max_statement_records=internal_integer(
             data["max_statement_records"], "feedback max_statement_records", 1, MAX_FEEDBACK_POLICY_RECORDS
         ),
-        max_relationship_records=_integer(
+        max_relationship_records=internal_integer(
             data["max_relationship_records"], "feedback max_relationship_records", 1, MAX_FEEDBACK_POLICY_RECORDS
         ),
     )
     return result
 
 
-def feedback_policy_from_json(value: str) -> FeedbackPolicy:
-    data = _load_json_mapping(value, "FeedbackPolicy JSON")
+def feedback_policy_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "FeedbackPolicy JSON")
     result = feedback_policy_from_dict(data)
     return result
 
@@ -415,9 +416,6 @@ def feedback_policy_fingerprint(policy: object = {}) -> str:
     return result
 
 
-StatementFeedbackKey = dict
-
-
 def statement_feedback_key(
     statement_id: object,
     generation: object,
@@ -425,21 +423,21 @@ def statement_feedback_key(
     policy_fingerprint: object,
     contract_fingerprint: object = FEEDBACK_CONTRACT_FINGERPRINT,
     schema_version: object = FEEDBACK_KEY_SCHEMA_VERSION,
-) -> StatementFeedbackKey:
+) -> dict:
     """Build one statement-lineage observation partition."""
-    version = _integer(schema_version, "statement feedback key schema_version", 0)
+    version = internal_integer(schema_version, "statement feedback key schema_version", 0)
     if version != FEEDBACK_KEY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported statement feedback key schema_version: {version}")
-    validated_statement_id = _text(statement_id, "feedback statement_id", MAX_STATEMENT_ID_BYTES)
-    validated_generation = _integer(generation, "feedback generation", 0)
-    generation_is_available = _boolean(generation_available, "feedback generation_available")
+    validated_statement_id = internal_text(statement_id, "feedback statement_id", MAX_STATEMENT_ID_BYTES)
+    validated_generation = internal_integer(generation, "feedback generation", 0)
+    generation_is_available = internal_boolean(generation_available, "feedback generation_available")
     if generation_is_available and validated_generation < 1:
         raise InvalidRequestError("available feedback generation must be positive")
     if not generation_is_available and validated_generation != 0:
         raise InvalidRequestError("unavailable feedback generation must be zero")
-    validated_policy = _fingerprint(policy_fingerprint, "feedback policy_fingerprint")
-    validated_contract = _fingerprint(contract_fingerprint, "feedback contract_fingerprint")
-    result: StatementFeedbackKey = {
+    validated_policy = internal_fingerprint(policy_fingerprint, "feedback policy_fingerprint")
+    validated_contract = internal_fingerprint(contract_fingerprint, "feedback contract_fingerprint")
+    result: dict = {
         "statement_id": validated_statement_id,
         "generation": validated_generation,
         "generation_available": generation_is_available,
@@ -450,8 +448,8 @@ def statement_feedback_key(
     return result
 
 
-def validate_statement_feedback_key(value: object) -> StatementFeedbackKey:
-    data = _exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
+def validate_statement_feedback_key(value: object) -> dict:
+    data = exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
     result = statement_feedback_key(
         data["statement_id"],
         data["generation"],
@@ -490,30 +488,27 @@ def statement_feedback_key_signature(value: object) -> tuple[object, ...]:
 
 def statement_feedback_key_to_json(value: object) -> str:
     data = statement_feedback_key_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def statement_feedback_key_from_dict(value: object) -> StatementFeedbackKey:
-    data = _exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
+def statement_feedback_key_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
     result = statement_feedback_key(
-        schema_version=_integer(data["schema_version"], "statement feedback key schema_version", 0),
-        statement_id=_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
-        generation=_integer(data["generation"], "feedback generation", 0),
-        generation_available=_boolean(data["generation_available"], "feedback generation_available"),
-        policy_fingerprint=_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
-        contract_fingerprint=_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
+        schema_version=internal_integer(data["schema_version"], "statement feedback key schema_version", 0),
+        statement_id=internal_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
+        generation=internal_integer(data["generation"], "feedback generation", 0),
+        generation_available=internal_boolean(data["generation_available"], "feedback generation_available"),
+        policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
+        contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
     )
     return result
 
 
-def statement_feedback_key_from_json(value: str) -> StatementFeedbackKey:
-    data = _load_json_mapping(value, "StatementFeedbackKey JSON")
+def statement_feedback_key_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "StatementFeedbackKey JSON")
     result = statement_feedback_key_from_dict(data)
     return result
-
-
-RelationshipFeedbackKey = dict
 
 
 def relationship_feedback_key(
@@ -522,9 +517,9 @@ def relationship_feedback_key(
     constraint_fingerprint: object,
     statement: object,
     schema_version: object = FEEDBACK_KEY_SCHEMA_VERSION,
-) -> RelationshipFeedbackKey:
+) -> dict:
     """Build one exact query, scope, constraint, and statement partition."""
-    version = _integer(schema_version, "relationship feedback key schema_version", 0)
+    version = internal_integer(schema_version, "relationship feedback key schema_version", 0)
     if version != FEEDBACK_KEY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported relationship feedback key schema_version: {version}")
     try:
@@ -537,12 +532,12 @@ def relationship_feedback_key(
         raise InvalidRequestError("relationship scope must match query identity scope") from error
     if validated_query_identity["scope"] != validated_scope:
         raise InvalidRequestError("relationship scope must match query identity scope")
-    validated_constraint = _fingerprint(constraint_fingerprint, "relationship constraint_fingerprint")
+    validated_constraint = internal_fingerprint(constraint_fingerprint, "relationship constraint_fingerprint")
     try:
         validated_statement = validate_statement_feedback_key(statement)
     except InvalidRequestError as error:
         raise InvalidRequestError("relationship statement must be a StatementFeedbackKey") from error
-    result: RelationshipFeedbackKey = {
+    result: dict = {
         "query_identity": validated_query_identity,
         "scope": validated_scope,
         "constraint_fingerprint": validated_constraint,
@@ -552,8 +547,8 @@ def relationship_feedback_key(
     return result
 
 
-def validate_relationship_feedback_key(value: object) -> RelationshipFeedbackKey:
-    data = _exact_mapping(value, "RelationshipFeedbackKey", RELATIONSHIP_FEEDBACK_KEY_FIELDS)
+def validate_relationship_feedback_key(value: object) -> dict:
+    data = exact_mapping(value, "RelationshipFeedbackKey", RELATIONSHIP_FEEDBACK_KEY_FIELDS)
     result = relationship_feedback_key(
         data["query_identity"],
         data["scope"],
@@ -568,8 +563,8 @@ def relationship_feedback_key_to_dict(value: object) -> dict[str, object]:
     current = validate_relationship_feedback_key(value)
     result = {
         "schema_version": current["schema_version"],
-        "query_identity": _feedback_wire_value(current["query_identity"]),
-        "scope": _feedback_wire_value(current["scope"]),
+        "query_identity": feedback_wire_value(current["query_identity"]),
+        "scope": feedback_wire_value(current["scope"]),
         "constraint_fingerprint": current["constraint_fingerprint"],
         "statement": statement_feedback_key_to_dict(current["statement"]),
     }
@@ -584,7 +579,7 @@ def relationship_feedback_key_fingerprint(value: object) -> str:
 
 def relationship_feedback_key_to_json(value: object) -> str:
     data = relationship_feedback_key_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
@@ -593,8 +588,8 @@ def relationship_feedback_key_from_dict(
     identity_cache: object = (),
     scope_cache: object = (),
     statement_cache: object = (),
-) -> RelationshipFeedbackKey:
-    data = _exact_mapping(value, "RelationshipFeedbackKey", RELATIONSHIP_FEEDBACK_KEY_FIELDS)
+) -> dict:
+    data = exact_mapping(value, "RelationshipFeedbackKey", RELATIONSHIP_FEEDBACK_KEY_FIELDS)
     for name in ("query_identity", "scope", "statement"):
         if not isinstance(data[name], Mapping):
             raise InvalidRequestError(f"relationship {name} must be an object")
@@ -625,28 +620,25 @@ def relationship_feedback_key_from_dict(
     else:
         statement = statement_feedback_key_from_dict(data["statement"])
         statements[statement_fingerprint] = statement
-    version = _integer(data["schema_version"], "relationship feedback key schema_version", 0)
+    version = internal_integer(data["schema_version"], "relationship feedback key schema_version", 0)
     if version != FEEDBACK_KEY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported relationship feedback key schema_version: {version}")
     if query_identity["scope"] != scope:
         raise InvalidRequestError("relationship scope must match query identity scope")
-    result: RelationshipFeedbackKey = {
+    result: dict = {
         "query_identity": query_identity,
         "scope": scope,
-        "constraint_fingerprint": _fingerprint(data["constraint_fingerprint"], "relationship constraint_fingerprint"),
+        "constraint_fingerprint": internal_fingerprint(data["constraint_fingerprint"], "relationship constraint_fingerprint"),
         "statement": statement,
         "schema_version": version,
     }
     return result
 
 
-def relationship_feedback_key_from_json(value: str) -> RelationshipFeedbackKey:
-    data = _load_json_mapping(value, "RelationshipFeedbackKey JSON")
+def relationship_feedback_key_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "RelationshipFeedbackKey JSON")
     result = relationship_feedback_key_from_dict(data)
     return result
-
-
-FeedbackObservation = dict
 
 
 def feedback_observation(
@@ -665,14 +657,14 @@ def feedback_observation(
     reason: object = "",
     contract_fingerprint: object = FEEDBACK_CONTRACT_FINGERPRINT,
     schema_version: object = FEEDBACK_OBSERVATION_SCHEMA_VERSION,
-) -> FeedbackObservation:
+) -> dict:
     """Build one exactly targeted candidacy or external verdict observation."""
-    version = _integer(schema_version, "feedback observation schema_version", 0)
+    version = internal_integer(schema_version, "feedback observation schema_version", 0)
     if version != FEEDBACK_OBSERVATION_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback observation schema_version: {version}")
     if not isinstance(reference_kind, FeedbackReferenceKind):
         raise InvalidRequestError("feedback reference_kind must be a FeedbackReferenceKind")
-    validated_reference_id = _text(reference_id, "feedback reference_id", MAX_REFERENCE_ID_BYTES)
+    validated_reference_id = internal_text(reference_id, "feedback reference_id", MAX_REFERENCE_ID_BYTES)
     if not isinstance(kind, FeedbackObservationKind) or not isinstance(outcome, FeedbackOutcome):
         raise InvalidRequestError("feedback kind and outcome must use the closed vocabularies")
     if kind == FeedbackObservationKind.CANDIDACY and outcome != FeedbackOutcome.CANDIDATE:
@@ -689,7 +681,7 @@ def feedback_observation(
         raise InvalidRequestError("feedback scope must match query identity scope") from error
     if validated_query_identity["scope"] != validated_scope:
         raise InvalidRequestError("feedback scope must match query identity scope")
-    validated_constraint = _fingerprint(constraint_fingerprint, "feedback constraint_fingerprint")
+    validated_constraint = internal_fingerprint(constraint_fingerprint, "feedback constraint_fingerprint")
     statement = statement_feedback_key(
         statement_id,
         generation,
@@ -697,9 +689,9 @@ def feedback_observation(
         policy_fingerprint,
         contract_fingerprint,
     )
-    validated_observed_at = canonical_utc(_parse_timestamp(observed_at, "feedback observed_at"))
-    validated_reason = _text(reason, "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
-    result: FeedbackObservation = {
+    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "feedback observed_at"))
+    validated_reason = internal_text(reason, "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
+    result: dict = {
         "reference_kind": reference_kind,
         "reference_id": validated_reference_id,
         "kind": kind,
@@ -719,13 +711,13 @@ def feedback_observation(
     return result
 
 
-def _trusted_feedback_observation(
+def trusted_feedback_observation(
     reference_kind: FeedbackReferenceKind,
     reference_id: str,
     kind: FeedbackObservationKind,
     outcome: FeedbackOutcome,
-    query_identity: QueryIdentity,
-    scope: ScopeKey,
+    query_identity: dict,
+    scope: dict,
     constraint_fingerprint: str,
     statement_id: str,
     generation: int,
@@ -734,9 +726,9 @@ def _trusted_feedback_observation(
     observed_at: str,
     reason: str = "",
     contract_fingerprint: str = FEEDBACK_CONTRACT_FINGERPRINT,
-) -> FeedbackObservation:
+) -> dict:
     """Build an observation from values established by the regulated service."""
-    result: FeedbackObservation = {
+    result: dict = {
         "reference_kind": reference_kind,
         "reference_id": reference_id,
         "kind": kind,
@@ -756,8 +748,8 @@ def _trusted_feedback_observation(
     return result
 
 
-def validate_feedback_observation(value: object) -> FeedbackObservation:
-    data = _exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
+def validate_feedback_observation(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
     result = feedback_observation(
         data["reference_kind"],
         data["reference_id"],
@@ -778,7 +770,7 @@ def validate_feedback_observation(value: object) -> FeedbackObservation:
     return result
 
 
-def feedback_observation_with_changes(value: object, changes: object) -> FeedbackObservation:
+def feedback_observation_with_changes(value: object, changes: object) -> dict:
     current = validate_feedback_observation(value)
     if not isinstance(changes, Mapping) or not set(changes).issubset(FEEDBACK_OBSERVATION_FIELDS):
         raise InvalidRequestError("feedback observation changes contain invalid fields")
@@ -788,41 +780,41 @@ def feedback_observation_with_changes(value: object, changes: object) -> Feedbac
     return result
 
 
-def feedback_observation_statement_key(value: object) -> StatementFeedbackKey:
+def feedback_observation_statement_key(value: object) -> dict:
     current = validate_feedback_observation(value)
-    result = _trusted_feedback_observation_statement_key(current)
+    result = trusted_feedback_observation_statement_key(current)
     return result
 
 
-def _trusted_feedback_observation_statement_key(current: FeedbackObservation) -> StatementFeedbackKey:
+def trusted_feedback_observation_statement_key(current: dict) -> dict:
     """Derive a statement key from an observation validated by the store boundary."""
-    result: StatementFeedbackKey = {
-        "statement_id": current["statement_id"],
-        "generation": current["generation"],
-        "generation_available": current["generation_available"],
-        "policy_fingerprint": current["policy_fingerprint"],
-        "contract_fingerprint": current["contract_fingerprint"],
+    result: dict = {
+        "statement_id": current.get("statement_id", ""),
+        "generation": current.get("generation", 0),
+        "generation_available": current.get("generation_available", False),
+        "policy_fingerprint": current.get("policy_fingerprint", ""),
+        "contract_fingerprint": current.get("contract_fingerprint", ""),
         "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
     }
     return result
 
 
-def feedback_observation_relationship_key(value: object) -> RelationshipFeedbackKey:
+def feedback_observation_relationship_key(value: object) -> dict:
     current = validate_feedback_observation(value)
-    statement = _trusted_feedback_observation_statement_key(current)
-    result = _trusted_feedback_observation_relationship_key(current, statement)
+    statement = trusted_feedback_observation_statement_key(current)
+    result = trusted_feedback_observation_relationship_key(current, statement)
     return result
 
 
-def _trusted_feedback_observation_relationship_key(
-    current: FeedbackObservation,
-    statement: StatementFeedbackKey,
-) -> RelationshipFeedbackKey:
+def trusted_feedback_observation_relationship_key(
+    current: dict,
+    statement: dict,
+) -> dict:
     """Derive a relationship key from one store-owned observation and statement key."""
-    result: RelationshipFeedbackKey = {
-        "query_identity": current["query_identity"],
-        "scope": current["scope"],
-        "constraint_fingerprint": current["constraint_fingerprint"],
+    result: dict = {
+        "query_identity": current.get("query_identity", {}),
+        "scope": current.get("scope", {}),
+        "constraint_fingerprint": current.get("constraint_fingerprint", ""),
         "statement": statement,
         "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
     }
@@ -831,40 +823,40 @@ def _trusted_feedback_observation_relationship_key(
 
 def feedback_observation_to_dict(value: object) -> dict[str, object]:
     current = validate_feedback_observation(value)
-    result = _trusted_feedback_observation_to_dict(current)
+    result = trusted_feedback_observation_to_dict(current)
     return result
 
 
-def _trusted_feedback_observation_to_dict(current: FeedbackObservation) -> dict[str, object]:
+def trusted_feedback_observation_to_dict(current: dict) -> dict[str, object]:
     """Serialize an observation already validated by the feedback-store boundary."""
     result = {
-        "schema_version": current["schema_version"],
-        "reference_kind": current["reference_kind"].value,
-        "reference_id": current["reference_id"],
-        "kind": current["kind"].value,
-        "outcome": current["outcome"].value,
-        "query_identity": query_identity_to_dict(current["query_identity"]),
-        "scope": scope_key_to_dict(current["scope"]),
-        "constraint_fingerprint": current["constraint_fingerprint"],
-        "statement_id": current["statement_id"],
-        "generation": current["generation"],
-        "generation_available": current["generation_available"],
-        "policy_fingerprint": current["policy_fingerprint"],
-        "contract_fingerprint": current["contract_fingerprint"],
-        "observed_at": current["observed_at"],
-        "reason": current["reason"],
+        "schema_version": current.get("schema_version", 0),
+        "reference_kind": current.get("reference_kind", FeedbackReferenceKind.RESOLUTION_REQUEST).value,
+        "reference_id": current.get("reference_id", ""),
+        "kind": current.get("kind", FeedbackObservationKind.CANDIDACY).value,
+        "outcome": current.get("outcome", FeedbackOutcome.CANDIDATE).value,
+        "query_identity": query_identity_to_dict(current.get("query_identity", {})),
+        "scope": scope_key_to_dict(current.get("scope", {})),
+        "constraint_fingerprint": current.get("constraint_fingerprint", ""),
+        "statement_id": current.get("statement_id", ""),
+        "generation": current.get("generation", 0),
+        "generation_available": current.get("generation_available", False),
+        "policy_fingerprint": current.get("policy_fingerprint", ""),
+        "contract_fingerprint": current.get("contract_fingerprint", ""),
+        "observed_at": current.get("observed_at", ""),
+        "reason": current.get("reason", ""),
     }
     return result
 
 
 def feedback_observation_to_json(value: object) -> str:
     data = feedback_observation_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def feedback_observation_from_dict(value: object) -> FeedbackObservation:
-    data = _exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
+def feedback_observation_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
     if not isinstance(data["query_identity"], Mapping) or not isinstance(data["scope"], Mapping):
         raise InvalidRequestError("feedback observation identity and scope must be objects")
     try:
@@ -874,32 +866,29 @@ def feedback_observation_from_dict(value: object) -> FeedbackObservation:
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("feedback observation contains an unsupported enum value") from error
     result = feedback_observation(
-        schema_version=_integer(data["schema_version"], "feedback observation schema_version", 0),
+        schema_version=internal_integer(data["schema_version"], "feedback observation schema_version", 0),
         reference_kind=reference_kind,
-        reference_id=_text(data["reference_id"], "feedback reference_id", MAX_REFERENCE_ID_BYTES),
+        reference_id=internal_text(data["reference_id"], "feedback reference_id", MAX_REFERENCE_ID_BYTES),
         kind=kind,
         outcome=outcome,
         query_identity=query_identity_from_dict(data["query_identity"]),
         scope=scope_key_from_dict(data["scope"]),
-        constraint_fingerprint=_fingerprint(data["constraint_fingerprint"], "feedback constraint_fingerprint"),
-        statement_id=_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
-        generation=_integer(data["generation"], "feedback generation", 0),
-        generation_available=_boolean(data["generation_available"], "feedback generation_available"),
-        policy_fingerprint=_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
-        contract_fingerprint=_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
-        observed_at=canonical_utc(_parse_timestamp(data["observed_at"], "feedback observed_at")),
-        reason=_text(data["reason"], "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True),
+        constraint_fingerprint=internal_fingerprint(data["constraint_fingerprint"], "feedback constraint_fingerprint"),
+        statement_id=internal_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
+        generation=internal_integer(data["generation"], "feedback generation", 0),
+        generation_available=internal_boolean(data["generation_available"], "feedback generation_available"),
+        policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
+        contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
+        observed_at=canonical_utc(parse_timestamp(data["observed_at"], "feedback observed_at")),
+        reason=internal_text(data["reason"], "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True),
     )
     return result
 
 
-def feedback_observation_from_json(value: str) -> FeedbackObservation:
-    data = _load_json_mapping(value, "FeedbackObservation JSON")
+def feedback_observation_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "FeedbackObservation JSON")
     result = feedback_observation_from_dict(data)
     return result
-
-
-FeedbackStatistics = dict
 
 
 def feedback_statistics(
@@ -910,9 +899,9 @@ def feedback_statistics(
     rejected_stale: object = 0,
     rejected_policy: object = 0,
     schema_version: object = FEEDBACK_STATISTICS_SCHEMA_VERSION,
-) -> FeedbackStatistics:
+) -> dict:
     """Build inspectable raw aggregate feedback counters."""
-    version = _integer(schema_version, "feedback statistics schema_version", 0)
+    version = internal_integer(schema_version, "feedback statistics schema_version", 0)
     if version != FEEDBACK_STATISTICS_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback statistics schema_version: {version}")
     values = {
@@ -923,8 +912,8 @@ def feedback_statistics(
         "rejected_stale": rejected_stale,
         "rejected_policy": rejected_policy,
     }
-    validated = {name: _integer(value, f"feedback statistics {name}", 0) for name, value in values.items()}
-    result: FeedbackStatistics = {
+    validated = {name: internal_integer(value, f"feedback statistics {name}", 0) for name, value in values.items()}
+    result: dict = {
         "candidate_count": validated["candidate_count"],
         "accept_count": validated["accept_count"],
         "rejected_quality": validated["rejected_quality"],
@@ -936,8 +925,8 @@ def feedback_statistics(
     return result
 
 
-def validate_feedback_statistics(value: object) -> FeedbackStatistics:
-    data = _exact_mapping(value, "FeedbackStatistics", FEEDBACK_STATISTICS_FIELDS)
+def validate_feedback_statistics(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackStatistics", FEEDBACK_STATISTICS_FIELDS)
     result = feedback_statistics(
         data["candidate_count"],
         data["accept_count"],
@@ -962,7 +951,7 @@ def feedback_statistics_verdict_count(value: object) -> int:
     return result
 
 
-def feedback_statistics_increment(value: object, outcome: object) -> FeedbackStatistics:
+def feedback_statistics_increment(value: object, outcome: object) -> dict:
     current = validate_feedback_statistics(value)
     if not isinstance(outcome, FeedbackOutcome):
         raise InvalidRequestError("feedback increment outcome must be a FeedbackOutcome")
@@ -973,7 +962,7 @@ def feedback_statistics_increment(value: object, outcome: object) -> FeedbackSta
     return result
 
 
-def feedback_statistics_add(first: object, second: object) -> FeedbackStatistics:
+def feedback_statistics_add(first: object, second: object) -> dict:
     try:
         first_value = validate_feedback_statistics(first)
         second_value = validate_feedback_statistics(second)
@@ -1006,41 +995,38 @@ def feedback_statistics_to_dict(value: object) -> dict[str, int]:
 
 def feedback_statistics_to_json(value: object) -> str:
     data = feedback_statistics_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def feedback_statistics_from_dict(value: object) -> FeedbackStatistics:
-    data = _exact_mapping(value, "FeedbackStatistics", FEEDBACK_STATISTICS_FIELDS)
-    values = {name: _integer(data[name], f"feedback statistics {name}", 0) for name in FEEDBACK_STATISTICS_FIELDS}
+def feedback_statistics_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackStatistics", FEEDBACK_STATISTICS_FIELDS)
+    values = {name: internal_integer(data[name], f"feedback statistics {name}", 0) for name in FEEDBACK_STATISTICS_FIELDS}
     result = feedback_statistics(**values)
     return result
 
 
-def feedback_statistics_from_json(value: str) -> FeedbackStatistics:
-    data = _load_json_mapping(value, "FeedbackStatistics JSON")
+def feedback_statistics_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "FeedbackStatistics JSON")
     result = feedback_statistics_from_dict(data)
     return result
-
-
-FeedbackBucket = dict
 
 
 def feedback_bucket(
     start_at: object,
     statistics: object,
     schema_version: object = FEEDBACK_BUCKET_SCHEMA_VERSION,
-) -> FeedbackBucket:
+) -> dict:
     """Build one bounded deterministic time bucket of raw counters."""
-    version = _integer(schema_version, "feedback bucket schema_version", 0)
+    version = internal_integer(schema_version, "feedback bucket schema_version", 0)
     if version != FEEDBACK_BUCKET_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback bucket schema_version: {version}")
-    validated_start_at = canonical_utc(_parse_timestamp(start_at, "feedback bucket start_at"))
+    validated_start_at = canonical_utc(parse_timestamp(start_at, "feedback bucket start_at"))
     try:
         validated_statistics = validate_feedback_statistics(statistics)
     except InvalidRequestError as error:
         raise InvalidRequestError("feedback bucket statistics must be FeedbackStatistics") from error
-    result: FeedbackBucket = {
+    result: dict = {
         "start_at": validated_start_at,
         "statistics": validated_statistics,
         "schema_version": version,
@@ -1048,8 +1034,8 @@ def feedback_bucket(
     return result
 
 
-def validate_feedback_bucket(value: object) -> FeedbackBucket:
-    data = _exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
+def validate_feedback_bucket(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
     result = feedback_bucket(data["start_at"], data["statistics"], data["schema_version"])
     return result
 
@@ -1064,35 +1050,32 @@ def feedback_bucket_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def feedback_bucket_from_dict(value: object) -> FeedbackBucket:
-    data = _exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
+def feedback_bucket_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
     if not isinstance(data["statistics"], Mapping):
         raise InvalidRequestError("feedback bucket statistics must be an object")
     result = feedback_bucket(
-        schema_version=_integer(data["schema_version"], "feedback bucket schema_version", 0),
-        start_at=canonical_utc(_parse_timestamp(data["start_at"], "feedback bucket start_at")),
+        schema_version=internal_integer(data["schema_version"], "feedback bucket schema_version", 0),
+        start_at=canonical_utc(parse_timestamp(data["start_at"], "feedback bucket start_at")),
         statistics=feedback_statistics_from_dict(data["statistics"]),
     )
     return result
 
 
-def _apply_buckets(
-    buckets: tuple[FeedbackBucket, ...],
+def apply_buckets(
+    buckets: tuple[dict, ...],
     outcome: FeedbackOutcome,
     observed_at: str,
-    policy: FeedbackPolicy,
-) -> tuple[FeedbackBucket, ...]:
-    start = _bucket_start(observed_at, policy["bucket_seconds"])
+    policy: dict,
+) -> tuple[dict, ...]:
+    start = bucket_start(observed_at, policy.get("bucket_seconds", 0))
     values = {bucket["start_at"]: bucket for bucket in buckets}
     current = values.get(start, feedback_bucket(start, feedback_statistics()))
     updated_statistics = feedback_statistics_increment(current["statistics"], outcome)
     values[start] = feedback_bucket(start, updated_statistics)
     ordered = tuple(values[key] for key in sorted(values))
-    result = ordered[-policy["max_buckets_per_record"] :]
+    result = ordered[-policy.get("max_buckets_per_record", 0) :]
     return result
-
-
-StatementFeedbackRecord = dict
 
 
 def statement_feedback_record(
@@ -1102,8 +1085,8 @@ def statement_feedback_record(
     last_outcome: object,
     last_observed_at: object,
     schema_version: object = FEEDBACK_RECORD_SCHEMA_VERSION,
-) -> StatementFeedbackRecord:
-    version = _integer(schema_version, "statement feedback record schema_version", 0)
+) -> dict:
+    version = internal_integer(schema_version, "statement feedback record schema_version", 0)
     if version != FEEDBACK_RECORD_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported statement feedback record schema_version: {version}")
     try:
@@ -1124,8 +1107,8 @@ def statement_feedback_record(
         raise InvalidRequestError("statement feedback bucket starts must be unique")
     if not isinstance(last_outcome, FeedbackOutcome):
         raise InvalidRequestError("statement feedback last_outcome must be a FeedbackOutcome")
-    validated_last_observed_at = canonical_utc(_parse_timestamp(last_observed_at, "statement feedback last_observed_at"))
-    result: StatementFeedbackRecord = {
+    validated_last_observed_at = canonical_utc(parse_timestamp(last_observed_at, "statement feedback last_observed_at"))
+    result: dict = {
         "key": validated_key,
         "raw": validated_raw,
         "buckets": validated_buckets,
@@ -1136,8 +1119,8 @@ def statement_feedback_record(
     return result
 
 
-def validate_statement_feedback_record(value: object) -> StatementFeedbackRecord:
-    data = _exact_mapping(value, "StatementFeedbackRecord", FEEDBACK_RECORD_FIELDS)
+def validate_statement_feedback_record(value: object) -> dict:
+    data = exact_mapping(value, "StatementFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     result = statement_feedback_record(
         data["key"],
         data["raw"],
@@ -1149,45 +1132,48 @@ def validate_statement_feedback_record(value: object) -> StatementFeedbackRecord
     return result
 
 
-def statement_feedback_record_apply(value: object, observation: object, policy: object) -> StatementFeedbackRecord:
+def statement_feedback_record_apply(value: object, observation: object, policy: object) -> dict:
     current = validate_statement_feedback_record(value)
     validated_observation = validate_feedback_observation(observation)
     validated_policy = validate_feedback_policy(policy)
-    result = _trusted_statement_feedback_record_apply(current, validated_observation, validated_policy)
+    result = trusted_statement_feedback_record_apply(current, validated_observation, validated_policy)
     return result
 
 
-def _trusted_statement_feedback_record_apply(
-    current: StatementFeedbackRecord,
-    validated_observation: FeedbackObservation,
-    validated_policy: FeedbackPolicy,
-) -> StatementFeedbackRecord:
+def trusted_statement_feedback_record_apply(
+    current: dict,
+    validated_observation: dict,
+    validated_policy: dict,
+) -> dict:
     """Apply one observation after the store boundary validated every input."""
-    observation_key = _trusted_feedback_observation_statement_key(validated_observation)
-    if observation_key != current["key"]:
+    observation_key = trusted_feedback_observation_statement_key(validated_observation)
+    if observation_key != current.get("key", {}):
         raise ConflictError("feedback observation does not match statement aggregate key")
     last_observed_at, last_outcome = max(
-        (current["last_observed_at"], current["last_outcome"]),
-        (validated_observation["observed_at"], validated_observation["outcome"]),
+        (current.get("last_observed_at", ""), current.get("last_outcome", FeedbackOutcome.CANDIDATE)),
+        (validated_observation.get("observed_at", ""), validated_observation.get("outcome", FeedbackOutcome.CANDIDATE)),
         key=lambda item: (item[0], item[1].value),
     )
-    raw = feedback_statistics_increment(current["raw"], validated_observation["outcome"])
-    buckets = _apply_buckets(
-        current["buckets"], validated_observation["outcome"], validated_observation["observed_at"], validated_policy
+    raw = feedback_statistics_increment(current.get("raw", {}), validated_observation.get("outcome", FeedbackOutcome.CANDIDATE))
+    buckets = apply_buckets(
+        current.get("buckets", ()),
+        validated_observation.get("outcome", FeedbackOutcome.CANDIDATE),
+        validated_observation.get("observed_at", ""),
+        validated_policy,
     )
-    result = _trusted_statement_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    result = trusted_statement_feedback_record(current.get("key", {}), raw, buckets, last_outcome, last_observed_at)
     return result
 
 
-def _trusted_statement_feedback_record(
-    key: StatementFeedbackKey,
-    raw: FeedbackStatistics,
-    buckets: tuple[FeedbackBucket, ...],
+def trusted_statement_feedback_record(
+    key: dict,
+    raw: dict,
+    buckets: tuple[dict, ...],
     last_outcome: FeedbackOutcome,
     last_observed_at: str,
-) -> StatementFeedbackRecord:
+) -> dict:
     """Build a statement aggregate from store-owned validated components."""
-    result: StatementFeedbackRecord = {
+    result: dict = {
         "key": key,
         "raw": raw,
         "buckets": buckets,
@@ -1211,8 +1197,8 @@ def statement_feedback_record_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def statement_feedback_record_from_dict(value: object) -> StatementFeedbackRecord:
-    data = _exact_mapping(value, "StatementFeedbackRecord", FEEDBACK_RECORD_FIELDS)
+def statement_feedback_record_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "StatementFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     if not isinstance(data["key"], Mapping) or not isinstance(data["raw"], Mapping):
         raise InvalidRequestError("statement feedback key and raw values must be objects")
     if not isinstance(data["buckets"], list) or not all(isinstance(item, Mapping) for item in data["buckets"]):
@@ -1221,7 +1207,7 @@ def statement_feedback_record_from_dict(value: object) -> StatementFeedbackRecor
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("statement feedback contains an unsupported last_outcome") from error
-    version = _integer(data["schema_version"], "statement feedback record schema_version", 0)
+    version = internal_integer(data["schema_version"], "statement feedback record schema_version", 0)
     if version != FEEDBACK_RECORD_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported statement feedback record schema_version: {version}")
     buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
@@ -1230,18 +1216,15 @@ def statement_feedback_record_from_dict(value: object) -> StatementFeedbackRecor
         raise InvalidRequestError("statement feedback buckets must be bounded and ordered")
     if len(set(bucket_starts)) != len(bucket_starts):
         raise InvalidRequestError("statement feedback bucket starts must be unique")
-    result: StatementFeedbackRecord = {
+    result: dict = {
         "key": statement_feedback_key_from_dict(data["key"]),
         "raw": feedback_statistics_from_dict(data["raw"]),
         "buckets": buckets,
         "last_outcome": last_outcome,
-        "last_observed_at": canonical_utc(_parse_timestamp(data["last_observed_at"], "statement feedback last_observed_at")),
+        "last_observed_at": canonical_utc(parse_timestamp(data["last_observed_at"], "statement feedback last_observed_at")),
         "schema_version": version,
     }
     return result
-
-
-RelationshipFeedbackRecord = dict
 
 
 def relationship_feedback_record(
@@ -1251,8 +1234,8 @@ def relationship_feedback_record(
     last_outcome: object,
     last_observed_at: object,
     schema_version: object = FEEDBACK_RECORD_SCHEMA_VERSION,
-) -> RelationshipFeedbackRecord:
-    version = _integer(schema_version, "relationship feedback record schema_version", 0)
+) -> dict:
+    version = internal_integer(schema_version, "relationship feedback record schema_version", 0)
     if version != FEEDBACK_RECORD_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported relationship feedback record schema_version: {version}")
     try:
@@ -1273,8 +1256,8 @@ def relationship_feedback_record(
         raise InvalidRequestError("relationship feedback bucket starts must be unique")
     if not isinstance(last_outcome, FeedbackOutcome):
         raise InvalidRequestError("relationship feedback last_outcome must be a FeedbackOutcome")
-    validated_last_observed_at = canonical_utc(_parse_timestamp(last_observed_at, "relationship feedback last_observed_at"))
-    result: RelationshipFeedbackRecord = {
+    validated_last_observed_at = canonical_utc(parse_timestamp(last_observed_at, "relationship feedback last_observed_at"))
+    result: dict = {
         "key": validated_key,
         "raw": validated_raw,
         "buckets": validated_buckets,
@@ -1285,8 +1268,8 @@ def relationship_feedback_record(
     return result
 
 
-def validate_relationship_feedback_record(value: object) -> RelationshipFeedbackRecord:
-    data = _exact_mapping(value, "RelationshipFeedbackRecord", FEEDBACK_RECORD_FIELDS)
+def validate_relationship_feedback_record(value: object) -> dict:
+    data = exact_mapping(value, "RelationshipFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     result = relationship_feedback_record(
         data["key"],
         data["raw"],
@@ -1298,46 +1281,49 @@ def validate_relationship_feedback_record(value: object) -> RelationshipFeedback
     return result
 
 
-def relationship_feedback_record_apply(value: object, observation: object, policy: object) -> RelationshipFeedbackRecord:
+def relationship_feedback_record_apply(value: object, observation: object, policy: object) -> dict:
     current = validate_relationship_feedback_record(value)
     validated_observation = validate_feedback_observation(observation)
     validated_policy = validate_feedback_policy(policy)
-    result = _trusted_relationship_feedback_record_apply(current, validated_observation, validated_policy)
+    result = trusted_relationship_feedback_record_apply(current, validated_observation, validated_policy)
     return result
 
 
-def _trusted_relationship_feedback_record_apply(
-    current: RelationshipFeedbackRecord,
-    validated_observation: FeedbackObservation,
-    validated_policy: FeedbackPolicy,
-) -> RelationshipFeedbackRecord:
+def trusted_relationship_feedback_record_apply(
+    current: dict,
+    validated_observation: dict,
+    validated_policy: dict,
+) -> dict:
     """Apply one relationship observation after validating the store boundary."""
-    statement_key = _trusted_feedback_observation_statement_key(validated_observation)
-    observation_key = _trusted_feedback_observation_relationship_key(validated_observation, statement_key)
-    if observation_key != current["key"]:
+    statement_key = trusted_feedback_observation_statement_key(validated_observation)
+    observation_key = trusted_feedback_observation_relationship_key(validated_observation, statement_key)
+    if observation_key != current.get("key", {}):
         raise ConflictError("feedback observation does not match relationship aggregate key")
     last_observed_at, last_outcome = max(
-        (current["last_observed_at"], current["last_outcome"]),
-        (validated_observation["observed_at"], validated_observation["outcome"]),
+        (current.get("last_observed_at", ""), current.get("last_outcome", FeedbackOutcome.CANDIDATE)),
+        (validated_observation.get("observed_at", ""), validated_observation.get("outcome", FeedbackOutcome.CANDIDATE)),
         key=lambda item: (item[0], item[1].value),
     )
-    raw = feedback_statistics_increment(current["raw"], validated_observation["outcome"])
-    buckets = _apply_buckets(
-        current["buckets"], validated_observation["outcome"], validated_observation["observed_at"], validated_policy
+    raw = feedback_statistics_increment(current.get("raw", {}), validated_observation.get("outcome", FeedbackOutcome.CANDIDATE))
+    buckets = apply_buckets(
+        current.get("buckets", ()),
+        validated_observation.get("outcome", FeedbackOutcome.CANDIDATE),
+        validated_observation.get("observed_at", ""),
+        validated_policy,
     )
-    result = _trusted_relationship_feedback_record(current["key"], raw, buckets, last_outcome, last_observed_at)
+    result = trusted_relationship_feedback_record(current.get("key", {}), raw, buckets, last_outcome, last_observed_at)
     return result
 
 
-def _trusted_relationship_feedback_record(
-    key: RelationshipFeedbackKey,
-    raw: FeedbackStatistics,
-    buckets: tuple[FeedbackBucket, ...],
+def trusted_relationship_feedback_record(
+    key: dict,
+    raw: dict,
+    buckets: tuple[dict, ...],
     last_outcome: FeedbackOutcome,
     last_observed_at: str,
-) -> RelationshipFeedbackRecord:
+) -> dict:
     """Build a relationship aggregate from store-owned validated components."""
-    result: RelationshipFeedbackRecord = {
+    result: dict = {
         "key": key,
         "raw": raw,
         "buckets": buckets,
@@ -1366,8 +1352,8 @@ def relationship_feedback_record_from_dict(
     identity_cache: object = (),
     scope_cache: object = (),
     statement_cache: object = (),
-) -> RelationshipFeedbackRecord:
-    data = _exact_mapping(value, "RelationshipFeedbackRecord", FEEDBACK_RECORD_FIELDS)
+) -> dict:
+    data = exact_mapping(value, "RelationshipFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     if not isinstance(data["key"], Mapping) or not isinstance(data["raw"], Mapping):
         raise InvalidRequestError("relationship feedback key and raw values must be objects")
     if not isinstance(data["buckets"], list) or not all(isinstance(item, Mapping) for item in data["buckets"]):
@@ -1376,7 +1362,7 @@ def relationship_feedback_record_from_dict(
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("relationship feedback contains an unsupported last_outcome") from error
-    version = _integer(data["schema_version"], "relationship feedback record schema_version", 0)
+    version = internal_integer(data["schema_version"], "relationship feedback record schema_version", 0)
     if version != FEEDBACK_RECORD_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported relationship feedback record schema_version: {version}")
     buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
@@ -1385,28 +1371,23 @@ def relationship_feedback_record_from_dict(
         raise InvalidRequestError("relationship feedback buckets must be bounded and ordered")
     if len(set(bucket_starts)) != len(bucket_starts):
         raise InvalidRequestError("relationship feedback bucket starts must be unique")
-    result: RelationshipFeedbackRecord = {
+    result: dict = {
         "key": relationship_feedback_key_from_dict(data["key"], identity_cache, scope_cache, statement_cache),
         "raw": feedback_statistics_from_dict(data["raw"]),
         "buckets": buckets,
         "last_outcome": last_outcome,
-        "last_observed_at": canonical_utc(_parse_timestamp(data["last_observed_at"], "relationship feedback last_observed_at")),
+        "last_observed_at": canonical_utc(parse_timestamp(data["last_observed_at"], "relationship feedback last_observed_at")),
         "schema_version": version,
     }
     return result
 
 
-PolicySuppression = dict
-
-
-def policy_suppression(
-    statement_id: object, namespace: object, policy_fingerprint: object, observed_at: object
-) -> PolicySuppression:
-    validated_statement_id = _text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
-    validated_namespace = _text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
-    validated_policy = _fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
-    validated_observed_at = canonical_utc(_parse_timestamp(observed_at, "policy suppression observed_at"))
-    result: PolicySuppression = {
+def policy_suppression(statement_id: object, namespace: object, policy_fingerprint: object, observed_at: object) -> dict:
+    validated_statement_id = internal_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
+    validated_namespace = internal_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+    validated_policy = internal_fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
+    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "policy suppression observed_at"))
+    result: dict = {
         "statement_id": validated_statement_id,
         "namespace": validated_namespace,
         "policy_fingerprint": validated_policy,
@@ -1415,8 +1396,8 @@ def policy_suppression(
     return result
 
 
-def validate_policy_suppression(value: object) -> PolicySuppression:
-    data = _exact_mapping(value, "PolicySuppression", POLICY_SUPPRESSION_FIELDS)
+def validate_policy_suppression(value: object) -> dict:
+    data = exact_mapping(value, "PolicySuppression", POLICY_SUPPRESSION_FIELDS)
     result = policy_suppression(data["statement_id"], data["namespace"], data["policy_fingerprint"], data["observed_at"])
     return result
 
@@ -1433,15 +1414,12 @@ def policy_suppression_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def policy_suppression_from_dict(value: object) -> PolicySuppression:
+def policy_suppression_from_dict(value: object) -> dict:
     result = validate_policy_suppression(value)
     return result
 
 
-StaleExclusion = dict
-
-
-def stale_exclusion(statement_id: object, generation: object, generation_available: object, observed_at: object) -> StaleExclusion:
+def stale_exclusion(statement_id: object, generation: object, generation_available: object, observed_at: object) -> dict:
     key = statement_feedback_key(
         statement_id,
         generation,
@@ -1449,8 +1427,8 @@ def stale_exclusion(statement_id: object, generation: object, generation_availab
         EMPTY_FINGERPRINT,
         FEEDBACK_CONTRACT_FINGERPRINT,
     )
-    validated_observed_at = canonical_utc(_parse_timestamp(observed_at, "stale exclusion observed_at"))
-    result: StaleExclusion = {
+    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "stale exclusion observed_at"))
+    result: dict = {
         "statement_id": key["statement_id"],
         "generation": key["generation"],
         "generation_available": key["generation_available"],
@@ -1459,8 +1437,8 @@ def stale_exclusion(statement_id: object, generation: object, generation_availab
     return result
 
 
-def validate_stale_exclusion(value: object) -> StaleExclusion:
-    data = _exact_mapping(value, "StaleExclusion", STALE_EXCLUSION_FIELDS)
+def validate_stale_exclusion(value: object) -> dict:
+    data = exact_mapping(value, "StaleExclusion", STALE_EXCLUSION_FIELDS)
     result = stale_exclusion(data["statement_id"], data["generation"], data["generation_available"], data["observed_at"])
     return result
 
@@ -1477,12 +1455,9 @@ def stale_exclusion_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def stale_exclusion_from_dict(value: object) -> StaleExclusion:
+def stale_exclusion_from_dict(value: object) -> dict:
     result = validate_stale_exclusion(value)
     return result
-
-
-FeedbackHistory = dict
 
 
 def feedback_history(
@@ -1497,25 +1472,25 @@ def feedback_history(
     policy_fingerprint: object = EMPTY_FINGERPRINT,
     feedback_policy_value: object = "",
     schema_version: object = FEEDBACK_HISTORY_SCHEMA_VERSION,
-) -> FeedbackHistory:
-    version = _integer(schema_version, "feedback history schema_version", 1)
+) -> dict:
+    version = internal_integer(schema_version, "feedback history schema_version", 1)
     if version != FEEDBACK_HISTORY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback history schema_version: {version}")
-    validated_value = _number(value, "feedback history value", 0.0, 1.0)
-    validated_available = _boolean(available, "feedback history available")
-    validated_statement_value = _number(statement_value, "feedback history statement_value", 0.0, 1.0)
-    validated_statement_available = _boolean(statement_available, "feedback history statement_available")
-    validated_relationship_value = _number(relationship_value, "feedback history relationship_value", 0.0, 1.0)
-    validated_relationship_available = _boolean(relationship_available, "feedback history relationship_available")
-    validated_statement_samples = _number(statement_samples, "feedback history statement_samples", 0.0, 1.0e18)
-    validated_relationship_samples = _number(relationship_samples, "feedback history relationship_samples", 0.0, 1.0e18)
-    validated_policy = _fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
+    validated_value = internal_number(value, "feedback history value", 0.0, 1.0)
+    validated_available = internal_boolean(available, "feedback history available")
+    validated_statement_value = internal_number(statement_value, "feedback history statement_value", 0.0, 1.0)
+    validated_statement_available = internal_boolean(statement_available, "feedback history statement_available")
+    validated_relationship_value = internal_number(relationship_value, "feedback history relationship_value", 0.0, 1.0)
+    validated_relationship_available = internal_boolean(relationship_available, "feedback history relationship_available")
+    validated_statement_samples = internal_number(statement_samples, "feedback history statement_samples", 0.0, 1.0e18)
+    validated_relationship_samples = internal_number(relationship_samples, "feedback history relationship_samples", 0.0, 1.0e18)
+    validated_policy = internal_fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
     if feedback_policy_value == "":
         feedback_policy_value = feedback_policy_fingerprint()
-    validated_feedback_policy = _fingerprint(feedback_policy_value, "feedback history feedback_policy_fingerprint")
+    validated_feedback_policy = internal_fingerprint(feedback_policy_value, "feedback history feedback_policy_fingerprint")
     if not validated_available and validated_value != 0.0:
         raise InvalidRequestError("unavailable feedback history must use zero value")
-    result: FeedbackHistory = {
+    result: dict = {
         "schema_version": version,
         "value": validated_value,
         "available": validated_available,
@@ -1531,8 +1506,8 @@ def feedback_history(
     return result
 
 
-def validate_feedback_history(value: object) -> FeedbackHistory:
-    data = _exact_mapping(value, "FeedbackHistory", FEEDBACK_HISTORY_FIELDS)
+def validate_feedback_history(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackHistory", FEEDBACK_HISTORY_FIELDS)
     result = feedback_history(
         value=data["value"],
         available=data["available"],
@@ -1557,51 +1532,48 @@ def feedback_history_to_dict(value: object) -> dict[str, object]:
 
 def feedback_history_to_json(value: object) -> str:
     data = feedback_history_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def feedback_history_from_dict(value: object) -> FeedbackHistory:
+def feedback_history_from_dict(value: object) -> dict:
     result = validate_feedback_history(value)
     return result
 
 
-def feedback_history_from_json(value: str) -> FeedbackHistory:
-    data = _load_json_mapping(value, "FeedbackHistory JSON")
+def feedback_history_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "FeedbackHistory JSON")
     result = feedback_history_from_dict(data)
     return result
 
 
-FeedbackState = dict
-
-
-def _freeze_feedback_value(value: object) -> object:
+def freeze_feedback_value(value: object) -> object:
     """Recursively freeze one validated feedback contract for structural sharing."""
     value_type = type(value)
-    if value_type in (dict, MappingProxyType):
+    if value_type in (dict, dict):
         mapping = value
-        result: object = MappingProxyType({key: _freeze_feedback_value(nested) for key, nested in mapping.items()})
+        result: object = {key: freeze_feedback_value(nested) for key, nested in mapping.items()}
     elif value_type is tuple or value_type is list:
-        result = tuple(_freeze_feedback_value(nested) for nested in value)
+        result = tuple(freeze_feedback_value(nested) for nested in value)
     else:
         result = value
     return result
 
 
-def _trusted_feedback_state(
-    policy: FeedbackPolicy,
-    statement_records: tuple[StatementFeedbackRecord, ...],
-    relationship_records: tuple[RelationshipFeedbackRecord, ...],
-    policy_suppressions: tuple[PolicySuppression, ...],
-    stale_exclusions: tuple[StaleExclusion, ...],
+def trusted_feedback_state(
+    policy: dict,
+    statement_records: tuple[dict, ...],
+    relationship_records: tuple[dict, ...],
+    policy_suppressions: tuple[dict, ...],
+    stale_exclusions: tuple[dict, ...],
     receipts: dict[str, object],
     statement_evictions: int,
     relationship_evictions: int,
     policy_suppression_evictions: int,
     stale_exclusion_evictions: int,
-) -> FeedbackState:
+) -> dict:
     """Assemble state from values owned and maintained by FeedbackStore."""
-    result: FeedbackState = {
+    result: dict = {
         "policy": policy,
         "statement_records": statement_records,
         "relationship_records": relationship_records,
@@ -1617,34 +1589,32 @@ def _trusted_feedback_state(
     return result
 
 
-def _trusted_feedback_state_copy(value: FeedbackState) -> FeedbackState:
+def trusted_feedback_state_copy(value: dict) -> dict:
     """Defensively copy state whose invariants are already established."""
-    receipts = json.loads(_json_text(value["receipts"]))
-    if not isinstance(receipts, dict):
-        raise InvalidRequestError("feedback receipts must decode to an object")
-    result = _trusted_feedback_state(
-        value["policy"],
-        value["statement_records"],
-        value["relationship_records"],
-        value["policy_suppressions"],
-        value["stale_exclusions"],
+    receipts = mutation_receipt_ledger_from_snapshot(value.get("receipts", ())).snapshot()
+    result = trusted_feedback_state(
+        validate_feedback_policy(value.get("policy", {})),
+        tuple(validate_statement_feedback_record(record) for record in value.get("statement_records", {})),
+        tuple(validate_relationship_feedback_record(record) for record in value.get("relationship_records", {})),
+        tuple(validate_policy_suppression(suppression) for suppression in value.get("policy_suppressions", {})),
+        tuple(validate_stale_exclusion(exclusion) for exclusion in value.get("stale_exclusions", {})),
         receipts,
-        value["statement_evictions"],
-        value["relationship_evictions"],
-        value["policy_suppression_evictions"],
-        value["stale_exclusion_evictions"],
+        value.get("statement_evictions", 0),
+        value.get("relationship_evictions", 0),
+        value.get("policy_suppression_evictions", 0),
+        value.get("stale_exclusion_evictions", 0),
     )
     return result
 
 
-def _feedback_wire_value(value: object) -> object:
+def feedback_wire_value(value: object) -> object:
     """Project an already validated feedback value into deterministic JSON types."""
     value_type = type(value)
-    if value_type in (dict, MappingProxyType):
+    if value_type in (dict, dict):
         mapping = value
-        result: object = {key: _feedback_wire_value(nested) for key, nested in mapping.items()}
+        result: object = {key: feedback_wire_value(nested) for key, nested in mapping.items()}
     elif value_type is tuple or value_type is list:
-        result = [_feedback_wire_value(nested) for nested in value]
+        result = [feedback_wire_value(nested) for nested in value]
     elif isinstance(value, Enum):
         result = value.value
     else:
@@ -1652,34 +1622,34 @@ def _feedback_wire_value(value: object) -> object:
     return result
 
 
-def _trusted_feedback_key_fingerprint(value: Mapping[str, object]) -> str:
+def trusted_feedback_key_fingerprint(value: dict[str, object]) -> str:
     """Fingerprint a key already validated by its record decoder or store."""
-    result = canonical_fingerprint(_feedback_wire_value(value))
+    result = canonical_fingerprint(feedback_wire_value(value))
     return result
 
 
-def _feedback_state_from_validated_components(
-    policy: FeedbackPolicy,
-    statement_records: tuple[StatementFeedbackRecord, ...],
-    relationship_records: tuple[RelationshipFeedbackRecord, ...],
-    policy_suppressions: tuple[PolicySuppression, ...],
-    stale_exclusions: tuple[StaleExclusion, ...],
-    receipts: Mapping[str, object],
+def feedback_state_from_validated_components(
+    policy: dict,
+    statement_records: tuple[dict, ...],
+    relationship_records: tuple[dict, ...],
+    policy_suppressions: tuple[dict, ...],
+    stale_exclusions: tuple[dict, ...],
+    receipts: dict[str, object],
     statement_evictions: object,
     relationship_evictions: object,
     policy_suppression_evictions: object,
     stale_exclusion_evictions: object,
     schema_version: int,
-) -> FeedbackState:
+) -> dict:
     """Enforce state-wide invariants after every nested value was validated once."""
     if schema_version != FEEDBACK_STATE_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback state schema_version: {schema_version}")
-    if len(statement_records) > policy["max_statement_records"]:
+    if len(statement_records) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback statement records exceed policy capacity")
-    if len(relationship_records) > policy["max_relationship_records"]:
+    if len(relationship_records) > policy.get("max_relationship_records", 0):
         raise InvalidRequestError("feedback relationship records exceed policy capacity")
-    statement_fingerprints = tuple(_trusted_feedback_key_fingerprint(record["key"]) for record in statement_records)
-    relationship_fingerprints = tuple(_trusted_feedback_key_fingerprint(record["key"]) for record in relationship_records)
+    statement_fingerprints = tuple(trusted_feedback_key_fingerprint(record["key"]) for record in statement_records)
+    relationship_fingerprints = tuple(trusted_feedback_key_fingerprint(record["key"]) for record in relationship_records)
     if len(set(statement_fingerprints)) != len(statement_fingerprints):
         raise InvalidRequestError("feedback statement record keys must be unique")
     if len(set(relationship_fingerprints)) != len(relationship_fingerprints):
@@ -1688,14 +1658,14 @@ def _feedback_state_from_validated_components(
         raise InvalidRequestError("feedback statement records must use canonical key order")
     if relationship_fingerprints != tuple(sorted(relationship_fingerprints)):
         raise InvalidRequestError("feedback relationship records must use canonical key order")
-    maximum_buckets = policy["max_buckets_per_record"]
+    maximum_buckets = policy.get("max_buckets_per_record", 0)
     if any(len(record["buckets"]) > maximum_buckets for record in statement_records):
         raise InvalidRequestError("feedback statement record buckets exceed policy retention")
     if any(len(record["buckets"]) > maximum_buckets for record in relationship_records):
         raise InvalidRequestError("feedback relationship record buckets exceed policy retention")
-    if len(policy_suppressions) > policy["max_statement_records"]:
+    if len(policy_suppressions) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback policy suppressions exceed policy capacity")
-    if len(stale_exclusions) > policy["max_statement_records"]:
+    if len(stale_exclusions) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback stale exclusions exceed policy capacity")
     suppression_keys = tuple(
         (value["statement_id"], value["namespace"], value["policy_fingerprint"]) for value in policy_suppressions
@@ -1712,20 +1682,20 @@ def _feedback_state_from_validated_components(
     if stale_exclusions != tuple(sorted(stale_exclusions, key=stale_exclusion_signature)):
         raise InvalidRequestError("feedback stale exclusions must use canonical order")
     mutation_receipt_ledger_from_snapshot(receipts)
-    receipt_copy = json.loads(_json_text(receipts))
+    receipt_copy = json_loads(json_text(receipts))
     if not isinstance(receipt_copy, dict):
         raise InvalidRequestError("feedback receipts must decode to an object")
-    result = _trusted_feedback_state(
+    result = trusted_feedback_state(
         policy,
         statement_records,
         relationship_records,
         policy_suppressions,
         stale_exclusions,
         receipt_copy,
-        _integer(statement_evictions, "feedback statement_evictions", 0),
-        _integer(relationship_evictions, "feedback relationship_evictions", 0),
-        _integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
-        _integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
+        internal_integer(statement_evictions, "feedback statement_evictions", 0),
+        internal_integer(relationship_evictions, "feedback relationship_evictions", 0),
+        internal_integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
+        internal_integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
     )
     result["schema_version"] = schema_version
     return result
@@ -1743,8 +1713,8 @@ def feedback_state(
     policy_suppression_evictions: object = 0,
     stale_exclusion_evictions: object = 0,
     schema_version: object = FEEDBACK_STATE_SCHEMA_VERSION,
-) -> FeedbackState:
-    version = _integer(schema_version, "feedback state schema_version", 1)
+) -> dict:
+    version = internal_integer(schema_version, "feedback state schema_version", 1)
     if version != FEEDBACK_STATE_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback state schema_version: {version}")
     policy_source = feedback_policy() if policy == {} else policy
@@ -1764,7 +1734,7 @@ def feedback_state(
     if not isinstance(receipts, Mapping):
         raise InvalidRequestError("feedback receipts must be an object")
     receipt_source = MutationReceiptLedger().snapshot() if receipts == {} else receipts
-    result = _feedback_state_from_validated_components(
+    result = feedback_state_from_validated_components(
         validated_policy,
         validated_statements,
         validated_relationships,
@@ -1780,8 +1750,8 @@ def feedback_state(
     return result
 
 
-def validate_feedback_state(value: object) -> FeedbackState:
-    data = _exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
+def validate_feedback_state(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
     result = feedback_state(
         policy=data["policy"],
         statement_records=data["statement_records"],
@@ -1800,7 +1770,7 @@ def validate_feedback_state(value: object) -> FeedbackState:
 
 def feedback_state_to_dict(value: object) -> dict[str, object]:
     current = validate_feedback_state(value)
-    result = _feedback_wire_value(current)
+    result = feedback_wire_value(current)
     return result
 
 
@@ -1812,12 +1782,12 @@ def feedback_state_signature(value: object) -> str:
 
 def feedback_state_to_json(value: object) -> str:
     data = feedback_state_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def feedback_state_from_dict(value: object) -> FeedbackState:
-    data = _exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
+def feedback_state_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
     for name in ("policy", "receipts"):
         if not isinstance(data[name], Mapping):
             raise InvalidRequestError(f"feedback state {name} must be an object")
@@ -1830,13 +1800,13 @@ def feedback_state_from_dict(value: object) -> FeedbackState:
     suppression_values = data["policy_suppressions"]
     exclusion_values = data["stale_exclusions"]
     parsed_statements = tuple(statement_feedback_record_from_dict(item) for item in statement_values)
-    statement_cache = {_trusted_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
-    identity_cache: dict[str, QueryIdentity] = {}
-    scope_cache: dict[str, ScopeKey] = {}
+    statement_cache = {trusted_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
+    identity_cache: dict[str, dict] = {}
+    scope_cache: dict[str, dict] = {}
     parsed_relationships = tuple(
         relationship_feedback_record_from_dict(item, identity_cache, scope_cache, statement_cache) for item in relationship_values
     )
-    result = _feedback_state_from_validated_components(
+    result = feedback_state_from_validated_components(
         feedback_policy_from_dict(data["policy"]),
         parsed_statements,
         parsed_relationships,
@@ -1847,109 +1817,106 @@ def feedback_state_from_dict(value: object) -> FeedbackState:
         data["relationship_evictions"],
         data["policy_suppression_evictions"],
         data["stale_exclusion_evictions"],
-        _integer(data["schema_version"], "feedback state schema_version", 1),
+        internal_integer(data["schema_version"], "feedback state schema_version", 1),
     )
     return result
 
 
-def feedback_state_from_json(value: str) -> FeedbackState:
-    data = _load_json_mapping(value, "FeedbackState JSON")
+def feedback_state_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "FeedbackState JSON")
     result = feedback_state_from_dict(data)
     return result
 
 
-FeedbackMutationCandidate = dict
-
-
-class _PreparedFeedbackState(dict[str, object]):
+class PreparedFeedbackState(dict[str, object]):
     """Opaque link between a returned state projection and its off-live owner."""
 
-    def __init__(self, state: FeedbackState, target: object, candidate: object) -> None:
+    def __init__(self, state: dict, target: object, candidate: object) -> None:
         super().__init__(state)
-        self["receipts"] = json.loads(_json_text(state["receipts"]))
+        self["receipts"] = json_loads(json_text(state.get("receipts", ())))
         self.target = target
         self.candidate = candidate
         self.canonical = state
 
 
-def feedback_mutation_candidate(before: object, after: object, receipt: object, replayed: object) -> FeedbackMutationCandidate:
-    result: FeedbackMutationCandidate = {
+def feedback_mutation_candidate(before: object, after: object, receipt: object, replayed: object) -> dict:
+    result: dict = {
         "before": validate_feedback_state(before),
         "after": validate_feedback_state(after),
         "receipt": validate_mutation_receipt(receipt),
-        "replayed": _boolean(replayed, "feedback mutation replayed"),
+        "replayed": internal_boolean(replayed, "feedback mutation replayed"),
     }
     return result
 
 
-def _trusted_feedback_mutation_candidate(
-    before: FeedbackState,
-    after: FeedbackState,
-    receipt: MutationReceipt,
+def trusted_feedback_mutation_candidate(
+    before: dict,
+    after: dict,
+    receipt: dict,
     replayed: bool,
-) -> FeedbackMutationCandidate:
+) -> dict:
     """Build a candidate from isolated store snapshots and a ledger-owned receipt."""
-    result: FeedbackMutationCandidate = {
+    result: dict = {
         "before": before,
-        "after": _trusted_feedback_state_copy(after) if after is before else after,
+        "after": trusted_feedback_state_copy(after) if after is before else after,
         "receipt": validate_mutation_receipt(receipt),
         "replayed": replayed,
     }
     return result
 
 
-def validate_feedback_mutation_candidate(value: object) -> FeedbackMutationCandidate:
-    data = _exact_mapping(value, "FeedbackMutationCandidate", set({"before", "after", "receipt", "replayed"}))
+def validate_feedback_mutation_candidate(value: object) -> dict:
+    data = exact_mapping(value, "FeedbackMutationCandidate", set({"before", "after", "receipt", "replayed"}))
     result = feedback_mutation_candidate(data["before"], data["after"], data["receipt"], data["replayed"])
     return result
 
 
-def _new_statement_record(observation: FeedbackObservation, policy: FeedbackPolicy) -> StatementFeedbackRecord:
-    statistics = feedback_statistics_increment(feedback_statistics(), observation["outcome"])
-    bucket = feedback_bucket(_bucket_start(observation["observed_at"], policy["bucket_seconds"]), statistics)
-    result = _trusted_statement_feedback_record(
-        _trusted_feedback_observation_statement_key(observation),
+def record_statement_feedback(observation: dict, policy: dict) -> dict:
+    statistics = feedback_statistics_increment(feedback_statistics(), observation.get("outcome", FeedbackOutcome.CANDIDATE))
+    bucket = feedback_bucket(bucket_start(observation.get("observed_at", ""), policy.get("bucket_seconds", 0)), statistics)
+    result = trusted_statement_feedback_record(
+        trusted_feedback_observation_statement_key(observation),
         statistics,
         (bucket,),
-        observation["outcome"],
-        observation["observed_at"],
+        observation.get("outcome", FeedbackOutcome.CANDIDATE),
+        observation.get("observed_at", ""),
     )
     return result
 
 
-def _new_relationship_record(observation: FeedbackObservation, policy: FeedbackPolicy) -> RelationshipFeedbackRecord:
-    statistics = feedback_statistics_increment(feedback_statistics(), observation["outcome"])
-    bucket = feedback_bucket(_bucket_start(observation["observed_at"], policy["bucket_seconds"]), statistics)
-    statement_key = _trusted_feedback_observation_statement_key(observation)
-    result = _trusted_relationship_feedback_record(
-        _trusted_feedback_observation_relationship_key(observation, statement_key),
+def record_relationship_feedback(observation: dict, policy: dict) -> dict:
+    statistics = feedback_statistics_increment(feedback_statistics(), observation.get("outcome", FeedbackOutcome.CANDIDATE))
+    bucket = feedback_bucket(bucket_start(observation.get("observed_at", ""), policy.get("bucket_seconds", 0)), statistics)
+    statement_key = trusted_feedback_observation_statement_key(observation)
+    result = trusted_relationship_feedback_record(
+        trusted_feedback_observation_relationship_key(observation, statement_key),
         statistics,
         (bucket,),
-        observation["outcome"],
-        observation["observed_at"],
+        observation.get("outcome", FeedbackOutcome.CANDIDATE),
+        observation.get("observed_at", ""),
     )
     return result
 
 
-def _record_buckets(value: object) -> tuple[FeedbackBucket, ...]:
+def record_buckets(value: object) -> tuple[dict, ...]:
     if not isinstance(value, Mapping) or not isinstance(value.get("buckets", []), tuple):
         raise InvalidRequestError("feedback record must contain a tuple of buckets")
     result = tuple(validate_feedback_bucket(bucket) for bucket in value["buckets"])
     return result
 
 
-def _aged_values(records: tuple[object, ...], at: str, policy: FeedbackPolicy) -> dict[FeedbackOutcome, float]:
-    evaluation = _parse_timestamp(at, "feedback history evaluation time")
+def aged_values(records: tuple[object, ...], at: str, policy: dict) -> dict[FeedbackOutcome, float]:
+    evaluation = parse_timestamp(at, "feedback history evaluation time")
     values = dict.fromkeys(FeedbackOutcome, 0.0)
     for record in records:
-        for bucket in _record_buckets(record):
-            start = _parse_timestamp(bucket["start_at"], "feedback bucket start_at")
+        for bucket in record_buckets(record):
+            start = parse_timestamp(bucket["start_at"], "feedback bucket start_at")
             # A bucket represents its complete interval. Using its deterministic
             # end prevents same-bucket samples from falling below the integer
             # floor merely because they arrived after the bucket boundary.
-            effective_at = start + timedelta(seconds=policy["bucket_seconds"])
+            effective_at = start + timedelta(seconds=policy.get("bucket_seconds", 0))
             age_seconds = max(0.0, (evaluation - effective_at).total_seconds())
-            weight = 0.5 ** (age_seconds / policy["half_life_seconds"])
+            weight = 0.5 ** (age_seconds / policy.get("half_life_seconds", 0.0))
             stats = bucket["statistics"]
             values[FeedbackOutcome.CANDIDATE] += stats["candidate_count"] * weight
             values[FeedbackOutcome.ACCEPTED] += stats["accept_count"] * weight
@@ -1967,232 +1934,235 @@ class FeedbackStore:
         if state == ():
             state = feedback_state()
         validated_state = validate_feedback_state(state)
-        self._lock = threading.RLock()
-        self._install(validated_state)
+        self.internal_lock = threading_RLock()
+        self.install(validated_state)
 
-    def _install(self, state: FeedbackState) -> None:
-        policy = _freeze_feedback_value(state["policy"])
-        statement_records = tuple(_freeze_feedback_value(record) for record in state["statement_records"])
-        relationship_records = tuple(_freeze_feedback_value(record) for record in state["relationship_records"])
-        policy_suppressions = tuple(_freeze_feedback_value(value) for value in state["policy_suppressions"])
-        stale_exclusions = tuple(_freeze_feedback_value(value) for value in state["stale_exclusions"])
-        self._state_dirty = False
-        self._policy = policy
-        self._statement_records = {statement_feedback_key_fingerprint(record["key"]): record for record in statement_records}
-        self._relationship_records = {
+    def install(self, state: dict) -> None:
+        policy = freeze_feedback_value(state.get("policy", {}))
+        statement_records = tuple(freeze_feedback_value(record) for record in state.get("statement_records", {}))
+        relationship_records = tuple(freeze_feedback_value(record) for record in state.get("relationship_records", {}))
+        policy_suppressions = tuple(freeze_feedback_value(value) for value in state.get("policy_suppressions", {}))
+        stale_exclusions = tuple(freeze_feedback_value(value) for value in state.get("stale_exclusions", {}))
+        self.state_dirty = False
+        self.internal_policy = policy
+        self.internal_statement_records = {
+            statement_feedback_key_fingerprint(record["key"]): record for record in statement_records
+        }
+        self.internal_relationship_records = {
             relationship_feedback_key_fingerprint(record["key"]): record for record in relationship_records
         }
-        self._policy_suppressions = {
+        self.internal_policy_suppressions = {
             (value["statement_id"], value["namespace"], value["policy_fingerprint"]): value for value in policy_suppressions
         }
-        self._stale_exclusions = {
+        self.internal_stale_exclusions = {
             (value["statement_id"], value["generation"], value["generation_available"]): value for value in stale_exclusions
         }
-        self._receipts = mutation_receipt_ledger_from_snapshot(state["receipts"])
-        self._statement_evictions = state["statement_evictions"]
-        self._relationship_evictions = state["relationship_evictions"]
-        self._policy_suppression_evictions = state["policy_suppression_evictions"]
-        self._stale_exclusion_evictions = state["stale_exclusion_evictions"]
-        self._state = _trusted_feedback_state(
+        self.internal_receipts = mutation_receipt_ledger_from_snapshot(state.get("receipts", ()))
+        self.internal_statement_evictions = state.get("statement_evictions", 0)
+        self.internal_relationship_evictions = state.get("relationship_evictions", 0)
+        self.internal_policy_suppression_evictions = state.get("policy_suppression_evictions", 0)
+        self.internal_stale_exclusion_evictions = state.get("stale_exclusion_evictions", 0)
+        self.internal_state = trusted_feedback_state(
             policy,
             statement_records,
             relationship_records,
             policy_suppressions,
             stale_exclusions,
-            self._receipts.snapshot(),
-            self._statement_evictions,
-            self._relationship_evictions,
-            self._policy_suppression_evictions,
-            self._stale_exclusion_evictions,
+            self.internal_receipts.snapshot(),
+            self.internal_statement_evictions,
+            self.internal_relationship_evictions,
+            self.internal_policy_suppression_evictions,
+            self.internal_stale_exclusion_evictions,
         )
 
     @property
-    def policy(self) -> FeedbackPolicy:
-        result = validate_feedback_policy(self._policy)
+    def policy(self) -> dict:
+        result = validate_feedback_policy(self.internal_policy)
         return result
 
-    def snapshot(self) -> FeedbackState:
-        with self._lock:
-            if not self._state_dirty:
-                result = _trusted_feedback_state_copy(self._state)
+    def snapshot(self) -> dict:
+        with self.internal_lock:
+            if not self.state_dirty:
+                result = trusted_feedback_state_copy(self.internal_state)
                 return result
-            state = _trusted_feedback_state(
-                self._policy,
-                tuple(record for _, record in sorted(self._statement_records.items())),
-                tuple(record for _, record in sorted(self._relationship_records.items())),
-                tuple(sorted(self._policy_suppressions.values(), key=policy_suppression_signature)),
-                tuple(sorted(self._stale_exclusions.values(), key=stale_exclusion_signature)),
-                self._receipts.snapshot(),
-                self._statement_evictions,
-                self._relationship_evictions,
-                self._policy_suppression_evictions,
-                self._stale_exclusion_evictions,
+            state = trusted_feedback_state(
+                self.internal_policy,
+                tuple(record for _, record in sorted(self.internal_statement_records.items())),
+                tuple(record for _, record in sorted(self.internal_relationship_records.items())),
+                tuple(sorted(self.internal_policy_suppressions.values(), key=policy_suppression_signature)),
+                tuple(sorted(self.internal_stale_exclusions.values(), key=stale_exclusion_signature)),
+                self.internal_receipts.snapshot(),
+                self.internal_statement_evictions,
+                self.internal_relationship_evictions,
+                self.internal_policy_suppression_evictions,
+                self.internal_stale_exclusion_evictions,
             )
-            self._state = state
-            self._state_dirty = False
-            result = _trusted_feedback_state_copy(state)
+            self.internal_state = state
+            self.state_dirty = False
+            result = trusted_feedback_state_copy(state)
             return result
 
-    def _candidate_copy(self):
+    def candidate_copy(self):
         """Create one shallow off-live owner while sharing immutable records."""
 
         candidate = object.__new__(FeedbackStore)
-        candidate._lock = threading.RLock()
-        candidate._state = self._state
-        candidate._state_dirty = False
-        candidate._policy = self._policy
-        candidate._statement_records = dict(self._statement_records)
-        candidate._relationship_records = dict(self._relationship_records)
-        candidate._policy_suppressions = dict(self._policy_suppressions)
-        candidate._stale_exclusions = dict(self._stale_exclusions)
-        candidate._receipts = self._receipts._trusted_clone()
-        candidate._statement_evictions = self._statement_evictions
-        candidate._relationship_evictions = self._relationship_evictions
-        candidate._policy_suppression_evictions = self._policy_suppression_evictions
-        candidate._stale_exclusion_evictions = self._stale_exclusion_evictions
+        candidate.internal_lock = threading_RLock()
+        candidate.internal_state = self.internal_state
+        candidate.state_dirty = False
+        candidate.internal_policy = self.internal_policy
+        candidate.internal_statement_records = dict(self.internal_statement_records)
+        candidate.internal_relationship_records = dict(self.internal_relationship_records)
+        candidate.internal_policy_suppressions = dict(self.internal_policy_suppressions)
+        candidate.internal_stale_exclusions = dict(self.internal_stale_exclusions)
+        candidate.internal_receipts = self.internal_receipts.trusted_clone()
+        candidate.internal_statement_evictions = self.internal_statement_evictions
+        candidate.internal_relationship_evictions = self.internal_relationship_evictions
+        candidate.internal_policy_suppression_evictions = self.internal_policy_suppression_evictions
+        candidate.internal_stale_exclusion_evictions = self.internal_stale_exclusion_evictions
         return candidate
 
-    def replace_from_snapshot(self, state: FeedbackState) -> None:
-        if isinstance(state, _PreparedFeedbackState) and state.target is self and isinstance(state.candidate, FeedbackStore):
+    def replace_from_snapshot(self, state: dict) -> bool:
+        if isinstance(state, PreparedFeedbackState) and state.target is self and isinstance(state.candidate, FeedbackStore):
             if dict(state) != state.canonical:
                 raise InvalidRequestError("prepared feedback state was modified before publication")
             candidate = state.candidate
-            with self._lock, candidate._lock:
-                self._state = candidate._state
-                self._state_dirty = candidate._state_dirty
-                self._policy = candidate._policy
-                self._statement_records = dict(candidate._statement_records)
-                self._relationship_records = dict(candidate._relationship_records)
-                self._policy_suppressions = dict(candidate._policy_suppressions)
-                self._stale_exclusions = dict(candidate._stale_exclusions)
-                self._receipts = candidate._receipts._trusted_clone()
-                self._statement_evictions = candidate._statement_evictions
-                self._relationship_evictions = candidate._relationship_evictions
-                self._policy_suppression_evictions = candidate._policy_suppression_evictions
-                self._stale_exclusion_evictions = candidate._stale_exclusion_evictions
-            return
+            with self.internal_lock, candidate.internal_lock:
+                self.internal_state = candidate.internal_state
+                self.state_dirty = candidate.state_dirty
+                self.internal_policy = candidate.internal_policy
+                self.internal_statement_records = dict(candidate.internal_statement_records)
+                self.internal_relationship_records = dict(candidate.internal_relationship_records)
+                self.internal_policy_suppressions = dict(candidate.internal_policy_suppressions)
+                self.internal_stale_exclusions = dict(candidate.internal_stale_exclusions)
+                self.internal_receipts = candidate.internal_receipts.trusted_clone()
+                self.internal_statement_evictions = candidate.internal_statement_evictions
+                self.internal_relationship_evictions = candidate.internal_relationship_evictions
+                self.internal_policy_suppression_evictions = candidate.internal_policy_suppression_evictions
+                self.internal_stale_exclusion_evictions = candidate.internal_stale_exclusion_evictions
+            return False
         validated_state = validate_feedback_state(state)
-        with self._lock:
-            self._install(validated_state)
+        with self.internal_lock:
+            self.install(validated_state)
+        return True
 
-    def _apply_observation(self, observation: FeedbackObservation) -> None:
-        self._state_dirty = True
-        statement_key = _trusted_feedback_observation_statement_key(observation)
-        statement_fingerprint = _trusted_feedback_key_fingerprint(statement_key)
-        statement = self._statement_records.get(statement_fingerprint)
+    def apply_observation(self, observation: dict) -> None:
+        self.state_dirty = True
+        statement_key = trusted_feedback_observation_statement_key(observation)
+        statement_fingerprint = trusted_feedback_key_fingerprint(statement_key)
+        statement = self.internal_statement_records.get(statement_fingerprint)
         if statement:
-            updated_statement = _trusted_statement_feedback_record_apply(statement, observation, self._policy)
+            updated_statement = trusted_statement_feedback_record_apply(statement, observation, self.internal_policy)
         else:
-            updated_statement = _new_statement_record(observation, self._policy)
-        self._statement_records[statement_fingerprint] = _freeze_feedback_value(updated_statement)
-        relationship_key = _trusted_feedback_observation_relationship_key(observation, statement_key)
-        relationship_fingerprint = _trusted_feedback_key_fingerprint(relationship_key)
-        relationship = self._relationship_records.get(relationship_fingerprint)
+            updated_statement = record_statement_feedback(observation, self.internal_policy)
+        self.internal_statement_records[statement_fingerprint] = freeze_feedback_value(updated_statement)
+        relationship_key = trusted_feedback_observation_relationship_key(observation, statement_key)
+        relationship_fingerprint = trusted_feedback_key_fingerprint(relationship_key)
+        relationship = self.internal_relationship_records.get(relationship_fingerprint)
         if relationship:
-            updated_relationship = _trusted_relationship_feedback_record_apply(relationship, observation, self._policy)
+            updated_relationship = trusted_relationship_feedback_record_apply(relationship, observation, self.internal_policy)
         else:
-            updated_relationship = _new_relationship_record(observation, self._policy)
-        self._relationship_records[relationship_fingerprint] = _freeze_feedback_value(updated_relationship)
+            updated_relationship = record_relationship_feedback(observation, self.internal_policy)
+        self.internal_relationship_records[relationship_fingerprint] = freeze_feedback_value(updated_relationship)
         suppression_key = (
-            observation["statement_id"],
-            observation["scope"]["namespace"],
-            observation["policy_fingerprint"],
+            observation.get("statement_id", ""),
+            observation.get("scope", {})["namespace"],
+            observation.get("policy_fingerprint", ""),
         )
-        if observation["outcome"] == FeedbackOutcome.REJECTED_POLICY:
-            self._policy_suppressions[suppression_key] = _freeze_feedback_value(
-                policy_suppression(*suppression_key, observation["observed_at"])
+        if observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.REJECTED_POLICY:
+            self.internal_policy_suppressions[suppression_key] = freeze_feedback_value(
+                policy_suppression(*suppression_key, observation.get("observed_at", ""))
             )
-        elif observation["outcome"] == FeedbackOutcome.ACCEPTED:
-            self._policy_suppressions.pop(suppression_key, {})
-        if observation["outcome"] == FeedbackOutcome.REJECTED_STALE:
+        elif observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.ACCEPTED:
+            self.internal_policy_suppressions.pop(suppression_key, {})
+        if observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.REJECTED_STALE:
             exclusion = stale_exclusion(
-                observation["statement_id"],
-                observation["generation"],
-                observation["generation_available"],
-                observation["observed_at"],
+                observation.get("statement_id", ""),
+                observation.get("generation", 0),
+                observation.get("generation_available", False),
+                observation.get("observed_at", ""),
             )
             exclusion_key = (exclusion["statement_id"], exclusion["generation"], exclusion["generation_available"])
-            self._stale_exclusions[exclusion_key] = _freeze_feedback_value(exclusion)
+            self.internal_stale_exclusions[exclusion_key] = freeze_feedback_value(exclusion)
 
-    def _enforce_capacity(self) -> None:
-        while len(self._statement_records) > self._policy["max_statement_records"]:
+    def enforce_capacity(self) -> None:
+        while len(self.internal_statement_records) > self.internal_policy["max_statement_records"]:
             oldest_key = min(
-                self._statement_records,
-                key=lambda key: (self._statement_records[key]["last_observed_at"], key),
+                self.internal_statement_records,
+                key=lambda key: (self.internal_statement_records[key]["last_observed_at"], key),
             )
-            del self._statement_records[oldest_key]
-            self._statement_evictions += 1
-        while len(self._relationship_records) > self._policy["max_relationship_records"]:
+            del self.internal_statement_records[oldest_key]
+            self.internal_statement_evictions += 1
+        while len(self.internal_relationship_records) > self.internal_policy["max_relationship_records"]:
             oldest_key = min(
-                self._relationship_records,
-                key=lambda key: (self._relationship_records[key]["last_observed_at"], key),
+                self.internal_relationship_records,
+                key=lambda key: (self.internal_relationship_records[key]["last_observed_at"], key),
             )
-            del self._relationship_records[oldest_key]
-            self._relationship_evictions += 1
-        while len(self._policy_suppressions) > self._policy["max_statement_records"]:
+            del self.internal_relationship_records[oldest_key]
+            self.internal_relationship_evictions += 1
+        while len(self.internal_policy_suppressions) > self.internal_policy["max_statement_records"]:
             oldest_key = min(
-                self._policy_suppressions,
-                key=lambda key: (self._policy_suppressions[key]["observed_at"], key),
+                self.internal_policy_suppressions,
+                key=lambda key: (self.internal_policy_suppressions[key]["observed_at"], key),
             )
-            del self._policy_suppressions[oldest_key]
-            self._policy_suppression_evictions += 1
-        while len(self._stale_exclusions) > self._policy["max_statement_records"]:
+            del self.internal_policy_suppressions[oldest_key]
+            self.internal_policy_suppression_evictions += 1
+        while len(self.internal_stale_exclusions) > self.internal_policy["max_statement_records"]:
             oldest_key = min(
-                self._stale_exclusions,
-                key=lambda key: (self._stale_exclusions[key]["observed_at"], key),
+                self.internal_stale_exclusions,
+                key=lambda key: (self.internal_stale_exclusions[key]["observed_at"], key),
             )
-            del self._stale_exclusions[oldest_key]
-            self._stale_exclusion_evictions += 1
+            del self.internal_stale_exclusions[oldest_key]
+            self.internal_stale_exclusion_evictions += 1
 
     def prepare(
         self,
         request_id: str,
-        observations: tuple[FeedbackObservation, ...],
+        observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
-    ) -> FeedbackMutationCandidate:
-        _text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
+    ) -> dict:
+        internal_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not isinstance(observations, tuple) or not observations:
             raise InvalidRequestError("feedback observations must be a non-empty tuple of FeedbackObservation values")
         if len(observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError(f"feedback observations exceed the limit of {MAX_FEEDBACK_OBSERVATIONS}")
         validated_observations = tuple(validate_feedback_observation(observation) for observation in observations)
-        result = self._prepare_validated(request_id, validated_observations, lifecycle_status)
+        result = self.prepare_validated(request_id, validated_observations, lifecycle_status)
         return result
 
-    def _prepare_validated(
+    def prepare_validated(
         self,
         request_id: str,
-        validated_observations: tuple[FeedbackObservation, ...],
+        validated_observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
-    ) -> FeedbackMutationCandidate:
+    ) -> dict:
         """Prepare observations already validated by an internal service boundary."""
-        _text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
+        internal_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not validated_observations or len(validated_observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError("validated feedback observations must be a non-empty bounded tuple")
         if not isinstance(lifecycle_status, LifecycleHandoffStatus):
             raise InvalidRequestError("feedback lifecycle_status must be LifecycleHandoffStatus")
-        signature = _feedback_payload_signature(validated_observations)
-        with self._lock:
+        signature = feedback_payload_signature(validated_observations)
+        with self.internal_lock:
             before = self.snapshot()
-            lookup = self._receipts.lookup(request_id, MutationOperation.RECORD_FEEDBACK, signature)
+            lookup = self.internal_receipts.lookup(request_id, MutationOperation.RECORD_FEEDBACK, signature)
             if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
-                result = _trusted_feedback_mutation_candidate(before, before, receipt_lookup_receipt(lookup), True)
+                result = trusted_feedback_mutation_candidate(before, before, receipt_lookup_receipt(lookup), True)
                 return result
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"feedback request_id is associated with a different observation: {request_id}")
             if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
-                raise ConflictError(f"feedback request is in progress and requires recovery: {request_id}")
+                raise ConflictError(f"feedback request is already in progress: {request_id}")
             if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"feedback request result expired and cannot be reapplied safely: {request_id}")
-            candidate = self._candidate_copy()
+            candidate = self.candidate_copy()
             for observation in validated_observations:
-                candidate._apply_observation(observation)
-            candidate._enforce_capacity()
+                candidate.apply_observation(observation)
+            candidate.enforce_capacity()
             outcomes = {outcome.value: 0 for outcome in FeedbackOutcome}
             for observation in validated_observations:
                 outcomes[observation["outcome"].value] += 1
             receipt = mutation_receipt(
-                sequence=candidate._receipts.next_sequence,
+                sequence=candidate.internal_receipts.next_sequence,
                 request_id=request_id,
                 operation=MutationOperation.RECORD_FEEDBACK,
                 payload_signature=signature,
@@ -2206,33 +2176,33 @@ class FeedbackStore:
                 completion_state=ReceiptCompletionState.COMPLETED,
                 created_at=max(observation["observed_at"] for observation in validated_observations),
             )
-            candidate._receipts.record(receipt)
-            after = _PreparedFeedbackState(candidate.snapshot(), self, candidate)
-            result = _trusted_feedback_mutation_candidate(before, after, receipt, False)
+            candidate.internal_receipts.record(receipt)
+            after = PreparedFeedbackState(candidate.snapshot(), self, candidate)
+            result = trusted_feedback_mutation_candidate(before, after, receipt, False)
             return result
 
     def history(
         self,
-        query_identity: QueryIdentity,
+        query_identity: dict,
         constraint: str,
         statement_id: str,
         current_generation: int,
         policy_fingerprint: str,
         evaluation_time: str,
-    ) -> FeedbackHistory:
+    ) -> dict:
         try:
             validated_query_identity = validate_query_identity(query_identity)
         except IdentityValidationError as error:
             raise InvalidRequestError("feedback history query_identity must be QueryIdentity") from error
-        _fingerprint(constraint, "feedback history constraint_fingerprint")
-        _text(statement_id, "feedback history statement_id", MAX_STATEMENT_ID_BYTES)
-        _integer(current_generation, "feedback history current_generation", 1)
-        policy_value = _fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
-        _parse_timestamp(evaluation_time, "feedback history evaluation_time")
-        with self._lock:
+        internal_fingerprint(constraint, "feedback history constraint_fingerprint")
+        internal_text(statement_id, "feedback history statement_id", MAX_STATEMENT_ID_BYTES)
+        internal_integer(current_generation, "feedback history current_generation", 1)
+        policy_value = internal_fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
+        parse_timestamp(evaluation_time, "feedback history evaluation_time")
+        with self.internal_lock:
             statement_records = tuple(
                 record
-                for record in self._statement_records.values()
+                for record in self.internal_statement_records.values()
                 if record["key"]["statement_id"] == statement_id
                 and record["key"]["policy_fingerprint"] == policy_value
                 and record["key"]["contract_fingerprint"] == FEEDBACK_CONTRACT_FINGERPRINT
@@ -2241,7 +2211,7 @@ class FeedbackStore:
             )
             relationship_records = tuple(
                 record
-                for record in self._relationship_records.values()
+                for record in self.internal_relationship_records.values()
                 if record["key"]["statement"]["statement_id"] == statement_id
                 and record["key"]["statement"]["policy_fingerprint"] == policy_value
                 and record["key"]["statement"]["contract_fingerprint"] == FEEDBACK_CONTRACT_FINGERPRINT
@@ -2251,8 +2221,8 @@ class FeedbackStore:
                 and record["key"]["scope"] == validated_query_identity["scope"]
                 and record["key"]["constraint_fingerprint"] == constraint
             )
-            statement_values = _aged_values(statement_records, evaluation_time, self._policy)
-            relationship_values = _aged_values(relationship_records, evaluation_time, self._policy)
+            statement_values = aged_values(statement_records, evaluation_time, self.internal_policy)
+            relationship_values = aged_values(relationship_records, evaluation_time, self.internal_policy)
 
         statement_accept = statement_values[FeedbackOutcome.ACCEPTED]
         statement_reject = statement_values[FeedbackOutcome.REJECTED_QUALITY] + statement_values[FeedbackOutcome.REJECTED_STALE]
@@ -2268,12 +2238,12 @@ class FeedbackStore:
         )
         statement_samples = statement_accept + statement_reject
         relationship_samples = relationship_accept + relationship_reject
-        statement_available = statement_samples >= self._policy["minimum_verdict_samples"]
-        relationship_available = relationship_samples >= self._policy["minimum_verdict_samples"]
+        statement_available = statement_samples >= self.internal_policy["minimum_verdict_samples"]
+        relationship_available = relationship_samples >= self.internal_policy["minimum_verdict_samples"]
 
         def posterior(accepted: float, rejected: float) -> float:
-            numerator = accepted + self._policy["prior_accept"]
-            denominator = accepted + rejected + self._policy["prior_accept"] + self._policy["prior_reject"]
+            numerator = accepted + self.internal_policy["prior_accept"]
+            denominator = accepted + rejected + self.internal_policy["prior_accept"] + self.internal_policy["prior_reject"]
             result = numerator / denominator
             return result
 
@@ -2298,18 +2268,18 @@ class FeedbackStore:
             statement_samples=statement_samples,
             relationship_samples=relationship_samples,
             policy_fingerprint=policy_value,
-            feedback_policy_value=feedback_policy_fingerprint(self._policy),
+            feedback_policy_value=feedback_policy_fingerprint(self.internal_policy),
         )
         return result
 
     def stale_excluded(self, statement_id: str, current_generation: int, generation_available: bool = True) -> bool:
-        _text(statement_id, "stale exclusion statement_id", MAX_STATEMENT_ID_BYTES)
-        _integer(current_generation, "stale exclusion current_generation", 0)
-        _boolean(generation_available, "stale exclusion generation_available")
-        result = self._trusted_stale_excluded(statement_id, current_generation, generation_available)
+        internal_text(statement_id, "stale exclusion statement_id", MAX_STATEMENT_ID_BYTES)
+        internal_integer(current_generation, "stale exclusion current_generation", 0)
+        internal_boolean(generation_available, "stale exclusion generation_available")
+        result = self.trusted_stale_excluded(statement_id, current_generation, generation_available)
         return result
 
-    def _trusted_stale_excluded(
+    def trusted_stale_excluded(
         self,
         statement_id: str,
         current_generation: int,
@@ -2317,8 +2287,8 @@ class FeedbackStore:
     ) -> bool:
         """Check a validated in-process eligibility tuple."""
         result = False
-        with self._lock:
-            for exclusion in self._stale_exclusions.values():
+        with self.internal_lock:
+            for exclusion in self.internal_stale_exclusions.values():
                 if exclusion["statement_id"] != statement_id:
                     continue
                 if not exclusion["generation_available"]:
@@ -2330,29 +2300,29 @@ class FeedbackStore:
         return result
 
     def policy_suppressed(self, statement_id: str, namespace: str, policy_fingerprint: str) -> bool:
-        _text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
-        _text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
-        policy_value = _fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
-        result = self._trusted_policy_suppressed(statement_id, namespace, policy_value)
+        internal_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
+        internal_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+        policy_value = internal_fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
+        result = self.trusted_policy_suppressed(statement_id, namespace, policy_value)
         return result
 
-    def _trusted_policy_suppressed(self, statement_id: str, namespace: str, policy_fingerprint: str) -> bool:
+    def trusted_policy_suppressed(self, statement_id: str, namespace: str, policy_fingerprint: str) -> bool:
         """Check a validated in-process policy-suppression tuple."""
-        with self._lock:
-            result = (statement_id, namespace, policy_fingerprint) in self._policy_suppressions
+        with self.internal_lock:
+            result = (statement_id, namespace, policy_fingerprint) in self.internal_policy_suppressions
         return result
 
     def inspect(self, limit: int = MAX_INSPECTION_RECORDS) -> dict[str, object]:
-        _integer(limit, "feedback inspection limit", 1, MAX_INSPECTION_RECORDS)
-        with self._lock:
+        internal_integer(limit, "feedback inspection limit", 1, MAX_INSPECTION_RECORDS)
+        with self.internal_lock:
             statement_values = sorted(
-                self._statement_records.values(), key=lambda record: statement_feedback_key_fingerprint(record["key"])
+                self.internal_statement_records.values(), key=lambda record: statement_feedback_key_fingerprint(record["key"])
             )
             relationship_values = sorted(
-                self._relationship_records.values(),
+                self.internal_relationship_records.values(),
                 key=lambda record: relationship_feedback_key_fingerprint(record["key"]),
             )
-            receipt_snapshot = self._receipts.snapshot()
+            receipt_snapshot = self.internal_receipts.snapshot()
             receipt_values = sorted(
                 receipt_snapshot["receipts"],
                 key=lambda value: value["sequence"],
@@ -2361,17 +2331,17 @@ class FeedbackStore:
             receipt_tombstones = receipt_snapshot["tombstones"]
             result = {
                 "schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
-                "policy_version": self._policy["policy_version"],
-                "policy_fingerprint": feedback_policy_fingerprint(self._policy),
+                "policy_version": self.internal_policy["policy_version"],
+                "policy_fingerprint": feedback_policy_fingerprint(self.internal_policy),
                 "statement_record_count": len(statement_values),
                 "relationship_record_count": len(relationship_values),
-                "policy_suppression_count": len(self._policy_suppressions),
-                "stale_exclusion_count": len(self._stale_exclusions),
+                "policy_suppression_count": len(self.internal_policy_suppressions),
+                "stale_exclusion_count": len(self.internal_stale_exclusions),
                 "receipt_count": len(receipt_values),
                 "receipt_tombstone_count": len(receipt_tombstones),
                 "receipts": [
                     {
-                        "diagnostic_id": _diagnostic_id(value["request_id"]),
+                        "diagnostic_id": internal_diagnostic_id(value["request_id"]),
                         "sequence": value["sequence"],
                         "result_code": value["result_code"],
                         "completion_state": value["completion_state"],
@@ -2382,13 +2352,13 @@ class FeedbackStore:
                     for value in receipt_values[:limit]
                 ],
                 "omitted_receipt_count": max(0, len(receipt_values) - limit),
-                "statement_evictions": self._statement_evictions,
-                "relationship_evictions": self._relationship_evictions,
-                "policy_suppression_evictions": self._policy_suppression_evictions,
-                "stale_exclusion_evictions": self._stale_exclusion_evictions,
+                "statement_evictions": self.internal_statement_evictions,
+                "relationship_evictions": self.internal_relationship_evictions,
+                "policy_suppression_evictions": self.internal_policy_suppression_evictions,
+                "stale_exclusion_evictions": self.internal_stale_exclusion_evictions,
                 "statements": [
                     {
-                        "diagnostic_id": _diagnostic_id(statement_feedback_key_fingerprint(record["key"])),
+                        "diagnostic_id": internal_diagnostic_id(statement_feedback_key_fingerprint(record["key"])),
                         "statistics": feedback_statistics_to_dict(record["raw"]),
                         "bucket_count": len(record["buckets"]),
                         "last_outcome": record["last_outcome"].value,
@@ -2399,7 +2369,7 @@ class FeedbackStore:
                 "omitted_statement_count": max(0, len(statement_values) - limit),
                 "relationships": [
                     {
-                        "diagnostic_id": _diagnostic_id(relationship_feedback_key_fingerprint(record["key"])),
+                        "diagnostic_id": internal_diagnostic_id(relationship_feedback_key_fingerprint(record["key"])),
                         "statistics": feedback_statistics_to_dict(record["raw"]),
                         "bucket_count": len(record["buckets"]),
                         "last_outcome": record["last_outcome"].value,
@@ -2412,30 +2382,25 @@ class FeedbackStore:
         return result
 
 
-def feedback_store_from_dict(value: Mapping[str, object]) -> FeedbackStore:
+def feedback_store_from_dict(value: dict[str, object]) -> FeedbackStore:
     """Construct a feedback store from one validated serialized state."""
     state = feedback_state_from_dict(value)
     result = FeedbackStore(state)
     return result
 
 
-NegativeResolutionKey = dict
-
-
 def negative_resolution_key(
     query_identity: object,
     scope: object,
     constraint_fingerprint: object,
-    knowledge_epoch: object,
-    knowledge_epoch_available: object,
     normalization_version: object,
     resolver_plan_fingerprint: object,
     capability_readiness_fingerprint: object,
     policy_fingerprint: object,
     schema_version: object = NEGATIVE_KEY_SCHEMA_VERSION,
-) -> NegativeResolutionKey:
+) -> dict:
     """Build the exact knowledge and policy state for one observed miss."""
-    version = _integer(schema_version, "negative key schema_version", 0)
+    version = internal_integer(schema_version, "negative key schema_version", 0)
     if version != NEGATIVE_KEY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported negative key schema_version: {version}")
     try:
@@ -2448,21 +2413,15 @@ def negative_resolution_key(
         raise InvalidRequestError("negative scope must match query identity scope") from error
     if validated_query_identity["scope"] != validated_scope:
         raise InvalidRequestError("negative scope must match query identity scope")
-    validated_constraint = _fingerprint(constraint_fingerprint, "negative constraint_fingerprint")
-    validated_epoch = _integer(knowledge_epoch, "negative knowledge_epoch", 0)
-    epoch_available = _boolean(knowledge_epoch_available, "negative knowledge_epoch_available")
-    if not epoch_available:
-        raise InvalidRequestError("negative resolution requires an available knowledge epoch")
-    validated_normalization_version = _integer(normalization_version, "negative normalization_version", 1)
-    validated_plan = _fingerprint(resolver_plan_fingerprint, "negative resolver_plan_fingerprint")
-    validated_readiness = _fingerprint(capability_readiness_fingerprint, "negative capability_readiness_fingerprint")
-    validated_policy = _fingerprint(policy_fingerprint, "negative policy_fingerprint")
-    result: NegativeResolutionKey = {
+    validated_constraint = internal_fingerprint(constraint_fingerprint, "negative constraint_fingerprint")
+    validated_normalization_version = internal_integer(normalization_version, "negative normalization_version", 1)
+    validated_plan = internal_fingerprint(resolver_plan_fingerprint, "negative resolver_plan_fingerprint")
+    validated_readiness = internal_fingerprint(capability_readiness_fingerprint, "negative capability_readiness_fingerprint")
+    validated_policy = internal_fingerprint(policy_fingerprint, "negative policy_fingerprint")
+    result: dict = {
         "query_identity": validated_query_identity,
         "scope": validated_scope,
         "constraint_fingerprint": validated_constraint,
-        "knowledge_epoch": validated_epoch,
-        "knowledge_epoch_available": epoch_available,
         "normalization_version": validated_normalization_version,
         "resolver_plan_fingerprint": validated_plan,
         "capability_readiness_fingerprint": validated_readiness,
@@ -2472,14 +2431,12 @@ def negative_resolution_key(
     return result
 
 
-def validate_negative_resolution_key(value: object) -> NegativeResolutionKey:
-    data = _exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
+def validate_negative_resolution_key(value: object) -> dict:
+    data = exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
     result = negative_resolution_key(
         data["query_identity"],
         data["scope"],
         data["constraint_fingerprint"],
-        data["knowledge_epoch"],
-        data["knowledge_epoch_available"],
         data["normalization_version"],
         data["resolver_plan_fingerprint"],
         data["capability_readiness_fingerprint"],
@@ -2489,7 +2446,7 @@ def validate_negative_resolution_key(value: object) -> NegativeResolutionKey:
     return result
 
 
-def negative_resolution_key_with_changes(value: object, changes: object) -> NegativeResolutionKey:
+def negative_resolution_key_with_changes(value: object, changes: object) -> dict:
     current = validate_negative_resolution_key(value)
     if not isinstance(changes, Mapping) or not set(changes).issubset(NEGATIVE_RESOLUTION_KEY_FIELDS):
         raise InvalidRequestError("negative resolution key changes contain invalid fields")
@@ -2506,8 +2463,6 @@ def negative_resolution_key_to_dict(value: object) -> dict[str, object]:
         "query_identity": query_identity_to_dict(current["query_identity"]),
         "scope": scope_key_to_dict(current["scope"]),
         "constraint_fingerprint": current["constraint_fingerprint"],
-        "knowledge_epoch": current["knowledge_epoch"],
-        "knowledge_epoch_available": current["knowledge_epoch_available"],
         "normalization_version": current["normalization_version"],
         "resolver_plan_fingerprint": current["resolver_plan_fingerprint"],
         "capability_readiness_fingerprint": current["capability_readiness_fingerprint"],
@@ -2524,7 +2479,7 @@ def negative_resolution_key_fingerprint(value: object) -> str:
 
 def negative_resolution_key_to_json(value: object) -> str:
     data = negative_resolution_key_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
@@ -2539,34 +2494,29 @@ def negative_resolution_key_relationship_fingerprint(value: object) -> str:
     return result
 
 
-def negative_resolution_key_from_dict(value: object) -> NegativeResolutionKey:
-    data = _exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
+def negative_resolution_key_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
     if not isinstance(data["query_identity"], Mapping) or not isinstance(data["scope"], Mapping):
         raise InvalidRequestError("negative identity and scope must be objects")
     result = negative_resolution_key(
-        schema_version=_integer(data["schema_version"], "negative key schema_version", 0),
+        schema_version=internal_integer(data["schema_version"], "negative key schema_version", 0),
         query_identity=query_identity_from_dict(data["query_identity"]),
         scope=scope_key_from_dict(data["scope"]),
-        constraint_fingerprint=_fingerprint(data["constraint_fingerprint"], "negative constraint_fingerprint"),
-        knowledge_epoch=_integer(data["knowledge_epoch"], "negative knowledge_epoch", 0),
-        knowledge_epoch_available=_boolean(data["knowledge_epoch_available"], "negative knowledge_epoch_available"),
-        normalization_version=_integer(data["normalization_version"], "negative normalization_version", 1),
-        resolver_plan_fingerprint=_fingerprint(data["resolver_plan_fingerprint"], "negative resolver_plan_fingerprint"),
-        capability_readiness_fingerprint=_fingerprint(
+        constraint_fingerprint=internal_fingerprint(data["constraint_fingerprint"], "negative constraint_fingerprint"),
+        normalization_version=internal_integer(data["normalization_version"], "negative normalization_version", 1),
+        resolver_plan_fingerprint=internal_fingerprint(data["resolver_plan_fingerprint"], "negative resolver_plan_fingerprint"),
+        capability_readiness_fingerprint=internal_fingerprint(
             data["capability_readiness_fingerprint"], "negative capability_readiness_fingerprint"
         ),
-        policy_fingerprint=_fingerprint(data["policy_fingerprint"], "negative policy_fingerprint"),
+        policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "negative policy_fingerprint"),
     )
     return result
 
 
-def negative_resolution_key_from_json(value: str) -> NegativeResolutionKey:
-    data = _load_json_mapping(value, "NegativeResolutionKey JSON")
+def negative_resolution_key_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "NegativeResolutionKey JSON")
     result = negative_resolution_key_from_dict(data)
     return result
-
-
-NegativeResolution = dict
 
 
 def negative_resolution(
@@ -2576,8 +2526,8 @@ def negative_resolution(
     expires_at: object,
     hit_count: object = 0,
     schema_version: object = NEGATIVE_RESOLUTION_SCHEMA_VERSION,
-) -> NegativeResolution:
-    version = _integer(schema_version, "negative resolution schema_version", 0)
+) -> dict:
+    version = internal_integer(schema_version, "negative resolution schema_version", 0)
     if version != NEGATIVE_RESOLUTION_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported negative resolution schema_version: {version}")
     try:
@@ -2586,14 +2536,14 @@ def negative_resolution(
         raise InvalidRequestError("negative resolution key has an invalid type") from error
     if not isinstance(reason, NegativeResolutionReason):
         raise InvalidRequestError("negative resolution reason has an invalid type")
-    created = _parse_timestamp(created_at, "negative created_at")
-    expires = _parse_timestamp(expires_at, "negative expires_at")
+    created = parse_timestamp(created_at, "negative created_at")
+    expires = parse_timestamp(expires_at, "negative expires_at")
     if expires <= created:
         raise InvalidRequestError("negative expires_at must be after created_at")
     validated_created_at = canonical_utc(created)
     validated_expires_at = canonical_utc(expires)
-    validated_hit_count = _integer(hit_count, "negative hit_count", 0)
-    result: NegativeResolution = {
+    validated_hit_count = internal_integer(hit_count, "negative hit_count", 0)
+    result: dict = {
         "key": validated_key,
         "reason": reason,
         "created_at": validated_created_at,
@@ -2604,17 +2554,15 @@ def negative_resolution(
     return result
 
 
-def empty_negative_resolution() -> NegativeResolution:
+def empty_negative_resolution() -> dict:
     key = negative_resolution_key(
-        query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
-        EMPTY_SCOPE_KEY,
-        EMPTY_FINGERPRINT,
-        0,
-        True,
-        1,
-        EMPTY_FINGERPRINT,
-        EMPTY_FINGERPRINT,
-        EMPTY_FINGERPRINT,
+        query_identity=query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
+        scope=EMPTY_SCOPE_KEY,
+        constraint_fingerprint=EMPTY_FINGERPRINT,
+        normalization_version=1,
+        resolver_plan_fingerprint=EMPTY_FINGERPRINT,
+        capability_readiness_fingerprint=EMPTY_FINGERPRINT,
+        policy_fingerprint=EMPTY_FINGERPRINT,
     )
     result = negative_resolution(
         key,
@@ -2625,8 +2573,8 @@ def empty_negative_resolution() -> NegativeResolution:
     return result
 
 
-def validate_negative_resolution(value: object) -> NegativeResolution:
-    data = _exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
+def validate_negative_resolution(value: object) -> dict:
+    data = exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
     result = negative_resolution(
         data["key"],
         data["reason"],
@@ -2638,7 +2586,7 @@ def validate_negative_resolution(value: object) -> NegativeResolution:
     return result
 
 
-def negative_resolution_with_changes(value: object, changes: object) -> NegativeResolution:
+def negative_resolution_with_changes(value: object, changes: object) -> dict:
     current = validate_negative_resolution(value)
     if not isinstance(changes, Mapping) or not set(changes).issubset(NEGATIVE_RESOLUTION_FIELDS):
         raise InvalidRequestError("negative resolution changes contain invalid fields")
@@ -2663,12 +2611,12 @@ def negative_resolution_to_dict(value: object) -> dict[str, object]:
 
 def negative_resolution_to_json(value: object) -> str:
     data = negative_resolution_to_dict(value)
-    result = _json_text(data)
+    result = json_text(data)
     return result
 
 
-def negative_resolution_from_dict(value: object) -> NegativeResolution:
-    data = _exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
+def negative_resolution_from_dict(value: object) -> dict:
+    data = exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
     if not isinstance(data["key"], Mapping):
         raise InvalidRequestError("negative key must be an object")
     try:
@@ -2676,27 +2624,24 @@ def negative_resolution_from_dict(value: object) -> NegativeResolution:
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("negative resolution contains an unsupported reason") from error
     result = negative_resolution(
-        schema_version=_integer(data["schema_version"], "negative resolution schema_version", 0),
+        schema_version=internal_integer(data["schema_version"], "negative resolution schema_version", 0),
         key=negative_resolution_key_from_dict(data["key"]),
         reason=reason,
-        created_at=canonical_utc(_parse_timestamp(data["created_at"], "negative created_at")),
-        expires_at=canonical_utc(_parse_timestamp(data["expires_at"], "negative expires_at")),
-        hit_count=_integer(data["hit_count"], "negative hit_count", 0),
+        created_at=canonical_utc(parse_timestamp(data["created_at"], "negative created_at")),
+        expires_at=canonical_utc(parse_timestamp(data["expires_at"], "negative expires_at")),
+        hit_count=internal_integer(data["hit_count"], "negative hit_count", 0),
     )
     return result
 
 
-def negative_resolution_from_json(value: str) -> NegativeResolution:
-    data = _load_json_mapping(value, "NegativeResolution JSON")
+def negative_resolution_from_json(value: str) -> dict:
+    data = load_json_mapping(value, "NegativeResolution JSON")
     result = negative_resolution_from_dict(data)
     return result
 
 
-NegativeLookup = dict
-
-
-def negative_lookup(hit: object, record: object = {}) -> NegativeLookup:
-    validated_hit = _boolean(hit, "negative lookup hit")
+def negative_lookup(hit: object, record: object = {}) -> dict:
+    validated_hit = internal_boolean(hit, "negative lookup hit")
     if not isinstance(record, Mapping):
         raise InvalidRequestError("negative lookup record must be NegativeResolution")
     try:
@@ -2705,12 +2650,12 @@ def negative_lookup(hit: object, record: object = {}) -> NegativeLookup:
         raise InvalidRequestError("negative lookup record must be NegativeResolution") from error
     if not validated_hit and validated_record != empty_negative_resolution():
         raise InvalidRequestError("negative lookup miss must use the concrete empty record")
-    result: NegativeLookup = {"hit": validated_hit, "record": validated_record}
+    result: dict = {"hit": validated_hit, "record": validated_record}
     return result
 
 
-def validate_negative_lookup(value: object) -> NegativeLookup:
-    data = _exact_mapping(value, "NegativeLookup", NEGATIVE_LOOKUP_FIELDS)
+def validate_negative_lookup(value: object) -> dict:
+    data = exact_mapping(value, "NegativeLookup", NEGATIVE_LOOKUP_FIELDS)
     result = negative_lookup(data["hit"], data["record"])
     return result
 
@@ -2723,11 +2668,11 @@ class NegativeResolutionStore:
         max_records: int = DEFAULT_NEGATIVE_MAX_RECORDS,
         ttl_seconds: int = DEFAULT_NEGATIVE_TTL_SECONDS,
     ) -> None:
-        self.max_records = _integer(max_records, "negative max_records", 1, MAX_NEGATIVE_RECORDS)
-        self.ttl_seconds = _integer(ttl_seconds, "negative ttl_seconds", 1, MAX_NEGATIVE_TTL_SECONDS)
-        self._lock = threading.RLock()
-        self._records: dict[str, NegativeResolution] = {}
-        self._metrics = {
+        self.max_records = internal_integer(max_records, "negative max_records", 1, MAX_NEGATIVE_RECORDS)
+        self.ttl_seconds = internal_integer(ttl_seconds, "negative ttl_seconds", 1, MAX_NEGATIVE_TTL_SECONDS)
+        self.internal_lock = threading_RLock()
+        self.internal_records: dict[str, dict] = {}
+        self.internal_metrics = {
             "lookups": 0,
             "hits": 0,
             "misses": 0,
@@ -2737,60 +2682,62 @@ class NegativeResolutionStore:
             "invalidations": 0,
         }
 
-    def _expire(self, at: datetime) -> None:
+    def expire(self, at: datetime) -> None:
         expired = [
-            key for key, record in self._records.items() if _parse_timestamp(record["expires_at"], "negative expires_at") <= at
+            key
+            for key, record in self.internal_records.items()
+            if parse_timestamp(record["expires_at"], "negative expires_at") <= at
         ]
         for key in expired:
-            del self._records[key]
-            self._metrics["expiries"] += 1
+            del self.internal_records[key]
+            self.internal_metrics["expiries"] += 1
 
-    def _invalidate_related(self, key: NegativeResolutionKey) -> None:
+    def invalidate_related(self, key: dict) -> None:
         validated_key = validate_negative_resolution_key(key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
         stale = [
             record_key
-            for record_key, record in self._records.items()
+            for record_key, record in self.internal_records.items()
             if negative_resolution_key_relationship_fingerprint(record["key"]) == relationship and record["key"] != validated_key
         ]
         for record_key in stale:
-            del self._records[record_key]
-            self._metrics["invalidations"] += 1
+            del self.internal_records[record_key]
+            self.internal_metrics["invalidations"] += 1
 
-    def lookup(self, key: NegativeResolutionKey, evaluation_time: str) -> NegativeLookup:
+    def lookup(self, key: dict, evaluation_time: str) -> dict:
         try:
             validated_key = validate_negative_resolution_key(key)
         except InvalidRequestError as error:
             raise InvalidRequestError("negative lookup key must be NegativeResolutionKey") from error
-        at = _parse_timestamp(evaluation_time, "negative lookup evaluation_time")
-        with self._lock:
-            self._metrics["lookups"] += 1
-            self._expire(at)
-            self._invalidate_related(validated_key)
+        at = parse_timestamp(evaluation_time, "negative lookup evaluation_time")
+        with self.internal_lock:
+            self.internal_metrics["lookups"] += 1
+            self.expire(at)
+            self.invalidate_related(validated_key)
             fingerprint = negative_resolution_key_fingerprint(validated_key)
-            if fingerprint not in self._records:
-                self._metrics["misses"] += 1
+            if fingerprint not in self.internal_records:
+                self.internal_metrics["misses"] += 1
                 result = negative_lookup(False)
                 return result
-            record = self._records[fingerprint]
+            record = self.internal_records[fingerprint]
             updated = negative_resolution_with_changes(record, {"hit_count": record["hit_count"] + 1})
-            self._records[fingerprint] = updated
-            self._metrics["hits"] += 1
+            self.internal_records[fingerprint] = updated
+            self.internal_metrics["hits"] += 1
             result = negative_lookup(True, updated)
             return result
 
-    def admit(self, key: NegativeResolutionKey, evaluation_time: str) -> NegativeResolution:
+    def admit(self, key: dict, evaluation_time: str) -> dict:
         try:
             validated_key = validate_negative_resolution_key(key)
         except InvalidRequestError as error:
             raise InvalidRequestError("negative admission key must be NegativeResolutionKey") from error
-        at = _parse_timestamp(evaluation_time, "negative admission evaluation_time")
-        with self._lock:
-            self._expire(at)
-            self._invalidate_related(validated_key)
+        at = parse_timestamp(evaluation_time, "negative admission evaluation_time")
+        with self.internal_lock:
+            self.expire(at)
+            self.invalidate_related(validated_key)
             fingerprint = negative_resolution_key_fingerprint(validated_key)
-            if fingerprint in self._records:
-                result = validate_negative_resolution(self._records[fingerprint])
+            if fingerprint in self.internal_records:
+                result = validate_negative_resolution(self.internal_records[fingerprint])
                 return result
             created_at = canonical_utc(at)
             record = negative_resolution(
@@ -2799,66 +2746,48 @@ class NegativeResolutionStore:
                 created_at,
                 canonical_utc(at + timedelta(seconds=self.ttl_seconds)),
             )
-            self._records[fingerprint] = record
-            self._metrics["admissions"] += 1
-            while len(self._records) > self.max_records:
-                oldest_key = min(self._records, key=lambda value: (self._records[value]["created_at"], value))
-                del self._records[oldest_key]
-                self._metrics["evictions"] += 1
+            self.internal_records[fingerprint] = record
+            self.internal_metrics["admissions"] += 1
+            while len(self.internal_records) > self.max_records:
+                oldest_key = min(self.internal_records, key=lambda value: (self.internal_records[value]["created_at"], value))
+                del self.internal_records[oldest_key]
+                self.internal_metrics["evictions"] += 1
             result = validate_negative_resolution(record)
             return result
 
-    def invalidate_for_key(self, key: NegativeResolutionKey) -> int:
+    def invalidate_for_key(self, key: dict) -> int:
         """Invalidate prior state for one relationship under changed policy state."""
 
         try:
             validated_key = validate_negative_resolution_key(key)
         except InvalidRequestError as error:
             raise InvalidRequestError("negative invalidation key must be NegativeResolutionKey") from error
-        with self._lock:
-            before = len(self._records)
-            self._invalidate_related(validated_key)
-            removed = before - len(self._records)
-            return removed
-
-    def invalidate_epoch_snapshot(self, snapshot: Mapping[str, object]) -> int:
-        if not isinstance(snapshot, Mapping):
-            raise InvalidRequestError("negative epoch snapshot must be an object")
-        epochs = snapshot.get("epochs", {})
-        if not isinstance(epochs, Mapping):
-            raise InvalidRequestError("negative epoch snapshot epochs must be an object")
-        with self._lock:
-            stale = []
-            for fingerprint, record in self._records.items():
-                current = epochs.get(record["key"]["scope"]["namespace"], ())
-                if isinstance(current, bool) or not isinstance(current, int) or current != record["key"]["knowledge_epoch"]:
-                    stale.append(fingerprint)
-            for fingerprint in stale:
-                del self._records[fingerprint]
-                self._metrics["invalidations"] += 1
-            removed = len(stale)
+        with self.internal_lock:
+            before = len(self.internal_records)
+            self.invalidate_related(validated_key)
+            removed = before - len(self.internal_records)
             return removed
 
     def clear(self) -> None:
-        with self._lock:
-            removed = len(self._records)
-            self._records.clear()
-            self._metrics["invalidations"] += removed
+        with self.internal_lock:
+            removed = len(self.internal_records)
+            self.internal_records.clear()
+            self.internal_metrics["invalidations"] += removed
 
     def inspect(self, limit: int = MAX_INSPECTION_RECORDS) -> dict[str, object]:
-        _integer(limit, "negative inspection limit", 1, MAX_INSPECTION_RECORDS)
-        with self._lock:
-            records = sorted(self._records.items())
+        internal_integer(limit, "negative inspection limit", 1, MAX_INSPECTION_RECORDS)
+        with self.internal_lock:
+            records = sorted(self.internal_records.items())
             result = {
                 "schema_version": NEGATIVE_RESOLUTION_SCHEMA_VERSION,
                 "memory_only": True,
                 "ttl_seconds": self.ttl_seconds,
                 "max_records": self.max_records,
                 "record_count": len(records),
-                **self._metrics,
+                **self.internal_metrics,
                 "records": [
                     {
-                        "diagnostic_id": _diagnostic_id(fingerprint),
+                        "diagnostic_id": internal_diagnostic_id(fingerprint),
                         "reason": record["reason"].value,
                         "created_at": record["created_at"],
                         "expires_at": record["expires_at"],

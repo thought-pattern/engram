@@ -1,6 +1,6 @@
 """Regressions taken directly from the adaptive MCP conversation."""
 
-import json
+from json import loads as json_loads
 from pathlib import Path
 
 from engram import pipeline
@@ -9,15 +9,15 @@ from engram.core import Engram
 SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
 
 
-def _seeded_engram() -> Engram:
+def seeded_engram() -> Engram:
     engram = Engram()
-    seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
-    engram.sync_corpus(seed["pairs"])
+    seed = json_loads(SEED_PATH.read_text(encoding="utf-8"))
+    engram.load_static_data(seed.get("pairs", []))
     return engram
 
 
 def test_compound_introduction_answers_the_actual_question_once() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "I'm Codex. What should I call you?", user_id="Codex")
 
@@ -26,7 +26,7 @@ def test_compound_introduction_answers_the_actual_question_once() -> None:
 
 
 def test_explicit_name_introduction_preserves_case() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "My name is Robin.", user_id="Robin")
 
@@ -35,7 +35,7 @@ def test_explicit_name_introduction_preserves_case() -> None:
 
 
 def test_reminder_request_returns_the_previous_user_message() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     fact = "A simple example is seasonal food: people appreciate a fruit more when it is available only briefly."
     pipeline.chat(engram, fact, user_id="Codex")
 
@@ -45,7 +45,7 @@ def test_reminder_request_returns_the_previous_user_message() -> None:
 
 
 def test_one_learned_fact_is_one_dynamic_statement() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     pipeline.chat(engram, "Kyoto is especially interesting in autumn.", user_id="Codex")
 
@@ -56,7 +56,7 @@ def test_one_learned_fact_is_one_dynamic_statement() -> None:
 
 
 def test_learned_fact_supports_natural_knowledge_question() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Kyoto is especially beautiful during cherry blossom season.", user_id="Codex")
 
     result = pipeline.chat(engram, "What do you know about Kyoto?", user_id="Codex")
@@ -65,7 +65,7 @@ def test_learned_fact_supports_natural_knowledge_question() -> None:
 
 
 def test_repetition_feedback_overrides_the_broad_you_are_pattern() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Limited time creates urgency.", user_id="Codex")
 
     result = pipeline.chat(
@@ -79,7 +79,7 @@ def test_repetition_feedback_overrides_the_broad_you_are_pattern() -> None:
 
 
 def test_explicit_topic_change_gets_a_relevant_transition() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "Let us change direction and talk about food.", user_id="Codex")
 
