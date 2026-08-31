@@ -8,6 +8,15 @@ The ten tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, report generation, and a two-phase propose/resolve cache
 interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the human CLI.
+The interface compatibility contract freezes the ten names, input schemas,
+defaults, and descriptions. Output schemas remain unspecified. The gRPC v2
+service owns unified Proposition evidence.
+
+MCP tool calls remain synchronous at this boundary. If a client abandons its
+wait, already-started mutation work may complete; retry the same request ID to
+recover the receipt outcome. Shared retry, durability, and shutdown behavior is
+described in the
+[deployment and rollback runbook](operations/deployment-and-rollback-v1.md).
 
 This document covers:
 
@@ -34,15 +43,14 @@ EngramCore
 one MCP-active ConversationRuntime over a shared Engram instance
 ```
 
-The MCP host owns process lifetime. `engram_start` creates a conversation
-inside the process; it does not start the process. `engram_stop` releases that
-conversation; it does not terminate the MCP server.
+The MCP host starts and stops the process. `engram_start` creates a conversation;
+`engram_stop` releases it.
 
-The MCP adapter deliberately exposes one active `ConversationRuntime` at a
-time. `EngramCore` itself can own multiple user runtimes, and the gRPC interface
+The MCP adapter exposes one active `ConversationRuntime` at a time.
+`EngramCore` can own multiple user runtimes, and the gRPC interface
 uses that capability for concurrent user contexts. Run separate MCP processes
-when a host needs independently owned concurrent tool lifecycles. User context
-is keyed by the caller-owned `user_id`.
+for concurrent tool lifecycles. User context is keyed by the caller-owned
+`user_id`.
 
 ## Installation and launch
 
@@ -67,27 +75,11 @@ A host configuration can launch the module from a checkout:
     "engram": {
       "command": "python",
       "args": ["-m", "engram.mcp_server"],
-      "cwd": "/absolute/path/to/engram"
+      "cwd": "."
     }
   }
 }
 ```
-
-Or it can use the installed entry point without a repository working directory:
-
-```json
-{
-  "mcpServers": {
-    "engram": {
-      "command": "engram-mcp"
-    }
-  }
-}
-```
-
-Use an absolute executable path when the MCP host has a restricted or different
-`PATH`. A “program not found” startup failure occurs before Engram runs and
-must be fixed in the host command configuration.
 
 ## Implemented tools
 
@@ -95,6 +87,8 @@ must be fixed in the host command configuration.
 
 Starts one persistent conversation. Starting a second conversation before
 `engram_stop` returns an MCP tool error.
+
+Startup runs the same transport-neutral component preflight as Python and gRPC. Enabled graph access must connect, enabled vector recall must load its local model and probe its configured index, and enabled spaCy-backed behavior must load the pre-provisioned English model before the tool reports success.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -104,7 +98,8 @@ Starts one persistent conversation. Starting a second conversation before
 | `store_path` | `""` | Optional persistent Engram JSON store. An existing store is loaded; a missing path is created when saved. |
 | `config_path` | `""` | Optional YAML configuration path. |
 | `transcript_path` | `""` | Optional JSON recovery transcript updated after every turn. |
-| `random_seed` | `null` | Optional deterministic per-turn random seed for reproducible testing. |
+| `random_seed` | `0` | Deterministic per-turn random seed value. Nonzero values enable seeding automatically. |
+| `random_seed_present` | `false` | Explicitly enables the seed, preserving seed `0` as a meaningful value. |
 
 The result includes `started`, normalized `user_id`, `initial_bot_text`,
 `turn_count`, `statement_count`, and the resolved `store_path`.
@@ -112,7 +107,7 @@ The result includes `started`, normalized `user_id`, `initial_bot_text`,
 ### `engram_send`
 
 Sends exactly one non-empty user message after the caller has observed the
-previous Engram response. There is deliberately no batch conversation tool.
+previous Engram response. Each `engram_send` submits one message.
 
 The returned turn event includes:
 
@@ -125,12 +120,11 @@ The returned turn event includes:
 - statements learned during that turn.
 
 The call mutates conversation state and may learn conversational facts according
-to Engram configuration. It is a chatbot operation, not a read-only cache
-proposal.
+to Engram configuration. Cache proposals use `engram_propose`.
 
 ### `engram_inspect`
 
-Returns the active state without advancing the conversation:
+Returns the active state and preserves the turn count:
 
 - user ID, initial bot text, and turn count;
 - session predicates, histories, active topic, entities, and fact diagnostics;
@@ -142,20 +136,20 @@ Returns the active state without advancing the conversation:
 
 ### `engram_add_fact`
 
-Adds one shared, unattributed fact without modifying user conversation context.
+Adds one shared, unattributed fact and preserves user conversation context.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
 | `text` | required | One non-empty fact string. |
 | `source_label` | `""` | Opaque caller-owned provenance label. |
 
-Use this for deliberate research or tool facts, not for caching an Actor answer
-to a request. The result is a statement view containing ID, text, patterns,
-attribution, and source label.
+Use this for research or tool facts. Cache Actor answers with
+`engram_learn_response`. The result contains ID, text, patterns, attribution,
+and source label.
 
 ### `engram_finish`
 
-Writes complete JSON and Markdown reports without ending the conversation.
+Writes complete JSON and Markdown reports and keeps the conversation active.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -168,15 +162,17 @@ contains the report summary and both resolved paths. Continue calling
 ### `engram_stop`
 
 Saves the configured store, returns the final user ID and summary, and releases
-the active `ConversationRuntime`. It does not write conversation reports; call
-`engram_finish` first when reports are required.
+the active `ConversationRuntime`. Call `engram_finish` first to write reports.
 
 All other tools require an active conversation established by `engram_start`.
 
 `engram_inspect` includes `core_status`, the transport-neutral lifecycle and
 durability snapshot. Its fields include `state`, `ready`, `healthy`,
-`durability`, `dirty`, the last checkpoint/error information, and the number
-of active conversations.
+`durability`, `dirty`, the last checkpoint/error-class information, and the number
+of active conversations. `telemetry` is the shared fixed-cardinality process
+aggregate for outcome, resolver contribution/state, latency, budget/resource,
+rebuild, durability, and fixed Regulator outcomes. The bounded `components`
+object reports `enabled` and `ready` for graph, vector, and spaCy.
 
 ## Required lifecycle
 
@@ -212,8 +208,8 @@ engram_stop {}
 ```
 
 Tool calls are sequential in one conversation. The next input may depend on
-the response from the previous `engram_send`; precomputing a batch would hide
-that dependency and would not constitute an observed conversation.
+the response from the previous `engram_send`; each observed response determines
+the next input.
 
 ## Persistence and recovery
 
@@ -228,19 +224,18 @@ different purposes:
 
 When an existing store is loaded and `seed_path` is non-empty, the configured
 seed is synchronized into it. Dynamic learned content survives that refresh.
-Graph credentials are never persisted.
+Graph credentials remain in runtime configuration.
 
 Successful durable mutations are atomically checkpointed when `store_path` is
 configured. Core validation, not-found, conflict, lifecycle, and persistence
 failures are surfaced by MCPServer as tool errors. If a checkpoint fails after a
 mutation, the tool call fails but the mutation remains applied in the live MCP
 process; `core_status` reports `durability: "degraded"` and `dirty: true`.
-Do not assume that such a tool error rolled back the request.
 
 The regulated-cache tools support safe recovery: retry the exact request with
 the same `request_id`, or reach an explicit `flush`/lifecycle boundary after
-the store becomes available. The idempotency path checkpoints again without
-learning, retiring, or crediting the item twice. An abrupt host exit before
+the store becomes available. The idempotency path checkpoints again while
+preserving one learning, retirement, or credit operation. An abrupt host exit before
 recovery loses that uncheckpointed state, as well as all transient proposals.
 The per-turn transcript separately describes observed chatbot turns.
 `engram_finish` and `engram_stop` remain explicit report and lifecycle
@@ -251,9 +246,8 @@ boundaries.
 - The server uses local stdio transport; remote access, authentication, and
   process isolation belong to the MCP host.
 - Treat `store_path`, `config_path`, `seed_path`, transcript paths, and report
-  prefixes as trusted deployment configuration rather than arbitrary end-user
-  input.
-- `source_label` is opaque provenance, not an authorization decision.
+  prefixes as trusted deployment configuration.
+- `source_label` records opaque provenance; MCP host policy supplies authorization.
 - `engram_add_fact` is an explicit write to shared Engram knowledge and should
   be granted only to callers authorized to add facts.
 - Runtime graph operations are read-only. Graph schema setup remains a
@@ -263,15 +257,14 @@ boundaries.
 
 ## Regulated-cache tools
 
-Do not use `engram_send` as a Tapestry cache proposal. It returns a completed
-chatbot response and performs normal chatbot state changes. The four tools in
-this section provide the separate speculative proposal and explicit Regulator
-decision boundary.
+`engram_send` returns a completed chatbot response and performs normal chatbot
+state changes. The four tools below provide speculative proposal and explicit
+Regulator decision handling.
 
 ### `engram_propose`
 
-Retrieves candidates without recording success or updating the displayed
-response context. It uses keyword retrieval only; scripted pattern responses
+Retrieves candidates, records candidacy, and preserves displayed response
+context. It uses keyword retrieval only; scripted pattern responses
 are excluded because pattern selection has autonomous success accounting.
 
 Input:
@@ -319,7 +312,7 @@ Output:
       "hit_count": 3,
       "query_count": 5,
       "source_label": "tapestry:actor",
-      "introduced_by_user_id": null,
+      "introduced_by_user_id": "",
       "metadata": {
         "tapestry": {
           "namespace": "support",
@@ -332,9 +325,9 @@ Output:
 }
 ```
 
-Returned candidates receive one candidacy/query count and no hit. The server
-retains their statement IDs, response snapshots, and keywords, so a client
-cannot credit an unrelated or subsequently replaced response. Reusing a
+Returned candidates receive one candidacy/query count; hit counts stay unchanged.
+The server binds statement IDs, response snapshots, and keywords to the
+proposal. Reusing a
 `request_id` with identical arguments returns the same proposal; conflicting
 reuse is an error.
 
@@ -354,8 +347,8 @@ Commits the Regulator verdict exactly once. Supported outcomes are `accepted`,
 ```
 
 `accepted` requires a candidate `statement_id`, records one hit, and updates
-that user's previous-response context. Rejection records no hit. Retrying the
-same verdict returns `idempotent: true` without double credit; a conflicting
+that user's previous-response context. Rejection leaves hit counts unchanged.
+Retrying the same verdict returns `idempotent: true` with one credit; a conflicting
 second verdict is an error. Rejection counts by outcome are available through
 `engram_inspect`.
 
@@ -382,16 +375,18 @@ of `IDK` are rejected.
 ```
 
 The result returns `learned`, `statement_id`, `action` (`created` or
-`replaced`), scope, provenance, and `idempotent`. Responses replace in place
-only when their query keyword set, namespace, and context fingerprint all
-match. Actor responses remain shared knowledge (`introduced_by_user_id` is
-null), while the calling user's previous-response context is updated.
-`request_id` makes retries idempotent and conflicting reuse is an error.
+`rejected_capacity`), scope, provenance, and `idempotent`. The compatibility
+operation preserves existing knowledge identity. A canonical or alias collision
+in the same exact scope names the existing owner and is rejected; the
+transport-neutral supersession operation handles replacement. Actor responses remain shared knowledge
+(`introduced_by_user_id` is `""`), while the calling user's previous-response
+context is updated. `request_id` makes retries idempotent and conflicting reuse
+is an error.
 
 ### `engram_retire_response`
 
 Explicitly retires a response that the Regulator has determined is globally
-stale. Context mismatch alone must not invoke this tool.
+stale. Use `rejected_context` for a context mismatch.
 
 ```json
 {
@@ -408,7 +403,7 @@ is retry-safe by `request_id`; conflicting request reuse is an error.
 
 Proposals and idempotency records are process-local, retained for five minutes,
 and bounded to 1,000 records of each kind. They are cleared by `engram_stop`
-and are never serialized. Learned responses, their scope/provenance metadata,
+and process exit. Learned responses, their scope/provenance metadata,
 query statistics, accepted hit statistics, retirements, and user context are
 checkpointed to the normal Engram store after their successful mutating call
 when `store_path` is configured.
@@ -421,12 +416,12 @@ identical resolutions therefore record exactly one accepted hit.
 | Condition | Client behavior |
 | --- | --- |
 | MCP server unavailable | Bypass Engram and invoke the Actor. |
-| `engram_start` fails | Do not send turns; fix configuration or bypass Engram. |
+| `engram_start` fails | Fix configuration or bypass Engram before sending turns. |
 | Conversation tool times out | Treat the turn result as unknown and inspect before retrying a mutating call. |
 | `engram_finish` fails | Keep the conversation active and retry with a valid writable output prefix. |
 | `engram_stop` fails | Treat store durability as unknown and surface the failure. |
-| Regulated-cache call fails | Actor response remains available; cache failure must not block the user response. |
-| Regulator unavailable | Never return an unregulated proposal; invoke the Actor. |
+| Regulated-cache call fails | Return the Actor response. |
+| Regulator unavailable | Invoke the Actor. |
 
 ## Verification checklist
 
@@ -434,15 +429,15 @@ identical resolutions therefore record exactly one accepted hit.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
 - `user_id` defaults to `"0"` and preserves explicit case.
-- `engram_inspect` does not advance the turn count.
-- `engram_add_fact` changes shared knowledge but not user context.
+- `engram_inspect` preserves the turn count.
+- `engram_add_fact` changes shared knowledge and preserves user context.
 - `engram_finish` writes both reports and allows another send.
 - `engram_stop` persists the configured store and releases the runtime.
 - Restarting the MCP process with the same store restores durable state.
 - A proposal records candidacy but earns a hit only after acceptance.
 - Scope and required metadata prevent incompatible responses from becoming candidates.
 - Proposal, learn, resolve, and retirement retries are idempotent; conflicting retries fail.
-- Transient proposals expire and are not restored, while learned responses are restored.
+- Transient proposals expire; learned responses restore from the store.
 - Adaptive conversation tests observe every response before sending the next
   input.
 - The regulated-cache tools satisfy the acceptance tests in the

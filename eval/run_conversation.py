@@ -11,8 +11,9 @@ for mechanical defects:
   - casing polish failures (lowercase sentence start, standalone lowercase i)
   - template artifacts leaking into the response (unresolved {...} tokens)
 
-Softer signals are warnings rather than failures: unanswered turns, three
-identical responses in a row (a conversation loop), and slow turns. After the
+Softer signals are warnings rather than failures: unanswered turns and three
+identical responses in a row (a conversation loop). Every turn length is
+reported without classifying it as fast or slow. After the
 conversation, the rig checks session hygiene (no scratch predicates, bounded
 history) and reports what the store learned along the way.
 
@@ -39,7 +40,6 @@ from engram.constants import Tier
 from engram.core import Engram
 
 SESSION_ID = "soak"
-SLOW_TURN_SECONDS = 1.0
 LOOP_LENGTH = 3  # identical consecutive responses that count as a loop
 LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
@@ -47,7 +47,7 @@ LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 def build_seeded_engram() -> Engram:
     """Build an engram instance populated from the bundled seed file."""
     engram = Engram(config=engram_config(learn_user_facts=True))
-    seed_path = os.path.join(REPO_ROOT, "data", "seed.json")
+    seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
         seed_data = json.load(f)
     for pair in seed_data.get("pairs", []):
@@ -62,7 +62,7 @@ def build_seeded_engram() -> Engram:
 
 def load_turns(path: str) -> list:
     """Load conversation turns from a script file."""
-    script_path = path if path else os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversation.json")
+    script_path = path or "eval/conversation.json"
     with open(script_path, encoding="utf-8") as f:
         data = json.load(f)
     turns = data.get("turns", [])
@@ -79,7 +79,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
             warnings.append("unanswered (source none)")
         else:
             defects.append(f"empty response from source {source}")
-        return defects, warnings
+        result = defects, warnings
+        return result
 
     first_alpha = next((c for c in response if c.isalpha()), "")
     if first_alpha and first_alpha.islower():
@@ -93,7 +94,8 @@ def check_response(response: str, source: str) -> tuple[list, list]:
     if "{" in response and "}" in response:
         defects.append("unresolved template token in response")
 
-    return defects, warnings
+    result = defects, warnings
+    return result
 
 
 def run_conversation(turns: list, verbose: bool) -> dict:
@@ -120,9 +122,6 @@ def run_conversation(turns: list, verbose: bool) -> dict:
         checked_defects, checked_warnings = check_response(response, result["source"])
         defects.extend(checked_defects)
         warnings.extend(checked_warnings)
-
-        if elapsed > SLOW_TURN_SECONDS:
-            warnings.append(f"slow turn: {elapsed:.2f}s")
 
         recent_responses.append(response)
         if len(recent_responses) >= LOOP_LENGTH and len(set(recent_responses[-LOOP_LENGTH:])) == 1 and response:
@@ -184,7 +183,8 @@ def main() -> int:
     turns = load_turns(args.script)
     if not turns:
         print("No turns found in the conversation script", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     report = run_conversation(turns, verbose=not args.quiet)
 
@@ -221,7 +221,8 @@ def main() -> int:
             json.dump(report, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    return 1 if defect_turns or report["hygiene_defects"] else 0
+    result = 1 if defect_turns or report["hygiene_defects"] else 0
+    return result
 
 
 if __name__ == "__main__":

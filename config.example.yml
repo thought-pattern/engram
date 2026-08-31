@@ -20,6 +20,7 @@ session_overflow: lru # reject | expire_oldest | lru
 
 # --- Input processing ---
 expand_contractions: true
+retrieval_rewrites_enabled: false # Retrieval-only Section 11 rules; does not execute AIML templates
 learn_user_facts: true # Learn shared facts with per-user attribution
 srai_depth_limit: 100
 
@@ -37,6 +38,72 @@ use_spacy_facts: false # spaCy dependency-parse fact extraction (needs en_core_w
 use_spacy_lemmatization: false # spaCy context-aware lemmas in the matcher
 use_phrase_keywords: false # spaCy noun-chunk phrase keywords for retrieval
 
+# --- Sparse retrieval (optional, local, rebuildable) ---
+# Derived entirely from authoritative accepted-response artifacts. No index data
+# is persisted. Response prose is excluded unless explicitly opted in.
+sparse:
+  enabled: false
+  include_response_text: false
+  max_query_terms: 64
+  max_posting_visits: 100000
+  max_prefix_expansions: 64
+
+# --- Standalone semantic retrieval (optional, local, rebuildable) ---
+# Provision the pinned artifact explicitly with
+# `python scripts/provision_semantic_model.py`, then copy the emitted manifest
+# values below. Runtime startup never downloads model files. Canonical requests
+# and aliases are embedded; accepted-response prose is never embedded.
+semantic:
+  enabled: false
+  model_path: ""
+  model_id: sentence-transformers/all-MiniLM-L6-v2
+  model_version: ""
+  license_id: apache-2.0
+  artifact_sha256: ""
+  dimension: 384
+  backend: native # native | onnx | quantized; only provisioned/installed backends become ready
+  normalization_version: 1
+  batch_size: 32
+  max_input_bytes: 16384
+  max_records: 100000
+  max_scan_records: 100000
+  min_similarity: 0.45
+
+# --- Candidate reranking (optional, independently gated) ---
+# Uses only a bounded fused-candidate shortlist and falls back to the baseline
+# order on input/dependency failure. Elapsed model time is diagnostic only.
+# Disable this independently to roll back.
+reranker:
+  enabled: false
+  implementation: transparent_logistic_v1
+  model_version: transparent-logistic-v1
+  shortlist_size: 8
+  max_input_bytes: 65536
+  max_model_time_ms: 25
+
+# --- Namespace rollout ---
+# The default preserves normal regulated answers. Exact namespace overrides may
+# use: disabled, shadow, evidence_only, regulated_direct_answer, or rollback.
+rollout:
+  policy_version: rollout-v1
+  default_mode: regulated_direct_answer
+  namespaces: {}
+
+# --- Deterministic utility resolver (optional, local) ---
+# Only these compiled-in plugins can run. Requests must use the documented
+# command grammars; Python expressions, imports, and third-party plugins are
+# never accepted. Plugins can be promoted or rolled back independently.
+utility:
+  enabled: false
+  plugins:
+    - arithmetic_v1
+    - boolean_v1
+    - set_v1
+    - date_time_v1
+    - unit_conversion_v1
+    - version_v1
+    - identifier_v1
+
 # --- Output processing ---
 polish_responses: true # Repair casing in pattern-path responses
 
@@ -45,12 +112,30 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 
 # --- Knowledge graph (optional) ---
 # MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
-# interface. Apply schema.cypher before enabling: python scripts/setup_schema.py
+# interface. Standalone DDL uses: python scripts/setup_schema.py --apply
+# A Tapestry-managed graph uses only the read-only verify_schema.py gate.
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
+# MemGraph remains optional when enabled. An unavailable graph reports not ready
+# and is skipped while Engram's local retrieval and conversation paths continue.
 graph:
   host: localhost
   port: 7687
   username: ""
   password: ""
   enabled: false
+  deployment_mode: "" # standalone or tapestry_managed when enabled
+  visibility_scope:
+    kind: global
+    company_id: {}
+    customer_id: {}
+    engagement_id: {}
+  vector_enabled: false
+  vector_index_name: proposition_embeddings
+  vector_model: all-MiniLM-L6-v2
+  vector_model_path: ""
+  vector_dimension: 384
+  vector_limit: 250
+  vector_support_scan_limit: 100000 # Bound matched Proposition-support fan-out
+  vector_min_similarity: 0.45
+  vector_weight: 0.75

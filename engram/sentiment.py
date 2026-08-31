@@ -12,7 +12,14 @@ from functools import lru_cache
 
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-from engram.constants import NEGATIVE, NEGATIVE_THRESHOLD, NEUTRAL, NEUTRAL_SCORES, POSITIVE, POSITIVE_THRESHOLD
+from engram.constants import (
+    NEGATIVE,
+    NEGATIVE_THRESHOLD,
+    NEUTRAL,
+    NEUTRAL_SCORES,
+    POSITIVE,
+    POSITIVE_THRESHOLD,
+)
 from engram.nltk_data import ensure_resource
 
 
@@ -20,7 +27,8 @@ from engram.nltk_data import ensure_resource
 def _get_analyzer():
     """Build and cache the VADER analyzer, or return falsy if unavailable."""
     if not ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
-        return ()
+        result = ()
+        return result
     analyzer = SentimentIntensityAnalyzer()
     return analyzer
 
@@ -55,7 +63,7 @@ def sentiment_label(text: str) -> str:
     Returns:
         One of "positive", "negative", or "neutral".
     """
-    compound = sentiment_scores(text)["compound"]
+    compound = sentiment_scores(text).get("compound", False)
     if compound >= POSITIVE_THRESHOLD:
         return POSITIVE
     if compound <= NEGATIVE_THRESHOLD:

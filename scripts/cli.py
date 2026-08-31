@@ -15,7 +15,7 @@ from engram.config import load_config
 from engram.constants import EvictionPolicy, Tier
 from engram.core import Engram
 from engram.errors import EngramCoreError
-from engram.service import EngramCore
+from engram.service import EngramCore, open_engram_core
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
@@ -42,18 +42,19 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--capacity",
         type=int,
-        default=None,
+        default=0,
         help="Override maximum DYNAMIC statements (default: from config)",
     )
     parser.add_argument(
         "--eviction",
         type=str,
         choices=["fifo", "lru", "lfu", "hit_rate"],
-        default=None,
+        default="",
         help="Override eviction policy (default: from config)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    parser.set_defaults(command="")
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new engram store")
@@ -71,6 +72,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--pattern",
         "-p",
         type=str,
+        default="",
         help="Pattern to match (default: extracted from text)",
     )
     store_parser.add_argument(
@@ -101,6 +103,7 @@ def create_parser() -> argparse.ArgumentParser:
     query_parser.add_argument(
         "--session",
         type=str,
+        default="",
         help="Session ID for context expansion",
     )
     query_parser.add_argument(
@@ -112,9 +115,10 @@ def create_parser() -> argparse.ArgumentParser:
     # session commands
     session_parser = subparsers.add_parser("session", help="Session management")
     session_sub = session_parser.add_subparsers(dest="session_command")
+    session_parser.set_defaults(session_command="")
 
     session_create = session_sub.add_parser("create", help="Create a new session")
-    session_create.add_argument("--id", type=str, help="Session ID (generated if omitted)")
+    session_create.add_argument("--id", type=str, default="", help="Session ID (generated if omitted)")
 
     session_sub.add_parser("list", help="List sessions")
 
@@ -193,7 +197,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Minimum query count threshold (default: 10)",
     )
 
-    # coverage command (new)
     coverage_parser = subparsers.add_parser("coverage", help="Coverage analysis")
     coverage_parser.add_argument(
         "--gaps",
@@ -218,6 +221,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--output",
         "-o",
         type=str,
+        default="",
         help="Output file (default: stdout)",
     )
     export_parser.add_argument(
@@ -243,6 +247,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--user-id",
         dest="session",
         type=str,
+        default="",
         help="Caller-owned user/session label (created if absent)",
     )
     interactive_parser.add_argument(
@@ -257,38 +262,34 @@ def create_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional JSON recovery transcript updated after each turn",
     )
-    interactive_parser.add_argument(
-        "--graph",
-        action="store_true",
-        help="Enable mock graph client for testing",
-    )
-
     return parser
 
 
 def get_eviction_policy(name: str) -> EvictionPolicy:
     """Convert string to EvictionPolicy enum."""
-    return {
+    result = {
         "fifo": EvictionPolicy.FIFO,
         "lru": EvictionPolicy.LRU,
         "lfu": EvictionPolicy.LFU,
         "hit_rate": EvictionPolicy.HIT_RATE,
     }[name]
+    return result
 
 
 def resolve_config(args: argparse.Namespace) -> dict:
     """Build the EngramConfig from the config file, applying CLI flag overrides."""
     config = load_config(args.config)
-    if args.capacity is not None:
+    if args.capacity:
         config["capacity"] = args.capacity
-    if args.eviction is not None:
+    if args.eviction:
         config["eviction_policy"] = get_eviction_policy(args.eviction)
     return config
 
 
 def load_core_instance(args: argparse.Namespace) -> EngramCore:
     """Load the shared core using the CLI's resolved configuration."""
-    return EngramCore.open(config=args.engram_config, store_path=args.store)
+    result = open_engram_core(config=args.engram_config, store_path=args.store)
+    return result
 
 
 def load_seed_pairs(path: str = "") -> list:
@@ -296,9 +297,10 @@ def load_seed_pairs(path: str = "") -> list:
 
     Returns [] when the file does not exist.
     """
-    seed_file = Path(path) if path else Path(_REPO_ROOT) / "data" / "seed.json"
+    seed_file = Path(path or "data/seed.json")
     if not seed_file.exists():
-        return []
+        result = []
+        return result
     with open(seed_file, encoding="utf-8") as f:
         seed_data = json.load(f)
     pairs = seed_data.get("pairs", [])
@@ -311,7 +313,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     if path.exists() and not args.force:
         print(f"Store already exists: {args.store}", file=sys.stderr)
         print("Use --force to overwrite", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     core = EngramCore(Engram(config=args.engram_config), store_path=args.store)
     engram = core.engram
@@ -319,7 +322,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     counts = engram.sync_corpus(pairs)
     core.flush()
     print(f"Initialized engram store: {args.store} ({counts['added']} seed statements)")
-    return 0
+    result = 0
+    return result
 
 
 def cmd_sync_seed(args: argparse.Namespace) -> int:
@@ -337,7 +341,8 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
     if not pairs:
         source = args.file or "data/seed.json"
         print(f"No seed pairs found: {source}", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     counts = engram.sync_corpus(pairs, prune=args.prune)
     core.flush()
@@ -345,7 +350,8 @@ def cmd_sync_seed(args: argparse.Namespace) -> int:
     if args.prune:
         summary += f", {counts['pruned']} pruned"
     print(summary)
-    return 0
+    result = 0
+    return result
 
 
 def cmd_store(args: argparse.Namespace) -> int:
@@ -355,7 +361,7 @@ def cmd_store(args: argparse.Namespace) -> int:
     tier = Tier.STATIC if args.static else Tier.DYNAMIC
 
     # Check if text is JSON template
-    template = None
+    template = {}
     text = args.text
     if args.text.startswith("{"):
         try:
@@ -367,7 +373,8 @@ def cmd_store(args: argparse.Namespace) -> int:
     stmt_id = engram.store(text, tier=tier, pattern=args.pattern, template=template)
     core.flush()
     print(f"Stored: {stmt_id} ({tier.value})")
-    return 0
+    result = 0
+    return result
 
 
 def cmd_load(args: argparse.Namespace) -> int:
@@ -379,7 +386,8 @@ def cmd_load(args: argparse.Namespace) -> int:
     path = Path(args.file)
     if not path.exists():
         print(f"File not found: {args.file}", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -409,7 +417,8 @@ def cmd_load(args: argparse.Namespace) -> int:
 
     core.flush()
     print(f"Loaded {count} statements ({tier.value})")
-    return 0
+    result = 0
+    return result
 
 
 def cmd_query(args: argparse.Namespace) -> int:
@@ -437,7 +446,8 @@ def cmd_query(args: argparse.Namespace) -> int:
     if not result["matches"]:
         print("No matches found.")
 
-    return 0
+    result = 0
+    return result
 
 
 def cmd_session(args: argparse.Namespace) -> int:
@@ -453,7 +463,8 @@ def cmd_session(args: argparse.Namespace) -> int:
             modified = True
         except SessionLimitExceededError as e:
             print(f"Error: {e}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     elif args.session_command == "list":
         session_list = sessions.list_sessions(engram)
@@ -479,7 +490,8 @@ def cmd_session(args: argparse.Namespace) -> int:
                 print(f"Input history: {session.get('input_history', [])[:5]}")
         else:
             print(f"Session not found: {args.id}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     elif args.session_command == "update":
         try:
@@ -488,7 +500,8 @@ def cmd_session(args: argparse.Namespace) -> int:
             modified = True
         except SessionNotFoundError:
             print(f"Session not found: {args.id}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     elif args.session_command == "delete":
         if sessions.delete_session(engram, args.id):
@@ -496,7 +509,8 @@ def cmd_session(args: argparse.Namespace) -> int:
             modified = True
         else:
             print(f"Session not found: {args.id}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     elif args.session_command == "expire":
         threshold = timedelta(hours=args.hours)
@@ -512,7 +526,8 @@ def cmd_session(args: argparse.Namespace) -> int:
             modified = True
         else:
             print(f"Session not found: {args.id}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     elif args.session_command == "topic":
         session = sessions.get_session(engram, args.id, create_if_missing=False)
@@ -522,16 +537,19 @@ def cmd_session(args: argparse.Namespace) -> int:
             modified = True
         else:
             print(f"Session not found: {args.id}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     else:
         print("Usage: engram session {create|list|get|update|delete|expire|set|topic}")
-        return 1
+        result = 1
+        return result
 
     if modified:
         core.flush()
 
-    return 0
+    result = 0
+    return result
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -553,7 +571,8 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     print(f"Evictions:      {metric_data['eviction_count']:,}")
     print(f"Eviction policy: {engram.config.get('eviction_policy', EvictionPolicy.FIFO).value}")
 
-    return 0
+    result = 0
+    return result
 
 
 def cmd_decay(args: argparse.Namespace) -> int:
@@ -565,11 +584,13 @@ def cmd_decay(args: argparse.Namespace) -> int:
         changed = metrics.decay_statistics(engram, factor=args.factor)
     except ValueError as err:
         print(f"Error: {err}", file=sys.stderr)
-        return 1
+        result = 1
+        return result
 
     core.flush()
     print(f"Decayed statistics on {changed} records (factor {args.factor})")
-    return 0
+    result = 0
+    return result
 
 
 def cmd_keywords(args: argparse.Namespace) -> int:
@@ -597,9 +618,11 @@ def cmd_keywords(args: argparse.Namespace) -> int:
 
     else:
         print("Usage: engram keywords {--low-hit|--zero-hit}")
-        return 1
+        result = 1
+        return result
 
-    return 0
+    result = 0
+    return result
 
 
 def cmd_coverage(args: argparse.Namespace) -> int:
@@ -645,9 +668,11 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
     else:
         print("Usage: engram coverage {--gaps|--report}")
-        return 1
+        result = 1
+        return result
 
-    return 0
+    result = 0
+    return result
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -685,7 +710,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     else:
         print(output)
 
-    return 0
+    result = 0
+    return result
 
 
 class InteractiveChat:
@@ -693,9 +719,8 @@ class InteractiveChat:
 
     def __init__(
         self,
-        core_or_engram: EngramCore | Engram,
-        session_id=None,
-        enable_graph: bool = False,
+        core_or_engram,
+        session_id: str = "",
         store_path: str = "",
         initial_bot_text: str = "",
         transcript_path: str = "",
@@ -714,14 +739,10 @@ class InteractiveChat:
         self.core.start_conversation(
             user_id=self.session_id,
             initial_bot_text=initial_bot_text,
-            transcript_path=transcript_path or None,
+            transcript_path=transcript_path,
         )
         self.runtime = self.core.get_conversation(self.session_id)
         self.session = sessions.get_session(self.engram, self.session_id, create_if_missing=True)
-
-        # Note: Graph support would require extending core.py to accept graph callbacks
-        if enable_graph:
-            print("Note: Graph client support is a future feature")
 
     def process_input(self, user_input: str) -> str:
         """Process user input through the tiered pipeline and return a response.
@@ -737,7 +758,8 @@ class InteractiveChat:
                 detail += f" | Pattern: '{result['pattern']}' | Captured: {result['captured']}"
             print(f"     [{detail}]")
 
-        return result["response"] or "Tell me more about that."
+        result = result["response"] or "Tell me more about that."
+        return result
 
     def run(self) -> None:
         """Run the interactive chat loop."""
@@ -771,7 +793,8 @@ class InteractiveChat:
         cmd = parts[0].lower()
 
         if cmd in ("quit", "exit", "q"):
-            return True
+            result = True
+            return result
 
         elif cmd == "debug":
             self.debug_mode = not self.debug_mode
@@ -824,7 +847,8 @@ class InteractiveChat:
         else:
             print(f"Unknown command: {cmd} (try /help)")
 
-        return False
+        result = False
+        return result
 
 
 def cmd_interactive(args: argparse.Namespace) -> int:
@@ -834,7 +858,6 @@ def cmd_interactive(args: argparse.Namespace) -> int:
     chat = InteractiveChat(
         core,
         session_id=args.session,
-        enable_graph=args.graph,
         store_path=args.store,
         initial_bot_text=args.initial_bot_text,
         transcript_path=args.transcript,
@@ -844,10 +867,11 @@ def cmd_interactive(args: argparse.Namespace) -> int:
 
     core.stop_conversation(chat.session_id)
     print("Saved.")
-    return 0
+    result = 0
+    return result
 
 
-def main(argv=None) -> int:
+def main(argv=()) -> int:
     """Main entry point.
 
     Args:
@@ -857,11 +881,10 @@ def main(argv=None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    if args.command is None:
+    if not args.command:
         args.command = "interactive"
         # Set defaults for interactive mode arguments when no subcommand was used
-        args.session = None
-        args.graph = False
+        args.session = ""
         args.initial_bot_text = ""
         args.transcript = ""
 
@@ -891,17 +914,20 @@ def main(argv=None) -> int:
         "interactive": cmd_interactive,
     }
 
-    handler = commands.get(args.command)
+    handler = commands.get(args.command, ())
     if handler:
         try:
-            return handler(args)
+            result = handler(args)
+            return result
         except EngramCoreError as error:
             print(f"Error: {error}", file=sys.stderr)
-            return 1
+            result = 1
+            return result
 
     parser.print_help()
-    return 1
+    result = 1
+    return result
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

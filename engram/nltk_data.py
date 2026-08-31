@@ -3,14 +3,15 @@
 All NLTK corpora and models used by ENGRAM are stored in a local, gitignored
 ``data/nltk_data`` directory at the repository root, so they can be fetched once
 at setup time rather than retrieved during normal runtime. Importing this module
-wires that directory onto NLTK's search path; ``ensure_nltk_data`` downloads any
-missing packages into it.
+wires that directory onto NLTK's search path. Downloading is available only
+through an explicit bootstrap request; normal callers perform an offline check.
 
 Run ``python -m engram.nltk_data`` once after installation to pre-fetch
 everything into the local directory.
 """
 
 import os
+from functools import lru_cache
 
 import nltk
 
@@ -33,6 +34,7 @@ def configure_path() -> str:
     return NLTK_DATA_DIR
 
 
+@lru_cache(maxsize=64)
 def _is_available(find_path: str) -> bool:
     """Return True if a resource resolves on NLTK's path.
 
@@ -42,26 +44,36 @@ def _is_available(find_path: str) -> bool:
     for candidate in (find_path, find_path + ".zip"):
         try:
             nltk.data.find(candidate)
-            return True
+            result = True
+            return result
         except LookupError:
             continue
-    return False
+    result = False
+    return result
 
 
-def ensure_resource(find_path: str, download_name: str) -> bool:
-    """Ensure a single NLTK resource is available, downloading it if missing.
+def ensure_resource(find_path: str, download_name: str, *, download: bool = False) -> bool:
+    """Return whether one NLTK resource is available after an optional bootstrap.
 
     Args:
         find_path: Path passed to ``nltk.data.find`` to test availability.
         download_name: Package name passed to ``nltk.download`` when missing.
+        download: Explicit setup-time authorization to acquire the resource.
 
     Returns:
         True if the resource is available after the call, False otherwise.
     """
     configure_path()
     if _is_available(find_path):
-        return True
+        result = True
+        return result
+    if not download:
+        result = False
+        return result
     nltk.download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
+    cache_clear = getattr(_is_available, "cache_clear", ())
+    if callable(cache_clear):
+        cache_clear()
     available = _is_available(find_path)
     return available
 
@@ -81,7 +93,7 @@ def ensure_nltk_data(download: bool = True) -> list:
     for find_path, download_name in REQUIRED_PACKAGES:
         if _is_available(find_path):
             continue
-        if download and ensure_resource(find_path, download_name):
+        if download and ensure_resource(find_path, download_name, download=True):
             continue
         missing.append((find_path, download_name))
     return missing
@@ -99,9 +111,11 @@ def main() -> int:
         print("[WARNING] Could not obtain the following packages:")
         for find_path, download_name in missing:
             print(f"  - {download_name} ({find_path})")
-        return 1
+        result = 1
+        return result
     print("[DONE] All required NLTK data is available.")
-    return 0
+    result = 0
+    return result
 
 
 if __name__ == "__main__":

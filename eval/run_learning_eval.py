@@ -164,7 +164,8 @@ def main() -> int:
             json.dump({"checks": checks}, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
-    return 1 if failed else 0
+    result = 1 if failed else 0
+    return result
 
 
 if __name__ == "__main__":

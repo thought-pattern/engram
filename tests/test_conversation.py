@@ -55,17 +55,20 @@ def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
     assert snapshot["learned_unique_texts"] == ["Sushi is good."]
 
 
-def test_runtime_writes_json_and_markdown_reports(tmp_path) -> None:
+def test_runtime_writes_json_and_markdown_reports(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
     runtime = ConversationRuntime(engram, user_id="agent", initial_bot_text=".")
     runtime.send("hello")
 
-    output = runtime.write_report(tmp_path / "reports" / "adaptive-chat")
+    output = runtime.write_report("reports/adaptive-chat")
 
     report = json.loads((tmp_path / "reports" / "adaptive-chat.json").read_text(encoding="utf-8"))
     markdown = (tmp_path / "reports" / "adaptive-chat.md").read_text(encoding="utf-8")
     assert output["summary"]["exchanges"] == 1
+    assert output["json"] == "reports/adaptive-chat.json"
+    assert output["markdown"] == "reports/adaptive-chat.md"
     assert report["user_id"] == "agent"
     assert "**Interlocutor:** hello" in markdown
 

@@ -1,0 +1,174 @@
+"""Probe Section 10 through fixed capabilities against the configured live MemGraph."""
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+if str(REPOSITORY) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY))
+
+from engram.config import load_config
+from engram.core import Engram
+from engram.resolution import resolver_result_to_dict
+from engram.service import EngramCore
+
+PREDICATE_SURFACES = ("married", "spouse", "husband", "present", "present in", "work", "born", "parent")
+COMPOSITION_PROMPTS = ("Who is Sarah's married partner married to?",)
+
+
+def _timed(operation):
+    started = time.perf_counter_ns()
+    value = operation()
+    return value, (time.perf_counter_ns() - started) / 1_000_000
+
+
+def run(config_path: str) -> dict[str, object]:
+    engine = Engram(load_config(config_path))
+    try:
+        entities, entity_ms = _timed(lambda: engine.canonical_entity_matches("Sarah", limit=4))
+        predicate_rows = []
+        for surface in PREDICATE_SURFACES:
+            rows, elapsed_ms = _timed(lambda surface=surface: engine.canonical_predicate_matches(surface, limit=4))
+            predicate_rows.append(
+                {
+                    "surface": surface,
+                    "elapsed_ms": elapsed_ms,
+                    "matches": [
+                        {
+                            "canonical_id": row["canonical_id"],
+                            "primary_label": row["primary_label"],
+                            "object_type": row["object_type"].value,
+                        }
+                        for row in rows
+                    ],
+                }
+            )
+        predicates = {row["canonical_id"]: row for surface in predicate_rows for row in surface["matches"] if isinstance(row, dict)}
+        one_hop = []
+        second_hop_subjects = {}
+        if len(entities) == 1:
+            for predicate_id in sorted(predicates):
+                rows, elapsed_ms = _timed(
+                    lambda predicate_id=predicate_id: engine.relation_one_hop_proposition_projections(
+                        entities[0]["canonical_id"],
+                        predicate_id,
+                        row_limit=4,
+                    )
+                )
+                one_hop.append(
+                    {
+                        "subject_entity_id": entities[0]["canonical_id"],
+                        "predicate_id": predicate_id,
+                        "elapsed_ms": elapsed_ms,
+                        "propositions": [
+                            {
+                                "proposition_id": row["projection"]["proposition_id"],
+                                "object_entity_id": row["projection"]["object_entity_id"],
+                                "object_label": row["object_label"],
+                                "object_type": row["object_type"].value,
+                            }
+                            for row in rows
+                        ],
+                    }
+                )
+                for row in rows:
+                    second_hop_subjects[row["projection"]["object_entity_id"]] = row["object_label"]
+        two_hop = []
+        for subject_id in sorted(second_hop_subjects)[:4]:
+            for predicate_id in sorted(predicates):
+                rows, elapsed_ms = _timed(
+                    lambda subject_id=subject_id, predicate_id=predicate_id: engine.relation_one_hop_proposition_projections(
+                        subject_id,
+                        predicate_id,
+                        row_limit=4,
+                    )
+                )
+                if rows:
+                    two_hop.append(
+                        {
+                            "subject_entity_id": subject_id,
+                            "subject_label": second_hop_subjects[subject_id],
+                            "predicate_id": predicate_id,
+                            "elapsed_ms": elapsed_ms,
+                            "propositions": [
+                                {
+                                    "proposition_id": row["projection"]["proposition_id"],
+                                    "object_entity_id": row["projection"]["object_entity_id"],
+                                    "object_label": row["object_label"],
+                                    "object_type": row["object_type"].value,
+                                }
+                                for row in rows
+                            ],
+                        }
+                    )
+        core = EngramCore(engine, checkpoint_on_mutation=False)
+        resolutions = []
+        for index, prompt in enumerate(COMPOSITION_PROMPTS):
+            result, elapsed_ms = _timed(
+                lambda index=index, prompt=prompt: core.resolve_request(
+                    prompt,
+                    f"live-composition-{index}",
+                    user_id="Sarah",
+                    configured_resolvers=("structured_graph",),
+                )
+            )
+            structured = next(resolver for resolver in result["resolver_results"] if resolver["resolver"] == "structured_graph")
+            structured_payload = resolver_result_to_dict(structured)
+            resolutions.append(
+                {
+                    "prompt": prompt,
+                    "elapsed_ms": elapsed_ms,
+                    "outcome": result["outcome"].value,
+                    "responses": [candidate["response"] for candidate in result["response_candidates"]],
+                    "evidence_paths": [
+                        [step["proposition_id"] for step in record["path"] if isinstance(step, dict)]
+                        for record in result["evidence_package"]["records"]
+                    ],
+                    "structured_reason": structured["reason_code"],
+                    "structured_diagnostics": structured_payload["diagnostics"],
+                    "graph_rows": structured["consumption"]["graph_rows"],
+                }
+            )
+        return {
+            "schema_version": 1,
+            "config_path": config_path,
+            "entity_lookup": {
+                "elapsed_ms": entity_ms,
+                "matches": [
+                    {
+                        "canonical_id": row["canonical_id"],
+                        "primary_label": row["primary_label"],
+                        "entity_type": row["entity_type"].value,
+                    }
+                    for row in entities
+                ],
+            },
+            "predicate_lookups": predicate_rows,
+            "one_hop": one_hop,
+            "two_hop": two_hop,
+            "core_resolutions": resolutions,
+            "timing_gate": False,
+        }
+    finally:
+        disconnect = getattr(engine.graph_client, "disconnect", None)
+        if callable(disconnect):
+            disconnect()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.yml")
+    parser.add_argument("--output", type=Path)
+    arguments = parser.parse_args()
+    report = run(arguments.config)
+    if arguments.output:
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(report, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

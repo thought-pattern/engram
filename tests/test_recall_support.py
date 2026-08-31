@@ -2,10 +2,12 @@
 
 from engram.core import Engram
 
+from .support_fixtures import PROPOSITION_REFERENCE_A
+
 
 def test_learn_from_response_carries_template():
     engram = Engram()
-    support = {"support": [{"claim_id": "c1", "trust": 1.0}]}
+    support = {"support": [PROPOSITION_REFERENCE_A]}
     stmt_id = engram.learn_from_response("who acquired github", "Microsoft acquired GitHub.", template=support)
     stmt = engram.get_statement(stmt_id)
     assert stmt["template"] == support

@@ -66,7 +66,5 @@ def test_phrase_facts_joins_sentences():
 def test_degrades_without_spacy(monkeypatch):
     """A missing model falls back to a bare active frame, overrides still fire."""
     monkeypatch.setattr(phrasing, "get_nlp", lambda disable=(): ())
-    phrasing._frame_cache.clear()
     assert phrase_fact("Alice", "member_of", "UN") == "Alice member of UN."
     assert phrase_fact("Einstein", "date_of_birth", "1879") == "Einstein was born on 1879."
-    phrasing._frame_cache.clear()

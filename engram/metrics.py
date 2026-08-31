@@ -43,7 +43,8 @@ def get_session_count(engram) -> int:
 def get_overall_hit_rate(engram) -> float:
     """Overall hit rate percentage."""
     if engram.query_count == 0:
-        return 0.0
+        result = 0.0
+        return result
     rate = engram.hit_count / engram.query_count
     return rate
 
@@ -215,10 +216,8 @@ def get_coverage_report(engram) -> dict:
         keywords_with_hits = sum(1 for e in engram.keywords.values() if e["hit_count"] > 0)
         keywords_zero_hits = total_keywords - keywords_with_hits
 
-        # Get coverage gaps (high traffic, low hit rate)
         coverage_gaps = get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
 
-        # Get top performing keywords (high hit rate with significant traffic)
         top_performing: list[dict] = []
         for kw, entry in engram.keywords.items():
             hit_rate = keyword_entry_hit_rate(entry)
@@ -232,18 +231,15 @@ def get_coverage_report(engram) -> dict:
                     }
                 )
         top_performing.sort(key=lambda x: x["hit_rate"], reverse=True)
-        top_performing = top_performing[:10]  # Top 10
+        top_performing = top_performing[:10]
 
-        # Generate recommendations
         recommendations: list[str] = []
 
-        # Recommend adding categories for zero-hit keywords
         zero_hits = get_zero_hit_keywords(engram, min_queries=10)
         if zero_hits:
             top_zero = [kw for kw, _ in zero_hits[:5]]
             recommendations.append(f"Add categories for: {', '.join(top_zero)}")
 
-        # Recommend reviewing low-performing keywords
         for gap in coverage_gaps[:3]:
             if gap["hit_rate"] < 0.1:
                 recommendations.append(f"Review low-performing: {gap['keyword']} ({gap['hit_rate'] * 100:.1f}% hit rate)")
@@ -253,7 +249,7 @@ def get_coverage_report(engram) -> dict:
             "keywords_with_hits": keywords_with_hits,
             "keywords_zero_hits": keywords_zero_hits,
             "overall_hit_rate": round(get_overall_hit_rate(engram), 3),
-            "coverage_gaps": coverage_gaps[:10],  # Top 10 gaps
+            "coverage_gaps": coverage_gaps[:10],
             "top_performing": top_performing,
             "recommendations": recommendations,
         }
