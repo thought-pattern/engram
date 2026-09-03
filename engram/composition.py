@@ -1,6 +1,5 @@
 """Closed contracts and bounded execution for one- and two-hop graph composition."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -103,7 +102,7 @@ def composition_step(
 
 
 def validate_composition_step(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != COMPOSITION_STEP_FIELDS:
+    if not isinstance(value, dict) or set(value) != COMPOSITION_STEP_FIELDS:
         raise InvalidRequestError("CompositionStep has invalid fields")
     result = composition_step(
         value["branch"],
@@ -120,15 +119,15 @@ def validate_composition_step(value: object) -> dict:
     return result
 
 
-def composition_step_to_dict(value: object) -> dict[str, object]:
+def composition_step_to_dict(value: object) -> dict:
     step = validate_composition_step(value)
-    result: dict[str, object] = dict(step)
+    result: dict = dict(step)
     result["expected_object_type"] = step["expected_object_type"].value
     return result
 
 
 def composition_step_from_dict(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != COMPOSITION_STEP_FIELDS:
+    if not isinstance(value, dict) or set(value) != COMPOSITION_STEP_FIELDS:
         raise InvalidRequestError("CompositionStep has invalid fields")
     try:
         expected = ExpectedObjectType(internal_text(value["expected_object_type"], "composition step expected_object_type", 16))
@@ -278,7 +277,7 @@ def composition_plan(
 
 
 def validate_composition_plan(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != COMPOSITION_PLAN_FIELDS:
+    if not isinstance(value, dict) or set(value) != COMPOSITION_PLAN_FIELDS:
         raise InvalidRequestError("CompositionPlan has invalid fields")
     result = composition_plan(
         value["operator"],
@@ -298,7 +297,7 @@ def validate_composition_plan(value: object) -> dict:
     return result
 
 
-def composition_plan_to_dict(value: object) -> dict[str, object]:
+def composition_plan_to_dict(value: object) -> dict:
     plan = validate_composition_plan(value)
     result = {
         "schema_version": plan["schema_version"],
@@ -319,7 +318,7 @@ def composition_plan_to_dict(value: object) -> dict[str, object]:
 
 
 def composition_plan_from_dict(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != COMPOSITION_PLAN_FIELDS:
+    if not isinstance(value, dict) or set(value) != COMPOSITION_PLAN_FIELDS:
         raise InvalidRequestError("CompositionPlan has invalid fields")
     try:
         operator = GraphCompositionOperator(internal_text(value["operator"], "composition plan operator", 16))
@@ -586,14 +585,6 @@ def typed_order_value(label: str, object_type: ExpectedObjectType) -> float:
     raise InvalidRequestError(CompositionReason.TYPE_UNAVAILABLE.value)
 
 
-
-
-
-
-
-
-
-
 def path_key(path: tuple) -> tuple[str, ...]:
     result = tuple(entry["proposition"]["projection"]["proposition_id"] for entry in path)
     return result
@@ -614,7 +605,13 @@ def execute_composition_plan(
 ) -> dict:
     """Execute fixed one-hop capabilities sequentially under declared non-time bounds."""
     current = validate_composition_plan(plan)
-    if not all(callable(value) for value in (query, evaluate, revalidate, cooperative_check)):
+    if not callable(query):
+        raise InvalidRequestError("composition query dependency must be callable")
+    if not callable(evaluate):
+        raise InvalidRequestError("composition eligibility dependency must be callable")
+    if not callable(revalidate):
+        raise InvalidRequestError("composition revalidation dependency must be callable")
+    if not callable(cooperative_check):
         raise InvalidRequestError("composition execution dependencies must be callable")
     graph_rows = 0
     truncated = False
@@ -768,16 +765,17 @@ def execute_composition_plan(
         raw_terminal_types,
         strict=True,
     ):
-        prior = terminal_values.get(entity_id, ())
         value = (label, object_type)
-        if prior and prior != value:
+        if entity_id not in terminal_values:
+            terminal_values[entity_id] = value
+            continue
+        prior = terminal_values.get(entity_id, ("", ExpectedObjectType.UNKNOWN))
+        if prior != value:
             terminal_consistent = False
             reasons.add(CompositionReason.CARDINALITY_CONFLICT)
-        else:
-            terminal_values[entity_id] = value
     terminal_ids = tuple(sorted(terminal_values))
-    terminal_labels = tuple(terminal_values.get(entity_id, ())[0] for entity_id in terminal_ids)
-    terminal_types = tuple(terminal_values.get(entity_id, ())[1] for entity_id in terminal_ids)
+    terminal_labels = tuple(terminal_values.get(entity_id, ("", ExpectedObjectType.UNKNOWN))[0] for entity_id in terminal_ids)
+    terminal_types = tuple(terminal_values.get(entity_id, ("", ExpectedObjectType.UNKNOWN))[1] for entity_id in terminal_ids)
     truth_value = False
     truth_available = False
     aggregate_value = ""
@@ -880,7 +878,7 @@ def execute_composition_plan(
 def phrase_composition_result(plan: object, execution: object) -> str:
     """Phrase only a direct-safe composition result from closed plan fields."""
     current = validate_composition_plan(plan)
-    if not isinstance(execution, Mapping) or not execution.get("direct_result"):
+    if not isinstance(execution, dict) or not execution.get("direct_result"):
         raise InvalidRequestError("composition result is not direct-result eligible")
     operator = current["operator"]
     chain = " → ".join(step["predicate_label"] for step in current["steps"] if step["branch"] == 0)

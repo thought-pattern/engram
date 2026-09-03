@@ -188,7 +188,7 @@ class ConversationRuntime:
             sessions.update_session_context(engram, self.session_id, initial_bot_text)
         self.metrics_baseline = metrics.get_metrics(engram)
 
-    def send(self, text: str) -> dict:
+    def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be one non-empty string")
@@ -231,8 +231,7 @@ class ConversationRuntime:
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
-                and statement.get("id", "") not in dynamic_ids_before
+                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC and statement.get("id", "") not in dynamic_ids_before
             ]
             event = {
                 "turn": turn_number,

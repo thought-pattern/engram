@@ -13,6 +13,8 @@ from sys import argv as sys_argv, executable as sys_executable, path as sys_path
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
+from sentence_transformers import SentenceTransformer
+
 REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
@@ -62,6 +64,13 @@ class SyntheticVectorGraph:
         return result
 
 
+class SyntheticEmbeddingModel(SentenceTransformer):
+    """Truthful benchmark marker for a locally replaced encoder operation."""
+
+    def __init__(self) -> None:
+        pass
+
+
 def benchmark_config(capacity: int) -> dict:
     result = engram_config(
         capacity=max(capacity + 10, 100),
@@ -83,6 +92,8 @@ def internal_percentile(samples: list[float], fraction: float) -> float:
 
 
 def internal_measure(operation: object, iterations: int) -> dict:
+    if not callable(operation):
+        raise ValueError("benchmark operation must be callable")
     samples = []
     for _ in range(iterations):
         started = time_perf_counter_ns()
@@ -99,7 +110,9 @@ def internal_measure(operation: object, iterations: int) -> dict:
     return result
 
 
-def memory_build[BuildValue](builder: object) -> tuple[BuildValue, dict]:
+def memory_build(builder):
+    if not callable(builder):
+        raise ValueError("benchmark builder must be callable")
     gc_collect()
     tracemalloc_start()
     value = builder()
@@ -165,7 +178,11 @@ def prepare_artifact_benchmark(corpus_size: int) -> tuple[EngramCore, str, dict]
         return result
 
     built, memory = memory_build(build)
+    if not isinstance(built, tuple) or len(built) != 2:
+        raise RuntimeError("artifact benchmark builder returned an invalid result")
     core, target_id = built
+    if not isinstance(core, EngramCore) or not isinstance(target_id, str):
+        raise RuntimeError("artifact benchmark builder returned invalid values")
     result = core, target_id, memory
     return result
 
@@ -275,12 +292,14 @@ def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[Eng
         graph_settings["vector_enabled"] = True
         benchmark_engram = engram
         benchmark_engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
-        benchmark_engram.graph_embedding_model = object()
+        benchmark_engram.graph_embedding_model = SyntheticEmbeddingModel()
         benchmark_engram.encode_graph_query = lambda text: [0.0] * 384
         result = EngramCore(engram)
         return result
 
     core, memory = memory_build(build)
+    if not isinstance(core, EngramCore):
+        raise RuntimeError("vector benchmark builder returned an invalid core")
     result = core, memory
     return result
 
@@ -345,8 +364,10 @@ def package_versions() -> dict[str, str]:
     return versions
 
 
-def reported[Result](label: str, operation: object) -> Result:
+def reported(label: str, operation: object):
     """Report long setup stages without including them in latency samples."""
+    if not callable(operation):
+        raise ValueError("reported benchmark operation must be callable")
     print(f"[runtime] starting {label}", file=sys_stderr, flush=True)
     started = time_perf_counter()
     result = operation()
@@ -400,17 +421,12 @@ def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict
     return result
 
 
-def internal_parser() -> argparse_ArgumentParser:
+def main(argv: tuple[str, ...] = ()) -> int:
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--sizes", type=int, nargs="+", default=[100, 1000, 5000])
     parser.add_argument("--fanouts", type=int, nargs="+", default=[1, 10, 100])
     parser.add_argument("--iterations", type=int, default=30)
-    return parser
-
-
-def main(argv: tuple[str] = ()) -> int:
-    parser = internal_parser()
     args = parser.parse_args(argv)
     if args.iterations < 5:
         parser.error("iterations must be at least 5")
@@ -430,4 +446,4 @@ def main(argv: tuple[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys_argv[1:]))
+    raise SystemExit(main(tuple(sys_argv[1:])))

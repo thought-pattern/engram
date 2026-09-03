@@ -5,7 +5,6 @@ the lifecycle vocabulary and policies without depending on storage tier,
 residency, indexes, or adapters.
 """
 
-from collections.abc import Mapping
 from datetime import datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -59,8 +58,8 @@ from engram.identity import (
 from engram.support import validate_support_references
 
 
-def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     actual = set(value)
     if actual != keys:
@@ -70,8 +69,8 @@ def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict[str,
     return value
 
 
-def require_mapping(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def require_mapping(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     return value
 
@@ -172,7 +171,7 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
         if not math_isfinite(value):
             raise InvalidRequestError(f"{name} must not contain a non-finite number")
         return value
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         validated_items = []
         for key, item in value.items():
             validated_key = require_text(key, f"{name} key", MAX_METADATA_KEY_BYTES, allow_empty=False)
@@ -188,11 +187,11 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
 
-def freeze_metadata(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def freeze_metadata(value: object) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError("artifact metadata must be an object")
     frozen = freeze_json_value(value, "artifact metadata", 0, [0])
-    if not isinstance(frozen, Mapping):
+    if not isinstance(frozen, dict):
         raise InvalidRequestError("artifact metadata must be an object")
     encoded = json_dumps(thaw_json_value(frozen), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     if len(encoded.encode("utf-8")) > MAX_METADATA_BYTES:
@@ -201,7 +200,7 @@ def freeze_metadata(value: object) -> dict[str, object]:
 
 
 def thaw_json_value(value: object) -> object:
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = {key: thaw_json_value(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
@@ -210,7 +209,7 @@ def thaw_json_value(value: object) -> object:
     return value
 
 
-def json_text(value: dict[str, object]) -> str:
+def json_text(value: dict) -> str:
     result = json_dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return result
 
@@ -264,7 +263,7 @@ def artifact_provenance(
     return result
 
 
-def artifact_provenance_to_dict(value: object) -> dict[str, object]:
+def artifact_provenance_to_dict(value: object) -> dict:
     """Serialize bounded accepted-response provenance."""
 
     provenance = validate_artifact_provenance(value)
@@ -322,7 +321,7 @@ def artifact_statistics(
     return result
 
 
-def artifact_statistics_to_dict(value: object) -> dict[str, object]:
+def artifact_statistics_to_dict(value: object) -> dict:
     """Serialize authoritative response statistics."""
 
     statistics = validate_artifact_statistics(value)
@@ -432,13 +431,13 @@ def cached_response_artifact(
     valid_until_available: bool,
     superseded_by: str,
     provenance: dict,
-    statistics: dict[str, object] = EMPTY_MAPPING,
-    metadata: dict[str, object] = EMPTY_MAPPING,
+    statistics: dict = EMPTY_MAPPING,
+    metadata: dict = EMPTY_MAPPING,
     schema_version: int = ARTIFACT_SCHEMA_VERSION,
 ) -> dict:
     """Construct one authoritative accepted-response artifact."""
 
-    if not isinstance(statistics, Mapping):
+    if not isinstance(statistics, dict):
         raise InvalidRequestError("artifact statistics must be ArtifactStatistics")
     selected_statistics = validate_artifact_statistics(statistics) if statistics else artifact_statistics()
     raw_artifact = {
@@ -465,11 +464,11 @@ def cached_response_artifact(
     return result
 
 
-def cached_response_artifact_to_dict(value: object) -> dict[str, object]:
+def cached_response_artifact_to_dict(value: object) -> dict:
     """Serialize one authoritative accepted-response artifact."""
 
     artifact = validate_cached_response_artifact(value)
-    result: dict[str, object] = {
+    result: dict = {
         "schema_version": artifact["schema_version"],
         "statement_id": artifact["statement_id"],
         "generation": artifact["generation"],
@@ -546,7 +545,7 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     return result
 
 
-def cached_response_artifact_from_json(value: str) -> dict:
+def cached_response_artifact_from_json(value: object) -> dict:
     """Decode one accepted-response artifact from canonical JSON."""
 
     if not isinstance(value, str):
@@ -555,7 +554,7 @@ def cached_response_artifact_from_json(value: str) -> dict:
         data = json_loads(value)
     except json_JSONDecodeError as error:
         raise InvalidRequestError("CachedResponseArtifact JSON is malformed") from error
-    if not isinstance(data, Mapping):
+    if not isinstance(data, dict):
         raise InvalidRequestError("CachedResponseArtifact JSON must contain an object")
     result = cached_response_artifact_from_dict(data)
     return result
@@ -604,11 +603,11 @@ def validate_lifecycle_base_decision(value: object) -> dict:
     return result
 
 
-def lifecycle_base_decision_to_dict(value: object) -> dict[str, object]:
+def lifecycle_base_decision_to_dict(value: object) -> dict:
     """Serialize one validated lifecycle-only eligibility decision."""
 
     decision = validate_lifecycle_base_decision(value)
-    result: dict[str, object] = {
+    result: dict = {
         "lifecycle": decision["lifecycle"].value,
         "direct_answer_eligible": decision["direct_answer_eligible"],
         "reason": decision["reason"].value,
@@ -656,7 +655,7 @@ def validate_lifecycle_transition_decision(value: object) -> dict:
     return result
 
 
-def lifecycle_transition_decision_to_dict(value: object) -> dict[str, object]:
+def lifecycle_transition_decision_to_dict(value: object) -> dict:
     """Serialize one validated lifecycle transition decision."""
 
     decision = validate_lifecycle_transition_decision(value)
@@ -683,7 +682,7 @@ def validate_historical_key_reuse_decision(value: object) -> dict:
     return result
 
 
-def historical_key_reuse_decision_to_dict(value: object) -> dict[str, object]:
+def historical_key_reuse_decision_to_dict(value: object) -> dict:
     """Serialize one validated historical retrieval-key reuse decision."""
 
     decision = validate_historical_key_reuse_decision(value)
@@ -691,7 +690,7 @@ def historical_key_reuse_decision_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def lifecycle_base_eligibility(lifecycle: LifecycleState) -> dict:
+def lifecycle_base_eligibility(lifecycle: object) -> dict:
     """Evaluate lifecycle alone; temporal checks are applied later."""
 
     state = require_lifecycle(lifecycle, "lifecycle")
@@ -712,9 +711,9 @@ def lifecycle_base_eligibility(lifecycle: LifecycleState) -> dict:
 
 
 def lifecycle_transition_decision(
-    current: LifecycleState,
-    target: LifecycleState,
-    operation: LifecycleOperation,
+    current: object,
+    target: object,
+    operation: object,
 ) -> dict:
     """Return the version 1 legal-transition decision without mutating state."""
 
@@ -751,9 +750,9 @@ def require_lifecycle_transition(
 
 def historical_key_reuse_decision(
     *,
-    explicit_replacement: bool,
-    expected_statement_id: str,
-    expected_generation: int,
+    explicit_replacement: object,
+    expected_statement_id: object,
+    expected_generation: object,
 ) -> dict:
     """Apply the v1 policy for a retrieval key already present in history.
 

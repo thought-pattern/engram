@@ -1,7 +1,6 @@
 """Dependency-free lexical term selection shared by retrieval pipelines."""
 
 
-
 def select_lexical_terms(
     tokens: list[str],
     stopwords: set[str],

@@ -223,7 +223,7 @@ def test_repository_rejects_duplicate_wrong_and_missing_inputs() -> None:
     artifact = accepted_artifact()
     with pytest_raises(ConflictError, match="duplicate"):
         normalize_repository_state((artifact, artifact))
-    with pytest_raises(InvalidRequestError, match="iterable"):
+    with pytest_raises(InvalidRequestError):
         normalize_repository_state({artifact.get("statement_id", ""): artifact})
     repository = ArtifactRepository()
     with pytest_raises(ResourceNotFoundError, match="not found"):

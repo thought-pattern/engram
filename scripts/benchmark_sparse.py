@@ -2,7 +2,6 @@
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from collections import Counter, defaultdict
-from collections.abc import Mapping
 from json import dumps as json_dumps, loads as json_loads
 from math import log as math_log
 from pathlib import Path
@@ -36,7 +35,9 @@ def internal_percentile(values: list[float], fraction: float) -> float:
     return result
 
 
-def internal_measure(operation: object, samples: int) -> dict[str, object]:
+def internal_measure(operation: object, samples: int) -> dict:
+    if not callable(operation):
+        raise ValueError("benchmark operation must be callable")
     durations = []
     for _ in range(samples):
         started = time_perf_counter_ns()
@@ -53,7 +54,7 @@ def internal_measure(operation: object, samples: int) -> dict[str, object]:
     return result
 
 
-def internal_load(path: Path) -> dict[str, object]:
+def internal_load(path: Path) -> dict:
     decoded = json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(decoded, dict) or decoded.get("schema_version") != 1:
         raise ValueError("sparse benchmark corpus must be a schema-1 object")
@@ -64,7 +65,7 @@ def internal_load(path: Path) -> dict[str, object]:
     return decoded
 
 
-def internal_artifact(raw: dict[str, object], namespace: str) -> dict:
+def internal_artifact(raw: dict, namespace: str) -> dict:
     request = str(raw.get("request", ""))
     aliases_value = raw.get("aliases", [])
     if not isinstance(aliases_value, list):
@@ -185,7 +186,9 @@ def internal_relevance(
     name: str,
     search: object,
     queries: list[object],
-) -> dict[str, object]:
+) -> dict:
+    if not callable(search):
+        raise ValueError("sparse benchmark search must be callable")
     positive = 0
     top_one = 0
     top_five = 0
@@ -195,10 +198,12 @@ def internal_relevance(
     family: dict[str, Counter[str]] = defaultdict(Counter)
     cases = []
     for raw in queries:
-        if not isinstance(raw, Mapping):
+        if not isinstance(raw, dict):
             raise ValueError("sparse query cases must be objects")
         expected = str(raw["expected_statement_id"])
         ranking = search(str(raw["query"]), 5)
+        if not isinstance(ranking, list):
+            raise ValueError("sparse benchmark search must return a list")
         ids = [statement_id for statement_id, internal_score in ranking]
         rank = ids.index(expected) + 1 if expected in ids else 0
         group = str(raw["family"])
@@ -242,11 +247,13 @@ def internal_latency(
     search: object,
     queries: list[object],
     repeats: int,
-) -> dict[str, object]:
+) -> dict:
+    if not callable(search):
+        raise ValueError("sparse benchmark search must be callable")
     samples = []
     for _ in range(repeats):
         for raw in queries:
-            if not isinstance(raw, Mapping):
+            if not isinstance(raw, dict):
                 continue
             started = time_perf_counter_ns()
             search(str(raw["query"]), 5)
@@ -279,7 +286,7 @@ def scale_artifacts(count: int) -> tuple[dict, ...]:
     return result
 
 
-def scale_profile() -> dict[str, object]:
+def scale_profile() -> dict:
     artifacts = scale_artifacts(SCALE_DOCUMENTS)
     settings = sparse_config(enabled=True)
     selected_scope = scope_key(namespace="section12-scale")
@@ -311,7 +318,7 @@ def scale_profile() -> dict[str, object]:
     }
 
 
-def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_scale: bool = True) -> dict[str, object]:
+def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_scale: bool = True) -> dict:
     if repeats < 20:
         raise ValueError("sparse benchmark requires at least 20 relevance repeats")
     corpus = internal_load(corpus_path)
@@ -321,7 +328,7 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
     if not isinstance(documents, list) or not isinstance(queries, list) or not isinstance(gates, dict):
         raise ValueError("sparse benchmark corpus fields are malformed")
     namespace = str(corpus["namespace"])
-    artifacts = tuple(internal_artifact(raw, namespace) for raw in documents if isinstance(raw, Mapping))
+    artifacts = tuple(internal_artifact(raw, namespace) for raw in documents if isinstance(raw, dict))
 
     build_latencies = {}
     started = time_perf_counter_ns()

@@ -1,6 +1,5 @@
 """Versioned candidate normalization, fusion, eligibility, and ambiguity policy."""
 
-from collections.abc import Mapping
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -184,31 +183,31 @@ def policy_unit(value: object, name: str) -> float:
     return selected
 
 
-def json_text(value: dict[str, object]) -> str:
+def json_text(value: dict) -> str:
     result = json_dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return result
 
 
-def load_mapping(value: str, name: str) -> dict[str, object]:
+def load_mapping(value: str, name: str) -> dict:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     try:
         decoded = json_loads(value)
     except json_JSONDecodeError as error:
         raise InvalidRequestError(f"{name} must be valid JSON") from error
-    if not isinstance(decoded, Mapping):
+    if not isinstance(decoded, dict):
         raise InvalidRequestError(f"{name} must contain an object")
     return decoded
 
 
-def exact_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != fields or not all(isinstance(key, str) for key in value):
+def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
+    if not isinstance(value, dict) or set(value) != fields or not all(isinstance(key, str) for key in value):
         raise InvalidRequestError(f"{name} has invalid fields")
     return value
 
 
 def enum_feature_mapping(value: object, name: str, *, complete: bool) -> dict[FusionFeature, float]:
-    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise InvalidRequestError(f"{name} must contain an object")
     expected = {feature.value for feature in FusionFeature}
     if complete and set(value) != expected:
@@ -233,7 +232,7 @@ def feature_tuple(value: object, name: str) -> tuple[FusionFeature, ...]:
 
 
 def weighted_feature_mapping(value: object, name: str) -> dict[FusionFeature, float]:
-    if not isinstance(value, Mapping) or set(value) != {feature.value for feature in FusionFeature}:
+    if not isinstance(value, dict) or set(value) != {feature.value for feature in FusionFeature}:
         raise InvalidRequestError(f"{name} must contain every canonical feature")
     weighted: dict[FusionFeature, float] = {}
     for feature in FusionFeature:
@@ -248,7 +247,7 @@ def contains_none(value: object) -> bool:
     if value is None:
         result = True
         return result
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = any(contains_none(key) or contains_none(item) for key, item in value.items())
         return result
     if isinstance(value, (list, tuple)):
@@ -292,7 +291,7 @@ def normalized_feature_set(
     version = internal_integer(schema_version, "NormalizedFeatureSet schema_version")
     if version != NORMALIZED_FEATURE_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported normalized feature schema_version: {version}")
-    if not isinstance(values, Mapping) or set(values) != set(FusionFeature):
+    if not isinstance(values, dict) or set(values) != set(FusionFeature):
         raise InvalidRequestError("normalized features must contain every canonical feature")
     normalized = {feature: bounded_unit(values[feature]) for feature in FusionFeature}
     if not isinstance(available, tuple) or not all(isinstance(value, FusionFeature) for value in available):
@@ -333,13 +332,13 @@ def trusted_normalized_feature_set(
     return result
 
 
-def normalized_feature_set_to_dict(value: object) -> dict[str, object]:
+def normalized_feature_set_to_dict(value: object) -> dict:
     current = validate_normalized_feature_set(value)
     result = trusted_normalized_feature_set_to_dict(current)
     return result
 
 
-def trusted_normalized_feature_set_to_dict(current: dict) -> dict[str, object]:
+def trusted_normalized_feature_set_to_dict(current: dict) -> dict:
     """Serialize an engine-owned normalized feature set."""
     result = {
         "schema_version": current.get("schema_version", 0),
@@ -391,7 +390,7 @@ def fusion_policy(
     formula = internal_integer(formula_version, "FusionPolicy formula_version")
     if formula != FUSION_FORMULA_VERSION:
         raise InvalidRequestError("unsupported fusion formula_version")
-    if not isinstance(weights, Mapping) or set(weights) != set(FusionFeature):
+    if not isinstance(weights, dict) or set(weights) != set(FusionFeature):
         raise InvalidRequestError("fusion weights must contain every canonical feature")
     normalized_weights = {}
     for feature in FusionFeature:
@@ -451,15 +450,15 @@ def validate_fusion_policy(value: object) -> dict:
 
 def fusion_policy_with_changes(value: object, changes: object) -> dict:
     current = validate_fusion_policy(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(FUSION_POLICY_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(FUSION_POLICY_FIELDS):
         raise InvalidRequestError("fusion policy changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
+    updated: dict = dict(current)
     updated.update(changes)
     result = validate_fusion_policy(updated)
     return result
 
 
-def fusion_policy_to_dict(value: object) -> dict[str, object]:
+def fusion_policy_to_dict(value: object) -> dict:
     current = validate_fusion_policy(value)
     result = {
         "schema_version": current["schema_version"],
@@ -485,7 +484,7 @@ def fusion_policy_to_json(value: object) -> str:
 def fusion_policy_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FusionPolicy", FUSION_POLICY_FIELDS)
     raw_weights = data["weights"]
-    if not isinstance(raw_weights, Mapping) or set(raw_weights) != {feature.value for feature in FusionFeature}:
+    if not isinstance(raw_weights, dict) or set(raw_weights) != {feature.value for feature in FusionFeature}:
         raise InvalidRequestError("FusionPolicy weights have invalid fields")
     weights = {
         feature: internal_number(raw_weights[feature.value], f"FusionPolicy {feature.value} weight") for feature in FusionFeature
@@ -542,7 +541,7 @@ def candidate_eligibility(
     normalized_reasons = tuple(validated_reasons)
     if tuple(dict.fromkeys(normalized_reasons)) != normalized_reasons:
         raise InvalidRequestError("candidate eligibility reasons must be unique and ordered")
-    if not isinstance(feature_values, Mapping):
+    if not isinstance(feature_values, dict):
         raise InvalidRequestError("eligibility feature values must be an object")
     values = {}
     for feature, value in feature_values.items():
@@ -609,13 +608,13 @@ def trusted_candidate_eligibility(
     return result
 
 
-def candidate_eligibility_to_dict(value: object) -> dict[str, object]:
+def candidate_eligibility_to_dict(value: object) -> dict:
     current = validate_candidate_eligibility(value)
     result = trusted_candidate_eligibility_to_dict(current)
     return result
 
 
-def trusted_candidate_eligibility_to_dict(current: dict) -> dict[str, object]:
+def trusted_candidate_eligibility_to_dict(current: dict) -> dict:
     """Serialize engine-owned candidate eligibility."""
     result = {
         "schema_version": current.get("schema_version", 0),
@@ -683,7 +682,7 @@ def abstaining_candidate_authority(candidate: dict, frame: dict) -> dict:
     return result
 
 
-def candidate_visibility_allowed(metadata: dict[str, object], scope: dict) -> bool:
+def candidate_visibility_allowed(metadata: dict, scope: dict) -> bool:
     """Return whether candidate metadata permits disclosure in the exact scope."""
     visibility = metadata.get("visibility", "")
     if visibility in ("", "public", "scope"):
@@ -1170,13 +1169,13 @@ def trusted_fusion_contribution(
     return result
 
 
-def fusion_contribution_to_dict(value: object) -> dict[str, object]:
+def fusion_contribution_to_dict(value: object) -> dict:
     current = validate_fusion_contribution(value)
     result = trusted_fusion_contribution_to_dict(current)
     return result
 
 
-def trusted_fusion_contribution_to_dict(current: dict) -> dict[str, object]:
+def trusted_fusion_contribution_to_dict(current: dict) -> dict:
     """Serialize one engine-owned contribution."""
     result = {
         "schema_version": current.get("schema_version", 0),
@@ -1187,13 +1186,13 @@ def trusted_fusion_contribution_to_dict(current: dict) -> dict[str, object]:
     return result
 
 
-def fusion_contribution_to_report_dict(value: object) -> dict[str, object]:
+def fusion_contribution_to_report_dict(value: object) -> dict:
     current = validate_fusion_contribution(value)
     result = trusted_fusion_contribution_to_report_dict(current)
     return result
 
 
-def trusted_fusion_contribution_to_report_dict(current: dict) -> dict[str, object]:
+def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     """Render an engine-owned contribution for bounded diagnostics."""
     result = {
         "schema_version": current.get("schema_version", 0),
@@ -1230,9 +1229,9 @@ def fusion_contribution_from_dict(value: object) -> dict:
     candidate_value = data["candidate"]
     normalized_value = data["normalized"]
     eligibility_value = data["eligibility"]
-    if not isinstance(candidate_value, Mapping):
+    if not isinstance(candidate_value, dict):
         raise InvalidRequestError("FusionContribution candidate must contain an object")
-    if not isinstance(normalized_value, Mapping) or not isinstance(eligibility_value, Mapping):
+    if not isinstance(normalized_value, dict) or not isinstance(eligibility_value, dict):
         raise InvalidRequestError("FusionContribution nested contracts must contain objects")
     result = fusion_contribution(
         candidate_from_dict(candidate_value),
@@ -1283,7 +1282,7 @@ def fused_candidate(
         validated_eligibility = validate_candidate_eligibility(eligibility)
     except InvalidRequestError as error:
         raise InvalidRequestError("fused candidate eligibility must be a CandidateEligibility") from error
-    if not isinstance(score_contributions, Mapping) or set(score_contributions) != set(FusionFeature):
+    if not isinstance(score_contributions, dict) or set(score_contributions) != set(FusionFeature):
         raise InvalidRequestError("score contributions must contain every canonical feature")
     if any(
         isinstance(value, bool) or not isinstance(value, (int, float)) or not math_isfinite(float(value)) or value < 0
@@ -1340,9 +1339,9 @@ def trusted_fused_candidate(
 
 def fused_candidate_with_changes(value: object, changes: object) -> dict:
     current = validate_fused_candidate(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(FUSED_CANDIDATE_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(FUSED_CANDIDATE_FIELDS):
         raise InvalidRequestError("fused candidate changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
+    updated: dict = dict(current)
     updated.update(changes)
     result = validate_fused_candidate(updated)
     return result
@@ -1366,13 +1365,13 @@ def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...
     return sources
 
 
-def fused_candidate_to_dict(value: object) -> dict[str, object]:
+def fused_candidate_to_dict(value: object) -> dict:
     current = validate_fused_candidate(value)
     result = trusted_fused_candidate_to_dict(current)
     return result
 
 
-def trusted_fused_candidate_to_dict(current: dict) -> dict[str, object]:
+def trusted_fused_candidate_to_dict(current: dict) -> dict:
     """Serialize one engine-owned fused candidate."""
     result = {
         "schema_version": current.get("schema_version", 0),
@@ -1386,13 +1385,13 @@ def trusted_fused_candidate_to_dict(current: dict) -> dict[str, object]:
     return result
 
 
-def fused_candidate_to_report_dict(value: object) -> dict[str, object]:
+def fused_candidate_to_report_dict(value: object) -> dict:
     current = validate_fused_candidate(value)
     result = trusted_fused_candidate_to_report_dict(current)
     return result
 
 
-def trusted_fused_candidate_to_report_dict(current: dict) -> dict[str, object]:
+def trusted_fused_candidate_to_report_dict(current: dict) -> dict:
     """Render an engine-owned fused candidate for bounded diagnostics."""
     visible = current.get("contributions", ())[:MAX_FUSION_REPORT_CONTRIBUTIONS]
     sources = trusted_fused_candidate_sources(current)
@@ -1434,11 +1433,11 @@ def fused_candidate_from_dict(value: object) -> dict:
     normalized_value = data["normalized"]
     eligibility_value = data["eligibility"]
     contribution_values = data["contributions"]
-    if not isinstance(candidate_value, Mapping):
+    if not isinstance(candidate_value, dict):
         raise InvalidRequestError("FusedCandidate candidate must contain an object")
-    if not isinstance(normalized_value, Mapping) or not isinstance(eligibility_value, Mapping):
+    if not isinstance(normalized_value, dict) or not isinstance(eligibility_value, dict):
         raise InvalidRequestError("FusedCandidate nested contracts must contain objects")
-    if not isinstance(contribution_values, list) or not all(isinstance(item, Mapping) for item in contribution_values):
+    if not isinstance(contribution_values, list) or not all(isinstance(item, dict) for item in contribution_values):
         raise InvalidRequestError("FusedCandidate contributions must contain a list of objects")
     result = fused_candidate(
         candidate=candidate_from_dict(candidate_value),
@@ -1477,7 +1476,7 @@ def fusion_decision(
         raise InvalidRequestError(f"unsupported fusion decision schema_version: {version}")
     if not isinstance(outcome, ResolutionOutcome):
         raise InvalidRequestError("fusion decision outcome must be a ResolutionOutcome")
-    if not isinstance(selected_candidate, Mapping):
+    if not isinstance(selected_candidate, dict):
         raise InvalidRequestError("fusion selected_candidate must be a Candidate")
     try:
         validated_selected_candidate = empty_candidate() if not selected_candidate else validate_candidate(selected_candidate)
@@ -1510,7 +1509,7 @@ def fusion_decision(
         tuple(FusionPolicyReason(value) for value in reason_codes)
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("fusion decision contains an unsupported reason code") from error
-    if not isinstance(report, Mapping) or contains_none(report):
+    if not isinstance(report, dict) or contains_none(report):
         raise InvalidRequestError("fusion report must be a concrete no-null object")
     try:
         encoded_report = json_text(dict(report))
@@ -1565,7 +1564,7 @@ def trusted_fusion_decision(
     confidence: float,
     confidence_available: bool,
     reason_codes: tuple[str, ...],
-    report: dict[str, object],
+    report: dict,
     working_memory_bytes: int,
 ) -> dict:
     """Build a decision from values whose invariants the engine has established."""
@@ -1605,7 +1604,7 @@ def validate_fusion_decision(value: object) -> dict:
     return result
 
 
-def fusion_decision_to_dict(value: object) -> dict[str, object]:
+def fusion_decision_to_dict(value: object) -> dict:
     current = validate_fusion_decision(value)
     selected = candidate_to_dict(current["selected_candidate"]) if current["selected_candidate_available"] else {}
     report = json_loads(json_text(dict(current["report"])))
@@ -1647,11 +1646,11 @@ def fusion_decision_from_dict(value: object) -> dict:
     evidence_values = data["evidence"]
     reason_values = data["reason_codes"]
     report_value = data["report"]
-    if not isinstance(selected_value, Mapping) or not isinstance(report_value, Mapping):
+    if not isinstance(selected_value, dict) or not isinstance(report_value, dict):
         raise InvalidRequestError("FusionDecision selected_candidate and report must contain objects")
-    if not isinstance(response_values, list) or not all(isinstance(item, Mapping) for item in response_values):
+    if not isinstance(response_values, list) or not all(isinstance(item, dict) for item in response_values):
         raise InvalidRequestError("FusionDecision response_candidates must contain objects")
-    if not isinstance(evidence_values, list) or not all(isinstance(item, Mapping) for item in evidence_values):
+    if not isinstance(evidence_values, list) or not all(isinstance(item, dict) for item in evidence_values):
         raise InvalidRequestError("FusionDecision evidence must contain objects")
     if not isinstance(reason_values, list) or not all(isinstance(item, str) for item in reason_values):
         raise InvalidRequestError("FusionDecision reason_codes must contain strings")
@@ -1884,7 +1883,7 @@ class CandidateFusionEngine:
             answer_eligible = False
             reasons.append(FusionPolicyReason.SUPPORT_INCOMPLETE)
         structural = candidate_eligibility(True, True, answer_eligible, tuple(reasons))
-        authority = self.internal_authority(candidate, frame)
+        authority = validate_candidate_eligibility(self.internal_authority(candidate, frame))
         result = merge_validated_candidate_eligibility(structural, authority)
         return result
 
@@ -2174,7 +2173,7 @@ class CandidateFusionEngine:
                 )
                 return result
         fused = tuple(fused_values)
-        reranker_report: dict[str, object] = {
+        reranker_report: dict = {
             "applied": False,
             "reason": "not_configured",
             "model_version": "",
@@ -2218,14 +2217,24 @@ class CandidateFusionEngine:
                     "scores": [],
                 }
             if reranker_report.get("applied", False):
-                reranked_scores = {value["statement_id"]: value["score"] for value in reranker_report.get("scores", [])}
+                score_values = reranker_report.get("scores", [])
+                if not isinstance(score_values, list):
+                    raise InvalidRequestError("reranker scores must be a list")
+                reranked_scores: dict[str, float] = {}
+                for value in score_values:
+                    if not isinstance(value, dict):
+                        raise InvalidRequestError("reranker scores must contain mappings")
+                    statement_id = value.get("statement_id", "")
+                    if not isinstance(statement_id, str) or not statement_id:
+                        raise InvalidRequestError("reranker score statement_id must be a non-empty string")
+                    reranked_scores[statement_id] = bounded_unit(value.get("score", 0.0))
                 updated_fused = []
                 for item in fused:
                     statement_id = item["candidate"]["statement_id"]
                     if statement_id not in reranked_scores:
                         updated_fused.append(item)
                         continue
-                    rerank_score = reranked_scores[statement_id]
+                    rerank_score = reranked_scores.get(statement_id, 0.0)
                     updated_candidate = trusted_candidate_with_changes(
                         item["candidate"],
                         {

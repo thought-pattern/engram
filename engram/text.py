@@ -645,6 +645,8 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
         ensure_wordnet()
         wordnet_reader = wordnet
         for syn in wordnet_reader.synsets(word):
+            if syn is None:
+                continue
             for lemma in syn.lemmas():
                 name = lemma.name().lower().replace("_", " ")
                 if name != word.lower():

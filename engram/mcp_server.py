@@ -7,7 +7,7 @@ from mcp.server.mcpserver import MCPServer
 from engram.config import load_config
 from engram.constants import EMPTY_METADATA, VERSION
 from engram.errors import ConflictError, LifecycleError
-from engram.service import EngramCore, normalize_service_user_id, open_engram_core
+from engram.service import EngramCore, normalize_service_user_id
 
 
 class MCPConversationService:
@@ -43,7 +43,7 @@ class MCPConversationService:
 
             config = load_config(config_path) if config_path else {}
             conversation_user_id = normalize_service_user_id(user_id)
-            core = open_engram_core(config=config)
+            core = EngramCore(config=config)
             try:
                 started = core.start_conversation(
                     user_id=conversation_user_id,
@@ -303,6 +303,8 @@ class EngramMCPServer(MCPServer):
             request_id=request_id,
         )
         return result
+
+
 def main() -> None:
     """Run the MCP adapter over the host-owned stdio transport."""
     EngramMCPServer().run(transport="stdio")

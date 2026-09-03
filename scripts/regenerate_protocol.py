@@ -5,15 +5,34 @@ from pathlib import Path
 from subprocess import CalledProcessError, run as subprocess_run
 from sys import executable as sys_executable, stderr
 
+from google.protobuf.descriptor_pb2 import FieldDescriptorProto, FileDescriptorProto
+
 REPOSITORY = Path(__file__).resolve().parent.parent
 PROTO = REPOSITORY / "engram" / "engram.proto"
 PROTOBUF_SOURCE = REPOSITORY / "engram" / "engram_pb2.py"
 GRPC_SOURCE = REPOSITORY / "engram" / "engram_pb2_grpc.py"
-STALE_STUB = REPOSITORY / "engram" / "engram_pb2.pyi"
+PROTOBUF_INTERFACE = REPOSITORY / "engram" / "engram_pb2.pyi"
 DESCRIPTOR_CHUNK_BYTES = 48
+SCALAR_INTERFACE_TYPES = {
+    FieldDescriptorProto.TYPE_BOOL: "bool",
+    FieldDescriptorProto.TYPE_BYTES: "bytes",
+    FieldDescriptorProto.TYPE_DOUBLE: "float",
+    FieldDescriptorProto.TYPE_FIXED32: "int",
+    FieldDescriptorProto.TYPE_FIXED64: "int",
+    FieldDescriptorProto.TYPE_FLOAT: "float",
+    FieldDescriptorProto.TYPE_INT32: "int",
+    FieldDescriptorProto.TYPE_INT64: "int",
+    FieldDescriptorProto.TYPE_SFIXED32: "int",
+    FieldDescriptorProto.TYPE_SFIXED64: "int",
+    FieldDescriptorProto.TYPE_SINT32: "int",
+    FieldDescriptorProto.TYPE_SINT64: "int",
+    FieldDescriptorProto.TYPE_STRING: "str",
+    FieldDescriptorProto.TYPE_UINT32: "int",
+    FieldDescriptorProto.TYPE_UINT64: "int",
+}
 
 
-def descriptor_argument(source: str) -> Constant:
+def descriptor_bytes(source: str) -> bytes:
     """Locate the serialized descriptor bytes in generated protobuf source."""
     tree = parse(source, filename=str(PROTOBUF_SOURCE))
     for node in walk(tree):
@@ -26,7 +45,7 @@ def descriptor_argument(source: str) -> Constant:
             break
         argument = node.value.args[0]
         if isinstance(argument, Constant) and isinstance(argument.value, bytes):
-            return argument
+            return argument.value
         break
     raise ValueError("generated protobuf source has no serialized DESCRIPTOR bytes")
 
@@ -34,8 +53,7 @@ def descriptor_argument(source: str) -> Constant:
 def normalize_protobuf_source() -> None:
     """Keep the descriptor and current pinned protobuf runtime surface."""
     source = PROTOBUF_SOURCE.read_text(encoding="utf-8")
-    argument = descriptor_argument(source)
-    value = argument.value
+    value = descriptor_bytes(source)
     chunks = [value[index : index + DESCRIPTOR_CHUNK_BYTES] for index in range(0, len(value), DESCRIPTOR_CHUNK_BYTES)]
     descriptor_lines = "\n".join(f"    {chunk!r}" for chunk in chunks)
     source = (
@@ -57,6 +75,79 @@ def normalize_protobuf_source() -> None:
     PROTOBUF_SOURCE.write_text(source, encoding="utf-8")
 
 
+def interface_type(field: FieldDescriptorProto) -> str:
+    """Return the concrete runtime annotation for one generated message field."""
+    if field.type == FieldDescriptorProto.TYPE_MESSAGE:
+        element = "Struct" if field.type_name == ".google.protobuf.Struct" else field.type_name.rsplit(".", 1)[-1]
+        if field.label == FieldDescriptorProto.LABEL_REPEATED:
+            computed_return_value = f"RepeatedCompositeFieldContainer[{element}]"
+            return computed_return_value
+        return element
+    if field.type == FieldDescriptorProto.TYPE_ENUM:
+        element = field.type_name.rsplit(".", 1)[-1]
+    else:
+        element = SCALAR_INTERFACE_TYPES.get(field.type, "")
+        if not element:
+            raise ValueError(f"unsupported protobuf field type: {field.type}")
+    if field.label == FieldDescriptorProto.LABEL_REPEATED:
+        computed_return_value = f"RepeatedScalarFieldContainer[{element}]"
+        return computed_return_value
+    return element
+
+
+def constructor_type(field: FieldDescriptorProto) -> str:
+    """Return the accepted constructor value used at Engram's protobuf boundary."""
+    if field.label == FieldDescriptorProto.LABEL_REPEATED:
+        return "object"
+    if field.type == FieldDescriptorProto.TYPE_MESSAGE:
+        element = "object"
+    elif field.type == FieldDescriptorProto.TYPE_ENUM:
+        element = field.type_name.rsplit(".", 1)[-1]
+    else:
+        element = SCALAR_INTERFACE_TYPES.get(field.type, "")
+        if not element:
+            raise ValueError(f"unsupported protobuf constructor field type: {field.type}")
+    return element
+
+
+def normalize_protobuf_interface() -> None:
+    """Emit the static interface directly from the current serialized descriptor."""
+    source = PROTOBUF_SOURCE.read_text(encoding="utf-8")
+    descriptor = FileDescriptorProto()
+    descriptor.ParseFromString(descriptor_bytes(source))
+    lines = [
+        '"""Static interface for the generated current Engram protobuf messages."""',
+        "",
+        "from google.protobuf.descriptor import FileDescriptor",
+        "from google.protobuf.internal.containers import RepeatedCompositeFieldContainer, RepeatedScalarFieldContainer",
+        "from google.protobuf.message import Message",
+        "from google.protobuf.struct_pb2 import Struct",
+        "",
+        "DESCRIPTOR: FileDescriptor",
+        "",
+    ]
+    for enum in descriptor.enum_type:
+        lines.extend((f"class {enum.name}(int):",))
+        for value in enum.value:
+            lines.append(f"    {value.name}: {enum.name}")
+        lines.append("")
+        for value in enum.value:
+            lines.append(f"{value.name}: {enum.name}")
+        lines.append("")
+    for message in descriptor.message_type:
+        lines.append(f"class {message.name}(Message):")
+        for field in message.field:
+            lines.append(f"    {field.name}: {interface_type(field)}")
+        lines.append("")
+        lines.append("    def __init__(")
+        lines.append("        self,")
+        for field in message.field:
+            lines.append(f"        {field.name}: {constructor_type(field)} = ...,")
+        lines.append("    ) -> None: ...")
+        lines.append("")
+    PROTOBUF_INTERFACE.write_text("\n".join(lines), encoding="utf-8")
+
+
 def remove_class(source: str, class_name: str) -> str:
     """Remove one generated experimental static-client class."""
     tree = parse(source, filename=str(GRPC_SOURCE))
@@ -67,7 +158,9 @@ def remove_class(source: str, class_name: str) -> str:
     start_line = int(target.lineno) - 1
     if start_line and "EXPERIMENTAL API" in lines[start_line - 1]:
         start_line -= 1
-    end_line = int(target.end_lineno)
+    if not isinstance(target.end_lineno, int):
+        raise ValueError(f"generated class has no end line: {class_name}")
+    end_line = target.end_lineno
     while end_line < len(lines) and not lines[end_line].strip():
         end_line += 1
     result = "".join((*lines[:start_line], *lines[end_line:]))
@@ -108,11 +201,13 @@ def regenerate() -> None:
         "grpc_tools.protoc",
         f"-I{REPOSITORY}",
         f"--python_out={REPOSITORY}",
+        f"--pyi_out={REPOSITORY}",
         f"--grpc_python_out={REPOSITORY}",
         str(PROTO),
     )
     subprocess_run(command, check=True, cwd=REPOSITORY)
     normalize_protobuf_source()
+    normalize_protobuf_interface()
     normalize_grpc_source()
     subprocess_run(
         (
@@ -121,13 +216,12 @@ def regenerate() -> None:
             "black",
             "--quiet",
             str(PROTOBUF_SOURCE),
+            str(PROTOBUF_INTERFACE),
             str(GRPC_SOURCE),
         ),
         check=True,
         cwd=REPOSITORY,
     )
-    if STALE_STUB.exists():
-        STALE_STUB.unlink()
 
 
 def main() -> int:

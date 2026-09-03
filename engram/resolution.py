@@ -1,6 +1,5 @@
 """Transport-neutral contracts for the bounded unified resolution pipeline."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
@@ -115,7 +114,7 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.eligibility import (
-    EligibilityContextFactory,
+    EligibilityContextCapture,
     eligibility_context_from_dict,
     eligibility_context_to_dict,
     validate_eligibility_context,
@@ -204,7 +203,7 @@ def require_proposition_timestamp(value: object, available: object, name: str) -
 
 
 def exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     observed = set(value)
     if observed != keys:
@@ -238,7 +237,7 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
         if not math_isfinite(value):
             raise InvalidRequestError(f"{name} numbers must be finite")
         return value
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         frozen = {}
         for key in sorted(value):
             if not isinstance(key, str):
@@ -255,7 +254,7 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
 
 def freeze_mapping(value: object, name: str) -> dict[str, object]:
     frozen = freeze_json(value, name)
-    if not isinstance(frozen, Mapping):
+    if not isinstance(frozen, dict):
         raise InvalidRequestError(f"{name} must be an object")
     encoded = json_dumps(thaw_json(frozen), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     if len(encoded.encode("utf-8")) > MAX_JSON_BYTES:
@@ -264,7 +263,7 @@ def freeze_mapping(value: object, name: str) -> dict[str, object]:
 
 
 def thaw_json(value: object) -> object:
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = {key: thaw_json(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
@@ -285,7 +284,7 @@ def load_json_mapping(value: str, name: str) -> dict[str, object]:
         decoded = json_loads(value)
     except json_JSONDecodeError as error:
         raise InvalidRequestError(f"{name} must be valid JSON") from error
-    if not isinstance(decoded, Mapping):
+    if not isinstance(decoded, dict):
         raise InvalidRequestError(f"{name} must contain an object")
     return decoded
 
@@ -382,7 +381,7 @@ def validate_resolution_budget(value: object) -> dict:
 
 def resolution_budget_with_changes(value: object, changes: object) -> dict:
     budget = validate_resolution_budget(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("resolution budget changes must be an object")
     if not set(changes).issubset(RESOLUTION_BUDGET_FIELDS):
         raise InvalidRequestError("resolution budget changes contain an unknown field")
@@ -567,7 +566,7 @@ def validate_budget_consumption(value: object) -> dict:
 
 def budget_consumption_with_changes(value: object, changes: object) -> dict:
     consumption = validate_budget_consumption(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("budget consumption changes must be an object")
     if not set(changes).issubset(BUDGET_CONSUMPTION_FIELDS):
         raise InvalidRequestError("budget consumption changes contain an unknown field")
@@ -820,7 +819,7 @@ def validate_query_frame(value: object) -> dict:
 
 def query_frame_with_changes(value: object, changes: object) -> dict:
     current = validate_query_frame(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(QUERY_FRAME_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(QUERY_FRAME_FIELDS):
         raise InvalidRequestError("query frame changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -911,7 +910,7 @@ def feature_set(
     version = require_int(schema_version, "schema_version", 0, 2_147_483_647)
     if version != FEATURE_SET_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feature set schema_version: {version}")
-    if not isinstance(values, Mapping):
+    if not isinstance(values, dict):
         raise InvalidRequestError("feature values must be an object")
     validated_values = {}
     for name in sorted(values):
@@ -956,7 +955,7 @@ def trusted_feature_set(values: dict[str, float], unavailable: tuple[str, ...]) 
 def feature_set_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate one feature-set dictionary."""
     features = validate_feature_set(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("feature set changes must be an object")
     if not set(changes).issubset(FEATURE_SET_FIELDS):
         raise InvalidRequestError("feature set changes contain an unknown field")
@@ -1034,7 +1033,7 @@ def validate_canonical_proposition_references(value: object) -> dict:
 def canonical_proposition_references_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate canonical Proposition references."""
     references = validate_canonical_proposition_references(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("canonical Proposition reference changes must be an object")
     if not set(changes).issubset(CANONICAL_PROPOSITION_REFERENCES_FIELDS):
         raise InvalidRequestError("canonical Proposition reference changes contain an unknown field")
@@ -1244,7 +1243,7 @@ def validate_proposition_validity_inputs(value: object) -> dict:
 def proposition_validity_inputs_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate complete Proposition-validity inputs."""
     validity = validate_proposition_validity_inputs(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("Proposition validity changes must be an object")
     if not set(changes).issubset(PROPOSITION_VALIDITY_INPUTS_FIELDS):
         raise InvalidRequestError("Proposition validity changes contain an unknown field")
@@ -1265,7 +1264,7 @@ def proposition_validity_inputs_to_dict(value: object) -> dict[str, object]:
 
 def proposition_validity_inputs_from_dict(value: object) -> dict:
     """Decode Proposition-validity inputs from their exact serialized form."""
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError("PropositionValidityInputs must be an object")
     decoded = dict(value)
     try:
@@ -1339,7 +1338,7 @@ def validate_proposition_trust_inputs(value: object) -> dict:
 def proposition_trust_inputs_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate complete Proposition-trust inputs."""
     trust = validate_proposition_trust_inputs(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("Proposition trust changes must be an object")
     if not set(changes).issubset(PROPOSITION_TRUST_INPUTS_FIELDS):
         raise InvalidRequestError("Proposition trust changes contain an unknown field")
@@ -1429,7 +1428,7 @@ def validate_disclosure_decision(value: object) -> dict:
 def disclosure_decision_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate one disclosure decision."""
     decision = validate_disclosure_decision(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("disclosure decision changes must be an object")
     if not set(changes).issubset(DISCLOSURE_DECISION_FIELDS):
         raise InvalidRequestError("disclosure decision changes contain an unknown field")
@@ -1736,7 +1735,7 @@ def validate_proposition_evidence_record(value: object) -> dict:
 def proposition_evidence_record_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate one full-Proposition evidence dictionary."""
     record = validate_proposition_evidence_record(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("Proposition evidence changes must be an object")
     if not set(changes).issubset(PROPOSITION_EVIDENCE_RECORD_FIELDS):
         raise InvalidRequestError("Proposition evidence changes contain an unknown field")
@@ -1958,7 +1957,7 @@ def validate_evidence_package(value: object) -> dict:
 def evidence_package_with_changes(value: object, changes: object) -> dict:
     """Apply named fields and revalidate one evidence-package dictionary."""
     package = validate_evidence_package(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("evidence package changes must be an object")
     if not set(changes).issubset(EVIDENCE_PACKAGE_FIELDS):
         raise InvalidRequestError("evidence package changes contain an unknown field")
@@ -2034,7 +2033,7 @@ def build_evidence_package(
     return result
 
 
-def evidence_package_to_dict(value: object) -> dict[str, object]:
+def evidence_package_to_dict(value: object) -> dict:
     """Serialize one evidence package."""
     package = validate_evidence_package(value)
     result = evidence_package_payload(package)
@@ -2151,7 +2150,7 @@ def validate_evidence_reference(value: object) -> dict:
 
 def evidence_reference_with_changes(value: object, changes: object) -> dict:
     reference = validate_evidence_reference(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("evidence reference changes must be an object")
     if not set(changes).issubset(EVIDENCE_REFERENCE_FIELDS):
         raise InvalidRequestError("evidence reference changes contain an unknown field")
@@ -2320,7 +2319,7 @@ def trusted_candidate(
 
 def candidate_with_changes(value: object, changes: object) -> dict:
     current = validate_candidate(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("candidate changes must be an object")
     if not set(changes).issubset(CANDIDATE_FIELDS):
         raise InvalidRequestError("candidate changes contain an unknown field")
@@ -2462,7 +2461,7 @@ def validate_accounting_observation(value: object) -> dict:
 
 def accounting_observation_with_changes(value: object, changes: object) -> dict:
     observation = validate_accounting_observation(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("accounting observation changes must be an object")
     if not set(changes).issubset(ACCOUNTING_OBSERVATION_FIELDS):
         raise InvalidRequestError("accounting observation changes contain an unknown field")
@@ -2557,7 +2556,7 @@ def resolver_result(
     ):
         raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     frozen_diagnostics = freeze_mapping(diagnostics, "resolver diagnostics")
-    if not isinstance(consumption, Mapping):
+    if not isinstance(consumption, dict):
         raise InvalidRequestError("resolver consumption must be a BudgetConsumption")
     try:
         validated_consumption = budget_consumption() if not consumption else validate_budget_consumption(consumption)
@@ -2597,7 +2596,7 @@ def validate_resolver_result(value: object) -> dict:
 
 def resolver_result_with_changes(value: object, changes: object) -> dict:
     current = validate_resolver_result(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLVER_RESULT_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_RESULT_FIELDS):
         raise InvalidRequestError("resolver result changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2752,7 +2751,7 @@ def resolution_result(
         validated_budget = validate_budget_consumption(budget)
     except InvalidRequestError as error:
         raise InvalidRequestError("resolution budget must be a BudgetConsumption") from error
-    if not isinstance(evidence_package, Mapping):
+    if not isinstance(evidence_package, dict):
         raise InvalidRequestError("evidence_package must be an EvidencePackage")
     try:
         validated_evidence_package = (
@@ -2814,7 +2813,7 @@ def trusted_resolution_result(
     confidence: float,
     confidence_available: bool,
     reason_codes: tuple[str, ...],
-    frame_diagnostics: dict[str, object],
+    frame_diagnostics: dict,
     resolver_results: tuple[dict, ...],
     budget: dict,
     evidence_package_available: bool,
@@ -2863,7 +2862,7 @@ def validate_resolution_result(value: object) -> dict:
 
 def resolution_result_with_changes(value: object, changes: object) -> dict:
     current = validate_resolution_result(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLUTION_RESULT_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(RESOLUTION_RESULT_FIELDS):
         raise InvalidRequestError("resolution result changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2871,13 +2870,13 @@ def resolution_result_with_changes(value: object, changes: object) -> dict:
     return result
 
 
-def resolution_result_to_dict(value: object) -> dict[str, object]:
+def resolution_result_to_dict(value: object) -> dict:
     current = validate_resolution_result(value)
     result = trusted_resolution_result_to_dict(current)
     return result
 
 
-def trusted_resolution_result_to_dict(current: dict) -> dict[str, object]:
+def trusted_resolution_result_to_dict(current: dict) -> dict:
     """Serialize a result already validated or built by the orchestrator."""
     selected = (
         trusted_candidate_to_dict(current.get("selected_candidate", {}))
@@ -2987,9 +2986,9 @@ class QueryFrameBuilder:
             scope = validate_scope_key(scope)
         except IdentityValidationError as error:
             raise InvalidRequestError("scope must be a ScopeKey") from error
-        if not isinstance(identity, Mapping):
+        if not isinstance(identity, dict):
             raise InvalidRequestError("identity must be an object")
-        if not isinstance(budget, Mapping):
+        if not isinstance(budget, dict):
             raise InvalidRequestError("budget must be an object")
         if identity:
             try:
@@ -3011,7 +3010,7 @@ class QueryFrameBuilder:
         resolved = original
         if self.internal_engram.config["expand_contractions"]:
             resolved = expand_contractions(original, self.internal_engram.substitution_maps["contractions"])
-        eligibility = EligibilityContextFactory(self.internal_utc_clock).capture_standalone(scope, True)
+        eligibility = EligibilityContextCapture(self.internal_utc_clock).capture_standalone(scope, True)
         seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
         require_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
         diagnostic_id = f"resolution:sha256:{hashlib_sha256(seed.encode('utf-8')).hexdigest()}"

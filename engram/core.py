@@ -584,7 +584,7 @@ class Engram:
         """Search request-local sparse structures derived from the current artifacts."""
         repository = self.response_repository.snapshot()
         result = search_sparse_artifacts(
-            repository.get("artifacts", {}).values(),
+            tuple(repository.get("artifacts", {}).values()),
             text,
             scope,
             self.config.get("sparse") or {},
@@ -608,7 +608,7 @@ class Engram:
         result = self.semantic_retriever.search(
             text,
             scope,
-            repository.get("artifacts", {}).values(),
+            tuple(repository.get("artifacts", {}).values()),
             limit=limit,
             max_vector_results=max_vector_results,
             max_working_memory_bytes=max_working_memory_bytes,
@@ -1952,7 +1952,7 @@ class Engram:
     def add_fact(
         self,
         text: str,
-        source_label: str = "",
+        source_label: object = "",
         tier: Tier = Tier.DYNAMIC,
     ) -> str:
         """Add shared knowledge without assigning it to a conversational user.

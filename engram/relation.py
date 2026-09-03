@@ -1,6 +1,5 @@
 """Canonical entity, Predicate, and bounded one-hop relation interpretation."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from math import isfinite as math_isfinite
 
@@ -110,7 +109,7 @@ def canonical_resolution(
 
 
 def validate_canonical_resolution(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != CANONICAL_RESOLUTION_FIELDS:
+    if not isinstance(value, dict) or set(value) != CANONICAL_RESOLUTION_FIELDS:
         raise InvalidRequestError("CanonicalResolution has invalid fields")
     result = canonical_resolution(
         value["status"],
@@ -284,7 +283,8 @@ def dependency_predicate_surfaces(text: object) -> tuple[tuple[str, str, float],
                 values.append((f"{head} {normalize_retrieval_key(token.text)}", "dependency_preposition", 0.08))
     unique: dict[str, tuple[str, str, float]] = {}
     for surface, evidence, penalty in values:
-        if surface and (surface not in unique or penalty < unique.get(surface, ())[2]):
+        previous = unique.get(surface, ("", "", float("inf")))
+        if surface and penalty < previous[2]:
             unique[surface] = (surface, evidence, penalty)
     result = tuple(unique.values())[:MAX_RELATION_SURFACES]
     return result
@@ -388,7 +388,7 @@ def one_hop_query_plan(
 
 
 def validate_one_hop_query_plan(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != ONE_HOP_QUERY_PLAN_FIELDS:
+    if not isinstance(value, dict) or set(value) != ONE_HOP_QUERY_PLAN_FIELDS:
         raise InvalidRequestError("OneHopQueryPlan has invalid fields")
     subject = canonical_resolution(
         CanonicalResolutionStatus.SELECTED,

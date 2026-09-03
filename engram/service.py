@@ -7,7 +7,6 @@ this module contains no transport-specific types or behavior.
 """
 
 from collections import Counter
-from collections.abc import Mapping
 from contextlib import contextmanager as contextlib_contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -20,7 +19,6 @@ from uuid import uuid4
 
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
-from engram.config import engram_config
 from engram.constants import (
     EARLIEST_UTC,
     EMPTY_CONFIG,
@@ -53,7 +51,7 @@ from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
 from engram.conversation import ConversationRuntime, statement_view
 from engram.coordination import AtomicMutationCoordinator, MutationCoordinationError
 from engram.core import Engram
-from engram.eligibility import EligibilityContextFactory
+from engram.eligibility import EligibilityContextCapture
 from engram.errors import (
     ConflictError,
     IdentityValidationError,
@@ -187,23 +185,46 @@ def accounting_request_id(kind: str, external_id: str) -> str:
     return result
 
 
+class ServiceClock:
+    """Validate one injectable wall clock at every read."""
+
+    def __init__(self, operation: object = ()) -> None:
+        if operation != () and not callable(operation):
+            raise InvalidRequestError("clock must be callable")
+        self.operation = operation
+
+    def __call__(self) -> datetime:
+        value = datetime.now(UTC) if self.operation == () else self.read_injected()
+        if not isinstance(value, datetime):
+            raise InvalidRequestError("clock must return a datetime")
+        return value
+
+    def read_injected(self) -> object:
+        if not callable(self.operation):
+            raise InvalidRequestError("clock must be callable")
+        result = self.operation()
+        return result
+
+
 class IsolatedGraphClient:
     """Run optional graph calls through a core-owned isolation context."""
 
-    def __init__(self, client: object, operation_context: object) -> None:
-        object.__setattr__(self, "_client", client)
-        object.__setattr__(self, "_operation_context", operation_context)
+    def __init__(self, client, operation_context) -> None:
+        if not callable(operation_context):
+            raise InvalidRequestError("graph operation context must be callable")
+        object.__setattr__(self, "client", client)
+        object.__setattr__(self, "operation_context", operation_context)
 
     def __bool__(self) -> bool:
-        result = bool(object.__getattribute__(self, "_client"))
+        result = bool(object.__getattribute__(self, "client"))
         return result
 
     def __getattr__(self, name: str):
-        client = object.__getattribute__(self, "_client")
+        client = object.__getattribute__(self, "client")
         value = getattr(client, name)
         if not callable(value) or name == "disconnect":
             return value
-        operation_context = object.__getattribute__(self, "_operation_context")
+        operation_context = object.__getattribute__(self, "operation_context")
 
         def isolated(*args, **kwargs):
             with operation_context():
@@ -213,10 +234,10 @@ class IsolatedGraphClient:
         return isolated
 
     def __setattr__(self, name: str, value: object) -> bool:
-        if name in {"_client", "_operation_context"}:
+        if name in {"client", "operation_context"}:
             object.__setattr__(self, name, value)
             return False
-        setattr(object.__getattribute__(self, "_client"), name, value)
+        setattr(object.__getattribute__(self, "client"), name, value)
         return True
 
 
@@ -237,11 +258,13 @@ def service_candidate_result(statement: dict, score: float) -> dict:
     return result
 
 
-def artifact_candidate_result(artifact: dict[str, object], score: float) -> dict:
+def artifact_candidate_result(artifact: dict, score: float) -> dict:
     """Build the proposal view directly from one accepted-response artifact."""
     statistics = artifact.get("statistics", {})
     provenance = artifact.get("provenance", {})
     tier = artifact.get("tier", Tier.DYNAMIC)
+    if not isinstance(statistics, dict) or not isinstance(provenance, dict) or not isinstance(tier, Tier):
+        raise LifecycleError("accepted-response artifact contains malformed candidate fields")
     result = {
         "statement_id": artifact.get("statement_id", ""),
         "response": artifact.get("response", ""),
@@ -407,14 +430,26 @@ class EngramCore:
         self,
         engram=(),
         *,
+        config: dict = EMPTY_CONFIG,
         clock: object = (),
     ) -> None:
-        if clock != () and not callable(clock):
-            raise InvalidRequestError("clock must be callable")
-        self.engram = engram or Engram()
+        if not isinstance(config, dict):
+            raise InvalidRequestError("config must be an object")
+        if engram == ():
+            try:
+                selected_engram = Engram(config=config)
+            except ValueError as error:
+                raise InvalidRequestError(str(error)) from error
+        elif isinstance(engram, Engram):
+            if config:
+                raise InvalidRequestError("config cannot be supplied with an existing Engram")
+            selected_engram = engram
+        else:
+            raise InvalidRequestError("engram must be an Engram")
+        self.engram = selected_engram
         self.conversations: dict[str, ConversationRuntime] = {}
-        self.resolution_requests: dict[str, dict[str, object]] = {}
-        self.internal_clock: object = clock if callable(clock) else lambda: datetime.now(UTC)
+        self.resolution_requests: dict[str, dict] = {}
+        self.internal_clock = ServiceClock(clock)
         self.lock = threading_RLock()
         self.resolution_condition = threading_Condition(self.lock)
         self.active_resolution_request_ids: set[str] = set()
@@ -472,7 +507,7 @@ class EngramCore:
         )
 
     @contextlib_contextmanager
-    def resolution_slot(self, request_id: str, user_id: str) -> object:
+    def resolution_slot(self, request_id: str, user_id: str):
         """Serialize retry identity and per-user context while permitting unrelated work."""
         with self.resolution_condition:
             while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
@@ -490,7 +525,7 @@ class EngramCore:
                 self.resolution_condition.notify_all()
 
     @contextlib_contextmanager
-    def graph_operation(self) -> object:
+    def graph_operation(self):
         """Track optional graph I/O and release an owned core-wide lock."""
         with self.resolution_condition:
             self.require_running()
@@ -813,9 +848,9 @@ class EngramCore:
             require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
             require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
             require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
-            if not isinstance(identity, Mapping):
+            if not isinstance(identity, dict):
                 raise InvalidRequestError("identity must be an object")
-            if not isinstance(budget, Mapping):
+            if not isinstance(budget, dict):
                 raise InvalidRequestError("budget must be an object")
             selected_identity = {}
             if identity:
@@ -897,7 +932,7 @@ class EngramCore:
                     session["previous_query_frame"] = {}
                 current_turn = prior_turn + 1
                 previous_query_frame = session.get("previous_query_frame", {})
-                if not isinstance(previous_query_frame, Mapping):
+                if not isinstance(previous_query_frame, dict):
                     raise LifecycleError("user previous query frame is malformed")
                 topic = session.get("active_topic", "")
                 if not isinstance(topic, str):
@@ -1099,7 +1134,7 @@ class EngramCore:
                 self.record_regulator_telemetry(verdict.value)
             return result
 
-    def inspect_feedback_learning(self, limit: int = 64) -> dict[str, object]:
+    def inspect_feedback_learning(self, limit: int = 64) -> dict:
         """Return bounded transport-neutral Section 6 state and counters."""
 
         with self.lock:
@@ -1157,7 +1192,9 @@ class EngramCore:
             conversation_id = conversation_user_id(user_id)
             if conversation_id not in self.conversations:
                 raise ResourceNotFoundError(f"no active conversation for user_id: {conversation_id}")
-            result = self.conversations.get(conversation_id)
+            result = self.conversations.get(conversation_id, ())
+            if not isinstance(result, ConversationRuntime):
+                raise LifecycleError("active conversation runtime is malformed")
             return result
 
     def chat(self, user_id: str, text: str) -> dict:
@@ -1339,9 +1376,11 @@ class EngramCore:
             feedback_policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
             response_artifacts = self.engram.response_repository.snapshot()["artifacts"]
 
-            def artifact_matches_scope(artifact: dict[str, object]) -> bool:
+            def artifact_matches_scope(artifact: dict) -> bool:
                 statement_id = str(artifact.get("statement_id", ""))
                 generation = artifact.get("generation", 0)
+                if isinstance(generation, bool) or not isinstance(generation, int):
+                    raise LifecycleError("accepted-response artifact generation is malformed")
                 if self.engram.feedback_store.trusted_stale_excluded(statement_id, generation, True):
                     return False
                 if self.engram.feedback_store.trusted_policy_suppressed(statement_id, namespace, feedback_policy_value):
@@ -1355,14 +1394,16 @@ class EngramCore:
                 if required_source_label and provenance.get("source_label", "") != required_source_label:
                     return False
                 artifact_metadata = artifact.get("metadata", {})
-                result = isinstance(artifact_metadata, Mapping) and all(
-                    artifact_metadata.get(key) == value for key, value in required_metadata.items()
+                if not isinstance(provenance, dict) or not isinstance(artifact_metadata, dict):
+                    raise LifecycleError("accepted-response artifact metadata is malformed")
+                result = all(
+                    key in artifact_metadata and artifact_metadata.get(key, {}) == value for key, value in required_metadata.items()
                 )
                 return result
 
             exact_artifact: dict[str, object] = {}
             try:
-                eligibility_context = EligibilityContextFactory(self.internal_clock).capture_standalone(scope, True)
+                eligibility_context = EligibilityContextCapture(self.internal_clock).capture_standalone(scope, True)
                 exact = self.engram.response_repository.exact_lookup(
                     build_scoped_retrieval_key(scope, request),
                     eligibility_context,
@@ -1787,20 +1828,3 @@ class EngramCore:
         if self.proposal_requests.get(request_id) == proposal_id:
             self.proposal_requests.pop(request_id, "")
         return True
-
-
-def open_engram_core(
-    *,
-    config: dict = EMPTY_CONFIG,
-) -> EngramCore:
-    """Create one empty process-memory core."""
-    if not isinstance(config, dict):
-        raise InvalidRequestError("config must be an object")
-    try:
-        core_config = config or engram_config()
-        engram = Engram(config=core_config)
-    except ValueError as error:
-        raise InvalidRequestError(str(error)) from error
-
-    result = EngramCore(engram)
-    return result

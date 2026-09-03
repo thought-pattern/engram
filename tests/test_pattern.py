@@ -5,8 +5,6 @@ from engram.pattern import PatternMatcher, match_pattern, normalize_pattern, pat
 """Tests for normalize_pattern function."""
 
 
-
-
 def test_normalize_pattern_lowercase():
     assert normalize_pattern("HELLO") == "hello"
 

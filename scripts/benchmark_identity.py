@@ -37,6 +37,8 @@ def internal_percentile(samples: list[float], fraction: float) -> float:
 
 
 def internal_measure(operation: object, iterations: int) -> dict:
+    if not callable(operation):
+        raise ValueError("benchmark operation must be callable")
     samples = []
     for _ in range(iterations):
         started = time_perf_counter_ns()
@@ -98,16 +100,12 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
     return result
 
 
-def internal_parser() -> argparse_ArgumentParser:
+def main(argv: tuple[str, ...] = ()) -> int:
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--iterations", type=int, default=10000)
     parser.add_argument("--memory-objects", type=int, default=1000)
-    return parser
-
-
-def main(argv: tuple[str] = ()) -> int:
-    args = internal_parser().parse_args(argv)
+    args = parser.parse_args(argv)
     if args.iterations < 100:
         raise ValueError("iterations must be at least 100")
     if args.memory_objects < 1:
@@ -121,4 +119,4 @@ def main(argv: tuple[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys_argv[1:]))
+    raise SystemExit(main(tuple(sys_argv[1:])))

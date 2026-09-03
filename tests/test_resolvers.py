@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from json import dumps as json_dumps
 
 from pytest import approx as pytest_approx, mark as pytest_mark, raises as pytest_raises
+from sentence_transformers import SentenceTransformer
 
 from engram import service as service_module
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
@@ -87,6 +88,14 @@ NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 
 
+class ReadyEmbeddingModel(SentenceTransformer):
+    def __init__(self) -> None:
+        pass
+
+    def __bool__(self) -> bool:
+        return True
+
+
 def artifact(
     statement_id: str = "stmt-accepted",
     *,
@@ -143,7 +152,7 @@ def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
     engine.config["graph"]["enabled"] = True
     if vector:
         engine.config["graph"]["vector_enabled"] = True
-        engine.graph_embedding_model = object()
+        engine.graph_embedding_model = ReadyEmbeddingModel()
 
 
 def frame(
@@ -155,7 +164,12 @@ def frame(
     required_source_label: str = "",
     budget: object = EMPTY_MAPPING,
 ):
-    selected_budget = budget if budget is not EMPTY_MAPPING else capture_resolution_budget(lambda: START_NS)
+    if budget is EMPTY_MAPPING:
+        selected_budget = capture_resolution_budget(lambda: START_NS)
+    elif isinstance(budget, dict):
+        selected_budget = budget
+    else:
+        raise ValueError("test budget must be a dictionary")
     result = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         request,
         scope_key(namespace=namespace),
@@ -669,7 +683,9 @@ def test_executor_isolates_a_malformed_resolver_result() -> None:
     result = ResolverExecutor(lambda: START_NS).execute(
         query_frame,
         ResolverRegistry((malformed,)).plan(query_frame),
-    )["results"][0]
+    )[
+        "results"
+    ][0]
 
     assert result["state"] == ResolverState.FAILED
     assert result["reason_code"] == "invalid_resolver_result"

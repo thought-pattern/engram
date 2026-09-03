@@ -101,49 +101,49 @@ def internal_contract(name: str, input_schema: str, result_schema: str, errors: 
 
 
 UTILITY_PLUGIN_CONTRACTS = {
-        "arithmetic_v1": internal_contract(
-            "arithmetic_v1",
-            "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
-            "canonical decimal text",
-            ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
-        ),
-        "boolean_v1": internal_contract(
-            "boolean_v1",
-            "boolean followed by true|false, not, and, xor, or, and parentheses",
-            "lowercase true or false",
-            ("boolean_syntax", "operation_limit"),
-        ),
-        "set_v1": internal_contract(
-            "set_v1",
-            "set union|intersection|difference|symmetric difference {items} and {items}",
-            "unique items sorted by Unicode code point in braces",
-            ("set_syntax", "collection_limit", "collection_item_invalid"),
-        ),
-        "date_time_v1": internal_contract(
-            "date_time_v1",
-            "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
-            "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
-            ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
-        ),
-        "unit_conversion_v1": internal_contract(
-            "unit_conversion_v1",
-            "convert <decimal> <allow-listed unit> to <same-dimension unit>",
-            "canonical decimal and canonical target unit",
-            ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
-        ),
-        "version_v1": internal_contract(
-            "version_v1",
-            "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
-            "left version, one of < = >, and right version; build metadata does not affect precedence",
-            ("version_syntax", "version_limit"),
-        ),
-        "identifier_v1": internal_contract(
-            "identifier_v1",
-            "validate uuid|slug <bounded ASCII identifier>",
-            "valid/invalid label and canonical identifier when valid",
-            ("identifier_syntax", "identifier_limit"),
-        ),
-    }
+    "arithmetic_v1": internal_contract(
+        "arithmetic_v1",
+        "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
+        "canonical decimal text",
+        ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
+    ),
+    "boolean_v1": internal_contract(
+        "boolean_v1",
+        "boolean followed by true|false, not, and, xor, or, and parentheses",
+        "lowercase true or false",
+        ("boolean_syntax", "operation_limit"),
+    ),
+    "set_v1": internal_contract(
+        "set_v1",
+        "set union|intersection|difference|symmetric difference {items} and {items}",
+        "unique items sorted by Unicode code point in braces",
+        ("set_syntax", "collection_limit", "collection_item_invalid"),
+    ),
+    "date_time_v1": internal_contract(
+        "date_time_v1",
+        "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
+        "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
+        ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
+    ),
+    "unit_conversion_v1": internal_contract(
+        "unit_conversion_v1",
+        "convert <decimal> <allow-listed unit> to <same-dimension unit>",
+        "canonical decimal and canonical target unit",
+        ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
+    ),
+    "version_v1": internal_contract(
+        "version_v1",
+        "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
+        "left version, one of < = >, and right version; build metadata does not affect precedence",
+        ("version_syntax", "version_limit"),
+    ),
+    "identifier_v1": internal_contract(
+        "identifier_v1",
+        "validate uuid|slug <bounded ASCII identifier>",
+        "valid/invalid label and canonical identifier when valid",
+        ("identifier_syntax", "identifier_limit"),
+    ),
+}
 
 
 def utility_plugin_contracts() -> tuple[dict, ...]:
@@ -344,11 +344,22 @@ def boolean_binary(
     operations: int,
     depth: int,
     operator: str,
-    lower: object,
 ) -> tuple[bool, int, int]:
-    value, index, operations = lower(tokens, index, operations, depth)
+    if operator == "and":
+        value, index, operations = boolean_atom(tokens, index, operations, depth)
+    elif operator == "xor":
+        value, index, operations = boolean_and(tokens, index, operations, depth)
+    elif operator == "or":
+        value, index, operations = boolean_xor(tokens, index, operations, depth)
+    else:
+        raise UtilityInputError("boolean_syntax")
     while index < len(tokens) and tokens[index] == operator:
-        right, index, operations = lower(tokens, index + 1, operations + 1, depth)
+        if operator == "and":
+            right, index, operations = boolean_atom(tokens, index + 1, operations + 1, depth)
+        elif operator == "xor":
+            right, index, operations = boolean_and(tokens, index + 1, operations + 1, depth)
+        else:
+            right, index, operations = boolean_xor(tokens, index + 1, operations + 1, depth)
         if operations > UTILITY_MAX_OPERATIONS:
             raise UtilityInputError("operation_limit")
         if operator == "and":
@@ -361,17 +372,17 @@ def boolean_binary(
 
 
 def boolean_and(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[bool, int, int]:
-    result = boolean_binary(tokens, index, operations, depth, "and", boolean_atom)
+    result = boolean_binary(tokens, index, operations, depth, "and")
     return result
 
 
 def boolean_xor(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[bool, int, int]:
-    result = boolean_binary(tokens, index, operations, depth, "xor", boolean_and)
+    result = boolean_binary(tokens, index, operations, depth, "xor")
     return result
 
 
 def boolean_or(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[bool, int, int]:
-    result = boolean_binary(tokens, index, operations, depth, "or", boolean_xor)
+    result = boolean_binary(tokens, index, operations, depth, "or")
     return result
 
 
@@ -505,25 +516,25 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
 
 
 UTILITY_UNITS = {
-        "m": ("length", Decimal("1"), Decimal("0"), "m"),
-        "km": ("length", Decimal("1000"), Decimal("0"), "km"),
-        "cm": ("length", Decimal("0.01"), Decimal("0"), "cm"),
-        "mm": ("length", Decimal("0.001"), Decimal("0"), "mm"),
-        "in": ("length", Decimal("0.0254"), Decimal("0"), "in"),
-        "ft": ("length", Decimal("0.3048"), Decimal("0"), "ft"),
-        "yd": ("length", Decimal("0.9144"), Decimal("0"), "yd"),
-        "mi": ("length", Decimal("1609.344"), Decimal("0"), "mi"),
-        "g": ("mass", Decimal("0.001"), Decimal("0"), "g"),
-        "kg": ("mass", Decimal("1"), Decimal("0"), "kg"),
-        "lb": ("mass", Decimal("0.45359237"), Decimal("0"), "lb"),
-        "oz": ("mass", Decimal("0.028349523125"), Decimal("0"), "oz"),
-        "s": ("duration", Decimal("1"), Decimal("0"), "s"),
-        "min": ("duration", Decimal("60"), Decimal("0"), "min"),
-        "h": ("duration", Decimal("3600"), Decimal("0"), "h"),
-        "c": ("temperature", Decimal("1"), Decimal("0"), "C"),
-        "f": ("temperature", Decimal("0.5555555555555555555555555555555556"), Decimal("32"), "F"),
-        "k": ("temperature", Decimal("1"), Decimal("273.15"), "K"),
-    }
+    "m": ("length", Decimal("1"), Decimal("0"), "m"),
+    "km": ("length", Decimal("1000"), Decimal("0"), "km"),
+    "cm": ("length", Decimal("0.01"), Decimal("0"), "cm"),
+    "mm": ("length", Decimal("0.001"), Decimal("0"), "mm"),
+    "in": ("length", Decimal("0.0254"), Decimal("0"), "in"),
+    "ft": ("length", Decimal("0.3048"), Decimal("0"), "ft"),
+    "yd": ("length", Decimal("0.9144"), Decimal("0"), "yd"),
+    "mi": ("length", Decimal("1609.344"), Decimal("0"), "mi"),
+    "g": ("mass", Decimal("0.001"), Decimal("0"), "g"),
+    "kg": ("mass", Decimal("1"), Decimal("0"), "kg"),
+    "lb": ("mass", Decimal("0.45359237"), Decimal("0"), "lb"),
+    "oz": ("mass", Decimal("0.028349523125"), Decimal("0"), "oz"),
+    "s": ("duration", Decimal("1"), Decimal("0"), "s"),
+    "min": ("duration", Decimal("60"), Decimal("0"), "min"),
+    "h": ("duration", Decimal("3600"), Decimal("0"), "h"),
+    "c": ("temperature", Decimal("1"), Decimal("0"), "C"),
+    "f": ("temperature", Decimal("0.5555555555555555555555555555555556"), Decimal("32"), "F"),
+    "k": ("temperature", Decimal("1"), Decimal("273.15"), "K"),
+}
 
 
 def evaluate_unit_conversion(text: str) -> tuple[str, str, int]:
@@ -539,8 +550,8 @@ def evaluate_unit_conversion(text: str) -> tuple[str, str, int]:
     target_name = match.group(3).casefold()
     if source_name not in UTILITY_UNITS or target_name not in UTILITY_UNITS:
         raise UtilityInputError("unit_unknown")
-    source = UTILITY_UNITS.get(source_name, ("", Decimal(0), Decimal(0)))
-    target = UTILITY_UNITS.get(target_name, ("", Decimal(0), Decimal(0)))
+    source = UTILITY_UNITS.get(source_name, ("", Decimal(0), Decimal(0), ""))
+    target = UTILITY_UNITS.get(target_name, ("", Decimal(0), Decimal(0), ""))
     if source[0] != target[0]:
         raise UtilityInputError("dimension_mismatch")
     with localcontext() as context:
@@ -629,31 +640,28 @@ def evaluate_identifier(text: str) -> tuple[str, str, int]:
 
 
 UTILITY_PREFIXES = {
-        "arithmetic_v1": ("calculate", "arithmetic"),
-        "boolean_v1": ("boolean",),
-        "set_v1": ("set ",),
-        "date_time_v1": ("date ", "days between ", "convert time "),
-        "unit_conversion_v1": ("convert ",),
-        "version_v1": ("compare version ",),
-        "identifier_v1": ("validate uuid ", "validate slug "),
-    }
+    "arithmetic_v1": ("calculate", "arithmetic"),
+    "boolean_v1": ("boolean",),
+    "set_v1": ("set ",),
+    "date_time_v1": ("date ", "days between ", "convert time "),
+    "unit_conversion_v1": ("convert ",),
+    "version_v1": ("compare version ",),
+    "identifier_v1": ("validate uuid ", "validate slug "),
+}
 UTILITY_EVALUATORS = {
-        "arithmetic_v1": evaluate_arithmetic,
-        "boolean_v1": evaluate_boolean,
-        "set_v1": evaluate_set,
-        "date_time_v1": evaluate_date_time,
-        "unit_conversion_v1": evaluate_unit_conversion,
-        "version_v1": evaluate_version,
-        "identifier_v1": evaluate_identifier,
-    }
+    "arithmetic_v1": evaluate_arithmetic,
+    "boolean_v1": evaluate_boolean,
+    "set_v1": evaluate_set,
+    "date_time_v1": evaluate_date_time,
+    "unit_conversion_v1": evaluate_unit_conversion,
+    "version_v1": evaluate_version,
+    "identifier_v1": evaluate_identifier,
+}
 
 
 def internal_accepts(plugin_name: str, text: str) -> bool:
     lowered = text.strip().casefold()
-    result = any(
-        lowered == prefix.strip() or lowered.startswith(prefix)
-        for prefix in UTILITY_PREFIXES.get(plugin_name, ())
-    )
+    result = any(lowered == prefix.strip() or lowered.startswith(prefix) for prefix in UTILITY_PREFIXES.get(plugin_name, ()))
     return result
 
 

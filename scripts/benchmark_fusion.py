@@ -158,12 +158,9 @@ def measure_fusion(samples: int) -> dict[str, object]:
     gates = {
         "thousand_candidates_peak_under_64_mib": peak_bytes < 67_108_864,
         "thousand_candidates_estimate_within_frame_budget": (
-            peak_decision.get("working_memory_bytes", 0)
-            <= frame.get("budget", {}).get("max_working_memory_bytes", 0)
+            peak_decision.get("working_memory_bytes", 0) <= frame.get("budget", {}).get("max_working_memory_bytes", 0)
         ),
-        "acceptance_scenarios_correct": all(
-            value.get("outcome", "") == value.get("expected", "") for value in acceptance
-        ),
+        "acceptance_scenarios_correct": all(value.get("outcome", "") == value.get("expected", "") for value in acceptance),
     }
     result = {
         "schema_version": 1,

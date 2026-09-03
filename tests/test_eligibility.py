@@ -8,7 +8,7 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 from engram.constants import EligibilityExclusionReason, ExactLookupOutcome, LifecycleState
 from engram.eligibility import (
     ContextualExactLookup,
-    EligibilityContextFactory,
+    EligibilityContextCapture,
     eligibility_context,
     eligibility_context_from_json,
     eligibility_context_to_json,
@@ -60,7 +60,7 @@ def test_factory_captures_one_utc_process_snapshot() -> None:
         result = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)
         return result
 
-    captured = EligibilityContextFactory(clock).capture_standalone(
+    captured = EligibilityContextCapture(clock).capture_standalone(
         scope_key(namespace="tenant-a"),
         True,
     )

@@ -115,8 +115,9 @@ def test_stop_discards_responses_conversations_and_receipts() -> None:
         namespace="support",
     )
 
+    core, _ = service.require_active()
     assert proposal.get("candidates") == []
-    assert service.core.engram.mutation_receipts.next_sequence == 1
+    assert core.engram.mutation_receipts.next_sequence == 1
 
 
 def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monkeypatch) -> None:

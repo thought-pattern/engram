@@ -164,7 +164,7 @@ def artifact(
     return result
 
 
-def report_candidates(decision) -> list[dict[str, object]]:
+def report_candidates(decision) -> list[dict]:
     values = decision["report"]["candidates"]
     assert isinstance(values, list)
     result = values

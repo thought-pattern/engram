@@ -1,6 +1,5 @@
 """Transport-neutral accepted-response mutation operations."""
 
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
@@ -49,8 +48,8 @@ def utc_receipt_clock() -> str:
     return timestamp
 
 
-def mapping_copy(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def mapping_copy(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
         raise ConflictError(f"authoritative artifact {name} must be an object")
     copied = dict(value)
     return copied
@@ -81,7 +80,7 @@ def response_mutation_result_from_execution(execution: dict) -> dict:
     return result
 
 
-def response_mutation_result_to_dict(value: dict) -> dict[str, object]:
+def response_mutation_result_to_dict(value: dict) -> dict:
     """Return the stable external dictionary for one validated mutation result."""
     validated = response_mutation_result(**value)
     receipt = validated["receipt"]
@@ -169,6 +168,13 @@ class AcceptedResponseService:
         self.internal_admission_policy = validated_policy
         self.internal_clock = clock
 
+    def receipt_time(self) -> str:
+        """Read and validate the configured mutation clock boundary."""
+        value = self.internal_clock()
+        if not isinstance(value, str):
+            raise InvalidRequestError("response receipt clock must return a timestamp string")
+        return value
+
     @property
     def coordinator(self) -> AtomicMutationCoordinator:
         coordinator = self.internal_coordinator
@@ -202,7 +208,7 @@ class AcceptedResponseService:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
-            created_at = self.internal_clock()
+            created_at = self.receipt_time()
             result = self.commit_new_locked(artifact, request_id, payload_signature, created_at)
             return result
 
@@ -309,7 +315,7 @@ class AcceptedResponseService:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different learned response: {request_id}")
-            accepted_at = self.internal_clock()
+            accepted_at = self.receipt_time()
             scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
             support_records = metadata.get("support", [])
             if not isinstance(support_records, list) or not all(isinstance(record, dict) for record in support_records):
@@ -379,7 +385,7 @@ class AcceptedResponseService:
                 updated_artifacts.append(artifact)
                 effects.append(artifact_generation_change(statement_id, current["generation"], artifact["generation"]))
             repository_candidate = self.internal_coordinator.repository.candidate_with_artifacts(tuple(updated_artifacts))
-            recorded_at = self.internal_clock()
+            recorded_at = self.receipt_time()
             receipt = mutation_receipt(
                 sequence=self.internal_coordinator.next_receipt_sequence,
                 request_id=request_id,
@@ -412,7 +418,7 @@ class AcceptedResponseService:
             if lookup["outcome"] != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"response hit accounting request cannot be applied: {request_id}")
             current = self.internal_coordinator.repository.get_artifact(normalized_id)
-            recorded_at = self.internal_clock()
+            recorded_at = self.receipt_time()
             updated = cached_response_artifact_to_dict(current)
             updated["generation"] = current["generation"] + 1
             statistics = mapping_copy(updated["statistics"], "statistics")
@@ -473,7 +479,7 @@ class AcceptedResponseService:
                 return result
             if lookup["outcome"] != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"resolution accounting request cannot be applied: {request_id}")
-            recorded_at = self.internal_clock()
+            recorded_at = self.receipt_time()
             updated_artifacts = []
             effects = []
             for statement_id in normalized_ids:
@@ -563,7 +569,7 @@ class AcceptedResponseService:
                     f"expected {expected_generation}, current {current['generation']}"
                 )
             require_lifecycle_transition(current["lifecycle"], target, lifecycle_operation)
-            occurred_at = self.internal_clock()
+            occurred_at = self.receipt_time()
             updated = cached_response_artifact_to_dict(current)
             updated["generation"] = current["generation"] + 1
             updated["lifecycle"] = target.value
@@ -752,14 +758,14 @@ class AcceptedResponseService:
                     affected_generations=(),
                     result=result,
                     completion_state=ReceiptCompletionState.COMPLETED,
-                    created_at=self.internal_clock(),
+                    created_at=self.receipt_time(),
                 )
                 candidate = self.internal_coordinator.build_candidate(before, rejected_receipt)
                 execution = self.internal_coordinator.execute(candidate)
                 result = response_mutation_result_from_execution(execution)
                 return result
 
-            occurred_at = self.internal_clock()
+            occurred_at = self.receipt_time()
             updated_current = cached_response_artifact_to_dict(current)
             updated_current["generation"] = current["generation"] + 1
             updated_current["lifecycle"] = LifecycleState.SUPERSEDED.value

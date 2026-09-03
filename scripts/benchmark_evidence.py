@@ -244,8 +244,7 @@ def measure_evidence(samples: int) -> dict[str, object]:
             and all(not value.get("proposition_evidence", ()) for value in partial_result.get("resolver_results", []))
         ),
         "proposition_only_has_no_response_accounting": (
-            partial_finalization.get("candidate_statement_ids", ()) == ()
-            and not partial_finalization.get("success_applied", False)
+            partial_finalization.get("candidate_statement_ids", ()) == () and not partial_finalization.get("success_applied", False)
         ),
         "complete_output_accounting_is_exact": (
             partial_result.get("budget", {}).get("output_bytes", 0)

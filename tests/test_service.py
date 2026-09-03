@@ -15,7 +15,7 @@ from engram.errors import (
     ResourceNotFoundError,
 )
 from engram.identity import build_standalone_identity, scope_key
-from engram.service import EngramCore, open_engram_core
+from engram.service import EngramCore
 
 
 def test_core_reports_process_memory_operation() -> None:
@@ -445,7 +445,7 @@ def test_transient_proposals_do_not_cross_process_restart() -> None:
     learned = core.learn_response("What is cached?", "The process-local answer.", "learn-process")
     proposal = core.propose("What is cached?", "proposal-before-restart")
 
-    restarted = open_engram_core()
+    restarted = EngramCore()
 
     assert restarted.engram.response_repository.snapshot().get("artifacts") == {}
     with pytest_raises(ResourceNotFoundError, match="proposal"):
@@ -459,7 +459,7 @@ def test_transient_proposals_do_not_cross_process_restart() -> None:
 @pytest_mark.parametrize("invalid", [[], (), "", 0, False])
 def test_core_open_rejects_falsey_non_object_config(invalid) -> None:
     with pytest_raises(InvalidRequestError, match="config must be an object"):
-        open_engram_core(config=invalid)
+        EngramCore(config=invalid)
 
 
 def test_process_mutations_are_immediately_visible_to_the_owned_core() -> None:
@@ -523,7 +523,7 @@ def test_close_waits_for_an_active_core_operation() -> None:
     entered = threading_Event()
     release = threading_Event()
 
-    def delayed_send(text: str) -> dict:
+    def delayed_send(text: object) -> dict:
         entered.set()
         assert release.wait(timeout=5)
         result = original_send(text)

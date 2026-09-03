@@ -15,6 +15,7 @@ from sys import argv as sys_argv
 from threading import Event as threading_Event, Lock as threading_Lock
 
 from google.protobuf import empty_pb2, json_format, struct_pb2
+from google.protobuf.message import Message as protobuf_Message
 from grpc import (
     ServicerContext as grpc_ServicerContext,
     StatusCode as grpc_StatusCode,
@@ -36,7 +37,7 @@ from engram.errors import (
 )
 from engram.identity import query_identity_from_dict
 from engram.resolution import resolution_budget_from_dict, resolution_result_to_dict
-from engram.service import EngramCore, open_engram_core
+from engram.service import EngramCore
 
 LOGGER = getLogger(__name__)
 SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramService"].full_name
@@ -96,36 +97,38 @@ def budget_from_struct(value: struct_pb2.Struct) -> dict:
 def to_evidence_resolution(value: dict) -> engram_pb2.ResolutionResult:
     """Translate one validated core result to the explicit wire contract."""
     current = resolution_result_to_dict(value)
-    package = current["evidence_package"]
+    package = current.get("evidence_package", {})
+    if not isinstance(package, dict):
+        raise InvalidRequestError("resolution evidence package must be an object")
     result = engram_pb2.ResolutionResult(
-        schema_version=current["schema_version"],
-        outcome=current["outcome"],
-        selected_candidate=to_struct(current["selected_candidate"]),
-        selected_candidate_available=current["selected_candidate_available"],
-        response_candidates=[to_struct(item) for item in current["response_candidates"]],
-        evidence=[to_struct(item) for item in current["evidence"]],
-        confidence=current["confidence"],
-        confidence_available=current["confidence_available"],
-        reason_codes=current["reason_codes"],
-        frame_diagnostics=to_struct(current["frame_diagnostics"]),
-        resolver_results=[to_struct(item) for item in current["resolver_results"]],
-        budget=to_struct(current["budget"]),
-        evidence_package_available=current["evidence_package_available"],
-        evidence_package=engram_pb2.EvidencePackage(
-            wire_version=package["wire_version"],
-            records=[to_struct(item) for item in package["records"]],
-            retained_count=package["retained_count"],
-            omitted_count=package["omitted_count"],
-            truncated=package["truncated"],
-            truncation_reasons=package["truncation_reasons"],
-        ),
+        schema_version=current.get("schema_version", 0),
+        outcome=current.get("outcome", ""),
+        selected_candidate=current.get("selected_candidate", {}),
+        selected_candidate_available=current.get("selected_candidate_available", False),
+        response_candidates=current.get("response_candidates", []),
+        evidence=current.get("evidence", []),
+        confidence=current.get("confidence", 0.0),
+        confidence_available=current.get("confidence_available", False),
+        reason_codes=current.get("reason_codes", []),
+        frame_diagnostics=current.get("frame_diagnostics", {}),
+        resolver_results=current.get("resolver_results", []),
+        budget=current.get("budget", {}),
+        evidence_package_available=current.get("evidence_package_available", False),
+        evidence_package={
+            "wire_version": package.get("wire_version", 0),
+            "records": package.get("records", []),
+            "retained_count": package.get("retained_count", 0),
+            "omitted_count": package.get("omitted_count", 0),
+            "truncated": package.get("truncated", False),
+            "truncation_reasons": package.get("truncation_reasons", []),
+        },
     )
     return result
 
 
-def status_code(error: EngramCoreError, context=()) -> grpc_StatusCode:
+def status_code(error: EngramCoreError, context: grpc_ServicerContext) -> grpc_StatusCode:
     if isinstance(error, ResolutionCancelledError):
-        remaining = context.time_remaining() if context else ()
+        remaining = context.time_remaining()
         result = (
             grpc_StatusCode.DEADLINE_EXCEEDED
             if isinstance(remaining, (int, float)) and not isinstance(remaining, bool) and remaining <= 0
@@ -154,6 +157,27 @@ def grpc_cancellation_check(context: grpc_ServicerContext, cancelled: threading_
         raise ResolutionCancelledError("gRPC resolution request is no longer active")
 
 
+def require_struct_message(value: protobuf_Message, operation: str) -> struct_pb2.Struct:
+    """Require the concrete response type promised by a Struct RPC."""
+    if not isinstance(value, struct_pb2.Struct):
+        raise InvalidRequestError(f"{operation} returned an invalid protobuf message")
+    return value
+
+
+def require_predicate_message(value: protobuf_Message, operation: str) -> engram_pb2.PredicateResponse:
+    """Require the concrete response type promised by a predicate RPC."""
+    if not isinstance(value, engram_pb2.PredicateResponse):
+        raise InvalidRequestError(f"{operation} returned an invalid protobuf message")
+    return value
+
+
+def require_resolution_message(value: protobuf_Message) -> engram_pb2.ResolutionResult:
+    """Require the concrete response type promised by unified resolution."""
+    if not isinstance(value, engram_pb2.ResolutionResult):
+        raise InvalidRequestError("ResolveEvidence returned an invalid protobuf message")
+    return value
+
+
 class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     """Translate protobuf requests into calls on one shared core."""
 
@@ -178,9 +202,13 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         self.health_servicer.set(SERVICE_NAME, serving_status)
         self.health_servicer.set(EVIDENCE_SERVICE_NAME, serving_status)
 
-    def invoke(self, context: grpc_ServicerContext, operation: object) -> object:
+    def invoke(self, context: grpc_ServicerContext, operation: object) -> protobuf_Message:
+        if not callable(operation):
+            raise InvalidRequestError("gRPC operation must be callable")
         try:
             result = operation()
+            if not isinstance(result, protobuf_Message):
+                raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
         except EngramCoreError as error:
             metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
@@ -195,7 +223,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     def StartConversation(self, request: engram_pb2.StartConversationRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         random_seed_present = request.HasField("random_seed")
         random_seed = request.random_seed if random_seed_present else 0
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: to_struct(
                 self.core.start_conversation(
@@ -206,26 +234,32 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 )
             ),
         )
+        result = require_struct_message(message, "StartConversation")
         return result
 
     def Chat(self, request: engram_pb2.ChatRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.chat(request.user_id, request.text)))
+        message = self.invoke(context, lambda: to_struct(self.core.chat(request.user_id, request.text)))
+        result = require_struct_message(message, "Chat")
         return result
 
     def InspectConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.inspect_conversation(request.user_id)))
+        message = self.invoke(context, lambda: to_struct(self.core.inspect_conversation(request.user_id)))
+        result = require_struct_message(message, "InspectConversation")
         return result
 
     def FinishConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.finish_conversation(request.user_id)))
+        message = self.invoke(context, lambda: to_struct(self.core.finish_conversation(request.user_id)))
+        result = require_struct_message(message, "FinishConversation")
         return result
 
     def StopConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.stop_conversation(request.user_id)))
+        message = self.invoke(context, lambda: to_struct(self.core.stop_conversation(request.user_id)))
+        result = require_struct_message(message, "StopConversation")
         return result
 
     def AddFact(self, request: engram_pb2.AddFactRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.add_fact(request.text, source_label=request.source_label)))
+        message = self.invoke(context, lambda: to_struct(self.core.add_fact(request.text, source_label=request.source_label)))
+        result = require_struct_message(message, "AddFact")
         return result
 
     def SetPredicate(self, request: engram_pb2.SetPredicateRequest, context: grpc_ServicerContext) -> engram_pb2.PredicateResponse:
@@ -234,21 +268,23 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
             result = engram_pb2.PredicateResponse(value=request.value)
             return result
 
-        result = self.invoke(context, set_predicate)
+        message = self.invoke(context, set_predicate)
+        result = require_predicate_message(message, "SetPredicate")
         return result
 
     def GetPredicate(self, request: engram_pb2.GetPredicateRequest, context: grpc_ServicerContext) -> engram_pb2.PredicateResponse:
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: engram_pb2.PredicateResponse(
                 value=self.core.get_predicate(request.user_id, request.name, request.default_value),
             ),
         )
+        result = require_predicate_message(message, "GetPredicate")
         return result
 
     def Propose(self, request: engram_pb2.ProposeRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         limit = request.limit if request.HasField("limit") else 1
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: to_struct(
                 self.core.propose(
@@ -263,11 +299,12 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 )
             ),
         )
+        result = require_struct_message(message, "Propose")
         return result
 
     def Resolve(self, request: engram_pb2.ResolveRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         outcome = outcome_names.get(request.outcome, "")
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: to_struct(
                 self.core.resolve(
@@ -278,11 +315,12 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 )
             ),
         )
+        result = require_struct_message(message, "Resolve")
         return result
 
     def LearnResponse(self, request: engram_pb2.LearnResponseRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         source_label = request.source_label or "tapestry:actor"
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: to_struct(
                 self.core.learn_response(
@@ -297,10 +335,11 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 )
             ),
         )
+        result = require_struct_message(message, "LearnResponse")
         return result
 
     def RetireResponse(self, request: engram_pb2.RetireResponseRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(
+        message = self.invoke(
             context,
             lambda: to_struct(
                 self.core.retire_response(
@@ -310,10 +349,12 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 )
             ),
         )
+        result = require_struct_message(message, "RetireResponse")
         return result
 
     def GetStatus(self, request: empty_pb2.Empty, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        result = self.invoke(context, lambda: to_struct(self.core.status()))
+        message = self.invoke(context, lambda: to_struct(self.core.status()))
+        result = require_struct_message(message, "GetStatus")
         return result
 
 
@@ -331,7 +372,7 @@ class EngramEvidenceGrpcService(engram_pb2_grpc.EngramEvidenceServiceServicer):
         cancelled = threading_Event()
         if not context.add_callback(cancelled.set):
             cancelled.set()
-        result = self.adapter.invoke(
+        message = self.adapter.invoke(
             context,
             lambda: to_evidence_resolution(
                 self.adapter.core.resolve_request(
@@ -350,6 +391,7 @@ class EngramEvidenceGrpcService(engram_pb2_grpc.EngramEvidenceServiceServicer):
                 )
             ),
         )
+        result = require_resolution_message(message)
         return result
 
 
@@ -470,7 +512,7 @@ def read_tls_files(parser: argparse_ArgumentParser, certificate_path: str, priva
         parser.error(f"unable to read TLS files: {error}")
 
 
-def main(argv: tuple[str] = ()) -> int:
+def main(argv: tuple[str, ...] = ()) -> int:
     """Run Engram until SIGINT or SIGTERM requests graceful shutdown."""
     parser = argument_parser()
     args = parser.parse_args(argv)
@@ -480,7 +522,7 @@ def main(argv: tuple[str] = ()) -> int:
 
     config = load_config(args.config_path) if args.config_path else {}
     try:
-        core = open_engram_core(config=config)
+        core = EngramCore(config=config)
         server = EngramGrpcServer(
             core,
             bind_address=args.bind,
@@ -525,4 +567,4 @@ def console_main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys_argv[1:]))
+    raise SystemExit(main(tuple(sys_argv[1:])))

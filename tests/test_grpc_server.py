@@ -29,16 +29,16 @@ from engram.service import EngramCore
 from .support_fixtures import ASSERTION_REFERENCE_A
 
 
-def internal_core() -> EngramCore:
-    engram = Engram()
-    engram.load_static_data(
-        [
-            {"pattern": "HELLO", "response": "Hello!"},
-            {"pattern": "*", "response": "Go on."},
-        ]
-    )
-    result = EngramCore(engram)
-    return result
+class GrpcCore(EngramCore):
+    def __init__(self) -> None:
+        engram = Engram()
+        engram.load_static_data(
+            [
+                {"pattern": "HELLO", "response": "Hello!"},
+                {"pattern": "*", "response": "Go on."},
+            ]
+        )
+        super().__init__(engram)
 
 
 def as_dict(message: struct_pb2.Struct) -> dict:
@@ -66,18 +66,32 @@ def running_server(core: EngramCore, **kwargs):
 
 def health_status(channel: grpc_Channel) -> int:
     health_stub = health_pb2_grpc.HealthStub(channel)
-    result = health_stub.Check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5).status
+    check = getattr(health_stub, "Check", ())
+    if not callable(check):
+        raise RuntimeError("gRPC health stub has no Check operation")
+    response = check(health_pb2.HealthCheckRequest(service=SERVICE_NAME), timeout=5)
+    if not isinstance(response, health_pb2.HealthCheckResponse):
+        raise RuntimeError("gRPC health stub returned a malformed response")
+    result = response.status
     return result
 
 
 def internal_trailing_metadata(error: grpc_RpcError) -> dict[str, str]:
     metadata = error.trailing_metadata()
-    result = dict(metadata)
+    result: dict[str, str] = {}
+    for item in metadata:
+        key = getattr(item, "key", ())
+        value = getattr(item, "value", ())
+        selected_key = key.decode("utf-8") if isinstance(key, bytes) else key
+        selected_value = value.decode("utf-8") if isinstance(value, bytes) else value
+        if not isinstance(selected_key, str) or not isinstance(selected_value, str):
+            raise RuntimeError("gRPC trailing metadata is malformed")
+        result[selected_key] = selected_value
     return result
 
 
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:
-    with running_server(internal_core()) as (_, channel, stub):
+    with running_server(GrpcCore()) as (_, channel, stub):
         alice = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice", random_seed=7)))
         carol = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Carol")))
         first = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Sushi is good.")))
@@ -111,7 +125,7 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
 
 
 def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with running_server(core) as (_, _, stub):
         explicit = as_dict(
             stub.StartConversation(
@@ -150,7 +164,7 @@ def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() ->
 
 
 def test_regulated_cache_protocol_and_error_mapping() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with running_server(core) as (_, channel, stub):
         learned = as_dict(
             stub.LearnResponse(
@@ -222,7 +236,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
 
 
 def test_learn_response_restores_integral_support_revisions_from_struct() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with running_server(core) as (_, internal_channel, stub):
         learned = as_dict(
             stub.LearnResponse(
@@ -241,7 +255,7 @@ def test_learn_response_restores_integral_support_revisions_from_struct() -> Non
 
 
 def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with running_server(core) as (_, channel, service_stub):
         service_stub.LearnResponse(
             engram_pb2.LearnResponseRequest(
@@ -274,7 +288,7 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
 
 
 def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:
-    core = internal_core()
+    core = GrpcCore()
     identity = build_standalone_identity("Uncached evidence contract request")
     budget = resolution_budget()
     with running_server(core) as (_, channel, _):
@@ -294,7 +308,7 @@ def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() ->
 
 
 def test_evidence_service_enforces_the_shared_request_bound() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with running_server(core) as (_, channel, _):
         stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
 
@@ -313,7 +327,7 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
 
 def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -> None:
     secret = "private-request-and-credential-content"
-    core = internal_core()
+    core = GrpcCore()
 
     def fail(internal_text, source_label=""):
         raise RuntimeError(secret)
@@ -335,7 +349,7 @@ def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -
 def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and_grpc() -> None:
     mcp = MCPConversationService()
     mcp.start()
-    core = mcp.core
+    core, _ = mcp.require_active()
     created = core.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
     mcp_replay = mcp.learn_response("What is shared?", "One shared result.", "cross-adapter-learn")
 
@@ -369,7 +383,7 @@ def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and
 def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adapter_visibility() -> None:
     mcp = MCPConversationService()
     mcp.start()
-    core = mcp.core
+    core, _ = mcp.require_active()
     learned = core.learn_response("What is concurrent?", "One accepted result.", "concurrent-learn")
     proposal = core.propose("What is concurrent?", "concurrent-proposal")
 
@@ -415,7 +429,7 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
 
 
 def test_grpc_restart_begins_with_empty_process_memory() -> None:
-    first_core = internal_core()
+    first_core = GrpcCore()
     with running_server(first_core) as (_, _, first_stub):
         learned = as_dict(
             first_stub.LearnResponse(
@@ -436,7 +450,7 @@ def test_grpc_restart_begins_with_empty_process_memory() -> None:
         )
         assert old_proposal.get("candidates", [])[0].get("statement_id", "") == learned.get("statement_id", "")
 
-    restarted_core = internal_core()
+    restarted_core = GrpcCore()
     with running_server(restarted_core) as (_, _, restarted_stub):
         started = as_dict(restarted_stub.StartConversation(engram_pb2.StartConversationRequest(user_id="static-after-restart")))
         static_turn = as_dict(restarted_stub.Chat(engram_pb2.ChatRequest(user_id="static-after-restart", text="hello")))
@@ -463,7 +477,7 @@ def test_grpc_restart_begins_with_empty_process_memory() -> None:
 
 
 def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
-    core = internal_core()
+    core = GrpcCore()
     entered = threading_Event()
     release = threading_Event()
     original_chat = core.chat
@@ -489,7 +503,7 @@ def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
 
 
 def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
-    core = internal_core()
+    core = GrpcCore()
     entered = threading_Event()
     release = threading_Event()
     original_chat = core.chat
@@ -521,20 +535,21 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
 
 
 def test_tls_requires_a_certificate_and_key_pair() -> None:
-    core = internal_core()
+    core = GrpcCore()
     with pytest_raises(InvalidRequestError, match="together"):
         EngramGrpcServer(core, bind_address="127.0.0.1:0", tls_certificate=b"certificate")
     core.close()
 
 
 def test_grpc_main_refuses_to_serve_after_required_component_preflight_failure(monkeypatch) -> None:
-    def fail_open(**kwargs):
-        del kwargs
-        raise InvalidRequestError("component preflight failed: required NLTK data unavailable")
+    class FailingCore:
+        def __init__(self, **kwargs):
+            del kwargs
+            raise InvalidRequestError("component preflight failed: required NLTK data unavailable")
 
-    monkeypatch.setattr(grpc_server_module, "open_engram_core", fail_open)
+    monkeypatch.setattr(grpc_server_module, "EngramCore", FailingCore)
 
-    assert grpc_server_module.main(["--log-level", "ERROR"]) == 1
+    assert grpc_server_module.main(("--log-level", "ERROR")) == 1
 
 
 def test_grpc_console_entry_point_forwards_process_arguments(monkeypatch) -> None:

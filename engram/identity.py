@@ -5,7 +5,6 @@ literal constants and error types. Identity construction therefore performs no
 graph access, model loading, resource download, or transport work.
 """
 
-from collections.abc import Mapping
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from re import Match as re_Match, fullmatch as re_fullmatch, search as re_search
 from unicodedata import category as unicodedata_category, normalize as unicodedata_normalize
@@ -113,20 +112,20 @@ def require_version(value: object, expected: int, name: str) -> int:
     return value
 
 
-def require_mapping(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def require_mapping(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
         raise IdentityValidationError(f"{name} must be an object")
     return value
 
 
-def require_list(value: object, name: str) -> list[object]:
+def require_list(value: object, name: str) -> list:
     if not isinstance(value, list):
         raise IdentityValidationError(f"{name} must be an array")
     result = list(value)
     return result
 
 
-def require_exact_keys(data: dict[str, object], expected: set[str], name: str) -> None:
+def require_exact_keys(data: dict, expected: set[str], name: str) -> None:
     actual = set(data)
     missing = expected - actual
     extra = actual - expected
@@ -136,7 +135,7 @@ def require_exact_keys(data: dict[str, object], expected: set[str], name: str) -
         raise IdentityValidationError(f"{name} has unsupported fields: {', '.join(sorted(str(key) for key in extra))}")
 
 
-def load_json_object(value: str, name: str) -> dict[str, object]:
+def load_json_object(value: str, name: str) -> dict:
     require_raw_text(value, name, MAX_IDENTITY_JSON_BYTES, allow_empty=False)
     try:
         decoded = json_loads(value)
@@ -146,7 +145,7 @@ def load_json_object(value: str, name: str) -> dict[str, object]:
     return result
 
 
-def dump_json(data: dict[str, object]) -> str:
+def dump_json(data: dict) -> str:
     result = json_dumps(data, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
     return result
 
@@ -231,7 +230,7 @@ def scope_key_signature(value: object) -> tuple:
     return result
 
 
-def scope_key_to_dict(value: object) -> dict[str, object]:
+def scope_key_to_dict(value: object) -> dict:
     """Serialize one scope key."""
 
     scope = validate_scope_key(value)
@@ -283,11 +282,11 @@ def validate_entity_reference(value: object) -> dict:
     return result
 
 
-def entity_reference_to_dict(value: object) -> dict[str, object]:
+def entity_reference_to_dict(value: object) -> dict:
     """Serialize one validated entity reference."""
 
     validated = validate_entity_reference(value)
-    result: dict[str, object] = {
+    result: dict = {
         "surface": validated["surface"],
         "canonical_id": validated["canonical_id"],
     }
@@ -330,11 +329,11 @@ def validate_relation_reference(value: object) -> dict:
     return result
 
 
-def relation_reference_to_dict(value: object) -> dict[str, object]:
+def relation_reference_to_dict(value: object) -> dict:
     """Serialize one validated relation reference."""
 
     validated = validate_relation_reference(value)
-    result: dict[str, object] = {
+    result: dict = {
         "surface": validated["surface"],
         "canonical_id": validated["canonical_id"],
     }
@@ -375,11 +374,11 @@ def validate_identity_qualifier(value: object) -> dict:
     return result
 
 
-def identity_qualifier_to_dict(value: object) -> dict[str, object]:
+def identity_qualifier_to_dict(value: object) -> dict:
     """Serialize one validated identity qualifier."""
 
     validated = validate_identity_qualifier(value)
-    result: dict[str, object] = {
+    result: dict = {
         "kind": validated["kind"].value,
         "value": validated["value"],
     }
@@ -501,7 +500,7 @@ def trusted_scoped_retrieval_key_signature(value: dict) -> tuple:
     return result
 
 
-def scoped_retrieval_key_to_dict(value: object) -> dict[str, object]:
+def scoped_retrieval_key_to_dict(value: object) -> dict:
     """Serialize one exact-index retrieval key."""
 
     key = validate_scoped_retrieval_key(value)
@@ -656,7 +655,7 @@ def validate_retrieval_representation(value: object) -> dict:
     return result
 
 
-def retrieval_representation_to_dict(value: object) -> dict[str, object]:
+def retrieval_representation_to_dict(value: object) -> dict:
     """Serialize one validated retrieval representation."""
 
     validated = validate_retrieval_representation(value)
@@ -847,7 +846,7 @@ def validate_query_identity(value: object) -> dict:
     return result
 
 
-def query_identity_to_dict(value: object) -> dict[str, object]:
+def query_identity_to_dict(value: object) -> dict:
     """Serialize one validated query identity."""
 
     validated = validate_query_identity(value)
@@ -1169,8 +1168,8 @@ def validate_authoritative_identity(
 
 
 def load_authoritative_identity(
-    identity: dict[str, object],
-    retrieval: dict[str, object],
+    identity: dict,
+    retrieval: dict,
 ) -> tuple[dict, dict]:
     """Decode and validate authoritative JSON-compatible identity contracts."""
     decoded_identity = query_identity_from_dict(identity)

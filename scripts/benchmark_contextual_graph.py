@@ -253,7 +253,9 @@ def run(manifest_path: Path) -> dict:
                 )
                 latency_ms = (time_perf_counter_ns() - started) / 1_000_000
                 all_latencies.append(latency_ms)
-                frame = core.resolution_requests[request_id]["frame"]
+                frame = core.resolution_requests.get(request_id, {}).get("frame", {})
+                if not isinstance(frame, dict):
+                    raise RuntimeError("benchmark resolution frame is malformed")
                 observed_inheritance = sorted(item["field_name"] for item in frame["inheritance"])
                 responses = [candidate["response"] for candidate in result.get("response_candidates", [])]
                 if result.get("selected_candidate_available", False):

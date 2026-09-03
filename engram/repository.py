@@ -1,6 +1,5 @@
 """Authoritative live accepted-response artifact repository."""
 
-from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from threading import RLock as threading_RLock
@@ -31,7 +30,7 @@ def tier_admission_policy(dynamic_capacity: int) -> dict:
 
 def validate_tier_admission_policy(value: object) -> dict:
     """Validate and copy one tier-admission policy dictionary."""
-    if not isinstance(value, Mapping) or set(value) != TIER_ADMISSION_POLICY_FIELDS:
+    if not isinstance(value, dict) or set(value) != TIER_ADMISSION_POLICY_FIELDS:
         raise InvalidRequestError("admission policy must be a TierAdmissionPolicy")
     dynamic_capacity = value.get("dynamic_capacity", ())
     if not isinstance(dynamic_capacity, int):
@@ -51,7 +50,7 @@ def artifact_time(value: str) -> datetime:
     return result
 
 
-def eviction_order_key(artifact: dict) -> tuple[object, ...]:
+def eviction_order_key(artifact: dict) -> tuple[datetime, int, str]:
     statistics = artifact.get("statistics", {})
     provenance = artifact.get("provenance", {})
     accepted_at = artifact_time(provenance.get("accepted_at", ""))
@@ -61,8 +60,6 @@ def eviction_order_key(artifact: dict) -> tuple[object, ...]:
     return result
 
 
-
-
 def repository_state(
     state_generation: int,
     artifacts: object,
@@ -70,7 +67,7 @@ def repository_state(
     """Build one validated repository snapshot dictionary."""
 
     generation = positive_int(state_generation, "repository state_generation")
-    if not isinstance(artifacts, Mapping):
+    if not isinstance(artifacts, dict):
         raise InvalidRequestError("repository artifacts must be an object")
     validated_artifacts = {}
     for statement_id, artifact in artifacts.items():
@@ -94,7 +91,7 @@ def repository_state(
 def validate_repository_state(value: object) -> dict:
     """Validate and copy one repository snapshot dictionary."""
 
-    if not isinstance(value, Mapping) or set(value) != REPOSITORY_STATE_FIELDS:
+    if not isinstance(value, dict) or set(value) != REPOSITORY_STATE_FIELDS:
         raise InvalidRequestError("repository state must be a RepositoryState")
     state_generation = value.get("state_generation", ())
     artifacts = value.get("artifacts", ())
@@ -102,8 +99,6 @@ def validate_repository_state(value: object) -> dict:
         raise InvalidRequestError("repository state must be a RepositoryState")
     result = repository_state(state_generation, artifacts)
     return result
-
-
 
 
 def admission_plan(
@@ -153,7 +148,7 @@ def admission_plan(
 def validate_admission_plan(value: object) -> dict:
     """Validate and copy one tier-admission result dictionary."""
 
-    if not isinstance(value, Mapping) or set(value) != ADMISSION_PLAN_FIELDS:
+    if not isinstance(value, dict) or set(value) != ADMISSION_PLAN_FIELDS:
         raise InvalidRequestError("admission plan must be an AdmissionPlan")
     outcome = value.get("outcome", ())
     candidate = value.get("candidate", ())
@@ -181,7 +176,7 @@ def validate_admission_plan(value: object) -> dict:
     return result
 
 
-def admission_plan_to_dict(value: object) -> dict[str, object]:
+def admission_plan_to_dict(value: object) -> dict:
     """Serialize one validated admission plan without its candidate snapshot."""
 
     validated = validate_admission_plan(value)
@@ -199,14 +194,14 @@ def admission_plan_to_dict(value: object) -> dict[str, object]:
 
 
 def normalize_repository_state(
-    artifacts: list[dict],
+    artifacts: object,
     state_generation: int = 1,
 ) -> dict:
     """Validate and normalize a complete candidate without changing live state."""
 
     generation = positive_int(state_generation, "repository state_generation")
-    if isinstance(artifacts, (str, bytes, Mapping)):
-        raise InvalidRequestError("repository artifact input must be an iterable of CachedResponseArtifact values")
+    if not isinstance(artifacts, tuple):
+        raise InvalidRequestError("repository artifact input must be a tuple of CachedResponseArtifact values")
     artifact_map = {}
     for artifact in artifacts:
         try:
@@ -246,7 +241,7 @@ def repository_state_with_artifact_updates(
             raise ConflictError(f"repository update artifact does not exist in candidate: {statement_id}")
         updated[statement_id] = artifact
     result = normalize_repository_state(
-        updated.values(),
+        tuple(updated.values()),
         validated_state.get("state_generation", 0),
     )
     return result
@@ -255,7 +250,7 @@ def repository_state_with_artifact_updates(
 class ArtifactRepository:
     """Atomic owner of authoritative accepted-response artifacts."""
 
-    def __init__(self, artifacts: tuple[dict] = ()) -> None:
+    def __init__(self, artifacts: tuple[dict, ...] = ()) -> None:
         self.internal_lock = threading_RLock()
         self.internal_state = normalize_repository_state(artifacts)
 
@@ -290,7 +285,7 @@ class ArtifactRepository:
             artifacts = dict(self.internal_state.get("artifacts", {}))
             artifacts[artifact.get("statement_id", "")] = artifact
             candidate = normalize_repository_state(
-                artifacts.values(),
+                tuple(artifacts.values()),
                 self.internal_state.get("state_generation", 0) + 1,
             )
             return candidate
@@ -314,7 +309,7 @@ class ArtifactRepository:
                     raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
                 updated[statement_id] = artifact
             candidate = normalize_repository_state(
-                updated.values(),
+                tuple(updated.values()),
                 self.internal_state.get("state_generation", 0) + 1,
             )
             return candidate
@@ -334,7 +329,7 @@ class ArtifactRepository:
             if artifact.get("tier", Tier.STATIC) == Tier.STATIC:
                 artifacts[artifact.get("statement_id", "")] = artifact
                 candidate = normalize_repository_state(
-                    artifacts.values(),
+                    tuple(artifacts.values()),
                     self.internal_state.get("state_generation", 0) + 1,
                 )
                 plan = admission_plan(
@@ -361,7 +356,7 @@ class ArtifactRepository:
                 del artifacts[victim_id]
             artifacts[artifact.get("statement_id", "")] = artifact
             candidate = normalize_repository_state(
-                artifacts.values(),
+                tuple(artifacts.values()),
                 self.internal_state.get("state_generation", 0) + 1,
             )
             outcome = AdmissionOutcome.ADMITTED_WITH_EVICTION if victims else AdmissionOutcome.ADMITTED
@@ -379,7 +374,7 @@ class ArtifactRepository:
         self,
         statement_id: str,
         expected_generation: int,
-        reason: RepositoryRemovalReason,
+        reason: object,
     ) -> dict:
         if not isinstance(statement_id, str) or not statement_id:
             raise InvalidRequestError("repository statement_id must be a non-empty string")
@@ -402,7 +397,7 @@ class ArtifactRepository:
             artifacts = dict(current_artifacts)
             del artifacts[statement_id]
             candidate = normalize_repository_state(
-                artifacts.values(),
+                tuple(artifacts.values()),
                 self.internal_state.get("state_generation", 0) + 1,
             )
             return candidate

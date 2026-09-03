@@ -1,6 +1,5 @@
-"""Durable idempotent mutation receipt contracts and bounded ledger."""
+"""Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
@@ -60,8 +59,8 @@ def nonnegative_int(value: object, name: str) -> int:
     return value
 
 
-def exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def exact_mapping(value: object, name: str, keys: set[str]) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     actual = set(value)
     if actual != keys:
@@ -97,14 +96,13 @@ def freeze_json(value: object, name: str, depth: int, count: list[int]) -> objec
         if not math_isfinite(value):
             raise InvalidRequestError(f"{name} contains a non-finite number")
         return value
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         pairs = []
         for key, item in value.items():
             normalized_key = require_text(key, f"{name} key", MAX_RESULT_KEY_BYTES, allow_empty=False)
             pairs.append((normalized_key, item))
         result = {
-            key: freeze_json(item, f"{name}.{key}", depth + 1, count)
-            for key, item in sorted(pairs, key=lambda pair: pair[0])
+            key: freeze_json(item, f"{name}.{key}", depth + 1, count) for key, item in sorted(pairs, key=lambda pair: pair[0])
         }
         return result
     if isinstance(value, (list, tuple)):
@@ -114,7 +112,7 @@ def freeze_json(value: object, name: str, depth: int, count: list[int]) -> objec
 
 
 def thaw_json(value: object) -> object:
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = {key: thaw_json(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
@@ -123,11 +121,11 @@ def thaw_json(value: object) -> object:
     return value
 
 
-def freeze_result(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def freeze_result(value: object) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError("mutation result must be an object")
     frozen = freeze_json(value, "mutation result", 0, [0])
-    if not isinstance(frozen, Mapping):
+    if not isinstance(frozen, dict):
         raise InvalidRequestError("mutation result must be an object")
     encoded = json_text(thaw_json(frozen))
     if len(encoded.encode("utf-8")) > MAX_RESULT_BYTES:
@@ -140,10 +138,10 @@ def json_text(value: object) -> str:
     return text
 
 
-def canonical_payload_signature(payload: dict[str, object]) -> str:
+def canonical_payload_signature(payload: object) -> str:
     """Return the stable signature for one concrete canonical mutation payload."""
 
-    if not isinstance(payload, Mapping):
+    if not isinstance(payload, dict):
         raise InvalidRequestError("mutation payload must be an object")
     frozen = freeze_json(payload, "mutation payload", 0, [0])
     encoded = json_text(thaw_json(frozen)).encode("utf-8")
@@ -158,8 +156,6 @@ def internal_signature(value: object) -> str:
     if len(text) != 71 or not text.startswith("sha256:") or any(character not in "0123456789abcdef" for character in text[7:]):
         raise InvalidRequestError("mutation payload_signature must be a lowercase SHA-256 signature")
     return text
-
-
 
 
 def artifact_generation_change(
@@ -200,7 +196,7 @@ def validate_artifact_generation_change(value: object) -> dict:
     return result
 
 
-def artifact_generation_change_to_dict(value: object) -> dict[str, object]:
+def artifact_generation_change_to_dict(value: object) -> dict:
     """Return one validated serializable generation-change dictionary."""
     validated = validate_artifact_generation_change(value)
     result = dict(validated)
@@ -232,8 +228,6 @@ def normalize_artifact_generation_changes(value: object) -> tuple[dict, ...]:
     return ordered
 
 
-
-
 def mutation_receipt(
     sequence: int,
     request_id: str,
@@ -241,12 +235,12 @@ def mutation_receipt(
     payload_signature: str,
     result_code: MutationResultCode,
     affected_generations: tuple[dict, ...],
-    result: dict[str, object],
+    result: dict,
     completion_state: ReceiptCompletionState,
     created_at: str,
     schema_version: int = MUTATION_RECEIPT_SCHEMA_VERSION,
 ) -> dict:
-    """Build one validated durable mutation-receipt dictionary."""
+    """Build one validated mutation-receipt dictionary."""
     if schema_version != MUTATION_RECEIPT_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported mutation receipt schema_version: {schema_version}")
     normalized_sequence = positive_int(sequence, "mutation receipt sequence")
@@ -299,7 +293,7 @@ def validate_mutation_receipt(value: object) -> dict:
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(result_code, MutationResultCode) or not isinstance(affected_generations, tuple):
         raise InvalidRequestError("mutation receipt fields are malformed")
-    if not isinstance(result, Mapping) or not isinstance(completion_state, ReceiptCompletionState):
+    if not isinstance(result, dict) or not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(created_at, str) or not isinstance(schema_version, int):
         raise InvalidRequestError("mutation receipt fields are malformed")
@@ -318,14 +312,14 @@ def validate_mutation_receipt(value: object) -> dict:
     return receipt
 
 
-def mutation_receipt_to_dict(value: object) -> dict[str, object]:
-    """Return the exact persistent dictionary for one mutation receipt."""
+def mutation_receipt_to_dict(value: object) -> dict:
+    """Return the exact external dictionary for one mutation receipt."""
     receipt = validate_mutation_receipt(value)
     result = trusted_mutation_receipt_to_dict(receipt)
     return result
 
 
-def trusted_mutation_receipt_to_dict(receipt: dict) -> dict[str, object]:
+def trusted_mutation_receipt_to_dict(receipt: dict) -> dict:
     """Serialize a ledger-owned receipt without redundant semantic validation."""
     affected = [artifact_generation_change_to_dict(change) for change in receipt.get("affected_generations", ())]
     result_value = thaw_json(receipt.get("result", {}))
@@ -364,7 +358,7 @@ def mutation_receipt_from_dict(value: object) -> dict:
     if not isinstance(affected, list):
         raise InvalidRequestError("mutation receipt affected_generations must be an array")
     result = data["result"]
-    if not isinstance(result, Mapping):
+    if not isinstance(result, dict):
         raise InvalidRequestError("mutation receipt result must be an object")
     receipt = mutation_receipt(
         schema_version=positive_int(data["schema_version"], "mutation receipt schema_version"),
@@ -389,12 +383,10 @@ def mutation_receipt_from_json(value: str) -> dict:
         decoded = json_loads(value)
     except json_JSONDecodeError as error:
         raise InvalidRequestError("MutationReceipt JSON is malformed") from error
-    if not isinstance(decoded, Mapping):
+    if not isinstance(decoded, dict):
         raise InvalidRequestError("MutationReceipt JSON must contain an object")
     receipt = mutation_receipt_from_dict(decoded)
     return receipt
-
-
 
 
 def receipt_tombstone(
@@ -433,7 +425,7 @@ def validate_receipt_tombstone(value: object) -> dict:
     return result
 
 
-def receipt_tombstone_to_dict(value: object) -> dict[str, object]:
+def receipt_tombstone_to_dict(value: object) -> dict:
     """Return the exact serializable form of one receipt tombstone."""
     validated = validate_receipt_tombstone(value)
     result = {
@@ -459,8 +451,6 @@ def receipt_tombstone_from_dict(value: object) -> dict:
         payload_signature=internal_signature(data["payload_signature"]),
     )
     return result
-
-
 
 
 def receipt_lookup(
@@ -524,10 +514,20 @@ class MutationReceiptLedger:
         self,
         max_receipts: int = 10_000,
         max_tombstones: int = 10_000,
-        receipts: tuple[dict, ...] = (),
-        tombstones: tuple[dict, ...] = (),
+        receipts: object = (),
+        tombstones: object = (),
         next_sequence: int = 1,
+        state: object = (),
     ) -> None:
+        if state != ():
+            if max_receipts != 10_000 or max_tombstones != 10_000 or receipts or tombstones or next_sequence != 1:
+                raise InvalidRequestError("ledger state cannot be combined with individual ledger fields")
+            validated_state = validate_mutation_receipt_ledger_state(state)
+            max_receipts = validated_state.get("max_receipts", 0)
+            max_tombstones = validated_state.get("max_tombstones", 0)
+            receipts = validated_state.get("receipts", ())
+            tombstones = validated_state.get("tombstones", ())
+            next_sequence = validated_state.get("next_sequence", 0)
         self.max_receipts = positive_int(max_receipts, "max_receipts", MAX_RECEIPTS)
         self.max_tombstones = positive_int(max_tombstones, "max_tombstones", MAX_TOMBSTONES)
         self.internal_next_sequence = positive_int(next_sequence, "next receipt sequence")
@@ -554,18 +554,6 @@ class MutationReceiptLedger:
         self.internal_lock = threading_RLock()
         self.internal_receipts = {receipt["request_id"]: receipt for receipt in validated_receipts}
         self.internal_tombstones = {tombstone["request_id"]: tombstone for tombstone in validated_tombstones}
-
-    def trusted_clone(self) -> "MutationReceiptLedger":
-        """Clone indexes while sharing immutable receipt values."""
-        with self.internal_lock:
-            result = object.__new__(MutationReceiptLedger)
-            result.max_receipts = self.max_receipts
-            result.max_tombstones = self.max_tombstones
-            result.internal_next_sequence = self.internal_next_sequence
-            result.internal_lock = threading_RLock()
-            result.internal_receipts = dict(self.internal_receipts)
-            result.internal_tombstones = dict(self.internal_tombstones)
-            return result
 
     @property
     def next_sequence(self) -> int:
@@ -655,7 +643,7 @@ class MutationReceiptLedger:
             oldest = min(self.internal_tombstones.values(), key=lambda tombstone: tombstone["sequence"])
             del self.internal_tombstones[oldest["request_id"]]
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> dict:
         with self.internal_lock:
             result = {
                 "schema_version": MUTATION_LEDGER_SCHEMA_VERSION,
@@ -673,10 +661,10 @@ class MutationReceiptLedger:
             }
             return result
 
-    def replace_from_snapshot(self, value: dict[str, object]) -> None:
-        """Atomically restore a validated ledger without changing owner identity."""
+    def replace_from_snapshot(self, value: dict) -> None:
+        """Atomically publish validated in-process ledger state without changing owner identity."""
 
-        replacement = mutation_receipt_ledger_from_snapshot(value)
+        replacement = MutationReceiptLedger(state=value)
         with self.internal_lock:
             self.max_receipts = replacement.max_receipts
             self.max_tombstones = replacement.max_tombstones
@@ -685,14 +673,14 @@ class MutationReceiptLedger:
             self.internal_tombstones = dict(replacement.internal_tombstones)
 
 
-def mutation_receipt_ledger_from_validated(
+def mutation_receipt_ledger_state(
     max_receipts: int,
     max_tombstones: int,
     receipts: tuple[dict, ...],
     tombstones: tuple[dict, ...],
     next_sequence: int,
-) -> MutationReceiptLedger:
-    """Assemble a ledger from values parsed and validated by the snapshot decoder."""
+) -> dict:
+    """Validate and assemble one concrete process-memory ledger state."""
     if len(receipts) > max_receipts or len(tombstones) > max_tombstones:
         raise InvalidRequestError("receipt ledger state exceeds its configured retention bounds")
     sequences = [receipt["sequence"] for receipt in receipts] + [value["sequence"] for value in tombstones]
@@ -703,18 +691,18 @@ def mutation_receipt_ledger_from_validated(
         raise InvalidRequestError("receipt ledger request IDs must be unique")
     if sequences and next_sequence <= max(sequences):
         raise InvalidRequestError("next receipt sequence must exceed every retained sequence")
-    result = object.__new__(MutationReceiptLedger)
-    result.max_receipts = max_receipts
-    result.max_tombstones = max_tombstones
-    result.internal_next_sequence = next_sequence
-    result.internal_lock = threading_RLock()
-    result.internal_receipts = {receipt["request_id"]: receipt for receipt in receipts}
-    result.internal_tombstones = {value["request_id"]: value for value in tombstones}
+    result = {
+        "max_receipts": max_receipts,
+        "max_tombstones": max_tombstones,
+        "receipts": receipts,
+        "tombstones": tombstones,
+        "next_sequence": next_sequence,
+    }
     return result
 
 
-def mutation_receipt_ledger_from_snapshot(value: dict[str, object]) -> MutationReceiptLedger:
-    """Construct a mutation receipt ledger from one exact snapshot."""
+def validate_mutation_receipt_ledger_state(value: object) -> dict:
+    """Validate one exact in-process mutation receipt ledger state."""
     data = exact_mapping(
         value,
         "MutationReceiptLedger",
@@ -735,7 +723,7 @@ def mutation_receipt_ledger_from_snapshot(value: dict[str, object]) -> MutationR
     tombstones = data["tombstones"]
     if not isinstance(receipts, list) or not isinstance(tombstones, list):
         raise InvalidRequestError("mutation ledger receipts and tombstones must be arrays")
-    result = mutation_receipt_ledger_from_validated(
+    result = mutation_receipt_ledger_state(
         positive_int(data["max_receipts"], "max_receipts", MAX_RECEIPTS),
         positive_int(data["max_tombstones"], "max_tombstones", MAX_TOMBSTONES),
         tuple(mutation_receipt_from_dict(receipt) for receipt in receipts),

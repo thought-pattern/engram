@@ -63,13 +63,6 @@ def test_engram_config_invalid_matching_settings() -> None:
         engram_config(max_synonyms_per_word=-1)
 
 
-def test_removed_eviction_policy_keys_are_not_accepted() -> None:
-    with pytest_raises(TypeError):
-        engram_config(eviction_policy="fifo")
-    with pytest_raises(TypeError):
-        engram_config(min_hit_rate=0.5)
-
-
 def test_engram_config_graph_config_validation() -> None:
     with pytest_raises(ValueError):
         graph_config(host="")

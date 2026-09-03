@@ -195,14 +195,6 @@ def optional_projection_text(value: object, available: bool, name: str, maximum_
     return result
 
 
-
-
-
-
-
-
-
-
 def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
         raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")

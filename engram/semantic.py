@@ -1,6 +1,6 @@
 """Request-local semantic retrieval over accepted-response artifacts."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from hashlib import sha256 as hashlib_sha256
 from math import isfinite as math_isfinite, sqrt as math_sqrt
 from pathlib import Path
@@ -24,7 +24,6 @@ from engram.identity import validate_scope_key
 
 SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION = 32
 SEMANTIC_MATCH_WORKING_BYTES = 640
-
 
 
 def model_artifact_sha256(path: Path) -> str:
@@ -61,29 +60,17 @@ def model_artifact_sha256(path: Path) -> str:
     return result
 
 
-def internal_artifact_identity(settings: dict, actual_sha256: str) -> dict[str, object]:
+def internal_artifact_identity(settings: dict, actual_sha256: str) -> dict:
     result = {
-            "model_id": settings.get("model_id", ""),
-            "model_version": settings.get("model_version", ""),
-            "license_id": settings.get("license_id", ""),
-            "artifact_sha256": actual_sha256,
-            "backend": settings.get("backend", ""),
-            "dimension": settings.get("dimension", 0),
-            "normalization_version": settings.get("normalization_version", 0),
-        }
+        "model_id": settings.get("model_id", ""),
+        "model_version": settings.get("model_version", ""),
+        "license_id": settings.get("license_id", ""),
+        "artifact_sha256": actual_sha256,
+        "backend": settings.get("backend", ""),
+        "dimension": settings.get("dimension", 0),
+        "normalization_version": settings.get("normalization_version", 0),
+    }
     return result
-
-
-def load_native_model(settings: dict) -> object:
-    if settings.get("backend", "") != "native":
-        raise RuntimeError(f"semantic backend is unavailable: {settings.get('backend', "")}")
-    model = SentenceTransformer(
-        settings.get("model_path", ""),
-        device="cpu",
-        local_files_only=True,
-        trust_remote_code=False,
-    )
-    return model
 
 
 def model_dimension(model: object) -> int:
@@ -99,13 +86,9 @@ def model_dimension(model: object) -> int:
 
 
 def normalize_embedding(value: object, dimension: int) -> tuple[float, ...]:
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        try:
-            values = tuple(value)  # type: ignore[arg-type]
-        except TypeError as error:
-            raise InvalidRequestError("semantic model returned a non-vector value") from error
-    else:
-        values = tuple(value)
+    if isinstance(value, (str, bytes, dict)) or not isinstance(value, Iterable):
+        raise InvalidRequestError("semantic model returned a non-vector value")
+    values = tuple(value)
     if len(values) != dimension:
         raise InvalidRequestError("semantic model output dimension does not match configured dimension")
     numbers = []
@@ -148,11 +131,12 @@ def internal_encode(model: object, texts: tuple[str, ...], settings: dict) -> tu
     return result
 
 
-def representation_specs(artifact: dict, settings: dict) -> tuple[dict[str, object], ...]:
+def representation_specs(artifact: dict, settings: dict) -> tuple[dict, ...]:
     if artifact.get("lifecycle", LifecycleState.RETIRED) != LifecycleState.ACTIVE:
         return ()
-    texts = (("canonical", 0, artifact.get("retrieval", {})["canonical"]),) + tuple(
-        ("alias", index, value) for index, value in enumerate(artifact.get("retrieval", {})["aliases"])
+    retrieval = artifact.get("retrieval", {})
+    texts = (("canonical", 0, retrieval.get("canonical", "")),) + tuple(
+        ("alias", index, value) for index, value in enumerate(retrieval.get("aliases", ()))
     )
     seen = set()
     values = []
@@ -179,7 +163,7 @@ def representation_specs(artifact: dict, settings: dict) -> tuple[dict[str, obje
     return result
 
 
-def embedding_record(spec: dict[str, object], embedding: tuple[float, ...], identity: dict[str, object]) -> dict:
+def embedding_record(spec: dict, embedding: tuple[float, ...], identity: dict) -> dict:
     statement_id = spec.get("statement_id", "")
     generation = spec.get("generation", 0)
     origin = spec.get("origin", "")
@@ -187,23 +171,23 @@ def embedding_record(spec: dict[str, object], embedding: tuple[float, ...], iden
     text = spec.get("text", "")
     digest = hashlib_sha256(f"{statement_id}\0{generation}\0{origin}\0{ordinal}\0{text}".encode()).hexdigest()
     result = {
-            "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
-            "representation_id": f"semantic:sha256:{digest}",
-            "statement_id": statement_id,
-            "generation": generation,
-            "scope": dict(validate_scope_key(spec.get("scope", {}))),
-            "lifecycle": spec.get("lifecycle", LifecycleState.RETIRED),
-            "origin": origin,
-            "ordinal": ordinal,
-            "text": text,
-            "model_id": identity.get("model_id", ""),
-            "model_version": identity.get("model_version", ""),
-            "artifact_sha256": identity.get("artifact_sha256", ""),
-            "backend": identity.get("backend", ""),
-            "dimension": identity.get("dimension", 0),
-            "normalization_version": identity.get("normalization_version", 0),
-            "embedding": embedding,
-        }
+        "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
+        "representation_id": f"semantic:sha256:{digest}",
+        "statement_id": statement_id,
+        "generation": generation,
+        "scope": dict(validate_scope_key(spec.get("scope", {}))),
+        "lifecycle": spec.get("lifecycle", LifecycleState.RETIRED),
+        "origin": origin,
+        "ordinal": ordinal,
+        "text": text,
+        "model_id": identity.get("model_id", ""),
+        "model_version": identity.get("model_version", ""),
+        "artifact_sha256": identity.get("artifact_sha256", ""),
+        "backend": identity.get("backend", ""),
+        "dimension": identity.get("dimension", 0),
+        "normalization_version": identity.get("normalization_version", 0),
+        "embedding": embedding,
+    }
     return result
 
 
@@ -212,24 +196,21 @@ class StandaloneSemanticRetriever:
 
     def __init__(
         self,
-        settings: dict[str, object],
-        model_loader: object = (),
+        settings: dict,
+        model: object = (),
     ) -> None:
         try:
             self.internal_settings = semantic_config(**dict(settings))
         except (TypeError, ValueError) as error:
             raise InvalidRequestError(str(error)) from error
-        if model_loader != () and not callable(model_loader):
-            raise InvalidRequestError("semantic model_loader must be callable")
-        injected_loader = callable(model_loader)
-        loader = model_loader if callable(model_loader) else load_native_model
+        injected_model = model != ()
         self.internal_model: object = ()
         self.internal_healthy = not self.internal_settings["enabled"]
         self.internal_last_error = ""
-        self.internal_identity: dict[str, object] = {}
+        self.internal_identity: dict = {}
         if self.internal_settings["enabled"]:
             try:
-                if not injected_loader:
+                if not injected_model:
                     approved_identity = {
                         "model_id": APPROVED_SEMANTIC_MODEL_ID,
                         "model_version": APPROVED_SEMANTIC_MODEL_VERSION,
@@ -248,10 +229,19 @@ class StandaloneSemanticRetriever:
                 actual_sha256 = model_artifact_sha256(model_path)
                 if actual_sha256 != self.internal_settings["artifact_sha256"]:
                     raise InvalidRequestError("semantic model artifact checksum mismatch")
-                model = loader(self.internal_settings)
-                if model_dimension(model) != self.internal_settings["dimension"]:
+                selected_model = model
+                if not injected_model:
+                    if self.internal_settings.get("backend", "") != "native":
+                        raise RuntimeError(f"semantic backend is unavailable: {self.internal_settings.get('backend', "")}")
+                    selected_model = SentenceTransformer(
+                        self.internal_settings.get("model_path", ""),
+                        device="cpu",
+                        local_files_only=True,
+                        trust_remote_code=False,
+                    )
+                if model_dimension(selected_model) != self.internal_settings["dimension"]:
                     raise InvalidRequestError("semantic model dimension mismatch")
-                self.internal_model = model
+                self.internal_model = selected_model
                 self.internal_identity = internal_artifact_identity(self.internal_settings, actual_sha256)
                 self.internal_healthy = True
             except Exception as error:
@@ -272,7 +262,7 @@ class StandaloneSemanticRetriever:
     def last_error(self) -> str:
         return self.internal_last_error
 
-    def health(self) -> dict[str, object]:
+    def health(self) -> dict:
         result = {
             "enabled": self.enabled,
             "ready": bool(self.enabled and self.internal_healthy and self.internal_model),
@@ -281,11 +271,11 @@ class StandaloneSemanticRetriever:
         }
         return result
 
-    def records(self, specs: tuple[dict[str, object], ...]) -> tuple[dict, ...]:
+    def records(self, specs: tuple[dict, ...]) -> tuple[dict, ...]:
         model = self.internal_model
         if not model:
             raise InvalidRequestError("semantic model is unavailable")
-        embeddings = internal_encode(model, tuple(spec["text"] for spec in specs), self.internal_settings)
+        embeddings = internal_encode(model, tuple(spec.get("text", "") for spec in specs), self.internal_settings)
         result = tuple(
             embedding_record(spec, embedding, self.internal_identity) for spec, embedding in zip(specs, embeddings, strict=True)
         )
@@ -295,7 +285,7 @@ class StandaloneSemanticRetriever:
         self,
         text: str,
         scope: dict,
-        artifacts: list[dict],
+        artifacts: tuple[dict, ...],
         *,
         limit: int,
         max_vector_results: int,

@@ -1,6 +1,5 @@
 """Request-scoped time, availability, and cache eligibility contracts."""
 
-from collections.abc import Mapping
 from datetime import datetime, timedelta
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 
@@ -21,6 +20,8 @@ from engram.constants import (
     MAX_EXACT_LOOKUP_STATEMENT_ID_BYTES,
     EligibilityExclusionReason,
     ExactLookupOutcome,
+    LifecycleDecisionReason,
+    LifecycleState,
     RetrievalOrigin,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
@@ -34,9 +35,9 @@ from engram.identity import (
 )
 
 
-def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
+def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
     """Require one mapping with exactly the declared keys."""
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     actual = set(value)
     if actual != keys:
@@ -157,7 +158,7 @@ def validate_eligibility_context(value: object) -> dict:
     return result
 
 
-def eligibility_context_to_dict(value: object) -> dict[str, object]:
+def eligibility_context_to_dict(value: object) -> dict:
     """Return the external dictionary for one eligibility context."""
     result = dict(validate_eligibility_context(value))
     return result
@@ -252,11 +253,11 @@ def validate_eligibility_decision(value: object) -> dict:
     return result
 
 
-def eligibility_decision_to_dict(value: object) -> dict[str, object]:
+def eligibility_decision_to_dict(value: object) -> dict:
     """Return the external dictionary for one eligibility decision."""
     decision = validate_eligibility_decision(value)
-    result: dict[str, object] = dict(decision)
-    result["exclusion_reason"] = decision.get("exclusion_reason").value
+    result: dict = dict(decision)
+    result["exclusion_reason"] = decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE).value
     return result
 
 
@@ -332,7 +333,7 @@ def evaluate_artifact_eligibility(
         current_context = validate_eligibility_context(context)
     except InvalidRequestError as error:
         raise InvalidRequestError("context must be an EligibilityContext") from error
-    lifecycle = lifecycle_base_eligibility(current_artifact.get("lifecycle"))
+    lifecycle = lifecycle_base_eligibility(current_artifact.get("lifecycle", LifecycleState.RETIRED))
     lifecycle_eligible = lifecycle.get("direct_answer_eligible", False)
     if not current_context.get("artifact_repository_available", False):
         result = eligibility_result(
@@ -363,7 +364,10 @@ def evaluate_artifact_eligibility(
             current_artifact,
             current_context,
             False,
-            LIFECYCLE_EXCLUSION_REASONS.get(lifecycle.get("reason")),
+            LIFECYCLE_EXCLUSION_REASONS.get(
+                lifecycle.get("reason", LifecycleDecisionReason.RETIRED),
+                EligibilityExclusionReason.LIFECYCLE_RETIRED,
+            ),
         )
         return result
     evaluation_time = timestamp_to_datetime(current_context.get("evaluation_time", ""))
@@ -488,11 +492,11 @@ def validate_exact_lookup_result(value: object) -> dict:
     return result
 
 
-def exact_lookup_result_to_dict(value: object) -> dict[str, object]:
+def exact_lookup_result_to_dict(value: object) -> dict:
     """Return the external dictionary for one direct artifact lookup."""
     lookup = validate_exact_lookup_result(value)
     result = {
-        "outcome": lookup.get("outcome").value,
+        "outcome": lookup.get("outcome", ExactLookupOutcome.MISS).value,
         "key": scoped_retrieval_key_to_dict(lookup.get("key", {})),
         "statement_id": lookup.get("statement_id", ""),
         "generation": lookup.get("generation", 0),
@@ -541,7 +545,7 @@ def validate_contextual_exact_lookup_result(value: object) -> dict:
     return result
 
 
-def contextual_exact_lookup_result_to_dict(value: object) -> dict[str, object]:
+def contextual_exact_lookup_result_to_dict(value: object) -> dict:
     """Return the external dictionary for one contextual exact lookup."""
     lookup_result = validate_contextual_exact_lookup_result(value)
     result = {
@@ -560,7 +564,7 @@ class ContextualExactLookup:
         artifacts: dict[str, dict],
         trusted_artifacts: bool = False,
     ) -> None:
-        if not isinstance(artifacts, Mapping):
+        if not isinstance(artifacts, dict):
             raise InvalidRequestError("contextual exact artifacts must be an object")
         if not isinstance(trusted_artifacts, bool):
             raise InvalidRequestError("trusted_artifacts must be a boolean")
@@ -591,7 +595,7 @@ class ContextualExactLookup:
         eligible = []
         decisions = []
         for statement_id in sorted(self.artifacts):
-            artifact = self.artifacts.get(statement_id)
+            artifact = self.artifacts.get(statement_id, {})
             matched_binding = ()
             for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {})):
                 if binding.get("key") == current_key:
@@ -613,7 +617,7 @@ class ContextualExactLookup:
                 current_key,
                 artifact.get("statement_id", ""),
                 artifact.get("generation", 0),
-                binding.get("origin").value,
+                binding.get("origin", RetrievalOrigin.CANONICAL).value,
                 binding.get("representation", ""),
                 bounded_owners,
                 truncated,
@@ -637,13 +641,20 @@ class ContextualExactLookup:
         return result
 
 
-class EligibilityContextFactory:
+class EligibilityContextCapture:
     """Capture exactly one trusted time snapshot per request."""
 
     def __init__(self, clock: object) -> None:
         if not callable(clock):
             raise InvalidRequestError("eligibility clock must be callable")
         self.clock = clock
+
+    def current_time(self) -> datetime:
+        """Read and validate the configured request clock boundary."""
+        value = self.clock()
+        if not isinstance(value, datetime):
+            raise InvalidRequestError("eligibility clock must return a datetime")
+        return value
 
     def capture_standalone(self, scope: dict, artifact_repository_available: bool) -> dict:
         try:
@@ -652,7 +663,7 @@ class EligibilityContextFactory:
             raise InvalidRequestError("eligibility scope must be a ScopeKey") from error
         repository_available = require_bool(artifact_repository_available, "artifact_repository_available")
         result = eligibility_context(
-            datetime_to_timestamp(self.clock()),
+            datetime_to_timestamp(self.current_time()),
             True,
             current_scope.get("namespace", ""),
             repository_available,

@@ -39,14 +39,14 @@ SPARSE_FIELD_NAMES = (
     "response_text",
 )
 SPARSE_FIELD_WEIGHTS: dict[str, float] = {
-        "canonical": 3.0,
-        "aliases": 2.5,
-        "entities": 2.25,
-        "relation": 2.0,
-        "keywords": 1.5,
-        "technical_identifiers": 3.5,
-        "response_text": 0.25,
-    }
+    "canonical": 3.0,
+    "aliases": 2.5,
+    "entities": 2.25,
+    "relation": 2.0,
+    "keywords": 1.5,
+    "technical_identifiers": 3.5,
+    "response_text": 0.25,
+}
 
 GENERAL_TOKEN = re_compile(r"[^\W_]+(?:['’][^\W_]+)?", UNICODE)
 VERSION_TOKEN = re_compile(r"^v?\d+(?:\.\d+){1,5}(?:[-+][a-z0-9._-]+)?$", IGNORECASE)
@@ -95,15 +95,7 @@ def internal_validated_settings(value: dict[str, object]) -> dict:
     return result
 
 
-
-
-
-
-
-
 SparseMatch = dict
-
-
 
 
 def normalized_text(value: str) -> str:
@@ -202,14 +194,14 @@ def sparse_document_from_validated_artifact(
         for name in SPARSE_FIELD_NAMES
     }
     result = {
-            "schema_version": SPARSE_DOCUMENT_SCHEMA_VERSION,
-            "statement_id": artifact.get("statement_id", ""),
-            "scope": dict(validate_scope_key(artifact.get("scope", {}))),
-            "lifecycle": artifact.get("lifecycle", LifecycleState.RETIRED),
-            "fields": dict(fields),
-            "tokens": dict(tokens),
-            "technical_identifiers": fields["technical_identifiers"],
-        }
+        "schema_version": SPARSE_DOCUMENT_SCHEMA_VERSION,
+        "statement_id": artifact.get("statement_id", ""),
+        "scope": dict(validate_scope_key(artifact.get("scope", {}))),
+        "lifecycle": artifact.get("lifecycle", LifecycleState.RETIRED),
+        "fields": dict(fields),
+        "tokens": dict(tokens),
+        "technical_identifiers": fields["technical_identifiers"],
+    }
     return result
 
 
@@ -257,7 +249,7 @@ def document_term_frequencies(document: dict) -> dict[str, Counter[str]]:
 
 
 def build_sparse_working_set(
-    artifacts: list[dict],
+    artifacts: tuple[dict, ...],
     *,
     settings: dict[str, object],
     trusted_artifacts: bool = False,
@@ -297,12 +289,12 @@ def build_sparse_working_set(
     frozen_documents = dict(dict(sorted(documents.items())))
     frozen_postings = dict(postings)
     result = {
-            "tokenizer_version": SPARSE_TOKENIZER_VERSION,
-            "documents": frozen_documents,
-            "postings": frozen_postings,
-            "document_frequencies": dict(document_frequencies),
-            "average_field_lengths": dict(averages),
-        }
+        "tokenizer_version": SPARSE_TOKENIZER_VERSION,
+        "documents": frozen_documents,
+        "postings": frozen_postings,
+        "document_frequencies": dict(document_frequencies),
+        "average_field_lengths": dict(averages),
+    }
     return result
 
 
@@ -657,9 +649,8 @@ def search_sparse_working_set(
                 return result
             working_memory = projected_memory
         field_contributions = {
-                name: raw_fields[name] / (raw_fields[name] + normalization) if raw_fields[name] else 0.0
-                for name in SPARSE_FIELD_NAMES
-            }
+            name: raw_fields[name] / (raw_fields[name] + normalization) if raw_fields[name] else 0.0 for name in SPARSE_FIELD_NAMES
+        }
         match = SparseMatch(
             statement_id=statement_id,
             score=score,
@@ -691,7 +682,7 @@ def search_sparse_working_set(
 
 
 def search_sparse_artifacts(
-    artifacts: list[dict],
+    artifacts: tuple[dict, ...],
     text: str,
     scope: dict,
     settings: dict[str, object],

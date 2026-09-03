@@ -1,6 +1,5 @@
 """Current-time disclosure eligibility for response-less Proposition evidence."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -63,8 +62,8 @@ def no_cooperative_check() -> bool:
     return False
 
 
-def exact_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != fields:
+def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
+    if not isinstance(value, dict) or set(value) != fields:
         raise InvalidRequestError(f"{name} has invalid fields")
     result = value
     return result
@@ -122,7 +121,7 @@ def validate_evidence_usefulness_decision(value: object) -> dict:
     return result
 
 
-def evidence_usefulness_decision_to_dict(value: object) -> dict[str, object]:
+def evidence_usefulness_decision_to_dict(value: object) -> dict:
     decision = validate_evidence_usefulness_decision(value)
     result = {
         "policy_version": decision["policy_version"],
@@ -199,19 +198,19 @@ def validate_evidence_usefulness_policy(value: object) -> dict:
 
 def evidence_usefulness_policy_with_changes(value: object, changes: object) -> dict:
     policy = validate_evidence_usefulness_policy(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("evidence usefulness policy changes must be an object")
     if not set(changes).issubset(EVIDENCE_USEFULNESS_POLICY_FIELDS):
         raise InvalidRequestError("evidence usefulness policy changes contain an unknown field")
-    updated: dict[str, object] = dict(policy)
+    updated: dict = dict(policy)
     updated.update(changes)
     result = validate_evidence_usefulness_policy(updated)
     return result
 
 
-def evidence_usefulness_policy_to_dict(value: object) -> dict[str, object]:
+def evidence_usefulness_policy_to_dict(value: object) -> dict:
     policy = validate_evidence_usefulness_policy(value)
-    result: dict[str, object] = dict(policy)
+    result: dict = dict(policy)
     return result
 
 
@@ -233,7 +232,7 @@ def evidence_usefulness_policy_from_json(value: str) -> dict:
         decoded = json_loads(value)
     except json_JSONDecodeError as error:
         raise InvalidRequestError("EvidenceUsefulnessPolicy JSON must be valid JSON") from error
-    if not isinstance(decoded, Mapping):
+    if not isinstance(decoded, dict):
         raise InvalidRequestError("EvidenceUsefulnessPolicy JSON must decode to an object")
     result = evidence_usefulness_policy_from_dict(decoded)
     return result
@@ -485,11 +484,11 @@ def validate_proposition_eligibility_decision(value: object) -> dict:
 
 def proposition_eligibility_decision_with_changes(value: object, changes: object) -> dict:
     decision = validate_proposition_eligibility_decision(value)
-    if not isinstance(changes, Mapping):
+    if not isinstance(changes, dict):
         raise InvalidRequestError("Proposition eligibility decision changes must be an object")
     if not set(changes).issubset(PROPOSITION_ELIGIBILITY_DECISION_FIELDS):
         raise InvalidRequestError("Proposition eligibility decision changes contain an unknown field")
-    updated: dict[str, object] = dict(decision)
+    updated: dict = dict(decision)
     updated.update(changes)
     result = validate_proposition_eligibility_decision(updated)
     return result

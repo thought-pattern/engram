@@ -1,4 +1,4 @@
-"""Section 3 durable mutation receipt tests."""
+"""Process-memory mutation receipt behavior tests."""
 
 from json import loads as json_loads
 from threading import Barrier as threading_Barrier, Thread as threading_Thread
@@ -17,7 +17,6 @@ from engram.mutations import (
     canonical_payload_signature,
     mutation_receipt,
     mutation_receipt_from_json,
-    mutation_receipt_ledger_from_snapshot,
     mutation_receipt_to_dict,
     mutation_receipt_to_json,
     receipt_lookup_receipt,
@@ -180,24 +179,6 @@ def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon(
     )
     with pytest_raises(ConflictError, match="pruned"):
         ledger.record(completed_receipt("request-2", 5))
-
-
-def test_ledger_snapshot_restart_preserves_replay_conflict_and_expired_semantics() -> None:
-    ledger = MutationReceiptLedger(max_receipts=1, max_tombstones=2)
-    first = ledger.record(completed_receipt("request-1", 1))
-    second = ledger.record(completed_receipt("request-2", 2))
-    restored = mutation_receipt_ledger_from_snapshot(ledger.snapshot())
-
-    assert restored.snapshot() == ledger.snapshot()
-    assert restored.next_sequence == 3
-    assert restored.lookup(second["request_id"], second["operation"], second["payload_signature"])["outcome"] == (
-        ReceiptLookupOutcome.REPLAY
-    )
-    assert restored.lookup(first["request_id"], first["operation"], first["payload_signature"])["outcome"] == (
-        ReceiptLookupOutcome.EXPIRED
-    )
-    changed_signature = canonical_payload_signature({"response": "changed"})
-    assert restored.lookup(first["request_id"], first["operation"], changed_signature)["outcome"] == (ReceiptLookupOutcome.CONFLICT)
 
 
 def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:

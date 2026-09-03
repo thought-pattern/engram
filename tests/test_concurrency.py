@@ -14,6 +14,7 @@ from engram.core import Engram
 THREADS = 4
 ITERATIONS = 25
 
+
 def test_concurrent_flows_hold_invariants() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)

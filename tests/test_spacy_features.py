@@ -12,6 +12,7 @@ from engram.text import extract_keywords_spacy, lemmatize_text_spacy
 
 requires_model = pytest_mark.skipif(not get_nlp(), reason="en_core_web_sm not installed")
 
+
 def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
     calls = []
 

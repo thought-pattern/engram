@@ -1,6 +1,5 @@
 """Versioned, bounded, retrieval-only symbolic rewrites."""
 
-from collections.abc import Mapping
 from enum import StrEnum
 from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
@@ -89,10 +88,8 @@ class RewriteStopReason(StrEnum):
     TIME_LIMIT = "time_limit"
 
 
-
-
 def internal_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != fields:
+    if not isinstance(value, dict) or set(value) != fields:
         raise InvalidRequestError(f"{name} has invalid fields")
     return value
 
@@ -319,6 +316,12 @@ class RewriteEngine:
             raise InvalidRequestError("rewrite clock_ns must be callable")
         self.internal_clock_ns = clock_ns
 
+    def current_time_ns(self) -> int:
+        value = self.internal_clock_ns()
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise InvalidRequestError("rewrite clock_ns must return a non-negative integer")
+        return value
+
     def rewrite(
         self,
         text: str,
@@ -340,7 +343,7 @@ class RewriteEngine:
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("rewrite cooperative_check must be callable")
         check = cooperative_check if callable(cooperative_check) else lambda: False
-        started = self.internal_clock_ns()
+        started = self.current_time_ns()
         current = original
         seen = {current.casefold()}
         applications: dict[tuple[str, int], int] = {}
@@ -349,7 +352,7 @@ class RewriteEngine:
         stop_reason = RewriteStopReason.FIXED_POINT
         while len(chain) < self.max_depth:
             check()
-            if max(0, self.internal_clock_ns() - started) > self.max_elapsed_ns:
+            if max(0, self.current_time_ns() - started) > self.max_elapsed_ns:
                 stop_reason = RewriteStopReason.TIME_LIMIT
                 break
             candidates = []
@@ -382,7 +385,7 @@ class RewriteEngine:
             seen.add(signature)
         else:
             stop_reason = RewriteStopReason.DEPTH_LIMIT
-        elapsed = max(0, self.internal_clock_ns() - started)
+        elapsed = max(0, self.current_time_ns() - started)
         if stop_reason == RewriteStopReason.FIXED_POINT and elapsed > self.max_elapsed_ns:
             stop_reason = RewriteStopReason.TIME_LIMIT
         result: dict = {

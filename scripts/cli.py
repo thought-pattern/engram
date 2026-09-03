@@ -11,7 +11,7 @@ if str(REPOSITORY_ROOT) not in sys_path:
 
 from engram.config import load_config
 from engram.errors import EngramCoreError
-from engram.service import EngramCore, open_engram_core
+from engram.service import EngramCore
 
 
 class InteractiveChat:
@@ -116,7 +116,7 @@ def main(argv=()) -> int:
         config["capacity"] = args.capacity
     command = args.command or "interactive"
     try:
-        core = open_engram_core(config=config)
+        core = EngramCore(config=config)
         if command == "query":
             result = core.engram.query(args.text, limit=args.limit)
             print(json_dumps(result, indent=2, default=str))

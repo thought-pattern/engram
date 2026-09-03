@@ -369,7 +369,7 @@ async def internal_run(
     return run_result
 
 
-def internal_parser() -> argparse_ArgumentParser:
+def main(argv: tuple[str, ...] = ()) -> int:
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--turns", type=int, default=MCP_CONFORMANCE_MINIMUM_TURNS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -414,18 +414,15 @@ def internal_parser() -> argparse_ArgumentParser:
         help="Replace every Nth profile message with a graph query and require a graph-sourced response",
     )
     parser.add_argument("--stdout", action="store_true")
-    parser_value = parser
-    return parser_value
-
-
-def main(argv: tuple[str] = ()) -> int:
-    args = internal_parser().parse_args(argv)
+    args = parser.parse_args(argv)
     if args.turns < MCP_CONFORMANCE_MINIMUM_TURNS:
         raise ValueError(f"MCP conformance requires at least {MCP_CONFORMANCE_MINIMUM_TURNS} turns")
     if args.memgraph_probe_every < 0:
         raise ValueError("--memgraph-probe-every must be nonnegative")
     selected_config = args.config
-    with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
+    temporary_root = REPOSITORY.parents[2] / "temp"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-", dir=temporary_root) as temporary_directory:
         if args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility:
             raw_config = {}
             if args.config:
@@ -484,4 +481,4 @@ def main(argv: tuple[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys_argv[1:]))
+    raise SystemExit(main(tuple(sys_argv[1:])))

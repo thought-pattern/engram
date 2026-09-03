@@ -55,20 +55,20 @@ DIALOGUE_TOPIC_SHIFT = "topic_shift"
 EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
 VOWELS = set("aeiou")
 FRAME_OVERRIDES = {
-        "precedes": "{s} precedes {o}",
-        "dissolved_date": "{s} was dissolved in {o}",
-        "date_of_birth": "{s} was born on {o}",
-        "date_of_death": "{s} died on {o}",
-        "born_in": "{s} was born in {o}",
-        "inception": "{s} was founded in {o}",
-        "publication_date": "{s} was published on {o}",
-        "point_in_time": "{s} occurred on {o}",
-        "capital_of": "{s} is the capital of {o}",
-        "has_capital": "{s}'s capital is {o}",
-        "present_in_work": "{s} appears in {o}",
-        "award_received": "{s} received {o}",
-        "contains_location": "{s} contains {o}",
-    }
+    "precedes": "{s} precedes {o}",
+    "dissolved_date": "{s} was dissolved in {o}",
+    "date_of_birth": "{s} was born on {o}",
+    "date_of_death": "{s} died on {o}",
+    "born_in": "{s} was born in {o}",
+    "inception": "{s} was founded in {o}",
+    "publication_date": "{s} was published on {o}",
+    "point_in_time": "{s} occurred on {o}",
+    "capital_of": "{s} is the capital of {o}",
+    "has_capital": "{s}'s capital is {o}",
+    "present_in_work": "{s} appears in {o}",
+    "award_received": "{s} received {o}",
+    "contains_location": "{s} contains {o}",
+}
 GRAPH_ENTITY_FACTS_QUERY = (
     "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
     "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
@@ -220,10 +220,10 @@ MAX_IDENTITY_JSON_BYTES = 262_144
 SCOPE_KEY_FIELDS = set({"schema_version", "namespace", "context_fingerprint"})
 SCOPED_RETRIEVAL_KEY_FIELDS = set({"schema_version", "normalization_version", "scope", "normalized_key"})
 EMPTY_SCOPE_KEY = {
-        "schema_version": SCOPE_SCHEMA_VERSION,
-        "namespace": "",
-        "context_fingerprint": "",
-    }
+    "schema_version": SCOPE_SCHEMA_VERSION,
+    "namespace": "",
+    "context_fingerprint": "",
+}
 ENTITY_REFERENCE_FIELDS = set({"surface", "canonical_id"})
 RELATION_REFERENCE_FIELDS = set({"surface", "canonical_id"})
 IDENTITY_QUALIFIER_FIELDS = set({"kind", "value"})
@@ -1812,13 +1812,13 @@ class FeedbackOutcome(StrEnum):
 
 
 FEEDBACK_OUTCOME_COUNTER_FIELDS = {
-        FeedbackOutcome.CANDIDATE: "candidate_count",
-        FeedbackOutcome.ACCEPTED: "accept_count",
-        FeedbackOutcome.REJECTED_QUALITY: "rejected_quality",
-        FeedbackOutcome.REJECTED_CONTEXT: "rejected_context",
-        FeedbackOutcome.REJECTED_STALE: "rejected_stale",
-        FeedbackOutcome.REJECTED_POLICY: "rejected_policy",
-    }
+    FeedbackOutcome.CANDIDATE: "candidate_count",
+    FeedbackOutcome.ACCEPTED: "accept_count",
+    FeedbackOutcome.REJECTED_QUALITY: "rejected_quality",
+    FeedbackOutcome.REJECTED_CONTEXT: "rejected_context",
+    FeedbackOutcome.REJECTED_STALE: "rejected_stale",
+    FeedbackOutcome.REJECTED_POLICY: "rejected_policy",
+}
 
 
 class LifecycleHandoffStatus(StrEnum):
@@ -1833,19 +1833,19 @@ class LifecycleHandoffStatus(StrEnum):
 
 
 DEFAULT_FUSION_WEIGHTS = {
-        FusionFeature.EXACT: 1.0,
-        FusionFeature.LEXICAL: 1.0,
-        FusionFeature.SEMANTIC: 1.0,
-        FusionFeature.ENTITY: 0.4,
-        FusionFeature.RELATION: 0.5,
-        FusionFeature.OBJECT_TYPE: 0.3,
-        FusionFeature.SUPPORT: 0.8,
-        FusionFeature.HISTORY: 0.2,
-        FusionFeature.FRESHNESS: 0.2,
-        FusionFeature.AUTHORITY: 0.5,
-        FusionFeature.AGREEMENT: 0.9,
-        FusionFeature.MARGIN: 0.0,
-    }
+    FusionFeature.EXACT: 1.0,
+    FusionFeature.LEXICAL: 1.0,
+    FusionFeature.SEMANTIC: 1.0,
+    FusionFeature.ENTITY: 0.4,
+    FusionFeature.RELATION: 0.5,
+    FusionFeature.OBJECT_TYPE: 0.3,
+    FusionFeature.SUPPORT: 0.8,
+    FusionFeature.HISTORY: 0.2,
+    FusionFeature.FRESHNESS: 0.2,
+    FusionFeature.AUTHORITY: 0.5,
+    FusionFeature.AGREEMENT: 0.9,
+    FusionFeature.MARGIN: 0.0,
+}
 TEMPLATE_STAR_EXPRESSION = r"\{star(\d+)\}"
 TEMPLATE_THATSTAR_EXPRESSION = r"\{thatstar(\d+)\}"
 TEMPLATE_TOPICSTAR_EXPRESSION = r"\{topicstar(\d+)\}"
@@ -1862,38 +1862,38 @@ TEMPLATE_TRANSFORM_EXPRESSION = (
 )
 TEMPLATE_DATE_FORMAT_EXPRESSION = r"\{date:([^}]+)\}"
 TEMPLATE_SIMPLE_VARIABLE_TOKENS = {
-        "topic": "{topic}",
-        "input": "{input}",
-        "request": "{request}",
-        "id": "{id}",
-        "size": "{size}",
-        "vocabulary": "{vocabulary}",
-        "date": "{date}",
-        "time": "{time}",
-        "program": "{program}",
-        "version": "{version}",
-    }
+    "topic": "{topic}",
+    "input": "{input}",
+    "request": "{request}",
+    "id": "{id}",
+    "size": "{size}",
+    "vocabulary": "{vocabulary}",
+    "date": "{date}",
+    "time": "{time}",
+    "program": "{program}",
+    "version": "{version}",
+}
 GRPC_REGULATOR_OUTCOME_NAMES = {
-        "REGULATOR_OUTCOME_ACCEPTED": "accepted",
-        "REGULATOR_OUTCOME_REJECTED_QUALITY": "rejected_quality",
-        "REGULATOR_OUTCOME_REJECTED_CONTEXT": "rejected_context",
-        "REGULATOR_OUTCOME_REJECTED_STALE": "rejected_stale",
-        "REGULATOR_OUTCOME_REJECTED_POLICY": "rejected_policy",
-    }
+    "REGULATOR_OUTCOME_ACCEPTED": "accepted",
+    "REGULATOR_OUTCOME_REJECTED_QUALITY": "rejected_quality",
+    "REGULATOR_OUTCOME_REJECTED_CONTEXT": "rejected_context",
+    "REGULATOR_OUTCOME_REJECTED_STALE": "rejected_stale",
+    "REGULATOR_OUTCOME_REJECTED_POLICY": "rejected_policy",
+}
 FUSION_SOURCE_ORDER = {
-        CandidateSource.EXACT: 0,
-        CandidateSource.SUPPORT_SEMANTIC: 1,
-        CandidateSource.SPARSE: 2,
-        CandidateSource.STANDALONE_SEMANTIC: 3,
-        CandidateSource.UTILITY: 4,
-    }
+    CandidateSource.EXACT: 0,
+    CandidateSource.SUPPORT_SEMANTIC: 1,
+    CandidateSource.SPARSE: 2,
+    CandidateSource.STANDALONE_SEMANTIC: 3,
+    CandidateSource.UTILITY: 4,
+}
 FUSION_SOURCE_FAMILY = {
-        CandidateSource.EXACT: "exact",
-        CandidateSource.SUPPORT_SEMANTIC: "support_semantic",
-        CandidateSource.SPARSE: "lexical",
-        CandidateSource.STANDALONE_SEMANTIC: "standalone_semantic",
-        CandidateSource.UTILITY: "utility",
-    }
+    CandidateSource.EXACT: "exact",
+    CandidateSource.SUPPORT_SEMANTIC: "support_semantic",
+    CandidateSource.SPARSE: "lexical",
+    CandidateSource.STANDALONE_SEMANTIC: "standalone_semantic",
+    CandidateSource.UTILITY: "utility",
+}
 FUSION_CONSERVATIVE_MINIMUM = set(
     {
         FusionFeature.ENTITY,
@@ -1905,163 +1905,163 @@ FUSION_CONSERVATIVE_MINIMUM = set(
     }
 )
 FUSION_FEATURE_DEFINITION_SPECS: dict[FusionFeature, tuple] = {
-        FusionFeature.EXACT: (
-            0.0,
-            1.0,
-            True,
-            "scoped request equality or revalidated deterministic utility execution",
-            "neither exact retrieval nor an allow-listed utility measured a deterministic match",
-            "ExactResolver.exact_match or UtilityResolver.utility_match",
-            "§§3-5, 14",
-            "authoritative artifact revalidation or repeat execution of the named built-in utility",
-            "exact_match or utility_match in [0, 1] from its dedicated source only",
-            "maximum non-conflicting deterministic observation",
-            FusionFeatureRole.SCORING_AND_GATE,
-        ),
-        FusionFeature.LEXICAL: (
-            0.0,
-            1.0,
-            True,
-            "calibrated lexical relevance",
-            "no lexical contribution",
-            "SparseResolver sparse score",
-            "§§4-5, 12",
-            "sparse source only",
-            "finite lexical score in the resolver's documented scale",
-            "maximum non-conflicting lexical observation",
-            FusionFeatureRole.SCORING,
-        ),
-        FusionFeature.SEMANTIC: (
-            0.0,
-            1.0,
-            True,
-            "bounded semantic similarity",
-            "no semantic model observation",
-            "support or standalone semantic resolver semantic_score",
-            "§§4-5, 13",
-            "semantic candidate sources only",
-            "finite similarity in [0, 1]",
-            "maximum non-conflicting semantic observation",
-            FusionFeatureRole.SCORING,
-        ),
-        FusionFeature.ENTITY: (
-            0.0,
-            1.0,
-            True,
-            "query/candidate entity identity agreement",
-            "entity identity was not measured",
-            "contextual resolver entity_match",
-            "§8",
-            "trusted contextual identity producer",
-            "finite agreement in [0, 1]",
-            "minimum available agreement so a mismatch cannot be hidden",
-            FusionFeatureRole.SCORING_AND_GATE,
-        ),
-        FusionFeature.RELATION: (
-            0.0,
-            1.0,
-            True,
-            "query/candidate relation agreement",
-            "relation identity was not measured",
-            "contextual resolver relation_match",
-            "§8",
-            "trusted contextual identity producer",
-            "finite agreement in [0, 1]",
-            "minimum available agreement so a mismatch cannot be hidden",
-            FusionFeatureRole.SCORING_AND_GATE,
-        ),
-        FusionFeature.OBJECT_TYPE: (
-            0.0,
-            1.0,
-            True,
-            "expected/candidate object-type agreement",
-            "object type was not measured",
-            "contextual resolver object_type_match",
-            "§8",
-            "trusted contextual type producer",
-            "finite agreement in [0, 1]",
-            "minimum available agreement so a mismatch cannot be hidden",
-            FusionFeatureRole.SCORING_AND_GATE,
-        ),
-        FusionFeature.SUPPORT: (
-            0.0,
-            1.0,
-            True,
-            "presence and completeness of linked response support",
-            "support was not inspected",
-            "retained SUPPORT references plus current artifact support state",
-            "§§3-5",
-            "current authoritative artifact and scope-consistent evidence only",
-            "binary presence or finite coverage in [0, 1]",
-            "authoritative current state with minimum explicit coverage",
-            FusionFeatureRole.SCORING_AND_GATE,
-        ),
-        FusionFeature.HISTORY: (
-            0.0,
-            1.0,
-            True,
-            "bounded accepted-use history",
-            "history was not observed",
-            "current artifact statistics and later §6 feedback features",
-            "§§3, 6",
-            "authoritative statistics or versioned feedback producer; never statement priority",
-            "finite rate in [0, 1]",
-            "authoritative current observation",
-            FusionFeatureRole.SCORING,
-        ),
-        FusionFeature.FRESHNESS: (
-            0.0,
-            1.0,
-            True,
-            "bounded time-recency signal",
-            "freshness was not observed",
-            "current resolver recency",
-            "§§4-5",
-            "resolver observation after Section 3 validity remains a hard gate",
-            "finite recency in [0, 1]",
-            "minimum available freshness",
-            FusionFeatureRole.SCORING,
-        ),
-        FusionFeature.AUTHORITY: (
-            0.0,
-            1.0,
-            True,
-            "explicit source trust or authority input",
-            "authority was not supplied",
-            "explicit artifact metadata and later graph trust producer",
-            "§§5, 9",
-            "explicit finite trusted input only; source labels do not imply rank",
-            "finite value in [0, 1]",
-            "minimum available authority",
-            FusionFeatureRole.SCORING,
-        ),
-        FusionFeature.AGREEMENT: (
-            0.0,
-            1.0,
-            True,
-            "independent resolver-family agreement for one statement",
-            "deduplication was not run",
-            "Section 5 candidate grouping",
-            "§5",
-            "derived only from eligible configured resolver families",
-            "distinct family count",
-            "derived once after deduplication",
-            FusionFeatureRole.DERIVED_SCORING,
-        ),
-        FusionFeature.MARGIN: (
-            0.0,
-            1.0,
-            True,
-            "leading score minus runner-up score",
-            "fewer than two score-eligible candidates",
-            "Section 5 ranked distinct statements",
-            "§5",
-            "derived from the final deterministic ranking only",
-            "difference between two bounded scores",
-            "decision-only; never enters the score",
-            FusionFeatureRole.DECISION_ONLY,
-        ),
-    }
+    FusionFeature.EXACT: (
+        0.0,
+        1.0,
+        True,
+        "scoped request equality or revalidated deterministic utility execution",
+        "neither exact retrieval nor an allow-listed utility measured a deterministic match",
+        "ExactResolver.exact_match or UtilityResolver.utility_match",
+        "§§3-5, 14",
+        "authoritative artifact revalidation or repeat execution of the named built-in utility",
+        "exact_match or utility_match in [0, 1] from its dedicated source only",
+        "maximum non-conflicting deterministic observation",
+        FusionFeatureRole.SCORING_AND_GATE,
+    ),
+    FusionFeature.LEXICAL: (
+        0.0,
+        1.0,
+        True,
+        "calibrated lexical relevance",
+        "no lexical contribution",
+        "SparseResolver sparse score",
+        "§§4-5, 12",
+        "sparse source only",
+        "finite lexical score in the resolver's documented scale",
+        "maximum non-conflicting lexical observation",
+        FusionFeatureRole.SCORING,
+    ),
+    FusionFeature.SEMANTIC: (
+        0.0,
+        1.0,
+        True,
+        "bounded semantic similarity",
+        "no semantic model observation",
+        "support or standalone semantic resolver semantic_score",
+        "§§4-5, 13",
+        "semantic candidate sources only",
+        "finite similarity in [0, 1]",
+        "maximum non-conflicting semantic observation",
+        FusionFeatureRole.SCORING,
+    ),
+    FusionFeature.ENTITY: (
+        0.0,
+        1.0,
+        True,
+        "query/candidate entity identity agreement",
+        "entity identity was not measured",
+        "contextual resolver entity_match",
+        "§8",
+        "trusted contextual identity producer",
+        "finite agreement in [0, 1]",
+        "minimum available agreement so a mismatch cannot be hidden",
+        FusionFeatureRole.SCORING_AND_GATE,
+    ),
+    FusionFeature.RELATION: (
+        0.0,
+        1.0,
+        True,
+        "query/candidate relation agreement",
+        "relation identity was not measured",
+        "contextual resolver relation_match",
+        "§8",
+        "trusted contextual identity producer",
+        "finite agreement in [0, 1]",
+        "minimum available agreement so a mismatch cannot be hidden",
+        FusionFeatureRole.SCORING_AND_GATE,
+    ),
+    FusionFeature.OBJECT_TYPE: (
+        0.0,
+        1.0,
+        True,
+        "expected/candidate object-type agreement",
+        "object type was not measured",
+        "contextual resolver object_type_match",
+        "§8",
+        "trusted contextual type producer",
+        "finite agreement in [0, 1]",
+        "minimum available agreement so a mismatch cannot be hidden",
+        FusionFeatureRole.SCORING_AND_GATE,
+    ),
+    FusionFeature.SUPPORT: (
+        0.0,
+        1.0,
+        True,
+        "presence and completeness of linked response support",
+        "support was not inspected",
+        "retained SUPPORT references plus current artifact support state",
+        "§§3-5",
+        "current authoritative artifact and scope-consistent evidence only",
+        "binary presence or finite coverage in [0, 1]",
+        "authoritative current state with minimum explicit coverage",
+        FusionFeatureRole.SCORING_AND_GATE,
+    ),
+    FusionFeature.HISTORY: (
+        0.0,
+        1.0,
+        True,
+        "bounded accepted-use history",
+        "history was not observed",
+        "current artifact statistics and later §6 feedback features",
+        "§§3, 6",
+        "authoritative statistics or versioned feedback producer; never statement priority",
+        "finite rate in [0, 1]",
+        "authoritative current observation",
+        FusionFeatureRole.SCORING,
+    ),
+    FusionFeature.FRESHNESS: (
+        0.0,
+        1.0,
+        True,
+        "bounded time-recency signal",
+        "freshness was not observed",
+        "current resolver recency",
+        "§§4-5",
+        "resolver observation after Section 3 validity remains a hard gate",
+        "finite recency in [0, 1]",
+        "minimum available freshness",
+        FusionFeatureRole.SCORING,
+    ),
+    FusionFeature.AUTHORITY: (
+        0.0,
+        1.0,
+        True,
+        "explicit source trust or authority input",
+        "authority was not supplied",
+        "explicit artifact metadata and later graph trust producer",
+        "§§5, 9",
+        "explicit finite trusted input only; source labels do not imply rank",
+        "finite value in [0, 1]",
+        "minimum available authority",
+        FusionFeatureRole.SCORING,
+    ),
+    FusionFeature.AGREEMENT: (
+        0.0,
+        1.0,
+        True,
+        "independent resolver-family agreement for one statement",
+        "deduplication was not run",
+        "Section 5 candidate grouping",
+        "§5",
+        "derived only from eligible configured resolver families",
+        "distinct family count",
+        "derived once after deduplication",
+        FusionFeatureRole.DERIVED_SCORING,
+    ),
+    FusionFeature.MARGIN: (
+        0.0,
+        1.0,
+        True,
+        "leading score minus runner-up score",
+        "fewer than two score-eligible candidates",
+        "Section 5 ranked distinct statements",
+        "§5",
+        "derived from the final deterministic ranking only",
+        "difference between two bounded scores",
+        "decision-only; never enters the score",
+        FusionFeatureRole.DECISION_ONLY,
+    ),
+}
 
 
 class QualifierKind(StrEnum):
@@ -2151,15 +2151,15 @@ class HistoricalKeyReuseReason(StrEnum):
 
 
 LEGAL_LIFECYCLE_TRANSITIONS = {
-        LifecycleState.ACTIVE: {
-                LifecycleOperation.SUPERSEDE: LifecycleState.SUPERSEDED,
-                LifecycleOperation.INVALIDATE: LifecycleState.INVALIDATED,
-                LifecycleOperation.RETIRE: LifecycleState.RETIRED,
-            },
-        LifecycleState.SUPERSEDED: EMPTY_MAPPING,
-        LifecycleState.INVALIDATED: EMPTY_MAPPING,
-        LifecycleState.RETIRED: EMPTY_MAPPING,
-    }
+    LifecycleState.ACTIVE: {
+        LifecycleOperation.SUPERSEDE: LifecycleState.SUPERSEDED,
+        LifecycleOperation.INVALIDATE: LifecycleState.INVALIDATED,
+        LifecycleOperation.RETIRE: LifecycleState.RETIRED,
+    },
+    LifecycleState.SUPERSEDED: EMPTY_MAPPING,
+    LifecycleState.INVALIDATED: EMPTY_MAPPING,
+    LifecycleState.RETIRED: EMPTY_MAPPING,
+}
 TERMINAL_LIFECYCLE_STATES = set(
     {
         LifecycleState.SUPERSEDED,
@@ -2168,10 +2168,10 @@ TERMINAL_LIFECYCLE_STATES = set(
     }
 )
 LIFECYCLE_INELIGIBLE_REASONS = {
-        LifecycleState.SUPERSEDED: LifecycleDecisionReason.SUPERSEDED,
-        LifecycleState.INVALIDATED: LifecycleDecisionReason.INVALIDATED,
-        LifecycleState.RETIRED: LifecycleDecisionReason.RETIRED,
-    }
+    LifecycleState.SUPERSEDED: LifecycleDecisionReason.SUPERSEDED,
+    LifecycleState.INVALIDATED: LifecycleDecisionReason.INVALIDATED,
+    LifecycleState.RETIRED: LifecycleDecisionReason.RETIRED,
+}
 
 
 class RepositoryRemovalReason(StrEnum):
@@ -2974,7 +2974,7 @@ DIALOGUE_PERSONAL_FACT_OBJECT_WORDS = set({"i", "me", "mine", "my", "our", "ours
 DIALOGUE_ENTITY_LABEL_PRIORITY = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
 DIALOGUE_BROAD_PATTERNS = set({"THAT *", "THAT IS *", "THE *"})
 LIFECYCLE_EXCLUSION_REASONS = {
-        LifecycleDecisionReason.SUPERSEDED: EligibilityExclusionReason.LIFECYCLE_SUPERSEDED,
-        LifecycleDecisionReason.INVALIDATED: EligibilityExclusionReason.LIFECYCLE_INVALIDATED,
-        LifecycleDecisionReason.RETIRED: EligibilityExclusionReason.LIFECYCLE_RETIRED,
-    }
+    LifecycleDecisionReason.SUPERSEDED: EligibilityExclusionReason.LIFECYCLE_SUPERSEDED,
+    LifecycleDecisionReason.INVALIDATED: EligibilityExclusionReason.LIFECYCLE_INVALIDATED,
+    LifecycleDecisionReason.RETIRED: EligibilityExclusionReason.LIFECYCLE_RETIRED,
+}

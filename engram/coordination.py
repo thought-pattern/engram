@@ -1,6 +1,5 @@
 """In-process coordination for accepted-response cache mutations."""
 
-from collections.abc import Mapping
 from contextlib import contextmanager
 from threading import RLock as threading_RLock
 
@@ -9,7 +8,6 @@ from engram.errors import ConflictError, EngramCoreError, InvalidRequestError
 from engram.mutations import (
     MutationOperation,
     MutationReceiptLedger,
-    mutation_receipt_ledger_from_snapshot,
     validate_mutation_receipt,
 )
 from engram.repository import ArtifactRepository, validate_repository_state
@@ -30,9 +28,9 @@ def coordinated_response_state(repository: dict, mutation_receipts: object) -> d
         validated_repository = validate_repository_state(repository)
     except InvalidRequestError as error:
         raise InvalidRequestError("coordinated repository must be a RepositoryState") from error
-    if not isinstance(mutation_receipts, Mapping):
+    if not isinstance(mutation_receipts, dict):
         raise InvalidRequestError("coordinated mutation receipts must be an object")
-    ledger = mutation_receipt_ledger_from_snapshot(mutation_receipts)
+    ledger = MutationReceiptLedger(state=mutation_receipts)
     result: dict = {
         "repository": validated_repository,
         "mutation_receipts": ledger.snapshot(),
@@ -42,7 +40,7 @@ def coordinated_response_state(repository: dict, mutation_receipts: object) -> d
 
 def validate_coordinated_response_state(value: object) -> dict:
     """Validate and copy one coordinated response state."""
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError("coordinated response state must be an object")
     if set(value) != COORDINATED_RESPONSE_STATE_FIELDS:
         raise InvalidRequestError("coordinated response state fields are malformed")
@@ -66,7 +64,7 @@ def coordinated_mutation_candidate(
 
 def validate_coordinated_mutation_candidate(value: object) -> dict:
     """Validate and copy one coordinated mutation candidate."""
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError("coordinated mutation candidate must be an object")
     if set(value) != COORDINATED_MUTATION_CANDIDATE_FIELDS:
         raise InvalidRequestError("coordinated mutation candidate fields are malformed")
@@ -84,7 +82,7 @@ def mutation_execution_result(receipt: dict, published: bool) -> dict:
 
 def validate_mutation_execution_result(value: object) -> dict:
     """Validate and copy one mutation execution result."""
-    if not isinstance(value, Mapping) or set(value) != {"receipt", "published"}:
+    if not isinstance(value, dict) or set(value) != {"receipt", "published"}:
         raise InvalidRequestError("mutation execution result fields are malformed")
     result = mutation_execution_result(value.get("receipt", ()), value.get("published", False))
     return result
@@ -185,7 +183,7 @@ class AtomicMutationCoordinator:
             )
             if artifact_generation_changes(before_repository, validated_repository_candidate) != expected_changes:
                 raise ConflictError("mutation receipt affected generations do not match repository changes")
-            receipts = mutation_receipt_ledger_from_snapshot(before["mutation_receipts"])
+            receipts = MutationReceiptLedger(state=before["mutation_receipts"])
             receipts.record(validated_receipt)
             after = coordinated_response_state(validated_repository_candidate, receipts.snapshot())
             result = coordinated_mutation_candidate(before, after, validated_receipt)

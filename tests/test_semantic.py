@@ -96,7 +96,7 @@ def settings(tmp_path: Path, **changes) -> dict:
 
 def retriever(tmp_path: Path, model: object = False, **changes) -> StandaloneSemanticRetriever:
     selected = model or FakeSemanticModel()
-    result = StandaloneSemanticRetriever(settings(tmp_path, **changes), model_loader=lambda _: selected)
+    result = StandaloneSemanticRetriever(settings(tmp_path, **changes), model=selected)
     return result
 
 
@@ -116,8 +116,8 @@ def test_semantic_model_is_checksum_license_and_dimension_gated(tmp_path: Path) 
     corrupt = dict(valid)
     corrupt["artifact_sha256"] = "0" * 64
 
-    checksum_failure = StandaloneSemanticRetriever(corrupt, model_loader=lambda _: FakeSemanticModel())
-    dimension_failure = StandaloneSemanticRetriever(valid, model_loader=lambda _: FakeSemanticModel(dimension=3))
+    checksum_failure = StandaloneSemanticRetriever(corrupt, model=FakeSemanticModel())
+    dimension_failure = StandaloneSemanticRetriever(valid, model=FakeSemanticModel(dimension=3))
 
     assert checksum_failure.available is False
     assert dimension_failure.available is False
@@ -182,7 +182,7 @@ def test_semantic_resolver_reads_artifacts_without_a_live_index(tmp_path: Path) 
     engine = Engram(config=configuration)
     engine.semantic_retriever = StandaloneSemanticRetriever(
         configuration["semantic"],
-        model_loader=lambda _: FakeSemanticModel(),
+        model=FakeSemanticModel(),
     )
     engine.response_repository = ArtifactRepository((accepted,))
     frame = QueryFrameBuilder(engine, lambda: 1_000_000_000, lambda: NOW).build(

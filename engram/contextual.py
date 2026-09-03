@@ -1,6 +1,5 @@
 """Bounded Section 8 query-frame retention and follow-up enrichment."""
 
-from collections.abc import Mapping
 from math import isfinite as math_isfinite
 
 from engram.constants import (
@@ -71,8 +70,8 @@ def internal_confidence(value: object, name: str) -> float:
     return result
 
 
-def internal_mapping(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, Mapping):
+def internal_mapping(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     return value
 
@@ -165,7 +164,7 @@ def validate_compact_query_frame(value: object) -> dict:
     return result
 
 
-def compact_query_frame_to_dict(value: object) -> dict[str, object]:
+def compact_query_frame_to_dict(value: object) -> dict:
     frame = validate_compact_query_frame(value)
     result = {
         "schema_version": frame["schema_version"],

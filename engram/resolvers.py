@@ -1,6 +1,5 @@
 """Pure resolver adapters, bounded execution, accounting, and baseline policy."""
 
-from collections.abc import Mapping
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from threading import RLock as threading_RLock
@@ -136,6 +135,32 @@ def run_cooperative_check(check: object) -> bool:
     return True
 
 
+def resolver_clock_ns(clock: object) -> int:
+    """Read one injected monotonic clock and reject an invalid result."""
+    if not callable(clock):
+        raise InvalidRequestError("resolver clock_ns must be callable")
+    value = clock()
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise InvalidRequestError("resolver clock_ns must return a nonnegative integer")
+    return value
+
+
+def resolver_available(operation: object, frame: dict) -> bool:
+    """Invoke one validated availability operation."""
+    if not callable(operation):
+        raise InvalidRequestError("resolver availability operation must be callable")
+    result = bool(operation(frame))
+    return result
+
+
+def execute_resolver(operation: object, frame: dict, lease: dict, cooperative_check: object) -> object:
+    """Invoke one validated resolver operation."""
+    if not callable(operation):
+        raise InvalidRequestError("resolver operation must be callable")
+    result = operation(frame, lease, cooperative_check)
+    return result
+
+
 def resolver_budget(
     max_candidates: object,
     max_graph_rows: object,
@@ -182,7 +207,7 @@ def resolver_budget(
 
 
 def validate_resolver_budget(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != RESOLVER_BUDGET_FIELDS:
+    if not isinstance(value, dict) or set(value) != RESOLVER_BUDGET_FIELDS:
         raise InvalidRequestError("ResolverBudget has invalid fields")
     result = resolver_budget(
         schema_version=value["schema_version"],
@@ -200,7 +225,7 @@ def validate_resolver_budget(value: object) -> dict:
 
 def resolver_budget_with_changes(value: object, changes: object) -> dict:
     current = validate_resolver_budget(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLVER_BUDGET_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_BUDGET_FIELDS):
         raise InvalidRequestError("resolver budget changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -215,7 +240,7 @@ def resolver_budget_to_dict(value: object) -> dict[str, object]:
 
 
 def resolver_budget_from_dict(value: object) -> dict:
-    if not isinstance(value, Mapping):
+    if not isinstance(value, dict):
         raise InvalidRequestError("ResolverBudget must be an object")
     result = validate_resolver_budget(value)
     return result
@@ -268,7 +293,7 @@ def resolver_reservation(
 
 
 def validate_resolver_reservation(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != RESOLVER_RESERVATION_FIELDS:
+    if not isinstance(value, dict) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
     result = resolver_reservation(
         value["resolver"],
@@ -282,7 +307,7 @@ def validate_resolver_reservation(value: object) -> dict:
 
 def resolver_reservation_with_changes(value: object, changes: object) -> dict:
     current = validate_resolver_reservation(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(RESOLVER_RESERVATION_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_RESERVATION_FIELDS):
         raise InvalidRequestError("resolver reservation changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -303,11 +328,11 @@ def resolver_reservation_to_dict(value: object) -> dict[str, object]:
 
 
 def resolver_reservation_from_dict(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != RESOLVER_RESERVATION_FIELDS:
+    if not isinstance(value, dict) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
     lease = value["lease"]
     consumption = value["consumption"]
-    if not isinstance(lease, Mapping) or not isinstance(consumption, Mapping):
+    if not isinstance(lease, dict) or not isinstance(consumption, dict):
         raise InvalidRequestError("ResolverReservation nested records must be objects")
     result = resolver_reservation(
         value["resolver"],
@@ -360,7 +385,7 @@ def resolution_plan_entry(
 
 
 def validate_resolution_plan_entry(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != RESOLUTION_PLAN_ENTRY_FIELDS:
+    if not isinstance(value, dict) or set(value) != RESOLUTION_PLAN_ENTRY_FIELDS:
         raise InvalidRequestError("ResolutionPlanEntry has invalid fields")
     result = resolution_plan_entry(
         value["resolver"],
@@ -413,7 +438,7 @@ def resolution_plan(entries: object) -> dict:
 
 
 def validate_resolution_plan(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != RESOLUTION_PLAN_FIELDS:
+    if not isinstance(value, dict) or set(value) != RESOLUTION_PLAN_FIELDS:
         raise InvalidRequestError("ResolutionPlan has invalid fields")
     result = resolution_plan(value["entries"])
     return result
@@ -433,7 +458,7 @@ def trusted_resolution_plan_to_dict(current: dict) -> dict[str, object]:
 
 
 def json_value(value: object) -> object:
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = {key: json_value(item) for key, item in value.items()}
         return result
     if isinstance(value, tuple):
@@ -475,7 +500,7 @@ def working_size(value: object, seen=()) -> int:
         result = 0
         return result
     visited.add(identity)
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         result = 64 + sum(working_size(key, visited) + working_size(item, visited) for key, item in value.items())
         return result
     if isinstance(value, (list, tuple, set)):
@@ -549,7 +574,7 @@ class ExactResolver:
             dimension = "candidates" if not budget.get("max_candidates", 0) else "working_memory_bytes"
             result = exhausted_result(self.name, (dimension,))
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
         key = build_scoped_retrieval_key(frame.get("scope", {}), frame.get("resolved_text", ""))
         contextual = self.internal_engram.response_repository.exact_lookup(
             key,
@@ -565,7 +590,7 @@ class ExactResolver:
                     "owner_count": len(lookup["owner_statement_ids"]),
                     "truncated": lookup["truncated"],
                 },
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         artifact = self.internal_engram.response_repository.get_artifact(lookup["statement_id"])
@@ -574,7 +599,7 @@ class ExactResolver:
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
                 reason_code="exact_required_filter_excluded",
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         candidate = resolution_candidate(
@@ -613,7 +638,7 @@ class ExactResolver:
             candidates=(candidate,),
             accounting=(accounting_observation(artifact["statement_id"]),),
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=1,
                 evidence=len(candidate["evidence"]),
@@ -651,13 +676,13 @@ class UtilityResolver:
             dimension = "candidates" if not budget.get("max_candidates", 0) else "working_memory_bytes"
             result = exhausted_result(self.name, (dimension,))
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
         if frame.get("required_metadata", {}) or frame.get("required_source_label", ""):
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
                 reason_code="utility_filters_unsupported",
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         evaluation = self.internal_registry.evaluate(frame.get("original_text", ""))
@@ -673,7 +698,7 @@ class UtilityResolver:
                 state=ResolverState.COMPLETED,
                 reason_code="utility_miss",
                 diagnostics=diagnostics,
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         if evaluation["status"] == "rejected":
@@ -682,7 +707,7 @@ class UtilityResolver:
                 state=ResolverState.COMPLETED,
                 reason_code="utility_rejected",
                 diagnostics=diagnostics,
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         if evaluation["status"] == "failed":
@@ -691,7 +716,7 @@ class UtilityResolver:
                 state=ResolverState.FAILED,
                 reason_code="utility_plugin_failure",
                 diagnostics=diagnostics,
-                consumption=budget_consumption(elapsed_ns=max(0, self.internal_clock_ns() - started), resolvers=1),
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
         digest = hashlib_sha256(
@@ -728,7 +753,7 @@ class UtilityResolver:
             candidates=(current,),
             diagnostics=diagnostics,
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=1,
                 working_memory_bytes=working_memory_bytes,
@@ -774,7 +799,7 @@ class StandaloneSemanticResolver:
             )
             result = exhausted_result(self.name, exhausted)
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
         discovery = self.internal_engram.semantic_candidates(
             frame.get("resolved_text", ""),
             frame.get("scope", {}),
@@ -800,7 +825,7 @@ class StandaloneSemanticResolver:
                 reason_code=reason,
                 diagnostics={"scanned_records": discovery["scanned_records"]},
                 consumption=budget_consumption(
-                    elapsed_ns=max(0, self.internal_clock_ns() - started),
+                    elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
                     working_memory_bytes=discovery["working_memory_bytes"],
                     exhausted_dimensions=(dimension,),
@@ -855,7 +880,7 @@ class StandaloneSemanticResolver:
                     reason_code="semantic_candidate_memory_budget",
                     diagnostics={"scanned_records": discovery["scanned_records"]},
                     consumption=budget_consumption(
-                        elapsed_ns=max(0, self.internal_clock_ns() - started),
+                        elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                         resolvers=1,
                         vector_results=len(discovery["matches"]),
                         working_memory_bytes=min(retained_bytes, budget.get("max_working_memory_bytes", 0)),
@@ -878,7 +903,7 @@ class StandaloneSemanticResolver:
                 "backend": self.internal_engram.semantic_retriever.health()["artifact_identity"].get("backend", ""),
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
                 vector_results=len(discovery["matches"]),
@@ -913,7 +938,7 @@ class SparseResolver:
             dimension = "candidates" if not budget.get("max_candidates", 0) else "working_memory_bytes"
             result = exhausted_result(self.name, (dimension,))
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
         discovery = self.internal_engram.sparse_candidates(
             frame.get("resolved_text", ""),
             frame.get("scope", {}),
@@ -940,7 +965,7 @@ class SparseResolver:
                 reason_code=reason,
                 diagnostics={"posting_visits": discovery["posting_visits"]},
                 consumption=budget_consumption(
-                    elapsed_ns=max(0, self.internal_clock_ns() - started),
+                    elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
                     working_memory_bytes=discovery["working_memory_bytes"],
                     exhausted_dimensions=(exhausted_dimension,),
@@ -1003,7 +1028,7 @@ class SparseResolver:
                         "posting_visits": discovery["posting_visits"],
                     },
                     consumption=budget_consumption(
-                        elapsed_ns=max(0, self.internal_clock_ns() - started),
+                        elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                         resolvers=1,
                         working_memory_bytes=min(retained_bytes, budget.get("max_working_memory_bytes", 0)),
                         exhausted_dimensions=("working_memory_bytes",),
@@ -1024,7 +1049,7 @@ class SparseResolver:
                 "posting_visits": discovery["posting_visits"],
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
                 working_memory_bytes=retained_bytes,
@@ -1110,7 +1135,7 @@ class StructuredGraphResolver:
                 reason_code=reason.value,
                 diagnostics={"composition": True, "entity_status": subject["status"].value},
                 consumption=budget_consumption(
-                    elapsed_ns=max(0, self.internal_clock_ns() - started),
+                    elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
                     graph_rows=graph_rows,
                 ),
@@ -1127,7 +1152,7 @@ class StructuredGraphResolver:
                     reason_code=CompositionReason.ROW_LIMIT.value,
                     diagnostics={"composition": True, "entity_status": subject["status"].value},
                     consumption=budget_consumption(
-                        elapsed_ns=max(0, self.internal_clock_ns() - started),
+                        elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                         resolvers=1,
                         graph_rows=graph_rows,
                         exhausted_dimensions=("graph_rows",),
@@ -1151,7 +1176,7 @@ class StructuredGraphResolver:
                 reason_code=reason,
                 diagnostics={"composition": True, "entity_status": subject["status"].value},
                 consumption=budget_consumption(
-                    elapsed_ns=max(0, self.internal_clock_ns() - started),
+                    elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
                     graph_rows=graph_rows,
                 ),
@@ -1364,9 +1389,7 @@ class StructuredGraphResolver:
             reason_code=(
                 "graph_composition_candidate"
                 if candidates
-                else "graph_composition_evidence"
-                if records
-                else "graph_composition_miss"
+                else "graph_composition_evidence" if records else "graph_composition_miss"
             ),
             candidates=tuple(candidates),
             proposition_evidence=tuple(records),
@@ -1380,7 +1403,7 @@ class StructuredGraphResolver:
                 "plan": composition_plan_to_dict(plan),
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
                 graph_rows=graph_rows,
@@ -1454,7 +1477,7 @@ class StructuredGraphResolver:
                     "predicate_candidates": len(predicate["candidate_ids"]),
                 },
                 consumption=budget_consumption(
-                    elapsed_ns=max(0, self.internal_clock_ns() - started),
+                    elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
                     graph_rows=graph_rows,
                 ),
@@ -1630,9 +1653,7 @@ class StructuredGraphResolver:
                 else (
                     "relation_proposition_conflict"
                     if selection["conflict_proposition_ids"]
-                    else "relation_proposition_evidence"
-                    if records
-                    else "relation_graph_miss"
+                    else "relation_proposition_evidence" if records else "relation_graph_miss"
                 )
             ),
             candidates=tuple(candidates),
@@ -1653,7 +1674,7 @@ class StructuredGraphResolver:
                 "trust_version_available": selection["trust_version_available"],
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
                 graph_rows=graph_rows,
@@ -1694,7 +1715,7 @@ class StructuredGraphResolver:
             )
             result = exhausted_result(self.name, dimensions)
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
         try:
             composition_result = self.internal_composition_result(frame, budget, started, cooperative_check)
             if composition_result:
@@ -1762,7 +1783,7 @@ class StructuredGraphResolver:
                 "exclusion_counts": exclusion_counts,
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 graph_rows=len(projections) + revalidation_rows,
                 evidence=len(records),
@@ -1838,7 +1859,7 @@ class SupportSemanticResolver:
             )
             result = exhausted_result(self.name, dimensions)
             return result
-        started = self.internal_clock_ns()
+        started = resolver_clock_ns(self.internal_clock_ns)
 
         def artifact_filter(artifact: dict[str, object]) -> bool:
             result = artifact_matches_frame(artifact, frame)
@@ -2019,7 +2040,7 @@ class SupportSemanticResolver:
                 "exclusion_counts": exclusion_counts,
             },
             consumption=budget_consumption(
-                elapsed_ns=max(0, self.internal_clock_ns() - started),
+                elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
                 graph_rows=revalidation_attempts,
@@ -2071,7 +2092,7 @@ class ResolverRegistry:
             cost_allowed = cost_class in frame.get("budget", {})["allowed_cost_classes"]
             availability_failed = False
             try:
-                available = bool(selected and cost_allowed and available_operation(frame))
+                available = bool(selected and cost_allowed and resolver_available(available_operation, frame))
             except Exception:
                 available = False
                 availability_failed = True
@@ -2136,7 +2157,7 @@ def trusted_execution_report(
 
 
 def validate_execution_report(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != EXECUTION_REPORT_FIELDS:
+    if not isinstance(value, dict) or set(value) != EXECUTION_REPORT_FIELDS:
         raise InvalidRequestError("ExecutionReport has invalid fields")
     result = execution_report(
         value["results"],
@@ -2149,7 +2170,7 @@ def validate_execution_report(value: object) -> dict:
 
 def execution_report_with_changes(value: object, changes: object) -> dict:
     current = validate_execution_report(value)
-    if not isinstance(changes, Mapping) or not set(changes).issubset(EXECUTION_REPORT_FIELDS):
+    if not isinstance(changes, dict) or not set(changes).issubset(EXECUTION_REPORT_FIELDS):
         raise InvalidRequestError("execution report changes contain invalid fields")
     updated: dict[str, object] = dict(current)
     updated.update(changes)
@@ -2415,14 +2436,14 @@ class ResolverExecutor:
                     )
                 )
                 continue
-            started = self.internal_clock_ns()
+            started = resolver_clock_ns(self.internal_clock_ns)
             try:
-                raw = resolve_operation(frame, lease, cooperative_check)
+                raw = execute_resolver(resolve_operation, frame, lease, cooperative_check)
                 run_cooperative_check(cooperative_check)
             except ResolutionCancelledError:
                 raise
             except Exception as error:
-                finished = self.internal_clock_ns()
+                finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
                 result = resolver_result(
                     resolver=resolver_name,
@@ -2432,7 +2453,7 @@ class ResolverExecutor:
                     consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
                 )
             else:
-                finished = self.internal_clock_ns()
+                finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
                 try:
                     current_raw = validate_resolver_result(raw)
@@ -2506,7 +2527,7 @@ def accounting_finalization(
 
 
 def validate_accounting_finalization(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != ACCOUNTING_FINALIZATION_FIELDS:
+    if not isinstance(value, dict) or set(value) != ACCOUNTING_FINALIZATION_FIELDS:
         raise InvalidRequestError("AccountingFinalization has invalid fields")
     result = accounting_finalization(
         value["candidate_statement_ids"],
@@ -2537,7 +2558,10 @@ def accounting_signature(results: tuple[dict, ...], accepted_statement_id: str) 
     stable_results = []
     for result in results:
         value = resolver_result_to_dict(result)
-        consumption = dict(value["consumption"])
+        raw_consumption = value.get("consumption", {})
+        if not isinstance(raw_consumption, dict):
+            raise InvalidRequestError("resolver result consumption must be an object")
+        consumption = dict(raw_consumption)
         consumption["elapsed_ns"] = 0
         value["consumption"] = consumption
         stable_results.append(value)
@@ -3079,7 +3103,7 @@ class ResolutionOrchestrator:
             exhausted.add("working_memory_bytes")
         elapsed_ns = execution["consumption"]["elapsed_ns"]
         if frame.get("budget", {})["started_ns"]:
-            current_ns = self.internal_clock_ns()
+            current_ns = resolver_clock_ns(self.internal_clock_ns)
             if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
                 raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
             elapsed_ns = max(elapsed_ns, max(0, current_ns - frame.get("budget", {})["started_ns"]))
