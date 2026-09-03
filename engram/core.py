@@ -86,6 +86,7 @@ from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
 from engram.reranking import TransparentLogisticReranker
+from engram.resources import estimate_working_bytes, require_working_memory
 from engram.scoring import score_statement_components
 from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
@@ -115,41 +116,6 @@ def run_cooperative_check(check=()) -> None:
         if not callable(check):
             raise ValueError("cooperative_check must be callable")
         check()
-
-
-def estimate_working_bytes(value: object, seen=()) -> int:
-    """Return a conservative, bounded-size estimate for resolution working data."""
-    visited = seen if isinstance(seen, set) else set()
-    if isinstance(value, str):
-        result = len(value.encode("utf-8")) + 49
-        return result
-    if isinstance(value, bytes):
-        result = len(value) + 33
-        return result
-    if isinstance(value, (bool, int, float)):
-        result = 32
-        return result
-    identity = id(value)
-    if identity in visited:
-        result = 0
-        return result
-    visited.add(identity)
-    if isinstance(value, dict):
-        result = 64 + sum(
-            estimate_working_bytes(key, visited) + estimate_working_bytes(item, visited) for key, item in value.items()
-        )
-        return result
-    if isinstance(value, (list, tuple, set)):
-        result = 64 + sum(estimate_working_bytes(item, visited) for item in value)
-        return result
-    result = len(str(value).encode("utf-8")) + 64
-    return result
-
-
-def require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
-    """Raise before retaining work that exceeds a resolver's memory estimate."""
-    if maximum_bytes and estimated_bytes > maximum_bytes:
-        raise MemoryError("resolution working-memory estimate exceeded")
 
 
 def reports_repetition(text: str) -> bool:
@@ -694,7 +660,7 @@ class Engram:
             result = []
             return result
         graph_settings = self.config.get("graph") or {}
-        vector_weight = float(graph_settings["vector_weight"])
+        vector_weight = float(graph_settings.get("vector_weight", 0.0))
         scan_limit = int(graph_settings.get("vector_support_scan_limit", 100_000))
         if limit < 1:
             result = []
@@ -706,22 +672,22 @@ class Engram:
         edge_count = 0
         for index, artifact in enumerate(repository.get("artifacts", {}).values()):
             run_cooperative_check(cooperative_check)
-            references = artifact.get("support_references", ())
-            edge_count += len(references)
-            if edge_count > scan_limit:
-                logger.warning(
-                    "vector_support_scan_incomplete: response support fan-out %s exceeds configured limit %s",
-                    edge_count,
-                    scan_limit,
-                )
-                return []
             if artifact_filter and not artifact_filter(artifact):
                 continue
-            similarities = [
-                support_scores.get(reference.get("id", ""), 0.0)
-                for reference in references
-                if reference.get("id", "") in support_scores
-            ]
+            similarities = []
+            for reference in artifact.get("support_references", ()):
+                reference_id = reference.get("id", "")
+                if reference_id not in support_scores:
+                    continue
+                edge_count += 1
+                if edge_count > scan_limit:
+                    logger.warning(
+                        "vector_support_scan_incomplete: relevant response support fan-out %s exceeds configured limit %s",
+                        edge_count,
+                        scan_limit,
+                    )
+                    return []
+                similarities.append(support_scores.get(reference_id, 0.0))
             if not similarities:
                 continue
             retained_bytes += estimate_working_bytes(artifact.get("statement_id", ""))

@@ -1,5 +1,6 @@
 """Request-local sparse retrieval tests."""
 
+from engram import sparse as sparse_module
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.config import engram_config, sparse_config
 from engram.constants import Tier
@@ -118,6 +119,45 @@ def test_sparse_search_abstains_when_request_budget_is_exhausted() -> None:
 
     assert result["complete"] is False
     assert result["reason"] == "posting_visit_budget"
+
+
+def test_sparse_search_stops_construction_at_the_working_memory_budget(monkeypatch) -> None:
+    accepted = tuple(
+        artifact(f"artifact-{index}", f"technical request {index} with repeated searchable terms", "A") for index in range(20)
+    )
+    engine = sparse_engine(*accepted)
+    observed_statement_ids = []
+    original = sparse_module.sparse_document_from_validated_artifact
+
+    def observe(artifact_value: dict, include_response_text: bool) -> dict:
+        observed_statement_ids.append(artifact_value.get("statement_id", ""))
+        result = original(artifact_value, include_response_text)
+        return result
+
+    monkeypatch.setattr(sparse_module, "sparse_document_from_validated_artifact", observe)
+
+    result = search(engine, "technical request", max_working_memory_bytes=10_000)
+
+    assert result.get("complete", True) is False
+    assert result.get("reason", "") == "working_memory_budget"
+    assert result.get("working_memory_bytes", 0) <= 10_000
+    assert len(observed_statement_ids) < len(accepted)
+
+
+def test_sparse_construction_does_not_charge_other_scopes() -> None:
+    unrelated = tuple(
+        artifact(f"other-{index}", f"unrelated technical material {index} " + "noise " * 400, "B", namespace="tenant-b")
+        for index in range(20)
+    )
+    target = artifact("target", "target technical request", "A", namespace="tenant-a")
+    engine = sparse_engine(*unrelated, target)
+
+    result = search(engine, "target technical request", namespace="tenant-a", max_working_memory_bytes=100_000)
+
+    matches = result.get("matches", ())
+    assert result.get("complete", False) is True
+    assert [match.get("statement_id", "") for match in matches] == ["target"]
+    assert result.get("working_memory_bytes", 100_001) <= 100_000
 
 
 def test_sparse_search_uses_each_current_artifact_snapshot_without_synchronization() -> None:

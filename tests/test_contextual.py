@@ -233,6 +233,23 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     assert "Sarah" not in core.engram.sessions
 
 
+def test_caller_topic_predicate_is_retained_in_contextual_frames() -> None:
+    core = EngramCore()
+    core.set_predicate("Sarah", "topic", "Kyoto")
+
+    core.resolve_request(
+        "When is the spring festival?",
+        "predicate-topic",
+        user_id="Sarah",
+        configured_resolvers=("exact",),
+    )
+
+    session = core.engram.sessions.get("Sarah", {})
+    previous_frame = session.get("previous_query_frame", {})
+    assert session.get("active_topic", "") == ""
+    assert previous_frame.get("topic", "") == "Kyoto"
+
+
 def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> None:
     core = EngramCore()
     core.resolve_request(

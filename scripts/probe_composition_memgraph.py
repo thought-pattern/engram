@@ -13,7 +13,8 @@ if str(REPOSITORY) not in sys_path:
 from engram.config import load_config
 from engram.constants import ResolutionOutcome
 from engram.core import Engram
-from engram.resolution import resolver_result_to_dict
+from engram.errors import InvalidRequestError
+from engram.resolution import resolver_result_to_dict, validate_resolution_result
 from engram.service import EngramCore
 
 PREDICATE_SURFACES = ("married", "spouse", "husband", "present", "present in", "work", "born", "parent")
@@ -117,23 +118,32 @@ def run(config_path: str) -> dict[str, object]:
                     configured_resolvers=("structured_graph",),
                 )
             )
+            validated_result = validate_resolution_result(result)
+            evidence_package = validated_result.get("evidence_package", {})
+            if not isinstance(evidence_package, dict):
+                raise InvalidRequestError("resolution evidence package is malformed")
+            evidence_records = evidence_package.get("records", ())
+            if not isinstance(evidence_records, tuple):
+                raise InvalidRequestError("resolution evidence records are malformed")
             structured = next(
-                resolver for resolver in result.get("resolver_results", []) if resolver["resolver"] == "structured_graph"
+                resolver
+                for resolver in validated_result.get("resolver_results", ())
+                if resolver.get("resolver", "") == "structured_graph"
             )
             structured_payload = resolver_result_to_dict(structured)
             resolutions.append(
                 {
                     "prompt": prompt,
                     "elapsed_ms": elapsed_ms,
-                    "outcome": result.get("outcome", ResolutionOutcome.MISS).value,
-                    "responses": [candidate["response"] for candidate in result.get("response_candidates", [])],
+                    "outcome": validated_result.get("outcome", ResolutionOutcome.MISS).value,
+                    "responses": [candidate.get("response", "") for candidate in validated_result.get("response_candidates", ())],
                     "evidence_paths": [
-                        [step["proposition_id"] for step in record["path"] if isinstance(step, dict)]
-                        for record in result.get("evidence_package", {})["records"]
+                        [step.get("proposition_id", "") for step in record.get("path", ()) if isinstance(step, dict)]
+                        for record in evidence_records
                     ],
-                    "structured_reason": structured["reason_code"],
-                    "structured_diagnostics": structured_payload["diagnostics"],
-                    "graph_rows": structured["consumption"]["graph_rows"],
+                    "structured_reason": structured.get("reason_code", ""),
+                    "structured_diagnostics": structured_payload.get("diagnostics", {}),
+                    "graph_rows": structured.get("consumption", {}).get("graph_rows", 0),
                 }
             )
         result = {

@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from hashlib import sha256 as hashlib_sha256
+from itertools import batched as itertools_batched
 from math import isfinite as math_isfinite, sqrt as math_sqrt
 from pathlib import Path
 
@@ -21,8 +22,10 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
+from engram.resources import estimate_working_bytes
 
 SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION = 32
+SEMANTIC_RECORD_WORKING_BYTES_PER_DIMENSION = 64
 SEMANTIC_MATCH_WORKING_BYTES = 640
 
 
@@ -160,6 +163,22 @@ def representation_specs(artifact: dict, settings: dict) -> tuple[dict, ...]:
             }
         )
     result = tuple(values)
+    return result
+
+
+def scoped_representation_specs(artifacts: tuple[dict, ...], scope: dict, settings: dict):
+    """Yield validated active representation specifications for one request scope."""
+    for artifact_value in artifacts:
+        artifact = validate_cached_response_artifact(artifact_value)
+        if artifact.get("scope", {}) != scope:
+            continue
+        yield from representation_specs(artifact, settings)
+
+
+def semantic_record_working_bytes(spec: dict, dimension: int) -> int:
+    """Estimate peak specification, model-output, and normalized-record memory."""
+    embedding_bytes = 256 + dimension * SEMANTIC_RECORD_WORKING_BYTES_PER_DIMENSION
+    result = estimate_working_bytes(spec) + embedding_bytes
     return result
 
 
@@ -314,113 +333,172 @@ class StandaloneSemanticRetriever:
                 "scanned_records": 0,
                 "working_memory_bytes": 0,
             }
+        settings = self.internal_settings
         normalized_scope = validate_scope_key(scope)
+        normalized_text = text.strip()
         encoded_size = len(text.encode("utf-8"))
-        if not text.strip():
-            return {"complete": True, "reason": "semantic_miss", "matches": (), "scanned_records": 0, "working_memory_bytes": 0}
-        if encoded_size > self.internal_settings["max_input_bytes"]:
-            return {
+        if not normalized_text:
+            result = {
+                "complete": True,
+                "reason": "semantic_miss",
+                "matches": (),
+                "scanned_records": 0,
+                "working_memory_bytes": 0,
+            }
+            return result
+        if encoded_size > settings.get("max_input_bytes", 0):
+            result = {
                 "complete": False,
                 "reason": "semantic_input_too_large",
                 "matches": (),
                 "scanned_records": 0,
                 "working_memory_bytes": 0,
             }
+            return result
         if not max_vector_results:
-            return {
+            result = {
                 "complete": False,
                 "reason": "vector_result_budget",
                 "matches": (),
                 "scanned_records": 0,
                 "working_memory_bytes": 0,
             }
-        query_memory = 64 + self.internal_settings["dimension"] * SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION
+            return result
+        dimension = settings.get("dimension", 0)
+        query_memory = 64 + dimension * SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION
         if query_memory > max_working_memory_bytes:
-            return {
+            result = {
                 "complete": False,
                 "reason": "working_memory_budget",
                 "matches": (),
                 "scanned_records": 0,
                 "working_memory_bytes": max_working_memory_bytes,
             }
-        if callable(cooperative_check):
-            cooperative_check()
-        query = internal_encode(self.internal_model, (text.strip(),), self.internal_settings)[0]
-        if callable(cooperative_check):
-            cooperative_check()
-        validated = tuple(validate_cached_response_artifact(value) for value in artifacts)
-        specs = tuple(
-            spec
-            for artifact in validated
-            for spec in representation_specs(artifact, self.internal_settings)
-            if spec.get("scope") == normalized_scope
-        )
-        if len(specs) > self.internal_settings["max_records"]:
-            return {
-                "complete": False,
-                "reason": "semantic_record_budget",
-                "matches": (),
-                "scanned_records": 0,
-                "working_memory_bytes": query_memory,
-            }
-        records = self.records(specs)
-        retained_limit = min(limit, max_vector_results)
-        retained_by_statement: dict[str, dict] = {}
-        scanned_records = 0
-        for record in records:
-            scanned_records += 1
-            if scanned_records > self.internal_settings["max_scan_records"]:
+            return result
+
+        corpus_record_count = 0
+        largest_record_working_bytes = 0
+        for spec in scoped_representation_specs(artifacts, normalized_scope, settings):
+            corpus_record_count += 1
+            if corpus_record_count > settings.get("max_records", 0):
+                result = {
+                    "complete": False,
+                    "reason": "semantic_record_budget",
+                    "matches": (),
+                    "scanned_records": 0,
+                    "working_memory_bytes": query_memory,
+                }
+                return result
+            if corpus_record_count > settings.get("max_scan_records", 0):
                 result = {
                     "complete": False,
                     "reason": "semantic_scan_budget",
                     "matches": (),
-                    "scanned_records": scanned_records,
-                    "working_memory_bytes": query_memory + len(retained_by_statement) * SEMANTIC_MATCH_WORKING_BYTES,
+                    "scanned_records": corpus_record_count,
+                    "working_memory_bytes": query_memory,
                 }
                 return result
-            if callable(cooperative_check) and scanned_records % 64 == 1:
+            record_working_bytes = semantic_record_working_bytes(spec, dimension)
+            largest_record_working_bytes = max(largest_record_working_bytes, record_working_bytes)
+            if callable(cooperative_check) and corpus_record_count % 64 == 1:
                 cooperative_check()
-            similarity = sum(first * second for first, second in zip(query, record["embedding"], strict=True))
-            if similarity <= 0.0 or similarity < self.internal_settings["min_similarity"]:
-                continue
-            match = {
-                "statement_id": record["statement_id"],
-                "similarity": min(1.0, similarity),
-                "origin": record["origin"],
-                "ordinal": record["ordinal"],
-                "representation_id": record["representation_id"],
-                "generation": record["generation"],
+        if not corpus_record_count:
+            result = {
+                "complete": True,
+                "reason": "semantic_miss",
+                "matches": (),
+                "scanned_records": 0,
+                "working_memory_bytes": query_memory,
             }
-            statement_id = match.get("statement_id", "")
-            current = retained_by_statement.get(statement_id, {})
-            if current:
-                if (-match.get("similarity", 0.0), match.get("representation_id", "")) < (
-                    -current["similarity"],
-                    current["representation_id"],
-                ):
-                    retained_by_statement[statement_id] = match
-                continue
-            global_key = (-match.get("similarity", 0.0), match.get("statement_id", ""))
-            if len(retained_by_statement) >= retained_limit:
-                worst = max(retained_by_statement.values(), key=lambda value: (-value["similarity"], value["statement_id"]))
-                if global_key >= (-worst["similarity"], worst["statement_id"]):
-                    continue
-                retained_by_statement.pop(worst["statement_id"])
-            projected_memory = query_memory + (len(retained_by_statement) + 1) * SEMANTIC_MATCH_WORKING_BYTES
-            if projected_memory > max_working_memory_bytes:
-                result = {
-                    "complete": False,
-                    "reason": "working_memory_budget",
-                    "matches": (),
-                    "scanned_records": scanned_records,
-                    "working_memory_bytes": query_memory + len(retained_by_statement) * SEMANTIC_MATCH_WORKING_BYTES,
-                }
-                return result
-            retained_by_statement[statement_id] = match
+            return result
+
+        retained_limit = min(limit, max_vector_results, corpus_record_count)
+        retained_reservation = retained_limit * SEMANTIC_MATCH_WORKING_BYTES
+        available_batch_memory = max_working_memory_bytes - query_memory - retained_reservation
+        if largest_record_working_bytes > available_batch_memory:
+            result = {
+                "complete": False,
+                "reason": "working_memory_budget",
+                "matches": (),
+                "scanned_records": 0,
+                "working_memory_bytes": query_memory,
+            }
+            return result
+        batch_size = settings.get("batch_size", 1)
+        batch_capacity = max(1, min(batch_size, available_batch_memory // largest_record_working_bytes))
         if callable(cooperative_check):
             cooperative_check()
-        retained = tuple(sorted(retained_by_statement.values(), key=lambda value: (-value["similarity"], value["statement_id"])))
-        working_memory = query_memory + len(retained) * SEMANTIC_MATCH_WORKING_BYTES
+        query = internal_encode(self.internal_model, (normalized_text,), settings)[0]
+        if callable(cooperative_check):
+            cooperative_check()
+        retained_by_statement: dict[str, dict] = {}
+        scanned_records = 0
+        peak_working_memory = query_memory
+        specs = scoped_representation_specs(artifacts, normalized_scope, settings)
+        for spec_batch in itertools_batched(specs, batch_capacity):
+            batch_working_bytes = sum(semantic_record_working_bytes(spec, dimension) for spec in spec_batch)
+            records = self.records(spec_batch)
+            peak_working_memory = max(
+                peak_working_memory,
+                query_memory + batch_working_bytes + len(retained_by_statement) * SEMANTIC_MATCH_WORKING_BYTES,
+            )
+            for record in records:
+                scanned_records += 1
+                if callable(cooperative_check) and scanned_records % 64 == 1:
+                    cooperative_check()
+                embedding = record.get("embedding", ())
+                similarity = sum(first * second for first, second in zip(query, embedding, strict=True))
+                if similarity <= 0.0 or similarity < settings.get("min_similarity", 0.0):
+                    continue
+                match = {
+                    "statement_id": record.get("statement_id", ""),
+                    "similarity": min(1.0, similarity),
+                    "origin": record.get("origin", ""),
+                    "ordinal": record.get("ordinal", 0),
+                    "representation_id": record.get("representation_id", ""),
+                    "generation": record.get("generation", 0),
+                }
+                statement_id = match.get("statement_id", "")
+                current = retained_by_statement.get(statement_id, {})
+                if current:
+                    if (-match.get("similarity", 0.0), match.get("representation_id", "")) < (
+                        -current.get("similarity", 0.0),
+                        current.get("representation_id", ""),
+                    ):
+                        retained_by_statement[statement_id] = match
+                    continue
+                global_key = (-match.get("similarity", 0.0), match.get("statement_id", ""))
+                if len(retained_by_statement) >= retained_limit:
+                    worst = max(
+                        retained_by_statement.values(),
+                        key=lambda value: (-value.get("similarity", 0.0), value.get("statement_id", "")),
+                    )
+                    if global_key >= (-worst.get("similarity", 0.0), worst.get("statement_id", "")):
+                        continue
+                    retained_by_statement.pop(worst.get("statement_id", ""))
+                projected_memory = (
+                    query_memory + batch_working_bytes + (len(retained_by_statement) + 1) * SEMANTIC_MATCH_WORKING_BYTES
+                )
+                if projected_memory > max_working_memory_bytes:
+                    result = {
+                        "complete": False,
+                        "reason": "working_memory_budget",
+                        "matches": (),
+                        "scanned_records": scanned_records,
+                        "working_memory_bytes": peak_working_memory,
+                    }
+                    return result
+                retained_by_statement[statement_id] = match
+                peak_working_memory = max(peak_working_memory, projected_memory)
+        if callable(cooperative_check):
+            cooperative_check()
+        retained = tuple(
+            sorted(
+                retained_by_statement.values(),
+                key=lambda value: (-value.get("similarity", 0.0), value.get("statement_id", "")),
+            )
+        )
+        working_memory = max(peak_working_memory, query_memory + len(retained) * SEMANTIC_MATCH_WORKING_BYTES)
         result = {
             "complete": True,
             "reason": "semantic_candidates" if retained else "semantic_miss",

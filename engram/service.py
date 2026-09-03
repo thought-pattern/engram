@@ -233,12 +233,11 @@ class IsolatedGraphClient:
 
         return isolated
 
-    def __setattr__(self, name: str, value: object) -> bool:
+    def __setattr__(self, name: str, value: object) -> None:
         if name in {"client", "operation_context"}:
             object.__setattr__(self, name, value)
-            return False
-        setattr(object.__getattribute__(self, "client"), name, value)
-        return True
+        else:
+            setattr(object.__getattribute__(self, "client"), name, value)
 
 
 def service_candidate_result(statement: dict, score: float) -> dict:
@@ -934,9 +933,16 @@ class EngramCore:
                 previous_query_frame = session.get("previous_query_frame", {})
                 if not isinstance(previous_query_frame, dict):
                     raise LifecycleError("user previous query frame is malformed")
-                topic = session.get("active_topic", "")
-                if not isinstance(topic, str):
+                active_topic = session.get("active_topic", "")
+                if not isinstance(active_topic, str):
                     raise LifecycleError("user contextual topic is malformed")
+                predicates = session.get("predicates", {})
+                if not isinstance(predicates, dict):
+                    raise LifecycleError("user predicates are malformed")
+                predicate_topic = predicates.get("topic", "")
+                if not isinstance(predicate_topic, str):
+                    raise LifecycleError("user topic predicate is malformed")
+                topic = active_topic or predicate_topic
             frame = enrich_query_frame(
                 frame,
                 previous=previous_query_frame,
@@ -1556,9 +1562,10 @@ class EngramCore:
                 raise InvalidRequestError("Regulator outcomes require statement_id")
             if statement_id not in candidate_responses:
                 raise InvalidRequestError("statement_id is not a candidate in this proposal")
+            current_artifact: dict = {}
             if outcome == "accepted":
                 current_artifact = self.engram.response_repository.get_artifact(statement_id)
-                if current_artifact["response"] != candidate_responses[statement_id]:
+                if current_artifact.get("response", "") != candidate_responses.get(statement_id, ""):
                     raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
             observations = record["candidacy_observations"]
             if not isinstance(observations, tuple):
@@ -1591,7 +1598,11 @@ class EngramCore:
             if outcome == "accepted":
                 proposal = record["proposal"]
                 sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
-                sessions.update_session_context(self.engram, proposal["user_id"], current_artifact["response"])
+                sessions.update_session_context(
+                    self.engram,
+                    proposal["user_id"],
+                    current_artifact.get("response", ""),
+                )
                 self.regulated_metrics["accepted"] += 1
             else:
                 self.regulated_metrics["rejections"][outcome] += 1

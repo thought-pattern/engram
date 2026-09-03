@@ -80,7 +80,7 @@ from engram.resolvers import (
 from engram.responses import AcceptedResponseService
 from engram.service import EngramCore
 
-from .support_fixtures import PROPOSITION_REFERENCE_A, REFERENCE_IDS
+from .support_fixtures import PROPOSITION_REFERENCE_A, PROPOSITION_REFERENCE_B, REFERENCE_IDS
 
 DEFAULT_CANDIDATE_FEATURES = {"sparse_score": 1.0}
 
@@ -551,6 +551,34 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     assert result["candidates"][0]["features"]["values"]["retrieval_score"] == pytest_approx(0.9)
     assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("unlinked",)
     assert result["consumption"]["vector_results"] == 3
+
+
+def test_support_semantic_scan_limit_counts_only_relevant_edges() -> None:
+    unrelated = artifact(
+        "unrelated",
+        namespace="tenant-b",
+        support_references=(PROPOSITION_REFERENCE_A,),
+    )
+    target = artifact(
+        "target",
+        namespace="tenant-a",
+        support_references=(PROPOSITION_REFERENCE_B, PROPOSITION_REFERENCE_A),
+    )
+    engine = engine_with_artifacts(unrelated, target)
+    engine.config.get("graph", {})["vector_support_scan_limit"] = 1
+    engine.config.get("graph", {})["vector_weight"] = 1.0
+    target_scope = scope_key(namespace="tenant-a")
+
+    matches = engine.vector_supported_match_components_from_scores(
+        {PROPOSITION_REFERENCE_A.get("id", ""): 0.9},
+        source_working_bytes=0,
+        limit=1,
+        artifact_filter=lambda value: value.get("scope", {}) == target_scope,
+        max_working_memory_bytes=1_000_000,
+    )
+
+    assert len(matches) == 1
+    assert matches[0].get("artifact", {}).get("statement_id", "") == "target"
 
 
 def test_support_semantic_emits_unlinked_full_proposition_without_response_candidate(monkeypatch) -> None:
@@ -1452,8 +1480,8 @@ def test_executor_propagates_cancellation_without_publishing_partial_results() -
     query_frame = frame(engine, namespace="")
 
     class CancellableResolver(FakeResolver):
-        def resolve(self, current_frame, current_budget, cooperative_check=()) -> dict:
-            del current_frame, current_budget
+        def resolve(self, frame, budget, cooperative_check=()) -> dict:
+            del frame, budget
             cooperative_check()
             self.calls += 1
             result = self.internal_result

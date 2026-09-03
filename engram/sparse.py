@@ -14,6 +14,7 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
+from engram.resources import estimate_working_bytes
 
 MAX_SPARSE_FIELDS = 7
 MAX_SPARSE_FIELD_TEXTS = 65
@@ -230,9 +231,12 @@ def character_ngrams(token: str) -> tuple[str, ...]:
 
 def document_term_frequencies(document: dict) -> dict[str, Counter[str]]:
     frequencies: dict[str, Counter[str]] = {}
+    token_fields = document.get("tokens", {})
+    if not isinstance(token_fields, dict):
+        raise InvalidRequestError("sparse document tokens must be an object")
     for field_name in SPARSE_FIELD_NAMES:
         counter: Counter[str] = Counter()
-        for token in document.get("tokens", ())[field_name]:
+        for token in token_fields.get(field_name, ()):
             counter[f"t:{token}"] += 1
             if field_name in {"canonical", "aliases"} and len(token) >= 6:
                 for prefix in prefixes(token):
@@ -251,49 +255,154 @@ def document_term_frequencies(document: dict) -> dict[str, Counter[str]]:
 def build_sparse_working_set(
     artifacts: tuple[dict, ...],
     *,
+    scope: dict,
     settings: dict[str, object],
+    max_working_memory_bytes: int,
     trusted_artifacts: bool = False,
 ) -> dict:
-    """Build immutable request-local sparse structures from current artifacts."""
+    """Build request-local sparse structures without exceeding the memory budget."""
     validated_settings = internal_validated_settings(settings)
+    validated_scope = validate_scope_key(scope)
+    if not isinstance(max_working_memory_bytes, int) or isinstance(max_working_memory_bytes, bool) or max_working_memory_bytes < 1:
+        raise InvalidRequestError("sparse working-memory budget must be a positive integer")
     if not isinstance(trusted_artifacts, bool):
         raise InvalidRequestError("sparse trusted_artifacts must be a boolean")
-    include_response_text = validated_settings["include_response_text"]
+    include_response_text = validated_settings.get("include_response_text", False)
     documents: dict[str, dict] = {}
     term_documents: dict[str, dict[str, dict[str, int]]] = {}
     field_totals = dict.fromkeys(SPARSE_FIELD_NAMES, 0)
+    working_memory_bytes = estimate_working_bytes((documents, term_documents, field_totals))
+    peak_working_memory_bytes = working_memory_bytes
+    if working_memory_bytes > max_working_memory_bytes:
+        result = {
+            "complete": False,
+            "reason": "working_memory_budget",
+            "working_memory_bytes": max_working_memory_bytes,
+            "state_working_memory_bytes": 0,
+            "state": {},
+        }
+        return result
     for artifact_value in artifacts:
         artifact = artifact_value if trusted_artifacts else validate_cached_response_artifact(artifact_value)
+        if artifact.get("lifecycle", LifecycleState.RETIRED) != LifecycleState.ACTIVE:
+            continue
+        if artifact.get("scope", {}) != validated_scope:
+            continue
+        construction_memory = working_memory_bytes + estimate_working_bytes(artifact)
+        if construction_memory > max_working_memory_bytes:
+            result = {
+                "complete": False,
+                "reason": "working_memory_budget",
+                "working_memory_bytes": peak_working_memory_bytes,
+                "state_working_memory_bytes": 0,
+                "state": {},
+            }
+            return result
+        peak_working_memory_bytes = max(peak_working_memory_bytes, construction_memory)
         document = sparse_document_from_validated_artifact(artifact, include_response_text)
-        statement_id = document["statement_id"]
+        statement_id = document.get("statement_id", "")
         if statement_id in documents:
             raise InvalidRequestError(f"duplicate sparse statement_id: {statement_id}")
+        frequencies = document_term_frequencies(document)
+        retained_increment = estimate_working_bytes((statement_id, document))
+        for field_name, counter in frequencies.items():
+            for term, frequency in counter.items():
+                retained_increment += estimate_working_bytes((term, statement_id, field_name, frequency)) + 128
+        projected_memory = working_memory_bytes + retained_increment
+        if projected_memory > max_working_memory_bytes:
+            result = {
+                "complete": False,
+                "reason": "working_memory_budget",
+                "working_memory_bytes": peak_working_memory_bytes,
+                "state_working_memory_bytes": 0,
+                "state": {},
+            }
+            return result
         documents[statement_id] = document
+        token_fields = document.get("tokens", {})
+        if not isinstance(token_fields, dict):
+            raise InvalidRequestError("sparse document tokens must be an object")
         for field_name in SPARSE_FIELD_NAMES:
-            field_totals[field_name] += len(document["tokens"][field_name])
-        for field_name, counter in document_term_frequencies(document).items():
+            field_totals[field_name] = field_totals.get(field_name, 0) + len(token_fields.get(field_name, ()))
+        for field_name, counter in frequencies.items():
             for term, frequency in counter.items():
                 term_documents.setdefault(term, {}).setdefault(statement_id, {})[field_name] = frequency
+        working_memory_bytes = projected_memory
+        peak_working_memory_bytes = max(peak_working_memory_bytes, working_memory_bytes)
 
     postings: dict[str, tuple[tuple, ...]] = {}
     document_frequencies = {}
-    for term in sorted(term_documents):
+    term_order_memory = 64 + sum(estimate_working_bytes(term) for term in term_documents)
+    projected_memory = working_memory_bytes + term_order_memory
+    if projected_memory > max_working_memory_bytes:
+        result = {
+            "complete": False,
+            "reason": "working_memory_budget",
+            "working_memory_bytes": peak_working_memory_bytes,
+            "state_working_memory_bytes": 0,
+            "state": {},
+        }
+        return result
+    ordered_terms = sorted(term_documents)
+    working_memory_bytes = projected_memory
+    peak_working_memory_bytes = max(peak_working_memory_bytes, working_memory_bytes)
+    for term in ordered_terms:
+        term_entries = term_documents.get(term, {})
+        posting_increment = estimate_working_bytes((term, term_entries)) + 128
+        projected_memory = working_memory_bytes + posting_increment
+        if projected_memory > max_working_memory_bytes:
+            result = {
+                "complete": False,
+                "reason": "working_memory_budget",
+                "working_memory_bytes": peak_working_memory_bytes,
+                "state_working_memory_bytes": 0,
+                "state": {},
+            }
+            return result
         posting_values: tuple[tuple, ...] = tuple(
-            (statement_id, tuple(sorted(term_documents.get(term, {})[statement_id].items())))
-            for statement_id in sorted(term_documents.get(term, {}))
+            (statement_id, tuple(sorted(term_entries.get(statement_id, {}).items()))) for statement_id in sorted(term_entries)
         )
         postings[term] = posting_values
         document_frequencies[term] = len(posting_values)
+        working_memory_bytes = projected_memory
+        peak_working_memory_bytes = max(peak_working_memory_bytes, working_memory_bytes)
     count = len(documents)
-    averages = {name: (field_totals[name] / count if count else 0.0) for name in SPARSE_FIELD_NAMES}
-    frozen_documents = dict(dict(sorted(documents.items())))
-    frozen_postings = dict(postings)
-    result = {
+    averages = {name: (field_totals.get(name, 0) / count if count else 0.0) for name in SPARSE_FIELD_NAMES}
+    final_increment = 512 + len(documents) * 64 + len(postings) * 64
+    projected_memory = working_memory_bytes + final_increment
+    if projected_memory > max_working_memory_bytes:
+        result = {
+            "complete": False,
+            "reason": "working_memory_budget",
+            "working_memory_bytes": peak_working_memory_bytes,
+            "state_working_memory_bytes": 0,
+            "state": {},
+        }
+        return result
+    state = {
         "tokenizer_version": SPARSE_TOKENIZER_VERSION,
-        "documents": frozen_documents,
-        "postings": frozen_postings,
+        "documents": dict(sorted(documents.items())),
+        "postings": dict(postings),
         "document_frequencies": dict(document_frequencies),
         "average_field_lengths": dict(averages),
+    }
+    state_working_memory_bytes = estimate_working_bytes(state)
+    if state_working_memory_bytes > max_working_memory_bytes:
+        result = {
+            "complete": False,
+            "reason": "working_memory_budget",
+            "working_memory_bytes": peak_working_memory_bytes,
+            "state_working_memory_bytes": 0,
+            "state": {},
+        }
+        return result
+    peak_working_memory_bytes = max(peak_working_memory_bytes, projected_memory)
+    result = {
+        "complete": True,
+        "reason": "",
+        "working_memory_bytes": peak_working_memory_bytes,
+        "state_working_memory_bytes": state_working_memory_bytes,
+        "state": state,
     }
     return result
 
@@ -702,24 +811,83 @@ def search_sparse_artifacts(
             "working_memory_bytes": 0,
         }
         return result
-    active_artifacts = tuple(
-        artifact
-        for value in artifacts
-        if (artifact := validate_cached_response_artifact(value)).get("lifecycle") == LifecycleState.ACTIVE
+    if not isinstance(text, str) or not text.strip():
+        raise InvalidRequestError("sparse query text must be a non-empty string")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_SPARSE_RESULTS:
+        raise InvalidRequestError(f"sparse limit must be an integer from 1 through {MAX_SPARSE_RESULTS}")
+    if not isinstance(max_working_memory_bytes, int) or isinstance(max_working_memory_bytes, bool) or max_working_memory_bytes < 1:
+        raise InvalidRequestError("sparse working-memory budget must be a positive integer")
+    validated_scope = validate_scope_key(scope)
+    query_tokens, query_identifiers, descriptors = query_descriptors(
+        text,
+        validated_settings.get("max_prefix_expansions", 1),
     )
-    state = build_sparse_working_set(
-        active_artifacts,
+    query_term_count = len({*(f"t:{token}" for token in query_tokens), *(f"x:{value}" for value in query_identifiers)})
+    if query_term_count > validated_settings.get("max_query_terms", 1):
+        result = {
+            "matches": (),
+            "complete": False,
+            "reason": "query_term_budget",
+            "query_term_count": query_term_count,
+            "posting_visits": 0,
+            "working_memory_bytes": 0,
+        }
+        return result
+    query_working_memory = estimate_working_bytes((query_tokens, query_identifiers, descriptors))
+    if query_working_memory > max_working_memory_bytes:
+        result = {
+            "matches": (),
+            "complete": False,
+            "reason": "working_memory_budget",
+            "query_term_count": query_term_count,
+            "posting_visits": 0,
+            "working_memory_bytes": max_working_memory_bytes,
+        }
+        return result
+    construction = build_sparse_working_set(
+        artifacts,
+        scope=validated_scope,
         settings=validated_settings,
-        trusted_artifacts=True,
+        max_working_memory_bytes=max_working_memory_bytes,
     )
+    construction_peak_memory = construction.get("working_memory_bytes", 0)
+    if not construction.get("complete", False):
+        result = {
+            "matches": (),
+            "complete": False,
+            "reason": construction.get("reason", "working_memory_budget"),
+            "query_term_count": 0,
+            "posting_visits": 0,
+            "working_memory_bytes": construction_peak_memory,
+        }
+        return result
+    state_memory = construction.get("state_working_memory_bytes", 0)
+    remaining_memory = max_working_memory_bytes - state_memory
+    if remaining_memory < 1:
+        result = {
+            "matches": (),
+            "complete": False,
+            "reason": "working_memory_budget",
+            "query_term_count": 0,
+            "posting_visits": 0,
+            "working_memory_bytes": max(construction_peak_memory, state_memory),
+        }
+        return result
+    state = construction.get("state", {})
+    if not isinstance(state, dict):
+        raise InvalidRequestError("sparse construction state must be an object")
     result = search_sparse_working_set(
         state,
         text,
-        scope,
+        validated_scope,
         limit=limit,
         max_query_terms=validated_settings.get("max_query_terms", 1),
         max_posting_visits=validated_settings.get("max_posting_visits", 1),
         max_prefix_expansions=validated_settings.get("max_prefix_expansions", 1),
-        max_working_memory_bytes=max_working_memory_bytes,
+        max_working_memory_bytes=remaining_memory,
+    )
+    result["working_memory_bytes"] = max(
+        construction_peak_memory,
+        state_memory + result.get("working_memory_bytes", 0),
     )
     return result

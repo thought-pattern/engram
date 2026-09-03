@@ -43,6 +43,7 @@ dev = [
     "black",
     "isort",
     "pip-audit>=2.10.1",
+    "psutil",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff",
@@ -68,6 +69,11 @@ version = {attr = "engram.constants.VERSION"}
 line-length = 132
 target-version = "py312"
 extend-exclude = ["engram/engram_pb2*.py", "engram/engram_pb2*.pyi"]
+
+[tool.pyright]
+include = ["engram", "scripts", "eval", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]

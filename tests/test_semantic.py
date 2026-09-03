@@ -176,6 +176,33 @@ def test_semantic_search_honors_budgets_and_cancellation(tmp_path: Path) -> None
         search(value, (accepted,), cooperative_check=cancelled)
 
 
+def test_semantic_search_checks_scan_budget_before_encoding_corpus(tmp_path: Path) -> None:
+    model = FakeSemanticModel()
+    value = retriever(tmp_path, model, max_scan_records=1)
+    first = artifact("first", "first sushi request", "A")
+    second = artifact("second", "second sushi request", "B")
+
+    result = search(value, (first, second), text="sushi")
+
+    assert result.get("complete", True) is False
+    assert result.get("reason", "") == "semantic_scan_budget"
+    assert result.get("scanned_records", 0) == 2
+    assert model.encoded_texts == []
+
+
+def test_semantic_search_checks_memory_budget_before_encoding_corpus(tmp_path: Path) -> None:
+    model = FakeSemanticModel()
+    value = retriever(tmp_path, model)
+    accepted = artifact("sushi", "best sushi", "Sushi")
+
+    result = search(value, (accepted,), max_working_memory_bytes=1_000)
+
+    assert result.get("complete", True) is False
+    assert result.get("reason", "") == "working_memory_budget"
+    assert result.get("working_memory_bytes", 0) <= 1_000
+    assert model.encoded_texts == []
+
+
 def test_semantic_resolver_reads_artifacts_without_a_live_index(tmp_path: Path) -> None:
     accepted = artifact("sushi", "best sushi", "Sushi", aliases=("japanese rolls",))
     configuration = engram_config(semantic=settings(tmp_path))
