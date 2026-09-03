@@ -236,6 +236,18 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
         validate_disclosure_decision(disclosure)
 
 
+def test_proposition_trust_inputs_accept_available_zero_revision() -> None:
+    result = proposition_trust_inputs(
+        supplied_trust=0.75,
+        supplied_trust_available=True,
+        supplied_trust_version=0,
+        supplied_trust_version_available=True,
+    )
+
+    assert result["supplied_trust_version"] == 0
+    assert result["supplied_trust_version_available"] is True
+
+
 def test_proposition_evidence_normalization_merges_sources_features_and_reasons_deterministically() -> None:
     structured = internal_record()
     semantic = semantic_record()

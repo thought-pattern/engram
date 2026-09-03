@@ -58,10 +58,17 @@ status available during that call.
 
 `resolve_request` also applies the process configuration's exact namespace rollout
 selection. The policy version and selected mode participate in retry identity.
-`disabled` returns a resolver-free `MISS`; `shadow` suppresses candidate output and
-accepted-success credit; `evidence_only` downgrades an answer to `EVIDENCE`;
-`rollback` executes exact-only retrieval and returns evidence or `MISS`; and
-`regulated_direct_answer` preserves the behavior described by `accept_exact`.
+When graph access is enabled, `structured_graph` remains in every resolver plan,
+including caller-supplied plans and every rollout mode. `disabled` executes
+resolution and suppresses its result to `MISS`; `shadow` executes resolution while
+suppressing candidate output and accepted-success credit; `evidence_only`
+downgrades an answer to `EVIDENCE`; `rollback` uses exact and configured graph
+retrieval and returns evidence or `MISS`; and `regulated_direct_answer` preserves
+the behavior described by `accept_exact`. An interface cannot disable a configured
+graph through resolver selection; graph participation is disabled only by
+`graph.enabled: false`.
+The configured graph resolver runs before local exact-answer short-circuiting and
+uses the evaluation time captured by the shared request clock.
 `core.status()["rollout"]` reports the policy version, default mode, override count,
 and fixed per-mode counts aggregated across namespaces.
 
@@ -76,7 +83,7 @@ access is:
 result = core.resolve_request(
     "What is Engram?",
     "resolution-42",
-    user_id="sarah",
+    user_id="account-42",
     namespace="support",
     configured_resolvers=("exact", "sparse", "support_semantic"),
 )
@@ -119,8 +126,8 @@ any implicit learning hook.
 `EngramCore.operational_telemetry()` returns the fixed-cardinality schema-version 1
 process aggregate. `core.status()["telemetry"]` returns the same information alongside
 readiness. It includes outcomes, fixed resolver contributions and states, observed
-latency buckets, budget/resource consumption, and fixed Regulator
-outcomes through fixed aggregate keys.
+latency buckets, budget/resource consumption, fixed Regulator outcomes, and graph
+consultation/hit/miss/failure counters through fixed aggregate keys.
 
 ## Verification
 

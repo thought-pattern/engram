@@ -5,7 +5,7 @@ the bundled STATIC data,
 instance, classifies how each prompt is answered, and prints the gaps so that
 content and engine improvements can be driven from real signal.
 
-The harness is side-effect free: it loads process memory from data/seed.json
+The harness is side-effect free: it loads process memory from the packaged seed
 and writes no Engram state.
 
 Classification (pattern path):
@@ -32,7 +32,7 @@ if REPO_ROOT not in sys_path:
     sys_path.insert(0, REPO_ROOT)
 
 from engram.config import engram_config
-from engram.constants import Tier
+from engram.conversation_seed import load_bundled_conversation_pairs
 from engram.core import Engram
 
 CATCHALL = "*"
@@ -42,16 +42,7 @@ WEAK_SCORE = 0.5  # calibrated keyword top-score at or below this is a weak retr
 def load_static_engram() -> Engram:
     """Load a fresh Engram from the bundled STATIC data."""
     engram = Engram(config=engram_config())
-    seed_path = "data/seed.json"
-    with open(seed_path, encoding="utf-8") as f:
-        seed_data = json_load(f)
-    for pair in seed_data.get("pairs", []):
-        engram.store(
-            pair.get("response", ""),
-            tier=Tier.STATIC,
-            pattern=pair.get("pattern", ""),
-            template=pair.get("template", {}),
-        )
+    engram.load_static_data(load_bundled_conversation_pairs())
     return engram
 
 

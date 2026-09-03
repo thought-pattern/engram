@@ -4,6 +4,7 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps
 from pathlib import Path
 from sys import path as sys_path
+from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter_ns as time_perf_counter_ns
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -16,9 +17,10 @@ from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.resolution import resolver_result_to_dict, validate_resolution_result
 from engram.service import EngramCore
+from scripts.graph_probe_config import materialize_engram_graph_config
 
-PREDICATE_SURFACES = ("married", "spouse", "husband", "present", "present in", "work", "born", "parent")
-COMPOSITION_PROMPTS = ("Who is Sarah's married partner married to?",)
+PREDICATE_SURFACES = ("is a", "classified as", "results in")
+COMPOSITION_PROMPTS = ("What was Elias Throrne classified as?",)
 
 
 def timed(operation):
@@ -31,7 +33,7 @@ def timed(operation):
 def run(config_path: str) -> dict[str, object]:
     engine = Engram(load_config(config_path))
     try:
-        entities, entity_ms = timed(lambda: engine.canonical_entity_matches("Sarah", limit=4))
+        entities, entity_ms = timed(lambda: engine.canonical_entity_matches("Elias Throrne", limit=4))
         predicate_rows = []
         for surface in PREDICATE_SURFACES:
             rows, elapsed_ms = timed(lambda surface=surface: engine.canonical_predicate_matches(surface, limit=4))
@@ -114,7 +116,7 @@ def run(config_path: str) -> dict[str, object]:
                 lambda index=index, prompt=prompt: core.resolve_request(
                     prompt,
                     f"live-composition-{index}",
-                    user_id="Sarah",
+                    user_id="Graph Composition Probe",
                     configured_resolvers=("structured_graph",),
                 )
             )
@@ -178,7 +180,12 @@ def main() -> None:
     parser.add_argument("--config", default="config.yml")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    report = run(arguments.config)
+    with tempfile_TemporaryDirectory(prefix="engram-graph-probe-") as temporary_directory:
+        selected_config = materialize_engram_graph_config(
+            arguments.config,
+            Path(temporary_directory) / "engram-graph.yml",
+        )
+        report = run(selected_config)
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

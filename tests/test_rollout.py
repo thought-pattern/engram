@@ -2,11 +2,13 @@
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.config import config_from_dict, config_to_dict, engram_config, rollout_config
+from engram.config import config_from_dict, config_to_dict, engram_config, graph_config, rollout_config
 from engram.constants import ResolutionOutcome, RolloutMode
 from engram.core import Engram
 from engram.errors import ConflictError
 from engram.service import EngramCore
+
+from .test_relation import RelationGraph
 
 EMPTY_NAMESPACES: dict = {}
 
@@ -103,7 +105,7 @@ def test_shadow_executes_without_disclosing_or_credentialing_candidates() -> Non
     assert artifact["statistics"]["hit_count"] == 0
 
 
-def test_disabled_skips_resolution_and_namespace_override_is_exact() -> None:
+def test_disabled_executes_resolution_without_disclosing_and_namespace_override_is_exact() -> None:
     core, statement_id = core_with_exact_response(
         RolloutMode.REGULATED_DIRECT_ANSWER,
         {"tenant-a": RolloutMode.DISABLED},
@@ -113,10 +115,11 @@ def test_disabled_skips_resolution_and_namespace_override_is_exact() -> None:
     artifact = core.engram.response_repository.get_artifact(statement_id)
 
     assert result["outcome"] == ResolutionOutcome.MISS
-    assert result["reason_codes"] == ("rollout_disabled",)
+    assert "rollout_disabled" in result["reason_codes"]
     assert result["resolver_results"] == ()
     assert result["frame_diagnostics"]["rollout"]["namespace_override"] is True
-    assert artifact["statistics"]["query_count"] == 0
+    assert result["frame_diagnostics"]["rollout"]["observed_outcome"] == "ANSWER"
+    assert artifact["statistics"]["query_count"] == 1
     assert artifact["statistics"]["hit_count"] == 0
 
 
@@ -129,3 +132,31 @@ def test_rollout_policy_is_part_of_retry_identity() -> None:
         resolve_exact(core, "policy-versioned-request")
 
     assert first["outcome"] == ResolutionOutcome.EVIDENCE
+
+
+@pytest_mark.parametrize("mode", tuple(RolloutMode))
+def test_enabled_graph_is_consulted_in_every_rollout_mode(mode: RolloutMode, monkeypatch) -> None:
+    graph = RelationGraph()
+    monkeypatch.setattr("engram.core.connect_graph", lambda **internal_kwargs: graph)
+    config = engram_config(
+        graph=graph_config(enabled=True, deployment_mode="tapestry_managed"),
+        rollout=rollout_config(default_mode=mode),
+    )
+    core = EngramCore(Engram(config))
+    core.learn_response(
+        "Where was Ada Lovelace born?",
+        "A cached response that must not bypass graph recall.",
+        f"graph-exact-{mode.value}",
+    )
+
+    core.resolve_request(
+        "Where was Ada Lovelace born?",
+        f"graph-{mode.value}",
+        configured_resolvers=("exact",),
+        accept_exact=True,
+    )
+
+    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
+    graph_metrics = core.status()["telemetry"]["graph_recall"]
+    assert graph_metrics["consultations"] > 0
+    assert graph_metrics["hits"] > 0

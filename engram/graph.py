@@ -11,7 +11,7 @@ method names — duck typing is the contract, so there is no abstract base class
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from pathlib import Path
@@ -74,6 +74,10 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = """
       AND assertion.lifecycle_disposition = 'active'
       AND assertion.retired_at IS NULL
       AND support.retired_at IS NULL
+      AND (assertion.valid_time_start IS NULL
+        OR assertion.valid_time_start <= datetime($evaluation_time))
+      AND (assertion.valid_time_end IS NULL
+        OR datetime($evaluation_time) < assertion.valid_time_end)
       AND predicate.canonical_id <> 'generic_relation'
       AND (proposition.visibility_kind = 'global'
         OR ($visibility_kind IN ['company', 'engagement']
@@ -213,6 +217,16 @@ def projection_object_type(value: object, name: str) -> ExpectedObjectType:
     return result
 
 
+def projection_entity_object_type(value: object, name: str) -> ExpectedObjectType:
+    """Map the graph's open entity taxonomy onto Engram's coarse answer types."""
+    raw = projection_text(value, name, 32, allow_empty=False).upper()
+    try:
+        result = ExpectedObjectType(raw)
+    except ValueError:
+        result = ExpectedObjectType.ENTITY
+    return result
+
+
 def projection_cardinality(value: object, name: str) -> PredicateCardinality:
     raw = projection_text(value, name, 32, allow_empty=False).upper()
     try:
@@ -233,7 +247,7 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
         ),
         "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
         "edge_surfaces": projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
-        "entity_type": projection_object_type(value["entity_type"], "canonical entity type"),
+        "entity_type": projection_entity_object_type(value["entity_type"], "canonical entity type"),
     }
     return result
 
@@ -525,7 +539,7 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
         "object_label": projection_text(
             value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "object_type": projection_object_type(value["object_type"], "relation object type"),
+        "object_type": projection_entity_object_type(value["object_type"], "relation object type"),
         "predicate_cardinality": projection_cardinality(
             value["predicate_cardinality"],
             "relation Predicate cardinality",
@@ -797,6 +811,7 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 250,
         min_similarity: float = 0.45,
+        evaluation_time: str = "",
     ) -> list:
         """Search active proof-canonical Propositions through one fixed ANN query.
 
@@ -816,6 +831,8 @@ class MemGraphConnection:
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
             raise ValueError("min_similarity must be between 0 and 1")
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "graph vector evaluation time")
         result = self.execute(
             VECTOR_SEARCH_PROPOSITIONS_QUERY,
             {
@@ -823,6 +840,7 @@ class MemGraphConnection:
                 "limit": limit,
                 "query_embedding": embedding,
                 "min_similarity": float(min_similarity),
+                "evaluation_time": selected_evaluation_time,
             },
         )
         return result
@@ -908,6 +926,7 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 10,
         min_similarity: float = 0.45,
+        evaluation_time: str = "",
     ) -> list[dict]:
         """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties."""
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
@@ -924,6 +943,8 @@ class MemGraphConnection:
                 raise InvalidRequestError("Proposition projection embedding must contain finite numeric values")
         row_limit = projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
         similarity = projection_score(min_similarity, True, "Proposition projection min_similarity")
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "Proposition projection vector evaluation time")
         rows = self.execute(
             VECTOR_PROPOSITION_PROJECTION_QUERY,
             {
@@ -931,6 +952,7 @@ class MemGraphConnection:
                 "limit": row_limit,
                 "query_embedding": embedding,
                 "min_similarity": similarity,
+                "evaluation_time": selected_evaluation_time,
             },
         )
         result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR_V1, index_name, row_limit)

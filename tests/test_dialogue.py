@@ -1,9 +1,7 @@
 """Dialogue interpretation and conversational-state regressions."""
 
-from json import loads as json_loads
-from pathlib import Path
-
 from engram import pipeline
+from engram.conversation_seed import load_bundled_conversation_pairs
 from engram.core import Engram
 from engram.dialogue import (
     DIALOGUE_ACKNOWLEDGMENT,
@@ -27,13 +25,10 @@ from engram.dialogue import (
 from engram.models import Tier, session as make_session, session_update_dialogue
 from engram.nlp import extract_fact
 
-SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
-
 
 def seeded_engram() -> Engram:
     engram = Engram()
-    seed = json_loads(SEED_PATH.read_text(encoding="utf-8"))
-    engram.load_static_data(seed.get("pairs", []))
+    engram.load_static_data(load_bundled_conversation_pairs())
     return engram
 
 

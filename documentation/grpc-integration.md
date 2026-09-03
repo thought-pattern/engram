@@ -14,6 +14,9 @@ services from the same generated modules:
 These are capabilities of one Engram component, not protocol generations. One
 `engram-grpc` process creates one `EngramCore`, registers both services and the
 standard gRPC health service, and closes the core during graceful shutdown.
+`ResolveEvidence` uses the same unified operation as Python `resolve_request`,
+CLI `query`, and MCP `engram_query`. When graph access is enabled, transport and
+rollout selection cannot remove it from a graph-eligible resolution plan.
 
 Engram responses, conversations, proposals, and idempotency records live only
 in bounded process memory. A new service process loads only the STATIC data

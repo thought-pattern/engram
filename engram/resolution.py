@@ -1306,8 +1306,6 @@ def proposition_trust_inputs(
         raise InvalidRequestError("Proposition supplied_trust_version must be zero when unavailable")
     if supplied_available != version_available:
         raise InvalidRequestError("Proposition supplied trust value and version availability must match")
-    if version_available and trust_version == 0:
-        raise InvalidRequestError("Proposition supplied_trust_version must be positive when available")
     result: dict = {
         "schema_version": version,
         "trust_category": category,

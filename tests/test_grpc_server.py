@@ -17,6 +17,7 @@ from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pytest import raises as pytest_raises
 
 from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
+from engram.config import engram_config, graph_config
 from engram.constants import MAX_REQUEST_BYTES
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -27,6 +28,7 @@ from engram.resolution import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore
 
 from .support_fixtures import ASSERTION_REFERENCE_A
+from .test_relation import RelationGraph
 
 
 class GrpcCore(EngramCore):
@@ -285,6 +287,32 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
         assert result.evidence_package.wire_version == 2
         assert result.evidence_package.retained_count == 0
         assert result.evidence_package.records == []
+
+
+def test_grpc_evidence_service_uses_shared_graph_resolution(monkeypatch) -> None:
+    graph = RelationGraph()
+    monkeypatch.setattr("engram.core.connect_graph", lambda **internal_kwargs: graph)
+    core = EngramCore(
+        Engram(
+            engram_config(
+                graph=graph_config(enabled=True, deployment_mode="tapestry_managed"),
+            )
+        )
+    )
+    with running_server(core) as (_, channel, _):
+        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+
+        result = stub.ResolveEvidence(
+            engram_pb2.ResolveEvidenceRequest(
+                request="Where was Ada Lovelace born?",
+                request_id="grpc-graph-query",
+                configured_resolvers=("exact",),
+            )
+        )
+
+    assert result.outcome == "EVIDENCE"
+    assert as_dict(result.response_candidates[0])["response"] == "Ada Lovelace — birth place: London."
+    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
 def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:

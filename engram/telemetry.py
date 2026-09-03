@@ -58,6 +58,13 @@ def operational_telemetry() -> dict:
         },
         "resolvers": resolver_metrics,
         "regulator_outcomes": dict.fromkeys(sorted(REGULATOR_OUTCOMES), 0),
+        "graph_recall": {
+            "consultations": 0,
+            "hits": 0,
+            "misses": 0,
+            "failures": 0,
+            "latency": duration_metrics(),
+        },
     }
     return result
 
@@ -116,6 +123,17 @@ def record_resolution(telemetry: dict, resolution: dict, *, replayed: bool) -> b
 def record_regulator_outcome(telemetry: dict, outcome: str) -> None:
     """Count one non-replayed fixed Regulator verdict."""
     telemetry.get("regulator_outcomes", {})[outcome] += 1
+
+
+def record_graph_recall(telemetry: dict, outcome: str, elapsed_ns: int) -> None:
+    """Count one conversational graph consultation without request labels."""
+    if outcome not in {"hit", "miss", "failure"}:
+        raise ValueError("graph recall outcome must be hit, miss, or failure")
+    metrics = telemetry.get("graph_recall", {})
+    counters = {"hit": "hits", "miss": "misses", "failure": "failures"}
+    metrics["consultations"] += 1
+    metrics[counters.get(outcome, "failures")] += 1
+    record_duration(metrics["latency"], elapsed_ns)
 
 
 def telemetry_snapshot(telemetry: dict) -> dict:

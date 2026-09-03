@@ -37,6 +37,7 @@ if REPO_ROOT not in sys_path:
 from engram import metrics, pipeline, sessions
 from engram.config import engram_config
 from engram.constants import Tier
+from engram.conversation_seed import load_bundled_conversation_pairs
 from engram.core import Engram
 
 SESSION_ID = "soak"
@@ -47,16 +48,7 @@ LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 def load_static_engram() -> Engram:
     """Load a fresh Engram from the bundled STATIC data."""
     engram = Engram(config=engram_config(learn_user_facts=True))
-    seed_path = "data/seed.json"
-    with open(seed_path, encoding="utf-8") as f:
-        seed_data = json_load(f)
-    for pair in seed_data.get("pairs", []):
-        engram.store(
-            pair.get("response", ""),
-            tier=Tier.STATIC,
-            pattern=pair.get("pattern", ""),
-            template=pair.get("template", {}),
-        )
+    engram.load_static_data(load_bundled_conversation_pairs())
     return engram
 
 

@@ -7,6 +7,7 @@ from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from sys import path as sys_path
+from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -18,16 +19,17 @@ from mcp.client import Client
 from engram.config import load_config
 from engram.constants import VERSION
 from engram.core import Engram
-from engram.mcp_server import EngramMCPServer
+from engram.mcp_server import EngramMCPServer, MCPConversationService
 from engram.service import EngramCore
+from scripts.graph_probe_config import materialize_engram_graph_config
 
 DEFAULT_OUTPUT = Path("eval/results/contextual/mcp-memgraph-comparison-2026-08-20.json")
 PROMPTS = (
-    "Tell me about Sarah.",
-    "Who is Sarah married to?",
-    "What work is Sarah present in?",
-    "Tell me about Abraham.",
-    "Who is Abraham married to?",
+    "What is Elias Throrne?",
+    "What was Elias Throrne classified as?",
+    "What does Elias Throrne do?",
+    "Tell me about Elias Throrne.",
+    "What does evaluating mapping[key] for an absent key result in?",
 )
 
 
@@ -66,8 +68,8 @@ def relation_probe(config_path: str) -> dict:
     """Exercise the Section 8 fixed capabilities and report live turn lengths."""
     engine = Engram(load_config(config_path))
     try:
-        entities, entity_latency = timed(lambda: engine.canonical_entity_matches("Sarah", limit=8))
-        predicates, predicate_latency = timed(lambda: engine.canonical_predicate_matches("married", limit=8))
+        entities, entity_latency = timed(lambda: engine.canonical_entity_matches("Elias Throrne", limit=8))
+        predicates, predicate_latency = timed(lambda: engine.canonical_predicate_matches("is a", limit=8))
         relation_rows = []
         relation_latency = 0.0
         if len(entities) == 1 and len(predicates) == 1:
@@ -79,9 +81,9 @@ def relation_probe(config_path: str) -> dict:
         core = EngramCore(engine)
         resolution, resolution_latency = timed(
             lambda: core.resolve_request(
-                "Who is Sarah married to?",
+                "What was Elias Throrne classified as?",
                 "live-memgraph-relation-probe",
-                user_id="Sarah",
+                user_id="Graph Comparison",
                 configured_resolvers=("structured_graph",),
             )
         )
@@ -143,7 +145,7 @@ def relation_probe(config_path: str) -> dict:
 
 
 async def internal_conversation(config_path: str) -> dict:
-    server = EngramMCPServer()
+    server = EngramMCPServer(service=MCPConversationService(static_pairs=[], require_catch_all=False))
     turns = []
     started_clock = time_perf_counter()
     async with Client(server) as client:
@@ -151,7 +153,7 @@ async def internal_conversation(config_path: str) -> dict:
             await client.call_tool(
                 "engram_start",
                 {
-                    "user_id": "Sarah",
+                    "user_id": "Graph Comparison",
                     "initial_bot_text": ".",
                     "config_path": config_path,
                     "random_seed": 808,
@@ -202,7 +204,7 @@ async def compare(config_path: str) -> dict:
         "engram_version": VERSION,
         "transport": "official MCP Client against repository MCPServer",
         "seed_enabled": False,
-        "user_id": "Sarah",
+        "user_id": "Graph Comparison",
         "disabled": disabled,
         "enabled": enabled,
         "section8_relation_probe": relation_probe(config_path),
@@ -221,7 +223,12 @@ def main() -> int:
     parser.add_argument("--config", default="config.yml")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
-    report = asyncio_run(compare(args.config))
+    with tempfile_TemporaryDirectory(prefix="engram-graph-probe-") as temporary_directory:
+        selected_config = materialize_engram_graph_config(
+            args.config,
+            Path(temporary_directory) / "engram-graph.yml",
+        )
+        report = asyncio_run(compare(selected_config))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(args.output)

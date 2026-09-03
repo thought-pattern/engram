@@ -12,6 +12,7 @@ from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
 from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.feedback import canonical_utc
 from engram.text import normalize
 
 
@@ -154,6 +155,7 @@ class ConversationRuntime:
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
+        clock=(),
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
         if not isinstance(anonymous_session_id, str):
@@ -172,6 +174,8 @@ class ConversationRuntime:
             raise ValueError("random_seed must be an integer")
         if not isinstance(random_seed_present, bool):
             raise ValueError("random_seed_present must be a boolean")
+        if clock != () and not callable(clock):
+            raise ValueError("clock must be callable")
 
         self.engram = engram
         self.user_id = user_id if user_id == "" else normalized_user_id
@@ -179,6 +183,7 @@ class ConversationRuntime:
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
+        self.clock = clock
         self.started_at = utc_now()
         self.turns: list[dict] = []
         self.lock = threading_RLock()
@@ -216,11 +221,15 @@ class ConversationRuntime:
                 random_seed(self.random_seed + turn_number)
             started = time_perf_counter()
             try:
+                evaluation_clock = self.clock() if callable(self.clock) else datetime.now(UTC)
+                if not isinstance(evaluation_clock, datetime):
+                    raise ValueError("clock must return a datetime")
                 result = pipeline.respond(
                     self.engram,
                     text,
                     context_id=self.session_id,
                     user_id=self.user_id,
+                    evaluation_time=canonical_utc(evaluation_clock),
                 )
             finally:
                 if random_state:

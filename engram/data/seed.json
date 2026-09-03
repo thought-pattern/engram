@@ -1,6 +1,9 @@
 {
   "pairs": [
-    { "pattern": "HELLO", "response": "Hello! How can I help you today?" },
+    {
+      "pattern": "HELLO",
+      "response": "Hello! How can I help you today?"
+    },
     { "pattern": "HELLO *", "response": "Hello! How can I help you today?" },
     { "pattern": "HI", "response": "Hi there!" },
     { "pattern": "HI *", "response": "Hi there!" },

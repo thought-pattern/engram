@@ -110,7 +110,7 @@ from engram.resolvers import (
 from engram.responses import AcceptedResponseService, LifecycleMutationReason, response_mutation_result_to_dict
 from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_rewrite_corpus
 from engram.rollout import apply_rollout, rollout_status, select_rollout
-from engram.telemetry import record_regulator_outcome, record_resolution
+from engram.telemetry import record_graph_recall, record_regulator_outcome, record_resolution
 from engram.text import normalize
 
 LOGGER = logging_getLogger("engram.service")
@@ -209,11 +209,14 @@ class ServiceClock:
 class IsolatedGraphClient:
     """Run optional graph calls through a core-owned isolation context."""
 
-    def __init__(self, client, operation_context) -> None:
+    def __init__(self, client, operation_context, telemetry_operation) -> None:
         if not callable(operation_context):
             raise InvalidRequestError("graph operation context must be callable")
+        if not callable(telemetry_operation):
+            raise InvalidRequestError("graph telemetry operation must be callable")
         object.__setattr__(self, "client", client)
         object.__setattr__(self, "operation_context", operation_context)
+        object.__setattr__(self, "telemetry_operation", telemetry_operation)
 
     def __bool__(self) -> bool:
         result = bool(object.__getattribute__(self, "client"))
@@ -225,16 +228,26 @@ class IsolatedGraphClient:
         if not callable(value) or name == "disconnect":
             return value
         operation_context = object.__getattribute__(self, "operation_context")
+        telemetry_operation = object.__getattribute__(self, "telemetry_operation")
 
         def isolated(*args, **kwargs):
+            started_ns = time_monotonic_ns()
             with operation_context():
-                result = value(*args, **kwargs)
+                try:
+                    result = value(*args, **kwargs)
+                except Exception:
+                    if name not in {"execute", "vector_search_propositions"}:
+                        telemetry_operation("failure", time_monotonic_ns() - started_ns)
+                    raise
+                if name not in {"execute", "vector_search_propositions"}:
+                    outcome = "hit" if result else "miss"
+                    telemetry_operation(outcome, time_monotonic_ns() - started_ns)
                 return result
 
         return isolated
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name in {"client", "operation_context"}:
+        if name in {"client", "operation_context", "telemetry_operation"}:
             object.__setattr__(self, name, value)
         else:
             setattr(object.__getattribute__(self, "client"), name, value)
@@ -457,7 +470,11 @@ class EngramCore:
         self.internal_state = CoreState.RUNNING
         graph_client = self.engram.graph_client
         if graph_client:
-            self.engram.internal_graph_client = IsolatedGraphClient(graph_client, self.graph_operation)
+            self.engram.internal_graph_client = IsolatedGraphClient(
+                graph_client,
+                self.graph_operation,
+                self.record_graph_operation,
+            )
         self.internal_component_status = deepcopy(self.engram.component_status)
         self.negative_resolutions = NegativeResolutionStore()
         self.reset_regulated_state()
@@ -474,16 +491,17 @@ class EngramCore:
         self.rewrite_engine: object = (
             RewriteEngine(load_default_rewrite_corpus()) if self.engram.config["retrieval_rewrites_enabled"] else ()
         )
-        self.resolver_registry = ResolverRegistry(
-            (
-                ExactResolver(self.engram, time_monotonic_ns),
-                UtilityResolver(self.engram.utility_registry, time_monotonic_ns),
-                SparseResolver(self.engram, time_monotonic_ns),
-                StandaloneSemanticResolver(self.engram, time_monotonic_ns),
-                StructuredGraphResolver(self.engram, time_monotonic_ns),
-                SupportSemanticResolver(self.engram, time_monotonic_ns),
-            )
+        graph_resolver = StructuredGraphResolver(self.engram, time_monotonic_ns)
+        local_resolvers = (
+            ExactResolver(self.engram, time_monotonic_ns),
+            UtilityResolver(self.engram.utility_registry, time_monotonic_ns),
+            SparseResolver(self.engram, time_monotonic_ns),
+            StandaloneSemanticResolver(self.engram, time_monotonic_ns),
+            SupportSemanticResolver(self.engram, time_monotonic_ns),
         )
+        configured_graph = bool((self.engram.config.get("graph") or {}).get("enabled"))
+        registered_resolvers = (graph_resolver, *local_resolvers) if configured_graph else (*local_resolvers, graph_resolver)
+        self.resolver_registry = ResolverRegistry(registered_resolvers)
         self.resolution_accounting = ResolutionAccountingFinalizer(
             self.engram,
             self.response_mutations,
@@ -543,6 +561,11 @@ class EngramCore:
             with self.resolution_condition:
                 self.active_graph_operations -= 1
                 self.resolution_condition.notify_all()
+
+    def record_graph_operation(self, outcome: str, elapsed_ns: int) -> None:
+        """Record one fixed-capability graph call without retaining request data."""
+        with self.engram.count_lock:
+            record_graph_recall(self.engram.operational_metrics, outcome, elapsed_ns)
 
     def publish_response_state(self, state: dict) -> None:
         """Invalidate request-result misses after authoritative publication."""
@@ -881,6 +904,10 @@ class EngramCore:
             check_cancellation()
             rollout = select_rollout(self.engram.config, namespace)
             rollout_mode = rollout["mode"]
+            selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
+            graph_enabled = bool((self.engram.config.get("graph") or {}).get("enabled"))
+            if graph_enabled and selected_resolvers and "structured_graph" not in selected_resolvers:
+                selected_resolvers = (*selected_resolvers, "structured_graph")
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
             signature_budget.pop("started_ns")
             signature = service_request_signature(
@@ -892,7 +919,7 @@ class EngramCore:
                 required_metadata=required_metadata,
                 required_source_label=required_source_label,
                 budget=signature_budget,
-                configured_resolvers=list(configured_resolvers),
+                configured_resolvers=list(selected_resolvers),
                 accept_exact=accept_exact,
                 rollout_policy_version=rollout["policy_version"],
                 rollout_mode=rollout_mode.value,
@@ -960,25 +987,6 @@ class EngramCore:
                     session["last_active"] = self.internal_clock()
 
             negative_started_ns = time_monotonic_ns()
-            if rollout_mode == RolloutMode.DISABLED:
-                disabled_result = bounded_miss_result(
-                    frame,
-                    negative_started_ns,
-                    ("rollout_disabled",),
-                    {
-                        "rollout": {
-                            "policy_version": rollout["policy_version"],
-                            "mode": rollout_mode.value,
-                            "namespace_override": rollout["namespace_override"],
-                        }
-                    },
-                )
-                public_result = self.cache_resolution(request_id, signature, disabled_result, frame, (), ())
-                remember_contextual_frame()
-                self.record_resolution_telemetry(public_result, replayed=False)
-                return public_result
-
-            selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
             plan = self.resolver_registry.plan(frame, selected_resolvers)
             negative_key = empty_negative_resolution()["key"]
             negative_key_available = False
@@ -1176,6 +1184,7 @@ class EngramCore:
                     initial_bot_text=initial_bot_text,
                     random_seed=random_seed,
                     random_seed_present=random_seed_present,
+                    clock=self.internal_clock,
                 )
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error

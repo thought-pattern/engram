@@ -4,13 +4,14 @@
 
 Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 stateful conversational process or a Regulator-controlled response cache.
-The ten tools expose one conversation lifecycle, inspection, explicit
-shared-fact ingestion, in-memory reporting, and a two-phase propose/resolve cache
-interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
+The eleven tools expose one conversation lifecycle, inspection, explicit
+shared-fact ingestion, in-memory reporting, unified evidence resolution, and a
+two-phase propose/resolve cache interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the gRPC adapter.
-The ten names, input schemas, defaults, and descriptions are the current MCP
-interface. Output schemas remain unspecified. The unversioned gRPC evidence
-service owns unified Proposition evidence.
+The eleven names, input schemas, defaults, and descriptions are the current MCP
+interface. Output schemas remain unspecified. `engram_query`, the Python
+`resolve_request` operation, the CLI `query` command, and gRPC `ResolveEvidence`
+all invoke the same unified Proposition-evidence pipeline.
 
 MCP tool calls remain synchronous at this boundary. If a client abandons its
 wait, already-started mutation work may complete; retry the same request ID to
@@ -49,9 +50,11 @@ for concurrent tool lifecycles. User context is keyed by the caller-owned
 `"0"` before starting the core conversation and retains `"0"` for every
 subsequent tool in that lifecycle.
 
-Restart loads only static data newly provided for that process; if none is
-provided, no static statements are present. No MCP tool accepts a transcript,
-report or static-refresh path. Dynamic accepted responses,
+The stdio process loads the packaged conversational corpus by default. The host
+may select another corpus with `--static-data PATH`, or deliberately start with
+no scripted statements by passing `--no-static-data` for cache-only use. Static
+data is reloaded for each `engram_start`; no MCP tool accepts a transcript,
+report, static-data, or static-refresh path. Dynamic accepted responses,
 learned conversational statements and facts, sessions, proposals, receipts,
 reports, turn diagnostics, and their counters never cross process restart.
 
@@ -69,6 +72,20 @@ After installation, the console entry point is equivalent:
 ```bash
 engram-mcp
 ```
+
+The default command uses the packaged conversational corpus, including a `*`
+catch-all that guarantees a non-empty response for a valid conversational turn.
+A host can choose a different corpus or an intentionally empty cache-only mode:
+
+```bash
+engram-mcp --static-data /trusted/config/support-conversation.json
+engram-mcp --no-static-data
+```
+
+A selected JSON corpus must contain one top-level `pairs` list in the same
+format accepted by `Engram.load_static_data`, and conversational corpora must
+include a `*` catch-all. These are process-launch options controlled by the MCP
+host; they are not tool arguments.
 
 A host configuration can launch the module from a checkout:
 
@@ -119,8 +136,12 @@ The returned turn event includes:
 - previous-response and predicate changes;
 - statements learned during that turn.
 
-The call mutates conversation state and may learn conversational facts according
-to Engram configuration. Cache proposals use `engram_propose`.
+The call mutates conversation state and learns facts whose admission decision is
+`admitted`, regardless of whether a scripted pattern matched that turn, when
+`learn_user_facts` is enabled. Cache proposals use `engram_propose`.
+When graph access is enabled, graph-eligible turns consult it before accepting a
+scripted factual response. The shared runtime clock supplies the graph evaluation
+time. Graph misses and failures preserve normal local fallback.
 
 ### `engram_inspect`
 
@@ -160,6 +181,20 @@ the active `ConversationRuntime`.
 
 All other tools require an active conversation established by `engram_start`.
 
+### `engram_query`
+
+Runs the same transport-neutral unified resolution pipeline exposed by Python
+`EngramCore.resolve_request`, CLI `query`, and gRPC `ResolveEvidence`. The required
+arguments are `request` and idempotent `request_id`. Optional `user_id`, namespace,
+context fingerprint, authoritative identity, metadata/source requirements, budget,
+resolver selection, and `accept_exact` fields have the same contracts documented in
+[the Python API](python-api.md).
+
+If graph access is enabled, the core includes `structured_graph` even when the
+caller supplies a narrower resolver list. Rollout modes control disclosure and
+answer authority, not graph participation. The result is the shared schema-versioned
+`ANSWER`, `EVIDENCE`, or `MISS` mapping.
+
 `engram_inspect` includes `core_status`, the transport-neutral lifecycle snapshot.
 Its fields include `state`, `ready`, `healthy`, `memory_only`, and the number of
 active conversations. `telemetry` is the shared fixed-cardinality process
@@ -172,8 +207,8 @@ object reports `enabled` and `ready` for graph, vector, and spaCy.
 ```text
 1. Host starts the MCP process.
 2. Client calls engram_start once.
-3. Client uses either `engram_send` for chatbot turns or the regulated-cache
-   sequence described below.
+3. Client uses `engram_send` for chatbot turns, `engram_query` for unified
+   information resolution, or the regulated-cache sequence described below.
 4. Client uses `engram_inspect` or `engram_add_fact` when needed.
 5. Client calls engram_finish when reports are required.
 6. Client calls engram_stop to discard and release the conversation.
@@ -190,6 +225,10 @@ engram_start {
 }
 
 engram_send {"text": "Hello, Engram."}
+engram_query {
+  "request": "What evidence is available?",
+  "request_id": "query-1"
+}
 engram_inspect {}
 engram_add_fact {
   "text": "Tokyo is the capital of Japan.",
@@ -218,6 +257,7 @@ is the receipt lifetime and retry boundary.
 - The server uses local stdio transport; remote access, authentication, and
   process isolation belong to the MCP host.
 - Treat `config_path` as trusted deployment configuration.
+- Treat a host-selected `--static-data` path as trusted deployment configuration.
 - `source_label` records opaque provenance; MCP host policy supplies authorization.
 - `engram_add_fact` is an explicit write to shared Engram knowledge and should
   be granted only to callers authorized to add facts.
@@ -406,7 +446,7 @@ identical resolutions therefore record exactly one accepted hit.
 
 ## Verification checklist
 
-- The host can list all ten tools after startup.
+- The host can list all eleven tools after startup.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
 - `user_id` defaults to `"0"` and preserves explicit case.
@@ -414,8 +454,13 @@ identical resolutions therefore record exactly one accepted hit.
 - `engram_add_fact` changes shared knowledge and preserves user context.
 - `engram_finish` returns the report without writing files and allows another send.
 - `engram_stop` discards process memory and releases the runtime.
-- Restarting the MCP process reloads only newly provided static data and starts
-  with empty dynamic memory.
+- `engram_query` returns the same unified result semantics as CLI, Python, and gRPC.
+- Default startup loads the packaged conversational corpus and produces a
+  non-empty response for every valid turn.
+- `--static-data` loads only the selected host-owned corpus, while
+  `--no-static-data` starts with no scripted statements.
+- Restarting the MCP process reloads its configured static data and starts with
+  empty dynamic memory.
 - A proposal records candidacy but earns a hit only after acceptance.
 - Scope and required metadata exclude responses that do not satisfy the request.
 - Proposal, learn, resolve, and retirement retries are idempotent; conflicting retries fail.

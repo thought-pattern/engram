@@ -128,6 +128,7 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
             return []
 
     engine.internal_graph_client = BlockingGraph()
+    engine.config["graph"]["enabled"] = True
     engine.pattern_matcher.clear()
     core = EngramCore(engine)
     core.start_conversation(user_id="graph-user")

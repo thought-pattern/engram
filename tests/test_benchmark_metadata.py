@@ -1,6 +1,6 @@
 """Source-binding checks for machine-readable benchmark evidence."""
 
-from scripts.benchmark_metadata import SOURCE_FILES, SOURCE_GLOBS, governed_source_sha256
+from scripts.benchmark_metadata import REPOSITORY, SOURCE_FILES, SOURCE_GLOBS, governed_source_sha256
 
 
 def source_tree(root) -> None:
@@ -39,3 +39,7 @@ def test_governed_digest_includes_packaged_runtime_corpora(tmp_path) -> None:
     corpus.write_text('{"version": 2}\n', encoding="utf-8")
 
     assert governed_source_sha256(tmp_path) != original
+
+
+def test_configured_governed_source_files_exist() -> None:
+    assert all((REPOSITORY / relative).is_file() for relative in SOURCE_FILES)

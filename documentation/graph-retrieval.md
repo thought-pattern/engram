@@ -1,8 +1,24 @@
 # Graph retrieval contracts
 
-Graph retrieval is optional and issues no writes. It enriches a resolution request
-with canonical identity and retrieves bounded Proposition evidence through fixed
-parameterized capabilities with typed identity and relation inputs.
+Graph retrieval is optional and issues no writes. When `graph.enabled` is true,
+it participates in every graph-eligible request through the shared `EngramCore`,
+regardless of rollout mode or whether the caller is Python, CLI, MCP, gRPC, or a
+future adapter. Interfaces and rollout policies may govern presentation, but they
+do not remove the configured graph resolver from the retrieval plan. It enriches
+a resolution request with canonical identity and retrieves bounded Proposition
+evidence through fixed parameterized capabilities with typed identity and relation
+inputs.
+
+The core schedules a configured graph before local exact-answer short-circuiting.
+The request or conversation runtime captures one evaluation timestamp and supplies
+it to graph reads, including vector recall, so adapters do not create different
+temporal views of the same operation.
+
+Conversational factual questions consult the graph before a scripted response is
+accepted. A graph hit takes precedence over broad reflective and catch-all patterns;
+a miss or failure preserves the local conversational fallback. Surface-fact reads
+apply current valid-time bounds and collapse duplicate subject/predicate/object
+triples before phrasing.
 
 ## Context and canonical identity
 
@@ -23,6 +39,11 @@ The relation path compiles one canonical subject and predicate into the fixed
 `PropositionProjection` values plus a bounded object label and type. Current lifecycle,
 system time, valid time, trust inputs, ownership, scope, and publication identity are
 revalidated before a row becomes evidence.
+
+Tapestry's open `Entity.entity_type` taxonomy is normalized at this boundary.
+Engram's scalar and coarse types retain their exact values; domain types such as
+`OCCUPATION`, `PLANET`, or `CHEMICAL_ELEMENT` become `ENTITY`. Predicate-declared
+answer types remain strict.
 
 A unique eligible `SINGLE` relation may become a direct candidate through the common
 fusion policy. Multiple values, unknown cardinality, ambiguity, or incomplete trust
@@ -63,6 +84,8 @@ failure. Cooperative cancellation is checked around graph calls, but an executin
 driver call continues until the driver returns.
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
+Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,
+and latency without retaining request text, entity labels, or graph identifiers.
 
 Focused behavior is covered by `tests/test_contextual.py`, `tests/test_temporal.py`,
 `tests/test_composition.py`, `tests/test_claim_projection.py`, and

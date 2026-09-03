@@ -5,6 +5,8 @@ from json import loads as json_loads
 from engram.service import EngramCore
 from scripts.cli import InteractiveChat, main
 
+from .test_relation import RelationGraph
+
 
 def test_query_runs_against_a_fresh_empty_process_cache(tmp_path, capsys) -> None:
     config = tmp_path / "config.yml"
@@ -13,7 +15,9 @@ def test_query_runs_against_a_fresh_empty_process_cache(tmp_path, capsys) -> Non
     assert main(("--config", str(config), "query", "unknown question")) == 0
 
     payload = json_loads(capsys.readouterr().out)
-    assert payload.get("matches") == []
+    assert payload.get("outcome") == "MISS"
+    assert payload.get("response_candidates") == []
+    assert payload.get("evidence") == []
 
 
 def test_cli_no_longer_accepts_disk_state_or_transcript_options() -> None:
@@ -27,6 +31,33 @@ def test_cli_no_longer_accepts_disk_state_or_transcript_options() -> None:
             assert error.code == 2
         else:
             raise AssertionError(f"removed disk option was unexpectedly accepted: {arguments[0]}")
+
+
+def test_cli_query_uses_shared_graph_resolution(tmp_path, capsys, monkeypatch) -> None:
+    graph = RelationGraph()
+    monkeypatch.setattr("engram.core.connect_graph", lambda **internal_kwargs: graph)
+    config = tmp_path / "graph.yml"
+    config.write_text(
+        "graph:\n  enabled: true\n  deployment_mode: tapestry_managed\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        (
+            "--config",
+            str(config),
+            "query",
+            "Where was Ada Lovelace born?",
+            "--request-id",
+            "cli-graph-query",
+        )
+    )
+
+    payload = json_loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["outcome"] == "EVIDENCE"
+    assert payload["response_candidates"][0]["response"] == "Ada Lovelace — birth place: London."
+    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
 def test_interactive_chat_uses_only_the_owned_core() -> None:

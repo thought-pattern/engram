@@ -21,8 +21,8 @@ Usage:
 """
 
 from engram import sessions as sessions_mod
-from engram.constants import QUESTION_WORDS
-from engram.nlp import is_question
+from engram.constants import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
+from engram.nlp import input_kind, is_question
 from engram.pattern import is_pure_wildcard
 
 
@@ -120,6 +120,7 @@ def respond(
     high_confidence: float = 0.7,
     context_limit: int = 3,
     user_id: str = "",
+    evaluation_time: str = "",
 ) -> dict:
     """Answer text through the conversational strategy: pattern, statement, then LLM.
 
@@ -150,6 +151,8 @@ def respond(
             answers without the LLM (scores run 0.0 - 1.0).
         context_limit: Maximum retrieved statements passed to llm_fn.
         user_id: Optional caller-owned identity for learned-fact attribution.
+        evaluation_time: Optional canonical UTC timestamp used by graph
+            recall for this turn.
 
     Returns:
         Pipeline result dict (response, source, score, matches, keywords).
@@ -170,11 +173,33 @@ def respond(
         text,
         context_id=context_id,
         user_id=user_id,
+        include_graph=False,
     )
+    stmt = {}
+    captured = []
+    response = ""
     if pattern_result:
         stmt, captured, response = pattern_result
         matched_pattern = stmt["pattern"] if stmt else ""
         matched_captured = captured
+
+    graph_enabled = bool((engram.config.get("graph") or {}).get("enabled"))
+    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION}
+    graph_response = engram.graph_lookup(text, evaluation_time=evaluation_time) if graph_enabled and graph_eligible else ""
+    if graph_response:
+        if response:
+            retract_response(engram, context_id, response)
+        update_session(engram, context_id, graph_response)
+        graph_result = pipeline_result(
+            graph_response,
+            "graph",
+            score=1.0,
+            user_id=context_id,
+        )
+        result = attach_dialogue_state(engram, graph_result, context_id)
+        return result
+
+    if pattern_result:
         is_fallback = not stmt and response == engram.config["fallback_response"]
         if response and not is_fallback:
             is_catchall_question = bool(stmt) and is_pure_wildcard(stmt["pattern"]) and is_question(text)

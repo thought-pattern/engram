@@ -5,12 +5,15 @@ unavailable graph raises, and every public execution path rejects mutations.
 MockGraphClient is an in-memory stand-in keyed on query parameters.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 from pytest import approx as pytest_approx, raises as pytest_raises
 
+from engram import pipeline
 from engram.config import engram_config, graph_config
 from engram.constants import Tier
+from engram.conversation import ConversationRuntime
 from engram.core import Engram
 from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.service import EngramCore
@@ -41,11 +44,13 @@ class MockGraphClient:
         self.propositions: list[dict] = []  # {"subject","predicate","object"}
         self.entities: set[str] = set()
         self.vector_rows: list[dict] = []
+        self.reads: list[tuple[str, dict]] = []
 
     def execute(self, query: str, params=()) -> list:
         """Execute a mock query, returning a list of row dicts."""
         params = params or {}
         query_upper = query.upper()
+        self.reads.append((query, dict(params)))
 
         subject = params.get("subject")
         predicate = params.get("predicate")
@@ -587,6 +592,63 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
 
     assert "Water" in result
     assert "100 degrees Celsius" in result
+
+
+def test_read_only_graph_wiring_conversation_graph_preempts_generic_question_pattern():
+    client = MockGraphClient()
+    client.propositions.extend(
+        [
+            {"subject": "Orion", "predicate": "is a", "object": "constellation"},
+            {"subject": "Orion", "predicate": "is a", "object": "constellation"},
+        ]
+    )
+    engram = read_only_graph_wiring_engram_with_graph(client)
+    engram.store(
+        text="What do you think it is?",
+        pattern="WHAT IS *",
+        tier=Tier.STATIC,
+    )
+
+    result = pipeline.respond(engram, "What is Orion?", context_id="graph-conversation")
+
+    assert result["source"] == "graph"
+    assert result["response"].count("Orion is a constellation.") == 1
+    assert result["pattern"] == ""
+    graph_metrics = engram.operational_telemetry_snapshot()["graph_recall"]
+    assert graph_metrics["consultations"] == 1
+    assert graph_metrics["hits"] == 1
+    assert graph_metrics["misses"] == 0
+    assert graph_metrics["failures"] == 0
+    assert any("datetime($evaluation_time)" in query for query, _ in client.reads)
+    assert all(parameters.get("evaluation_time", "").endswith("Z") for _, parameters in client.reads)
+
+
+def test_read_only_graph_wiring_conversation_uses_shared_runtime_clock():
+    client = MockGraphClient()
+    client.propositions.append({"subject": "Orion", "predicate": "is a", "object": "constellation"})
+    engram = read_only_graph_wiring_engram_with_graph(client)
+    evaluation_time = datetime(2026, 7, 4, 12, 30, tzinfo=UTC)
+    runtime = ConversationRuntime(engram, user_id="clock-test", clock=lambda: evaluation_time)
+
+    result = runtime.send("What is Orion?")
+
+    assert result["source"] == "graph"
+    assert client.reads
+    assert all(parameters.get("evaluation_time") == "2026-07-04T12:30:00Z" for _, parameters in client.reads)
+
+
+def test_read_only_graph_wiring_conversation_records_graph_failure_without_raising():
+    client = MockGraphClient()
+    client.execute = Mock(side_effect=RuntimeError("injected graph failure"))
+    engram = read_only_graph_wiring_engram_with_graph(client)
+
+    result = pipeline.respond(engram, "What is Orion?")
+
+    assert result["source"] == "none"
+    graph_metrics = engram.operational_telemetry_snapshot()["graph_recall"]
+    assert graph_metrics["consultations"] == 1
+    assert graph_metrics["failures"] == 1
+    assert graph_metrics["misses"] == 0
 
 
 def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyword_miss():

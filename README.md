@@ -17,15 +17,14 @@ Key features:
 - **Two-tier statements** - STATIC (provided at startup) and DYNAMIC (process-local and evictable)
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Process memory** - Accepted responses, conversations, and receipts have one in-memory owner
-- **Multiple interfaces** - Python API, MCP tools, and a single-instance gRPC service
+- **Multiple interfaces** - Python API, CLI, MCP tools, and a single-instance gRPC service over one shared core
 
 ## Architecture
 
 ```text
 Python API --\
-              \
-MCP stdio -----> EngramCore ---> Engram, pipeline, sessions
-              /
+CLI ----------+--> EngramCore ---> Engram, pipeline, sessions
+MCP stdio ----+
 gRPC --------/
 ```
 
@@ -33,7 +32,9 @@ gRPC --------/
 facade. It owns the shared `Engram` instance, per-user conversation runtimes,
 the sole accepted-response artifact collection, and regulated-cache proposal
 state. Python callers and the MCP and gRPC adapters invoke that core. The lower-level
-`Engram`, `pipeline`, and `sessions` Python APIs remain available.
+`Engram`, `pipeline`, and `sessions` Python APIs remain available. When graph
+access is enabled, every interface uses the same graph-aware resolution and
+conversation behavior; adapters cannot select a graph-bypassing mode.
 
 A new process loads its current provided STATIC data once, before serving, with
 `Engram.load_static_data`. Static data is startup input, not recovered Engram
@@ -304,7 +305,7 @@ feedback, lifecycle, and error behavior.
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance |
 | `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
-| `pattern_query(text, context_id, user_id)`                        | AIML-style match with separate turn context and learned-fact attribution; returns `(statement, captured, response)` or `()` |
+| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match with separate turn context, learned-fact attribution, and optional timestamped graph fallback; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
 | `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance                                                                     |
@@ -390,6 +391,19 @@ the factor (see Eviction and Hit Tracking above).
 
 ## Service interfaces
 
+### Command-line interface
+
+The one-shot CLI query uses the same unified resolver as Python, MCP, and gRPC:
+
+```bash
+python scripts/cli.py --config config.yml query "What evidence is available?" \
+  --request-id cli-query-1
+```
+
+Interactive CLI turns use the same shared conversation path as MCP and gRPC.
+Configured graph retrieval therefore has the same precedence, temporal filtering,
+deduplication, and fail-soft behavior at each interface.
+
 ### MCP Agent Interface
 
 The MCP stdio server retains one core and its conversations between tool calls:
@@ -400,13 +414,18 @@ python -m engram.mcp_server
 engram-mcp
 ```
 
+Both commands load Engram's packaged conversational corpus by default. Use
+`--static-data /trusted/path/conversation.json` to select another host-owned
+corpus, or `--no-static-data` for an intentionally empty cache-only process.
+Conversational corpora must contain a `*` catch-all.
+
 MCP owns one active conversation. An omitted or empty `user_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
 and report the same canonical identifier.
 
-The ten tools cover conversation lifecycle (`engram_start`, `engram_send`,
+The eleven tools cover conversation lifecycle (`engram_start`, `engram_send`,
 `engram_inspect`, `engram_finish`, `engram_stop`), shared facts
-(`engram_add_fact`), and regulated-cache use (`engram_propose`,
+(`engram_add_fact`), unified resolution (`engram_query`), and regulated-cache use (`engram_propose`,
 `engram_resolve`, `engram_learn_response`, `engram_retire_response`). See
 [MCP integration](documentation/mcp-integration.md) for host configuration,
 tool schemas, process-memory ownership, and retry behavior.
@@ -519,6 +538,14 @@ query, or optional vector-index failure contributes no graph result. If no local
 resolver supplies a result, Engram returns the same `MISS` it returns after a
 successful graph query with no rows; component diagnostics may still report the
 graph failure.
+
+When `graph.enabled` is true, the graph participates in every graph-eligible
+request through the shared core across Python, CLI, MCP, gRPC, every rollout
+mode, and future adapters. Conversational graph hits precede scripted factual
+fallbacks. Current surface reads apply valid-time bounds and suppress duplicate
+semantic triples; Tapestry domain entity types normalize to Engram's coarse
+`ENTITY` answer type. The shared core captures the evaluation time and schedules
+configured graph resolution before local exact-answer short-circuiting.
 
 For a standalone Engram-managed Memgraph, apply only Engram's independently
 installable corrected recall schema:

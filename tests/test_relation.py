@@ -281,6 +281,26 @@ def test_dependency_preposition_paraphrase_resolves_predicate() -> None:
     assert "dependency_preposition" in result["evidence"]
 
 
+def test_dependency_inflected_surface_resolves_curated_predicate_synonym() -> None:
+    engine = Engram()
+    frame = internal_frame(engine, "What was Elias Throrne classified as?")
+    match: dict = {
+        "canonical_id": "is_a",
+        "primary_label": "is a",
+        "synonyms": (),
+        "object_type": ExpectedObjectType.UNKNOWN,
+    }
+
+    result = resolve_canonical_predicate(
+        frame,
+        lambda surface, **internal_kwargs: [match] if surface == "is a" else [],
+    )
+
+    assert result["status"] == CanonicalResolutionStatus.SELECTED
+    assert result["canonical_id"] == "is_a"
+    assert "copular_classification" in result["evidence"]
+
+
 def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() -> None:
     subject = canonical_resolution(
         CanonicalResolutionStatus.SELECTED,
@@ -361,6 +381,19 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
     assert "predicate:birth-place" not in captured.get("query", "")
     assert "CALL " not in captured.get("query", "")
     assert set(proposition_row()) == PROPOSITION_PROJECTION_FIELDS
+
+
+def test_graph_one_hop_normalizes_domain_entity_type_to_entity() -> None:
+    row = {
+        **proposition_row(object_id="entity:python-developer"),
+        "object_label": "Python developer",
+        "object_type": "OCCUPATION",
+        "predicate_cardinality": "SINGLE",
+    }
+
+    result = relation_proposition_projection_from_graph_row(row)
+
+    assert result["object_type"] == ExpectedObjectType.ENTITY
 
 
 def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> None:

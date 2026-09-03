@@ -103,9 +103,13 @@ def main(argv=()) -> int:
     parser.add_argument("--config", "-c", default="config.yml", help="YAML configuration path")
     parser.add_argument("--capacity", type=int, default=0, help="override maximum dynamic entries")
     subparsers = parser.add_subparsers(dest="command")
-    query_parser = subparsers.add_parser("query", help="query the process-local cache once")
+    query_parser = subparsers.add_parser("query", help="run unified process-local and graph resolution once")
     query_parser.add_argument("text")
-    query_parser.add_argument("--limit", "-n", type=int, default=5)
+    query_parser.add_argument("--request-id", default="cli-query")
+    query_parser.add_argument("--user-id", default="0")
+    query_parser.add_argument("--namespace", default="")
+    query_parser.add_argument("--context-fingerprint", default="")
+    query_parser.add_argument("--accept-exact", action="store_true")
     interactive_parser = subparsers.add_parser("interactive", help="start an interactive process-local cache")
     interactive_parser.add_argument("--session", default="")
     interactive_parser.add_argument("--initial-bot-text", default="")
@@ -118,7 +122,14 @@ def main(argv=()) -> int:
     try:
         core = EngramCore(config=config)
         if command == "query":
-            result = core.engram.query(args.text, limit=args.limit)
+            result = core.resolve_request(
+                args.text,
+                args.request_id,
+                user_id=args.user_id,
+                namespace=args.namespace,
+                context_fingerprint=args.context_fingerprint,
+                accept_exact=args.accept_exact,
+            )
             print(json_dumps(result, indent=2, default=str))
         else:
             chat = InteractiveChat(

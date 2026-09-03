@@ -71,9 +71,12 @@ def apply_rollout(result: dict, selection: dict) -> dict:
         "reason_codes": reasons,
         "frame_diagnostics": {**current.get("frame_diagnostics", {}), "rollout": diagnostics},
     }
-    if mode == RolloutMode.SHADOW:
-        diagnostics["shadow_outcome"] = current.get("outcome", ResolutionOutcome.MISS).value
-        diagnostics["shadow_candidate_count"] = len(current.get("response_candidates", ()))
+    if mode in {RolloutMode.DISABLED, RolloutMode.SHADOW}:
+        diagnostics["observed_outcome"] = current.get("outcome", ResolutionOutcome.MISS).value
+        diagnostics["observed_candidate_count"] = len(current.get("response_candidates", ()))
+        if mode == RolloutMode.SHADOW:
+            diagnostics["shadow_outcome"] = diagnostics["observed_outcome"]
+            diagnostics["shadow_candidate_count"] = diagnostics["observed_candidate_count"]
         changes.update(
             {
                 "outcome": ResolutionOutcome.MISS,

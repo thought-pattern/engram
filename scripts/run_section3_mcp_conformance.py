@@ -28,11 +28,13 @@ from engram.constants import (
     MCP_TURN_EVENT_FIELDS,
     VERSION,
 )
-from engram.mcp_server import EngramMCPServer
+from engram.conversation_seed import load_conversation_pairs
+from engram.mcp_server import EngramMCPServer, MCPConversationService
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns-2026-08-12.json")
-SARAH_SUSHI_MESSAGES = (
+PREFERENCE_CONTINUITY_SEED = REPOSITORY / "eval" / "fixtures" / "preference-continuity-mcp-seed.json"
+CONTEXT_RECALL_MESSAGES = (
     "Sushi is good.",
     "What's good?",
     "Tell me more.",
@@ -44,7 +46,7 @@ SARAH_SUSHI_MESSAGES = (
     "What's good?",
     "How are you?",
 )
-SARAH_PREFERENCE_MESSAGES = (
+PREFERENCE_CONTINUITY_MESSAGES = (
     "I like sushi.",
     "I like cats.",
     "I dislike dogs.",
@@ -56,7 +58,7 @@ SARAH_PREFERENCE_MESSAGES = (
     "Tell me which animals I dislike.",
     "What preferences did I share?",
 )
-SARAH_PREFERENCE_EXPECTATIONS = {
+PREFERENCE_CONTINUITY_EXPECTATIONS = {
     "I like sushi.": (),
     "I like cats.": (),
     "I dislike dogs.": (),
@@ -156,7 +158,10 @@ async def internal_run(
     config_path: str = "",
     memgraph_probe_every: int = 0,
 ) -> dict:
-    server = EngramMCPServer()
+    service = ()
+    if profile == "preference-continuity":
+        service = MCPConversationService(static_pairs=load_conversation_pairs(str(PREFERENCE_CONTINUITY_SEED)))
+    server = EngramMCPServer(service=service)
     latencies_ms = []
     sources: Counter[str] = Counter()
     response_count = 0
@@ -187,20 +192,20 @@ async def internal_run(
         first_turn = {}
         last_turn = {}
         messages = (
-            SARAH_SUSHI_MESSAGES
-            if profile == "sarah-sushi"
-            else SARAH_PREFERENCE_MESSAGES if profile == "sarah-preferences" else MCP_CONFORMANCE_MESSAGES
+            CONTEXT_RECALL_MESSAGES
+            if profile == "context-recall"
+            else PREFERENCE_CONTINUITY_MESSAGES if profile == "preference-continuity" else MCP_CONFORMANCE_MESSAGES
         )
         for index in range(turns):
             call_started = time_perf_counter_ns()
             expected_turn = index + 1
             graph_probe = bool(memgraph_probe_every and expected_turn % memgraph_probe_every == 0)
-            message = "Who is Sarah married to?" if graph_probe else messages[index % len(messages)]
+            message = "What is Elias Throrne?" if graph_probe else messages[index % len(messages)]
             result = tool_json(await client.call_tool("engram_send", {"text": message}))
             latency_ms = (time_perf_counter_ns() - call_started) / 1_000_000
             latencies_ms.append(latency_ms)
             evaluation = evaluate_turn(result, expected_turn, message, user_id, latency_ms)
-            if profile == "sarah-sushi":
+            if profile == "context-recall":
                 response = result.get("response", "")
                 if graph_probe:
                     profile_check = "memgraph_source_when_asked"
@@ -215,16 +220,16 @@ async def internal_run(
                 if not profile_passed:
                     evaluation["passed"] = False
                     evaluation["failed_checks"].append(profile_check)
-            elif profile == "sarah-preferences":
+            elif profile == "preference-continuity":
                 response = result.get("response", "")
                 if graph_probe:
                     profile_check = "memgraph_source_when_asked"
                     profile_passed = result.get("source") == "graph"
                 else:
-                    expected_terms = SARAH_PREFERENCE_EXPECTATIONS.get(message, ())
+                    expected_terms = PREFERENCE_CONTINUITY_EXPECTATIONS.get(message, ())
                     response_text = response.casefold() if isinstance(response, str) else ""
-                    profile_check = "sarah_preference_continuity"
-                    profile_passed = result.get("user_id") == "Sarah" and all(term in response_text for term in expected_terms)
+                    profile_check = "preference_continuity"
+                    profile_passed = result.get("user_id") == user_id and all(term in response_text for term in expected_terms)
                 evaluation["profile_check"] = profile_check
                 evaluation["profile_passed"] = profile_passed
                 if not profile_passed:
@@ -335,12 +340,12 @@ async def internal_run(
         "first_turn": first_turn,
         "last_turn": last_turn,
         "turn_evaluation": {
-            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS) + int(profile in {"sarah-sushi", "sarah-preferences"}),
+            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS) + int(profile in {"context-recall", "preference-continuity"}),
             "check_names": sorted(
                 {
                     *MCP_TURN_EVALUATION_CHECKS,
-                    *({"sushi_recall_when_asked"} if profile == "sarah-sushi" else set()),
-                    *({"sarah_preference_continuity"} if profile == "sarah-preferences" else set()),
+                    *({"sushi_recall_when_asked"} if profile == "context-recall" else set()),
+                    *({"preference_continuity"} if profile == "preference-continuity" else set()),
                     *({"memgraph_source_when_asked"} if memgraph_probe_every else set()),
                 }
             ),
@@ -361,9 +366,7 @@ async def internal_run(
             "history_size": inspected.get("session", {}).get("history_size"),
             "telemetry": inspected.get("core_status", {}).get("telemetry", {}),
         },
-        "profile_definition": (
-            {"user_id": "Sarah", "likes": ["sushi", "cats"], "dislikes": ["dogs"]} if profile == "sarah-preferences" else {}
-        ),
+        "profile_definition": ({"likes": ["sushi", "cats"], "dislikes": ["dogs"]} if profile == "preference-continuity" else {}),
         "stop_summary": stopped.get("summary", {}),
     }
     return run_result
@@ -375,7 +378,11 @@ def main(argv: tuple[str, ...] = ()) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--gate", default="EGR-315 MCP long-conversation conformance")
     parser.add_argument("--user-id", default="Section 3 MCP Conformance")
-    parser.add_argument("--profile", choices=("standard", "sarah-sushi", "sarah-preferences"), default="standard")
+    parser.add_argument(
+        "--profile",
+        choices=("standard", "context-recall", "preference-continuity"),
+        default="standard",
+    )
     parser.add_argument("--config", default="", help="Configuration path passed to the MCP engram_start tool")
     parser.add_argument(
         "--enable-rewrites",
@@ -420,9 +427,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
     if args.memgraph_probe_every < 0:
         raise ValueError("--memgraph-probe-every must be nonnegative")
     selected_config = args.config
-    temporary_root = REPOSITORY.parents[2] / "temp"
-    temporary_root.mkdir(parents=True, exist_ok=True)
-    with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-", dir=temporary_root) as temporary_directory:
+    with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
         if args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility:
             raw_config = {}
             if args.config:

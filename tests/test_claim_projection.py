@@ -111,6 +111,7 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
         index_name="proposition_embeddings",
         limit=7,
         min_similarity=0.45,
+        evaluation_time="2026-08-12T18:00:00Z",
     )
 
     projection = projections[0]
@@ -125,7 +126,9 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
         "limit": 7,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
+        "evaluation_time": "2026-08-12T18:00:00Z",
     }
+    assert "datetime($evaluation_time)" in captured.get("query", "")
 
 
 @pytest_mark.parametrize(

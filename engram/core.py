@@ -1,11 +1,13 @@
 """Core ENGRAM implementation."""
 
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from logging import getLogger as logging_getLogger
 from pathlib import Path
 from random import choice as random_choice
 from threading import Lock as threading_Lock, RLock as threading_RLock
+from time import monotonic_ns as time_monotonic_ns
 
 from sentence_transformers import SentenceTransformer
 
@@ -63,6 +65,7 @@ from engram.graph import (
     canonical_predicate_match_from_graph_row,
     connect_graph,
     is_write_cypher,
+    projection_timestamp,
     proposition_projection_to_dict,
     validate_proposition_projection,
     validate_relation_proposition_projection,
@@ -92,7 +95,7 @@ from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
 from engram.sparse import search_sparse_artifacts
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
-from engram.telemetry import operational_telemetry, telemetry_snapshot
+from engram.telemetry import operational_telemetry, record_graph_recall, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
     correct_spelling,
@@ -159,12 +162,16 @@ def pattern_has_wildcard(pattern: str) -> bool:
 def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
     """Turn canonical graph rows into complete fact tuples."""
     facts = []
+    seen: set[tuple[str, str, str]] = set()
     for record in records:
         subject = record.get("subject", "")
         predicate = record.get("predicate", "")
         obj = record.get("object", "")
-        if subject and predicate and obj:
-            facts.append((subject, predicate, obj))
+        fact = (subject, predicate, obj)
+        identity = tuple(value.casefold() for value in fact)
+        if subject and predicate and obj and identity not in seen:
+            seen.add(identity)
+            facts.append(fact)
     result = facts
     return result
 
@@ -347,7 +354,7 @@ class Engram:
             result = telemetry_snapshot(self.operational_metrics)
             return result
 
-    def graph_query(self, cypher: str, params=()) -> list:
+    def graph_query(self, cypher: str, params=(), *, raise_on_failure: bool = False) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
 
         Args:
@@ -376,6 +383,8 @@ class Engram:
             return records
         except RuntimeError as err:
             logger.debug("Graph query failed (%s)", type(err).__name__)
+            if raise_on_failure:
+                raise
             result = []
             return result
 
@@ -422,7 +431,7 @@ class Engram:
             raise ValueError(f"query embedding dimension {len(vector)} does not match configured graph dimension {dimension}")
         return vector
 
-    def graph_vector_propositions(self, text: str, *, limit: int = 0) -> list:
+    def graph_vector_propositions(self, text: str, *, limit: int = 0, evaluation_time: str = "") -> list:
         """Return active semantic Proposition hits for ``text``.
 
         The method fails soft because vector recall augments the deterministic
@@ -445,6 +454,7 @@ class Engram:
                 index_name=graph_config["vector_index_name"],
                 limit=(max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])),
                 min_similarity=float(graph_config["vector_min_similarity"]),
+                evaluation_time=evaluation_time,
             )
             result = rows if isinstance(rows, list) else []
             return result
@@ -460,6 +470,7 @@ class Engram:
         limit: int = 0,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
+        evaluation_time: str = "",
     ) -> list[dict]:
         """Return strictly decoded wire-safe ANN Proposition projections."""
         graph_config = self.config.get("graph") or {}
@@ -482,6 +493,7 @@ class Engram:
                 index_name=graph_config["vector_index_name"],
                 limit=row_limit,
                 min_similarity=float(graph_config["vector_min_similarity"]),
+                evaluation_time=evaluation_time,
             )
             if not isinstance(rows, list) or len(rows) > row_limit:
                 raise ValueError("vector Proposition projection boundary returned an invalid collection")
@@ -719,7 +731,7 @@ class Engram:
         result = [components for _, _, components in scored]
         return result
 
-    def graph_lookup(self, text: str) -> str:
+    def graph_lookup(self, text: str, *, evaluation_time: str = "") -> str:
         """Look up information in the knowledge graph based on input text.
 
         Extracts entities from the text and queries the graph for related
@@ -727,6 +739,9 @@ class Engram:
 
         Args:
             text: User input text.
+            evaluation_time: Optional canonical UTC evaluation timestamp. The
+                shared runtime supplies this so every interface evaluates
+                temporal graph assertions against the same request clock.
 
         Returns:
             Response string if graph has relevant info, otherwise an empty string.
@@ -735,41 +750,56 @@ class Engram:
         if not client:
             result = ""
             return result
-
-        entities = extract_entities(text)
-        if not entities:
-            # Keyword fallback: match a canonical Entity whose primary label
-            # contains a query keyword, then return the surface triples of the
-            # propositions it is the subject of.
-            keywords = extract_keywords(normalize(text), self.config["stopwords"])
-            if not keywords:
-                result = ""
-                return result
+        started_ns = time_monotonic_ns()
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "graph lookup evaluation time")
+        result = ""
+        failed = False
+        try:
+            entities = extract_entities(text)
             facts = []
-            for kw in keywords[:3]:
-                records = self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": kw})
-                facts.extend(graph_records_to_facts(records))
+            if entities:
+                # Query the canonical graph for each entity. The Proposition node
+                # carries the rendered subject/predicate/object projection, so one
+                # query covers the entity in either the subject or object role.
+                for entity in entities:
+                    records = self.graph_query(
+                        GRAPH_ENTITY_FACTS_QUERY,
+                        {"name": entity["text"], "evaluation_time": selected_evaluation_time},
+                        raise_on_failure=True,
+                    )
+                    facts.extend(graph_records_to_facts(records))
+            else:
+                # Keyword fallback: match a canonical Entity whose primary label
+                # contains a query keyword, then return its current surface triples.
+                keywords = extract_keywords(normalize(text), self.config["stopwords"])
+                for keyword in keywords[:3]:
+                    records = self.graph_query(
+                        GRAPH_KEYWORD_FACTS_QUERY,
+                        {"keyword": keyword, "evaluation_time": selected_evaluation_time},
+                        raise_on_failure=True,
+                    )
+                    facts.extend(graph_records_to_facts(records))
+            facts = graph_records_to_facts(
+                [{"subject": subject, "predicate": predicate, "object": obj} for subject, predicate, obj in facts]
+            )
             if facts:
-                formatted = format_graph_facts(facts)
-                return formatted
-            vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
+                result = format_graph_facts(facts)
+                return result
+            vector_facts = graph_records_to_facts(
+                self.graph_vector_propositions(text, limit=5, evaluation_time=selected_evaluation_time)
+            )
             result = format_graph_facts(vector_facts) if vector_facts else ""
             return result
-
-        # Query the canonical graph for each entity. The Proposition node carries the
-        # rendered subject/predicate/object projection, so one query covers the
-        # entity in either the subject or object role.
-        facts = []
-        for entity in entities:
-            records = self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]})
-            facts.extend(graph_records_to_facts(records))
-
-        if facts:
-            formatted = format_graph_facts(facts)
-            return formatted
-        vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
-        result = format_graph_facts(vector_facts) if vector_facts else ""
-        return result
+        except RuntimeError:
+            failed = True
+            result = ""
+            return result
+        finally:
+            available = bool(getattr(client, "available", True))
+            outcome = "failure" if failed or not available else "hit" if result else "miss"
+            with self.count_lock:
+                record_graph_recall(self.operational_metrics, outcome, time_monotonic_ns() - started_ns)
 
     # =========================================================================
     # Statement Operations
@@ -1312,6 +1342,9 @@ class Engram:
         text: str,
         context_id: str = "",
         user_id: str = "",
+        *,
+        include_graph: bool = True,
+        evaluation_time: str = "",
     ) -> tuple:
         """Query using AIML-style pattern matching.
 
@@ -1323,6 +1356,10 @@ class Engram:
             context_id: Optional conversation context used for turn state.
             user_id: Optional caller-owned user label. When supplied, learned
                 conversational facts record this attribution.
+            include_graph: Whether a no-pattern result may fall back to graph
+                recall. The shared response pipeline disables this and applies
+                graph precedence once for the complete turn.
+            evaluation_time: Optional canonical UTC timestamp for graph recall.
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
@@ -1441,6 +1478,34 @@ class Engram:
 
             with self.statement_lock:
                 result = self.pattern_matcher.match(match_text, that=that, topic=topic)
+
+            # Fact admission belongs to the observed user turn, not to the
+            # availability of a scripted response. Match first so a newly
+            # learned fact cannot answer the sentence that introduced it,
+            # then persist every admitted fact regardless of match outcome.
+            learned = False
+            known_response = ""
+            for fact in admitted_facts:
+                if self.learn_fact(
+                    fact,
+                    introduced_by_user_id=attributed_user_id,
+                ):
+                    learned = True
+                    continue
+                # Already known. Surface the stored belief instead of a
+                # generic deflection: the no-overwrite rule protects the
+                # stored fact, but staying silent about a contradiction would
+                # read as agreement when a catch-all response is available.
+                with self.statement_lock:
+                    existing_id = self.pattern_to_statement.get(fact_subject_upper(fact), "")
+                existing = self.get_statement(existing_id)
+                if existing and existing["text"]:
+                    if normalize(existing["text"]) == normalize(fact["original"]):
+                        reply = random_choice(KNOWN_FACT_RESPONSES)
+                    else:
+                        reply = random_choice(CONFLICTING_FACT_RESPONSES)
+                    known_response = reply.replace("{existing}", existing["text"])
+
             if result:
                 (
                     response_text,
@@ -1452,28 +1517,6 @@ class Engram:
                     matched_that,
                 ) = result
                 captured = restore_capture_case(captured, sentence)
-
-                learned = False
-                known_response = ""
-                for fact in admitted_facts:
-                    if self.learn_fact(
-                        fact,
-                        introduced_by_user_id=attributed_user_id,
-                    ):
-                        learned = True
-                        continue
-                    # Already known. Surface the stored belief instead of a
-                    # generic deflection: the no-overwrite rule protects the
-                    # stored fact, but staying silent about a contradiction
-                    # would read as agreement.
-                    existing_id = self.pattern_to_statement.get(fact_subject_upper(fact), "")
-                    existing = self.get_statement(existing_id)
-                    if existing and existing["text"]:
-                        if normalize(existing["text"]) == normalize(fact["original"]):
-                            reply = random_choice(KNOWN_FACT_RESPONSES)
-                        else:
-                            reply = random_choice(CONFLICTING_FACT_RESPONSES)
-                        known_response = reply.replace("{existing}", existing["text"])
 
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
@@ -1532,7 +1575,7 @@ class Engram:
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
-            graph_response = self.graph_lookup(text)
+            graph_response = self.graph_lookup(text, evaluation_time=evaluation_time) if include_graph else ""
             if graph_response:
                 if session:
                     with self.session_lock:

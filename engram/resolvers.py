@@ -1869,9 +1869,11 @@ class SupportSemanticResolver:
             candidate_limit = min(budget.get("max_candidates", 0), budget.get("max_vector_results", 0))
             run_cooperative_check(cooperative_check)
             graph_rows = (
-                self.internal_engram.graph_vector_propositions(frame.get("resolved_text", ""), limit=candidate_limit)[
-                    :candidate_limit
-                ]
+                self.internal_engram.graph_vector_propositions(
+                    frame.get("resolved_text", ""),
+                    limit=candidate_limit,
+                    evaluation_time=frame.get("eligibility_context", {})["evaluation_time"],
+                )[:candidate_limit]
                 if candidate_limit
                 else []
             )
@@ -1894,6 +1896,7 @@ class SupportSemanticResolver:
                     limit=remaining_vector_results,
                     cooperative_check=cooperative_check,
                     max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+                    evaluation_time=frame.get("eligibility_context", {})["evaluation_time"],
                 )
                 if remaining_vector_results
                 else []
