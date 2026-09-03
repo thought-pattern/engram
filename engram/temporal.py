@@ -1,9 +1,9 @@
 """Exact temporal-query contracts and conservative Section 9 parsing."""
 
-import math
-import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
+from math import isfinite as math_isfinite
+from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compile, fullmatch as re_fullmatch
 
 from engram.constants import (
     MAX_TEMPORAL_SOURCE_BYTES,
@@ -14,27 +14,25 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 
-TemporalQuery = dict
-
-_DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
-_BETWEEN_RE = re.compile(rf"\bbetween\s+({_DATE_TOKEN})\s+(?:and|to)\s+({_DATE_TOKEN})\b", re.IGNORECASE)
-_AS_OF_RE = re.compile(rf"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at))\s+({_DATE_TOKEN})\b", re.IGNORECASE)
-_IN_YEAR_RE = re.compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b", re.IGNORECASE)
-_BEFORE_RE = re.compile(rf"\bbefore\s+({_DATE_TOKEN})\b", re.IGNORECASE)
-_AFTER_RE = re.compile(rf"\bafter\s+({_DATE_TOKEN})\b", re.IGNORECASE)
-_LATEST_RE = re.compile(r"\b(?:latest|most\s+recent)\b", re.IGNORECASE)
-_CURRENT_RE = re.compile(r"\b(?:current|currently|presently|at\s+present)\b", re.IGNORECASE)
-_NOW_RE = re.compile(r"\b(?:now|right\s+now)\b", re.IGNORECASE)
-_BARE_YEAR_RE = re.compile(r"^\s*(\d{4})\s*[?!.]?\s*$")
-_SYSTEM_AXIS_RE = re.compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded)|recorded)\b", re.IGNORECASE)
-_UNRESOLVED_RE = re.compile(
+DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
+BETWEEN_RE = re_compile(rf"\bbetween\s+({DATE_TOKEN})\s+(?:and|to)\s+({DATE_TOKEN})\b", IGNORECASE)
+AS_OF_RE = re_compile(rf"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at))\s+({DATE_TOKEN})\b", IGNORECASE)
+IN_YEAR_RE = re_compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b", IGNORECASE)
+BEFORE_RE = re_compile(rf"\bbefore\s+({DATE_TOKEN})\b", IGNORECASE)
+AFTER_RE = re_compile(rf"\bafter\s+({DATE_TOKEN})\b", IGNORECASE)
+LATEST_RE = re_compile(r"\b(?:latest|most\s+recent)\b", IGNORECASE)
+CURRENT_RE = re_compile(r"\b(?:current|currently|presently|at\s+present)\b", IGNORECASE)
+NOW_RE = re_compile(r"\b(?:now|right\s+now)\b", IGNORECASE)
+BARE_YEAR_RE = re_compile(r"^\s*(\d{4})\s*[?!.]?\s*$")
+SYSTEM_AXIS_RE = re_compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded)|recorded)\b", IGNORECASE)
+UNRESOLVED_RE = re_compile(
     r"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at)|before|after|between|during|latest|most\s+recent|"
     r"current|currently|presently|right\s+now|now)\b[^?.,;]*",
-    re.IGNORECASE,
+    IGNORECASE,
 )
 
 
-def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if not allow_empty and not value:
@@ -46,19 +44,19 @@ def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) ->
     return value
 
 
-def _confidence(value: object) -> float:
+def internal_confidence(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError("temporal query confidence must be numeric")
     result = float(value)
-    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+    if not math_isfinite(result) or not 0.0 <= result <= 1.0:
         raise InvalidRequestError("temporal query confidence must be finite and from 0 through 1")
     return result
 
 
-def _timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
+def internal_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
     if not isinstance(available, bool):
         raise InvalidRequestError(f"temporal query {name}_available must be a boolean")
-    text = _text(value, f"temporal query {name}", 64, allow_empty=not available)
+    text = internal_text(value, f"temporal query {name}", 64, allow_empty=not available)
     if not available:
         if text:
             raise InvalidRequestError(f"temporal query {name} must be empty when unavailable")
@@ -87,7 +85,7 @@ def temporal_query(
     confidence: object = 0.0,
     resolved: object = True,
     schema_version: object = TEMPORAL_QUERY_SCHEMA_VERSION,
-) -> TemporalQuery:
+) -> dict:
     """Build one exact temporal interpretation without inferring missing bounds."""
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != TEMPORAL_QUERY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported temporal query schema_version: {schema_version}")
@@ -97,10 +95,10 @@ def temporal_query(
         raise InvalidRequestError("temporal query axis is unsupported")
     if not isinstance(resolved, bool):
         raise InvalidRequestError("temporal query resolved must be a boolean")
-    source = _text(source_text, "temporal query source_text", MAX_TEMPORAL_SOURCE_BYTES, allow_empty=True)
-    normalized_start, normalized_start_available = _timestamp(start, start_available, "start")
-    normalized_end, normalized_end_available = _timestamp(end, end_available, "end")
-    normalized_confidence = _confidence(confidence)
+    source = internal_text(source_text, "temporal query source_text", MAX_TEMPORAL_SOURCE_BYTES, allow_empty=True)
+    normalized_start, normalized_start_available = internal_timestamp(start, start_available, "start")
+    normalized_end, normalized_end_available = internal_timestamp(end, end_available, "end")
+    normalized_confidence = internal_confidence(confidence)
     if normalized_start_available and normalized_end_available:
         start_value = datetime.fromisoformat(normalized_start[:-1] + "+00:00")
         end_value = datetime.fromisoformat(normalized_end[:-1] + "+00:00")
@@ -118,7 +116,7 @@ def temporal_query(
         TemporalQueryOperator.BETWEEN: (True, True),
         TemporalQueryOperator.LATEST: (False, False),
     }
-    if resolved and bounds != expected_bounds[operator]:
+    if resolved and bounds != expected_bounds.get(operator, ()):
         raise InvalidRequestError("resolved temporal query bounds conflict with its operator")
     if not resolved and bounds != (False, False):
         raise InvalidRequestError("unresolved temporal query must not carry normalized bounds")
@@ -127,7 +125,7 @@ def temporal_query(
             raise InvalidRequestError("unspecified temporal query must use concrete empty resolved state")
     elif not source:
         raise InvalidRequestError("explicit temporal query requires preserved source text")
-    result: TemporalQuery = {
+    result: dict = {
         "schema_version": TEMPORAL_QUERY_SCHEMA_VERSION,
         "operator": operator,
         "axis": axis,
@@ -142,7 +140,7 @@ def temporal_query(
     return result
 
 
-def validate_temporal_query(value: object) -> TemporalQuery:
+def validate_temporal_query(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != TEMPORAL_QUERY_FIELDS:
         raise InvalidRequestError("TemporalQuery has invalid fields")
     result = temporal_query(
@@ -177,7 +175,7 @@ def temporal_query_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def temporal_query_from_dict(value: object) -> TemporalQuery:
+def temporal_query_from_dict(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != TEMPORAL_QUERY_FIELDS:
         raise InvalidRequestError("serialized TemporalQuery has invalid fields")
     try:
@@ -200,13 +198,13 @@ def temporal_query_from_dict(value: object) -> TemporalQuery:
     return result
 
 
-def _canonical(value: datetime) -> str:
+def internal_canonical(value: datetime) -> str:
     result = value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     return result
 
 
-def _period(value: str) -> tuple[datetime, datetime]:
-    if re.fullmatch(r"\d{4}", value):
+def period(value: str) -> tuple[datetime, datetime]:
+    if re_fullmatch(r"\d{4}", value):
         year = int(value)
         if not 1 <= year <= 9_998:
             raise ValueError("temporal year is outside the supported range")
@@ -218,34 +216,34 @@ def _period(value: str) -> tuple[datetime, datetime]:
     return result
 
 
-def _unresolved(operator: TemporalQueryOperator, axis: TemporalAxis, source: str) -> TemporalQuery:
+def internal_unresolved(operator: TemporalQueryOperator, axis: TemporalAxis, source: str) -> dict:
     result = temporal_query(operator=operator, axis=axis, source_text=source, confidence=0.0, resolved=False)
     return result
 
 
-def parse_temporal_query(request: object) -> TemporalQuery:
+def parse_temporal_query(request: object) -> dict:
     """Parse only explicit supported dates and years; retain uncertain expressions."""
-    text = _text(request, "temporal request", 4_096, allow_empty=False)
-    axis = TemporalAxis.SYSTEM_TIME if _SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
-    candidates: list[tuple[TemporalQueryOperator, re.Match[str]]] = []
+    text = internal_text(request, "temporal request", 4_096, allow_empty=False)
+    axis = TemporalAxis.SYSTEM_TIME if SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
+    candidates: list[tuple[TemporalQueryOperator, re_Match[str]]] = []
     for operator, pattern in (
-        (TemporalQueryOperator.BETWEEN, _BETWEEN_RE),
-        (TemporalQueryOperator.AS_OF, _AS_OF_RE),
-        (TemporalQueryOperator.IN_YEAR, _IN_YEAR_RE),
-        (TemporalQueryOperator.BEFORE, _BEFORE_RE),
-        (TemporalQueryOperator.AFTER, _AFTER_RE),
-        (TemporalQueryOperator.LATEST, _LATEST_RE),
-        (TemporalQueryOperator.CURRENT, _CURRENT_RE),
-        (TemporalQueryOperator.NOW, _NOW_RE),
+        (TemporalQueryOperator.BETWEEN, BETWEEN_RE),
+        (TemporalQueryOperator.AS_OF, AS_OF_RE),
+        (TemporalQueryOperator.IN_YEAR, IN_YEAR_RE),
+        (TemporalQueryOperator.BEFORE, BEFORE_RE),
+        (TemporalQueryOperator.AFTER, AFTER_RE),
+        (TemporalQueryOperator.LATEST, LATEST_RE),
+        (TemporalQueryOperator.CURRENT, CURRENT_RE),
+        (TemporalQueryOperator.NOW, NOW_RE),
     ):
         match = pattern.search(text)
         if match:
             candidates.append((operator, match))
-    bare_year = _BARE_YEAR_RE.fullmatch(text)
+    bare_year = BARE_YEAR_RE.fullmatch(text)
     if bare_year:
         candidates = [(TemporalQueryOperator.IN_YEAR, bare_year)]
     if not candidates:
-        uncertain = _UNRESOLVED_RE.search(text)
+        uncertain = UNRESOLVED_RE.search(text)
         if not uncertain:
             result = temporal_query()
             return result
@@ -266,37 +264,37 @@ def parse_temporal_query(request: object) -> TemporalQuery:
             if normalized.startswith(prefix):
                 operator = selected
                 break
-        result = _unresolved(operator, axis, source)
+        result = internal_unresolved(operator, axis, source)
         return result
     if len(candidates) != 1:
         source = " | ".join(match.group(0) for _, match in candidates)
-        result = _unresolved(candidates[0][0], axis, source)
+        result = internal_unresolved(candidates[0][0], axis, source)
         return result
     operator, match = candidates[0]
     source = match.group(0)
     try:
         if operator == TemporalQueryOperator.BETWEEN:
-            first_start, _ = _period(match.group(1))
-            _, second_end = _period(match.group(2))
+            first_start, _ = period(match.group(1))
+            _, second_end = period(match.group(2))
             result = temporal_query(
                 operator=operator,
                 axis=axis,
                 source_text=source,
-                start=_canonical(first_start),
+                start=internal_canonical(first_start),
                 start_available=True,
-                end=_canonical(second_end),
+                end=internal_canonical(second_end),
                 end_available=True,
                 confidence=1.0,
             )
             return result
         if operator in {TemporalQueryOperator.AS_OF, TemporalQueryOperator.IN_YEAR}:
-            period_start, period_end = _period(match.group(1))
+            period_start, period_end = period(match.group(1))
             if operator == TemporalQueryOperator.AS_OF:
                 result = temporal_query(
                     operator=operator,
                     axis=axis,
                     source_text=source,
-                    start=_canonical(period_end - timedelta(microseconds=1)),
+                    start=internal_canonical(period_end - timedelta(microseconds=1)),
                     start_available=True,
                     confidence=1.0,
                 )
@@ -305,37 +303,37 @@ def parse_temporal_query(request: object) -> TemporalQuery:
                 operator=operator,
                 axis=axis,
                 source_text=source,
-                start=_canonical(period_start),
+                start=internal_canonical(period_start),
                 start_available=True,
-                end=_canonical(period_end),
+                end=internal_canonical(period_end),
                 end_available=True,
                 confidence=1.0,
             )
             return result
         if operator == TemporalQueryOperator.BEFORE:
-            period_start, _ = _period(match.group(1))
+            period_start, _ = period(match.group(1))
             result = temporal_query(
                 operator=operator,
                 axis=axis,
                 source_text=source,
-                end=_canonical(period_start),
+                end=internal_canonical(period_start),
                 end_available=True,
                 confidence=1.0,
             )
             return result
         if operator == TemporalQueryOperator.AFTER:
-            _, period_end = _period(match.group(1))
+            _, period_end = period(match.group(1))
             result = temporal_query(
                 operator=operator,
                 axis=axis,
                 source_text=source,
-                start=_canonical(period_end),
+                start=internal_canonical(period_end),
                 start_available=True,
                 confidence=1.0,
             )
             return result
     except (OverflowError, ValueError):
-        result = _unresolved(operator, axis, source)
+        result = internal_unresolved(operator, axis, source)
         return result
     result = temporal_query(operator=operator, axis=axis, source_text=source, confidence=1.0)
     return result

@@ -1,6 +1,6 @@
 """Tests for the small namespace rollout control."""
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.config import config_from_dict, config_to_dict, engram_config, rollout_config
 from engram.constants import ResolutionOutcome, RolloutMode
@@ -74,7 +74,7 @@ def test_regulated_direct_answer_preserves_current_behavior() -> None:
     assert artifact["statistics"]["hit_count"] == 1
 
 
-@pytest.mark.parametrize("mode", [RolloutMode.EVIDENCE_ONLY, RolloutMode.ROLLBACK])
+@pytest_mark.parametrize("mode", [RolloutMode.EVIDENCE_ONLY, RolloutMode.ROLLBACK])
 def test_non_direct_rollout_modes_retain_exact_candidate_without_credit(mode: RolloutMode) -> None:
     core, statement_id = core_with_exact_response(mode)
 
@@ -125,7 +125,7 @@ def test_rollout_policy_is_part_of_retry_identity() -> None:
     first = resolve_exact(core, "policy-versioned-request")
     core.engram.config["rollout"]["policy_version"] = "rollout-v2"
 
-    with pytest.raises(ConflictError, match="different input"):
+    with pytest_raises(ConflictError, match="different input"):
         resolve_exact(core, "policy-versioned-request")
 
     assert first["outcome"] == ResolutionOutcome.EVIDENCE

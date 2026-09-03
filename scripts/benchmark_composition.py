@@ -1,16 +1,16 @@
 """Evaluate the frozen Section 10 algebra corpus and report observed durations."""
 
-import argparse
-import json
-import statistics
-import sys
-import time
+from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
+from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
+from statistics import median as statistics_median
+from sys import path as sys_path
+from time import perf_counter_ns as time_perf_counter_ns
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY))
+if str(REPOSITORY) not in sys_path:
+    sys_path.insert(0, str(REPOSITORY))
 
 from engram.composition import composition_plan, composition_step, execute_composition_plan
 from engram.constants import ExpectedObjectType, GraphCompositionOperator
@@ -30,22 +30,23 @@ AGGREGATES = {
 }
 
 
-def _positive_integer(value: object, name: str) -> int:
+def positive_integer(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{name} must be a positive integer")
     return value
 
 
-def _percentile(values: list[float], fraction: float) -> float:
+def internal_percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, max(0, int((len(ordered) - 1) * fraction)))]
+    result = ordered[min(len(ordered) - 1, max(0, int((len(ordered) - 1) * fraction)))]
+    return result
 
 
-def _relation(raw: list[object]):
+def internal_relation(raw: list[object]):
     if len(raw) != 7 or not all(isinstance(value, str) for value in raw):
         raise ValueError("composition corpus Propositions must be seven-string lists")
     proposition_id, subject_id, predicate_id, object_id, label, object_type, cardinality = raw
-    return relation_proposition_projection_from_graph_row(
+    result = relation_proposition_projection_from_graph_row(
         {
             "proposition_id": proposition_id,
             "subject_entity_id": subject_id,
@@ -78,9 +79,10 @@ def _relation(raw: list[object]):
             "predicate_cardinality": cardinality,
         }
     )
+    return result
 
 
-def _current(item):
+def internal_current(item):
     values = dict(item["projection"])
     values.update(
         {
@@ -93,13 +95,14 @@ def _current(item):
             "vector_index_id_available": False,
         }
     )
-    return proposition_projection(**values)
+    result = proposition_projection(**values)
+    return result
 
 
-def _branches(case: dict[str, object]) -> list[list[list[str]]]:
-    raw = case.get("branches")
+def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
+    raw = case.get("branches", [])
     if raw is None:
-        raw = [case.get("predicates")]
+        raw = [case.get("predicates", {})]
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []
@@ -115,10 +118,10 @@ def _branches(case: dict[str, object]) -> list[list[list[str]]]:
     return result
 
 
-def _plan(case: dict[str, object]):
-    operator = GraphCompositionOperator(str(case["operator"]))
-    branches = _branches(case)
-    candidate_limit = _positive_integer(case.get("max_candidates", 4), "max_candidates")
+def internal_plan(case: dict[str, object]):
+    operator = GraphCompositionOperator(str(case.get("operator", "")))
+    branches = internal_branches(case)
+    candidate_limit = positive_integer(case.get("max_candidates", 4), "max_candidates")
     steps = []
     for branch_index, predicates in enumerate(branches):
         prior_binding = "$root"
@@ -138,26 +141,27 @@ def _plan(case: dict[str, object]):
                 )
             )
             prior_binding = output_binding
-    return composition_plan(
+    result = composition_plan(
         operator,
         "entity:root",
         "Root",
         tuple(steps),
         "$result",
         aggregation_inputs=("$result",) if operator in AGGREGATES else (),
-        max_rows=_positive_integer(case.get("max_rows", 64), "max_rows"),
+        max_rows=positive_integer(case.get("max_rows", 64), "max_rows"),
         max_branches=len(branches),
         max_candidates_per_step=candidate_limit,
     )
+    return result
 
 
-def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEvaluator) -> dict[str, object]:
-    started = time.perf_counter_ns()
-    plan = _plan(case)
-    raw_propositions = case["propositions"]
+def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEvaluator) -> dict[str, object]:
+    started = time_perf_counter_ns()
+    plan = internal_plan(case)
+    raw_propositions = case.get("propositions", [])
     if not isinstance(raw_propositions, list):
         raise ValueError("composition corpus propositions must be a list")
-    propositions = tuple(_relation(value) for value in raw_propositions if isinstance(value, list))
+    propositions = tuple(internal_relation(value) for value in raw_propositions if isinstance(value, list))
     if len(propositions) != len(raw_propositions):
         raise ValueError("composition corpus Proposition entries must be lists")
     rows = {}
@@ -165,7 +169,7 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
     for item in propositions:
         projection = item["projection"]
         rows.setdefault((projection["subject_entity_id"], projection["predicate_id"]), []).append(item)
-        current[projection["proposition_id"]] = _current(item)
+        current[projection["proposition_id"]] = internal_current(item)
     raw_failures = case.get("fail_queries", [])
     if not isinstance(raw_failures, list) or not all(isinstance(value, str) for value in raw_failures):
         raise ValueError("composition corpus fail_queries must be a string list")
@@ -174,7 +178,8 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
     def query(subject_id: str, predicate_id: str, limit: int):
         if f"{subject_id}|{predicate_id}" in failures:
             raise RuntimeError("injected dependency failure")
-        return rows.get((subject_id, predicate_id), [])[:limit]
+        result = rows.get((subject_id, predicate_id), [])[:limit]
+        return result
 
     execution = execute_composition_plan(
         plan,
@@ -183,10 +188,10 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
         lambda projection: evaluator.revalidate(
             projection,
             frame,
-            lambda proposition_id: (current[proposition_id],),
+            lambda proposition_id: (current.get(proposition_id, {}),),
         ),
     )
-    elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
+    elapsed_ms = (time_perf_counter_ns() - started) / 1_000_000
     observed = {
         "direct": execution["direct_result"],
         "truth_available": execution["truth_available"],
@@ -205,15 +210,15 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
             [entry["proposition"]["projection"]["proposition_id"] for entry in path] for path in execution["partial_paths"]
         ],
     }
-    raw_expected = case["expected"]
+    raw_expected = case.get("expected", {})
     if not isinstance(raw_expected, dict) or not all(isinstance(name, str) for name in raw_expected):
         raise ValueError("composition corpus expected value must be a string-keyed object")
     expected = raw_expected
     expected_reasons = expected.get("reasons")
     if not isinstance(expected_reasons, list) or not all(isinstance(reason, str) for reason in expected_reasons):
         raise ValueError("composition corpus expected reasons must be a string list")
-    comparable = {name: observed[name] for name in expected if name != "reasons"}
-    reasons_match = set(expected_reasons).issubset(observed["reasons"])
+    comparable = {name: observed.get(name, False) for name in expected if name != "reasons"}
+    reasons_match = set(expected_reasons).issubset(observed.get("reasons", []))
     passed = comparable == {name: value for name, value in expected.items() if name != "reasons"} and reasons_match
     bounded = (
         1 <= plan["max_hops"] <= 2
@@ -224,8 +229,8 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
         and execution["graph_rows"] <= plan["max_rows"]
     )
     useful_evidence = execution["direct_result"] or bool(execution["complete_paths"] or execution["partial_paths"])
-    return {
-        "id": case["id"],
+    result = {
+        "id": case.get("id", ""),
         "passed": passed,
         "bounded": bounded,
         "useful_evidence": useful_evidence,
@@ -233,10 +238,11 @@ def _run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityE
         "expected": expected,
         "observed": observed,
     }
+    return result
 
 
 def run(corpus_path: Path) -> dict[str, object]:
-    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    corpus = json_loads(corpus_path.read_text(encoding="utf-8"))
     frame = QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build(
         "What is connected to the root?",
         scope_key(namespace="public"),
@@ -250,13 +256,13 @@ def run(corpus_path: Path) -> dict[str, object]:
         for raw_case in raw_cases:
             if not isinstance(raw_case, dict):
                 raise ValueError("composition corpus cases must be objects")
-            case = _run_case(raw_case, frame, evaluator)
+            case = run_case(raw_case, frame, evaluator)
             case["split"] = split
             results.append(case)
     durations = [float(case["elapsed_ms"]) for case in results]
     held_out = [case for case in results if case["split"] == "held_out"]
     abstentions = [case for case in results if not case["observed"]["direct"]]
-    return {
+    result = {
         "schema_version": 1,
         "corpus": corpus["name"],
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -268,25 +274,26 @@ def run(corpus_path: Path) -> dict[str, object]:
         "zero_unbounded_execution": all(case["bounded"] for case in results),
         "useful_evidence_on_abstention": all(case["useful_evidence"] for case in abstentions),
         "duration_ms": {
-            "median": statistics.median(durations),
-            "p95": _percentile(durations, 0.95),
+            "median": statistics_median(durations),
+            "p95": internal_percentile(durations, 0.95),
             "maximum": max(durations),
             "timing_gate": False,
         },
         "cases": results,
     }
+    return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse_ArgumentParser()
     parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition-v1.json"))
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     report = run(arguments.corpus)
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps(report, sort_keys=True))
+        arguments.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json_dumps(report, sort_keys=True))
     if not report["passed"]:
         raise SystemExit(1)
 

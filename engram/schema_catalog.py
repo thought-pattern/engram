@@ -1,46 +1,46 @@
 """Independent static and live catalog contracts for Engram Memgraph DDL."""
 
-import re
 from hashlib import sha256
 from pathlib import Path
+from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
 
-ORDINARY_INDEX_PATTERN = re.compile(
+ORDINARY_INDEX_PATTERN = re_compile(
     r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)" r"\((?P<property>[A-Za-z][A-Za-z0-9_]*)\)",
-    re.IGNORECASE,
+    IGNORECASE,
 )
-TEXT_INDEX_PATTERN = re.compile(
+TEXT_INDEX_PATTERN = re_compile(
     r"CREATE\s+TEXT\s+INDEX\s+(?P<name>[A-Za-z][A-Za-z0-9_]*)\s+ON\s+:"
     r"(?P<label>[A-Za-z][A-Za-z0-9_]*)\((?P<properties>[^)]+)\)",
-    re.IGNORECASE,
+    IGNORECASE,
 )
-VECTOR_INDEX_PATTERN = re.compile(
+VECTOR_INDEX_PATTERN = re_compile(
     r"CREATE\s+VECTOR\s+(?P<edge>EDGE\s+)?INDEX\s+"
     r"(?P<name>[A-Za-z][A-Za-z0-9_]*)\s+ON\s+:"
     r"(?P<label>[A-Za-z][A-Za-z0-9_]*)"
     r"\((?P<property>[A-Za-z][A-Za-z0-9_]*)\)\s+"
     r"WITH\s+CONFIG\s*\{(?P<config>.*)\}",
-    re.IGNORECASE,
+    IGNORECASE,
 )
-UNIQUE_CONSTRAINT_PATTERN = re.compile(
+UNIQUE_CONSTRAINT_PATTERN = re_compile(
     r"CREATE\s+CONSTRAINT\s+ON\s+\((?P<variable>[A-Za-z][A-Za-z0-9_]*):"
     r"(?P<label>[A-Za-z][A-Za-z0-9_]*)\)\s+ASSERT\s+"
     r"(?P=variable)\.(?P<property>[A-Za-z][A-Za-z0-9_]*)\s+IS\s+UNIQUE",
-    re.IGNORECASE,
+    IGNORECASE,
 )
-EXISTS_CONSTRAINT_PATTERN = re.compile(
+EXISTS_CONSTRAINT_PATTERN = re_compile(
     r"CREATE\s+CONSTRAINT\s+ON\s+\((?P<variable>[A-Za-z][A-Za-z0-9_]*):"
     r"(?P<label>[A-Za-z][A-Za-z0-9_]*)\)\s+ASSERT\s+EXISTS\s*\("
     r"(?P=variable)\.(?P<property>[A-Za-z][A-Za-z0-9_]*)\)",
-    re.IGNORECASE,
+    IGNORECASE,
 )
-RELATIONSHIP_PATTERN = re.compile(
+RELATIONSHIP_PATTERN = re_compile(
     r"^//\s+(?P<origin>[A-Za-z][A-Za-z0-9_]*)\s+-\[:" r"(?P<relationship>[A-Z][A-Z0-9_]*)\]->\s+(?P<target>.+?)\s*$",
-    re.MULTILINE,
+    MULTILINE,
 )
-CONFIG_VALUE_PATTERN = re.compile(
+CONFIG_VALUE_PATTERN = re_compile(
     r'"(?P<name>dimension|capacity|metric|scalar_kind|resize_coefficient)"' r"\s*:\s*(?P<value>\"[^\"]*\"|[0-9]+)"
 )
-TEXT_INDEX_NAME_PATTERN = re.compile(r"name:\s*([A-Za-z][A-Za-z0-9_]*)", re.IGNORECASE)
+TEXT_INDEX_NAME_PATTERN = re_compile(r"name:\s*([A-Za-z][A-Za-z0-9_]*)", IGNORECASE)
 REQUIRED_VECTOR_CONFIG_FIELDS = {"dimension", "capacity", "metric", "scalar_kind", "resize_coefficient"}
 
 REQUIRED_IDENTITY_PROPERTIES = {
@@ -108,14 +108,16 @@ REQUIRED_VECTOR_INDEXES = {
 
 def schema_file_digest(path: Path) -> str:
     """Return the full SHA-256 digest of one schema file."""
-    return sha256(path.read_bytes()).hexdigest()
+    result = sha256(path.read_bytes()).hexdigest()
+    return result
 
 
 def schema_ddl_digest(path: Path) -> str:
     """Digest only normalized executable DDL, excluding comments and layout."""
     statements = cypher_statements(path.read_text(encoding="utf-8"))
     normalized = [" ".join(statement.split()) for statement in statements]
-    return sha256((";\n".join(normalized) + ";").encode("utf-8")).hexdigest()
+    result = sha256((";\n".join(normalized) + ";").encode("utf-8")).hexdigest()
+    return result
 
 
 def cypher_statements(text: str) -> list[str]:
@@ -155,7 +157,8 @@ def normalized_vector_capacity(requested_capacity: int) -> int:
         raise ValueError("vector capacity must be an integer")
     if requested_capacity <= 0:
         raise ValueError("vector capacity must be positive")
-    return 1 << (requested_capacity - 1).bit_length()
+    result = 1 << (requested_capacity - 1).bit_length()
+    return result
 
 
 def schema_catalog(text: str) -> dict:
@@ -280,13 +283,13 @@ def validate_schema_contract(text: str) -> dict:
     return catalog
 
 
-def row_properties(row: dict, singular: str, plural: str) -> tuple[str, ...]:
-    """Normalize one Memgraph property or property-list catalog field."""
-    value = row.get(plural, row.get(singular, []))
+def catalog_properties(value: object) -> tuple[str, ...]:
+    """Decode one property field from the exact Memgraph 3.9 catalog shape."""
     if isinstance(value, str):
         return (value,)
     if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value)
+        result = tuple(str(item) for item in value)
+        return result
     return ()
 
 
@@ -294,10 +297,10 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
     """Normalize Memgraph 3.9 SHOW results into the static catalog shape."""
     catalog = {"ordinary_indexes": [], "text_indexes": [], "vector_indexes": [], "constraints": [], "relationships": []}
     for row in index_rows:
-        index_type = str(row.get("index type", row.get("index_type", "")) or "")
+        index_type = str(row.get("index type", "") or "")
         if "vector" in index_type.casefold():
             continue
-        properties = row_properties(row, "property", "properties")
+        properties = catalog_properties(row.get("property", ()))
         if "text" in index_type.casefold():
             name = str(row.get("name", "") or "")
             if not name:
@@ -310,16 +313,16 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
             for property_name in properties:
                 catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": property_name})
     for row in constraint_rows:
-        constraint_type = str(row.get("constraint type", row.get("constraint_type", "")) or "").casefold()
-        for property_name in row_properties(row, "property", "properties"):
+        constraint_type = str(row.get("constraint type", "") or "").casefold()
+        for property_name in catalog_properties(row.get("properties", ())):
             catalog.get("constraints", []).append(
                 {"constraint_type": constraint_type, "label": str(row.get("label", "") or ""), "property": property_name}
             )
     for row in vector_rows:
-        index_type = str(row.get("index_type", row.get("index type", "")) or "")
+        index_type = str(row.get("index_type", "") or "")
         catalog.get("vector_indexes", []).append(
             {
-                "name": str(row.get("index_name", row.get("name", "")) or ""),
+                "name": str(row.get("index_name", "") or ""),
                 "label": str(row.get("label", "") or ""),
                 "property": str(row.get("property", "") or ""),
                 "index_type": "edge" if "edge" in index_type.casefold() else "node",
@@ -336,13 +339,16 @@ def catalog_keys(catalog: dict, group: str) -> set[tuple]:
     """Return comparable immutable keys for one catalog group."""
     values = catalog.get(group, [])
     if group == "ordinary_indexes":
-        return {(value.get("label", ""), value.get("property", "")) for value in values}
+        result = {(value.get("label", ""), value.get("property", "")) for value in values}
+        return result
     if group == "text_indexes":
-        return {(value.get("name", ""), value.get("label", ""), tuple(value.get("properties", ()))) for value in values}
+        result = {(value.get("name", ""), value.get("label", ""), tuple(value.get("properties", ()))) for value in values}
+        return result
     if group == "constraints":
-        return {(value.get("constraint_type", ""), value.get("label", ""), value.get("property", "")) for value in values}
+        result = {(value.get("constraint_type", ""), value.get("label", ""), value.get("property", "")) for value in values}
+        return result
     if group == "vector_indexes":
-        return {
+        result = {
             (
                 value.get("name", ""),
                 value.get("label", ""),
@@ -355,6 +361,7 @@ def catalog_keys(catalog: dict, group: str) -> set[tuple]:
             )
             for value in values
         }
+        return result
     raise ValueError(f"catalog group is unsupported: {group}")
 
 
@@ -369,21 +376,23 @@ def compare_catalogs(expected: dict, actual: dict, allow_superset: bool = False)
             missing[group] = sorted(expected_keys - actual_keys)
         if actual_keys - expected_keys and not allow_superset:
             unexpected[group] = sorted(actual_keys - expected_keys)
-    return {
-        "compatible": not missing and not unexpected,
+    result = {
+        "valid": not missing and not unexpected,
         "missing": missing,
         "unexpected": unexpected,
         "static_only_vector_fields": ("requested_capacity", "resize_coefficient"),
     }
+    return result
 
 
 def read_live_catalog(connection) -> dict:
-    """Read all live catalogs through read-only Engram connection methods."""
-    ready = connection.execute_read("RETURN 1 AS ready")
+    """Read all live catalogs through the Engram connection."""
+    ready = connection.execute("RETURN 1 AS ready")
     if not ready or ready[0].get("ready", 0) != 1:
         raise RuntimeError("Memgraph catalog connection is unavailable")
-    return live_catalog(
-        connection.execute_read("SHOW INDEX INFO"),
-        connection.execute_read("SHOW CONSTRAINT INFO"),
-        connection.execute_read("SHOW VECTOR INDEX INFO"),
+    result = live_catalog(
+        connection.execute("SHOW INDEX INFO"),
+        connection.execute("SHOW CONSTRAINT INFO"),
+        connection.execute("SHOW VECTOR INDEX INFO"),
     )
+    return result

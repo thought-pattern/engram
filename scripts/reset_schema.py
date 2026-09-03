@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
 """Resolve or apply an exact standalone Engram catalog reset."""
 
-import argparse
-import sys
+from argparse import ArgumentParser as argparse_ArgumentParser
 from pathlib import Path
+from sys import exit as sys_exit, path as sys_path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT) not in sys_path:
+    sys_path.insert(0, str(REPO_ROOT))
 
 SCHEMA_FILE = REPO_ROOT / "schema.cypher"
 
 
+from engram.config import load_config
+from engram.graph import MemGraphConnection
+from engram.schema_reset import apply_schema_reset, resolve_schema_reset
+
+
 def connection_settings(config_path: str, host: str, port: int) -> dict:
     """Resolve standalone administrative settings."""
-    from engram.config import load_config
 
     configured = load_config(config_path).get("graph", {}) or {}
-    return {
+    result = {
         "host": host or configured.get("host", "localhost"),
         "port": port or configured.get("port", 7687),
         "username": configured.get("username", ""),
         "password": configured.get("password", ""),
     }
+    return result
 
 
 def main() -> None:
     """Dry-run by default; mutate only with explicit --apply."""
-    parser = argparse.ArgumentParser(description="Reset standalone Engram schema")
+    parser = argparse_ArgumentParser(description="Reset standalone Engram schema")
     parser.add_argument("--apply", action="store_true", help="drop resolved definitions")
     parser.add_argument("--host", default="", help="override Memgraph host")
     parser.add_argument("--port", type=int, default=0, help="override Memgraph port")
@@ -38,9 +43,6 @@ def main() -> None:
         help="Engram config path",
     )
     arguments = parser.parse_args()
-
-    from engram.graph import MemGraphConnection
-    from engram.schema_reset import apply_schema_reset, resolve_schema_reset
 
     settings = connection_settings(arguments.config, arguments.host, arguments.port)
     connection = MemGraphConnection(**settings)
@@ -53,10 +55,10 @@ def main() -> None:
             report = resolve_schema_reset(connection, SCHEMA_FILE)
             report["applied"] = False
         print(report)
-        sys.exit(0)
+        sys_exit(0)
     except Exception as error:
-        print({"compatible": False, "error": str(error)})
-        sys.exit(1)
+        print({"valid": False, "error": str(error)})
+        sys_exit(1)
     finally:
         connection.disconnect()
 

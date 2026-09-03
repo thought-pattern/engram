@@ -10,17 +10,16 @@ only that a successful read matched no records. A backend swap
 method names — duck typing is the contract, so there is no abstract base class.
 """
 
-import logging
-import math
-import threading
-import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta
+from logging import getLogger as logging_getLogger
+from math import isfinite as math_isfinite
 from pathlib import Path
-from types import NoneType
+from threading import RLock as threading_RLock
+from time import monotonic as time_monotonic
 from uuid import UUID
 
-import mgclient
+from mgclient import connect as mgclient_connect
 
 from engram.constants import (
     CANONICAL_ENTITY_MATCH_FIELDS,
@@ -56,7 +55,47 @@ from engram.errors import InvalidRequestError
 from engram.schema_admin import verify_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
 
-logger = logging.getLogger(__name__)
+logger = logging_getLogger(__name__)
+
+
+VECTOR_SEARCH_PROPOSITIONS_QUERY = """
+    CALL vector_search.search(
+        $index_name, $limit, $query_embedding
+    ) YIELD node, distance
+    WITH node AS proposition, 1.0 - distance AS similarity
+    MATCH (proposition)-[:USES_PREDICATE]->(predicate:Predicate)
+    MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity)
+    MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity)
+    MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion)
+    WHERE subject_binding.role = 'subject' AND object_binding.role = 'object'
+      AND similarity >= $min_similarity
+      AND proposition.lifecycle_disposition = 'active'
+      AND proposition.retired_at IS NULL
+      AND assertion.lifecycle_disposition = 'active'
+      AND assertion.retired_at IS NULL
+      AND support.retired_at IS NULL
+      AND predicate.canonical_id <> 'generic_relation'
+      AND (proposition.visibility_kind = 'global'
+        OR ($visibility_kind IN ['company', 'engagement']
+          AND proposition.visibility_kind = 'company'
+          AND proposition.company_id = $company_id)
+        OR ($visibility_kind = 'engagement'
+          AND proposition.visibility_kind = 'engagement'
+          AND proposition.company_id = $company_id
+          AND proposition.customer_id = $customer_id
+          AND proposition.engagement_id = $engagement_id))
+    RETURN DISTINCT proposition.id AS proposition_id,
+           subject.primary_label AS subject,
+           coalesce(predicate.label, predicate.canonical_id) AS predicate,
+           object.primary_label AS object,
+           similarity
+    ORDER BY similarity DESC, proposition.id
+"""
+
+FIXED_READ_PROCEDURE_QUERIES = (
+    VECTOR_PROPOSITION_PROJECTION_QUERY,
+    VECTOR_SEARCH_PROPOSITIONS_QUERY,
+)
 
 
 def is_connection_error(err: Exception) -> bool:
@@ -78,7 +117,7 @@ def is_connection_error(err: Exception) -> bool:
     return result
 
 
-def _projection_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def projection_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if not allow_empty and not value:
@@ -90,42 +129,42 @@ def _projection_text(value: object, name: str, maximum_bytes: int, *, allow_empt
     return value
 
 
-def _projection_identifier(value: object, name: str) -> str:
-    identifier = _projection_text(value, name, MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES, allow_empty=False)
+def projection_identifier(value: object, name: str) -> str:
+    identifier = projection_text(value, name, MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES, allow_empty=False)
     if any(character.isspace() for character in identifier):
         raise InvalidRequestError(f"{name} must not contain whitespace")
     return identifier
 
 
-def _projection_bool(value: object, name: str) -> bool:
+def projection_bool(value: object, name: str) -> bool:
     if not isinstance(value, bool):
         raise InvalidRequestError(f"{name} must be a boolean")
     return value
 
 
-def _projection_int(value: object, name: str, minimum: int, maximum: int) -> int:
+def projection_int(value: object, name: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise InvalidRequestError(f"{name} must be an integer from {minimum} through {maximum}")
     return value
 
 
-def _projection_score(value: object, available: bool, name: str) -> float:
-    if not available and isinstance(value, NoneType):
+def projection_score(value: object, available: bool, name: str) -> float:
+    if not available and value is None:
         result = 0.0
         return result
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError(f"{name} must be numeric")
     score = float(value)
-    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+    if not math_isfinite(score) or not 0.0 <= score <= 1.0:
         raise InvalidRequestError(f"{name} must be finite and from 0 through 1")
     if not available and score != 0.0:
         raise InvalidRequestError(f"{name} must be zero when unavailable")
     return score
 
 
-def _projection_timestamp(value: object, available: bool, name: str) -> str:
+def projection_timestamp(value: object, available: bool, name: str) -> str:
     if not available:
-        if isinstance(value, NoneType) or value == "":
+        if value is None or value == "":
             result = ""
             return result
         raise InvalidRequestError(f"{name} must be empty when unavailable")
@@ -134,7 +173,7 @@ def _projection_timestamp(value: object, available: bool, name: str) -> str:
             raise InvalidRequestError(f"{name} must be timezone-aware UTC")
         text = value.isoformat().replace("+00:00", "Z")
     else:
-        text = _projection_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
+        text = projection_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
     if not text.endswith("Z"):
         raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
     try:
@@ -146,39 +185,27 @@ def _projection_timestamp(value: object, available: bool, name: str) -> str:
     return text
 
 
-def _optional_projection_text(value: object, available: bool, name: str, maximum_bytes: int) -> str:
+def optional_projection_text(value: object, available: bool, name: str, maximum_bytes: int) -> str:
     if not available:
-        if isinstance(value, NoneType) or value == "":
+        if value is None or value == "":
             result = ""
             return result
         raise InvalidRequestError(f"{name} must be empty when unavailable")
-    result = _projection_text(value, name, maximum_bytes, allow_empty=False)
+    result = projection_text(value, name, maximum_bytes, allow_empty=False)
     return result
 
 
-PropositionProjection = dict
-
-
-CanonicalEntityMatch = dict
-
-
-CanonicalPredicateMatch = dict
-
-
-RelationPropositionProjection = dict
-
-
-def _projection_text_collection(value: object, name: str) -> tuple[str, ...]:
+def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
         raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")
-    normalized = tuple(_projection_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
+    normalized = tuple(projection_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
     if normalized != tuple(dict.fromkeys(normalized)):
         raise InvalidRequestError(f"{name} must contain unique values")
     return normalized
 
 
-def _projection_object_type(value: object, name: str) -> ExpectedObjectType:
-    raw = _projection_text(value, name, 32, allow_empty=False).upper()
+def projection_object_type(value: object, name: str) -> ExpectedObjectType:
+    raw = projection_text(value, name, 32, allow_empty=False).upper()
     try:
         result = ExpectedObjectType(raw)
     except ValueError as error:
@@ -186,8 +213,8 @@ def _projection_object_type(value: object, name: str) -> ExpectedObjectType:
     return result
 
 
-def _projection_cardinality(value: object, name: str) -> PredicateCardinality:
-    raw = _projection_text(value, name, 32, allow_empty=False).upper()
+def projection_cardinality(value: object, name: str) -> PredicateCardinality:
+    raw = projection_text(value, name, 32, allow_empty=False).upper()
     try:
         result = PredicateCardinality(raw)
     except ValueError as error:
@@ -195,33 +222,33 @@ def _projection_cardinality(value: object, name: str) -> PredicateCardinality:
     return result
 
 
-def canonical_entity_match_from_graph_row(value: object) -> CanonicalEntityMatch:
+def canonical_entity_match_from_graph_row(value: object) -> dict:
     """Decode one exact canonical entity match row without arbitrary graph properties."""
     if not isinstance(value, Mapping) or set(value) != CANONICAL_ENTITY_MATCH_FIELDS:
         raise InvalidRequestError("canonical entity match row has invalid fields")
-    result: CanonicalEntityMatch = {
-        "canonical_id": _projection_identifier(value["canonical_id"], "canonical entity ID"),
-        "primary_label": _projection_text(
+    result: dict = {
+        "canonical_id": projection_identifier(value["canonical_id"], "canonical entity ID"),
+        "primary_label": projection_text(
             value["primary_label"], "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "aliases": _projection_text_collection(value["aliases"], "canonical entity aliases"),
-        "edge_surfaces": _projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
-        "entity_type": _projection_object_type(value["entity_type"], "canonical entity type"),
+        "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
+        "edge_surfaces": projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
+        "entity_type": projection_object_type(value["entity_type"], "canonical entity type"),
     }
     return result
 
 
-def canonical_predicate_match_from_graph_row(value: object) -> CanonicalPredicateMatch:
+def canonical_predicate_match_from_graph_row(value: object) -> dict:
     """Decode one exact canonical Predicate match row."""
     if not isinstance(value, Mapping) or set(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
         raise InvalidRequestError("canonical Predicate match row has invalid fields")
-    result: CanonicalPredicateMatch = {
-        "canonical_id": _projection_identifier(value["canonical_id"], "canonical Predicate ID"),
-        "primary_label": _projection_text(
+    result: dict = {
+        "canonical_id": projection_identifier(value["canonical_id"], "canonical Predicate ID"),
+        "primary_label": projection_text(
             value["primary_label"], "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "synonyms": _projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
-        "object_type": _projection_object_type(value["object_type"], "canonical Predicate object type"),
+        "synonyms": projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
+        "object_type": projection_object_type(value["object_type"], "canonical Predicate object type"),
     }
     return result
 
@@ -257,26 +284,26 @@ def proposition_projection(
     projection_id: object,
     vector_index_id: object,
     vector_index_id_available: object,
-) -> PropositionProjection:
+) -> dict:
     """Build one validated strict Proposition projection dictionary."""
-    normalized_proposition_id = _projection_identifier(proposition_id, "Proposition projection proposition_id")
-    normalized_subject_id = _projection_identifier(subject_entity_id, "Proposition projection subject_entity_id")
-    normalized_predicate_id = _projection_identifier(predicate_id, "Proposition projection predicate_id")
-    normalized_object_id = _projection_identifier(object_entity_id, "Proposition projection object_entity_id")
-    normalized_invalidated_available = _projection_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
-    normalized_system_from_available = _projection_bool(system_from_available, "Proposition projection system_from_available")
-    normalized_system_to_available = _projection_bool(system_to_available, "Proposition projection system_to_available")
-    normalized_valid_from_available = _projection_bool(valid_from_available, "Proposition projection valid_from_available")
-    normalized_valid_to_available = _projection_bool(valid_to_available, "Proposition projection valid_to_available")
-    normalized_invalidated_at = _projection_timestamp(
+    normalized_proposition_id = projection_identifier(proposition_id, "Proposition projection proposition_id")
+    normalized_subject_id = projection_identifier(subject_entity_id, "Proposition projection subject_entity_id")
+    normalized_predicate_id = projection_identifier(predicate_id, "Proposition projection predicate_id")
+    normalized_object_id = projection_identifier(object_entity_id, "Proposition projection object_entity_id")
+    normalized_invalidated_available = projection_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
+    normalized_system_from_available = projection_bool(system_from_available, "Proposition projection system_from_available")
+    normalized_system_to_available = projection_bool(system_to_available, "Proposition projection system_to_available")
+    normalized_valid_from_available = projection_bool(valid_from_available, "Proposition projection valid_from_available")
+    normalized_valid_to_available = projection_bool(valid_to_available, "Proposition projection valid_to_available")
+    normalized_invalidated_at = projection_timestamp(
         invalidated_at, normalized_invalidated_available, "Proposition projection invalidated_at"
     )
-    normalized_system_from = _projection_timestamp(
+    normalized_system_from = projection_timestamp(
         system_from, normalized_system_from_available, "Proposition projection system_from"
     )
-    normalized_system_to = _projection_timestamp(system_to, normalized_system_to_available, "Proposition projection system_to")
-    normalized_valid_from = _projection_timestamp(valid_from, normalized_valid_from_available, "Proposition projection valid_from")
-    normalized_valid_to = _projection_timestamp(valid_to, normalized_valid_to_available, "Proposition projection valid_to")
+    normalized_system_to = projection_timestamp(system_to, normalized_system_to_available, "Proposition projection system_to")
+    normalized_valid_from = projection_timestamp(valid_from, normalized_valid_from_available, "Proposition projection valid_from")
+    normalized_valid_to = projection_timestamp(valid_to, normalized_valid_to_available, "Proposition projection valid_to")
     if (
         normalized_system_from_available
         and normalized_system_to_available
@@ -291,45 +318,45 @@ def proposition_projection(
         >= datetime.fromisoformat(normalized_valid_to[:-1] + "+00:00")
     ):
         raise InvalidRequestError("Proposition projection valid_from must be earlier than valid_to")
-    normalized_predicate_canonical = _projection_bool(predicate_canonical, "Proposition projection predicate_canonical")
-    normalized_ownership = _projection_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
+    normalized_predicate_canonical = projection_bool(predicate_canonical, "Proposition projection predicate_canonical")
+    normalized_ownership = projection_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
     if normalized_ownership not in {"PUBLIC", "COMPANY", "CUSTOMER"}:
         raise InvalidRequestError("Proposition projection ownership_category is unsupported")
-    normalized_trust_category_available = _projection_bool(
+    normalized_trust_category_available = projection_bool(
         trust_category_available, "Proposition projection trust_category_available"
     )
-    normalized_trust_category = _optional_projection_text(
+    normalized_trust_category = optional_projection_text(
         trust_category,
         normalized_trust_category_available,
         "Proposition projection trust_category",
         96,
     )
-    normalized_trust_available = _projection_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
-    normalized_trust = _projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
-    normalized_version_available = _projection_bool(
+    normalized_trust_available = projection_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
+    normalized_trust = projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
+    normalized_version_available = projection_bool(
         supplied_trust_version_available, "Proposition projection supplied_trust_version_available"
     )
-    normalized_version = _projection_int(supplied_trust_version, "Proposition projection supplied_trust_version", 0, 2_147_483_647)
+    normalized_version = projection_int(supplied_trust_version, "Proposition projection supplied_trust_version", 0, 2_147_483_647)
     if not normalized_version_available and normalized_version != 0:
         raise InvalidRequestError("Proposition projection supplied_trust_version must be zero when unavailable")
     if normalized_trust_available != normalized_version_available:
         raise InvalidRequestError("Proposition projection supplied trust value and version availability must match")
-    normalized_structured_available = _projection_bool(
+    normalized_structured_available = projection_bool(
         structured_match_available, "Proposition projection structured_match_available"
     )
-    normalized_structured = _projection_score(
+    normalized_structured = projection_score(
         structured_match, normalized_structured_available, "Proposition projection structured_match"
     )
-    normalized_semantic_available = _projection_bool(
+    normalized_semantic_available = projection_bool(
         semantic_similarity_available, "Proposition projection semantic_similarity_available"
     )
-    normalized_semantic = _projection_score(
+    normalized_semantic = projection_score(
         semantic_similarity, normalized_semantic_available, "Proposition projection semantic_similarity"
     )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection projection_id must be a PropositionProjectionQuery")
-    normalized_vector_available = _projection_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
-    normalized_vector_id = _projection_text(
+    normalized_vector_available = projection_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
+    normalized_vector_id = projection_text(
         vector_index_id, "Proposition projection vector_index_id", 128, allow_empty=not normalized_vector_available
     )
     if normalized_vector_available and not VECTOR_INDEX_NAME.fullmatch(normalized_vector_id):
@@ -344,7 +371,7 @@ def proposition_projection(
             raise InvalidRequestError("by-ID Proposition projection measurements or index provenance are inconsistent")
     elif not normalized_structured_available or normalized_semantic_available or normalized_vector_available:
         raise InvalidRequestError("structured Proposition projection measurements or index provenance are inconsistent")
-    result: PropositionProjection = {
+    result: dict = {
         "proposition_id": normalized_proposition_id,
         "subject_entity_id": normalized_subject_id,
         "predicate_id": normalized_predicate_id,
@@ -378,7 +405,7 @@ def proposition_projection(
     return result
 
 
-def validate_proposition_projection(value: object) -> PropositionProjection:
+def validate_proposition_projection(value: object) -> dict:
     """Revalidate and copy one in-memory Proposition projection."""
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection must be an object")
@@ -397,7 +424,7 @@ def proposition_projection_from_graph_row(
     value: object,
     projection_id: PropositionProjectionQuery,
     vector_index_id: str = "",
-) -> PropositionProjection:
+) -> dict:
     """Decode one exact external graph row into a concrete projection."""
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection row must be an object")
@@ -410,21 +437,21 @@ def proposition_projection_from_graph_row(
         )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection query identifier is unsupported")
-    invalidated_available = _projection_bool(value["invalidated_at_available"], "invalidated_at_available")
-    system_from_available = _projection_bool(value["system_from_available"], "system_from_available")
-    system_to_available = _projection_bool(value["system_to_available"], "system_to_available")
-    valid_from_available = _projection_bool(value["valid_from_available"], "valid_from_available")
-    valid_to_available = _projection_bool(value["valid_to_available"], "valid_to_available")
-    trust_category_available = _projection_bool(value["trust_category_available"], "trust_category_available")
-    trust_available = _projection_bool(value["supplied_trust_available"], "supplied_trust_available")
-    version_available = _projection_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
-    structured_available = _projection_bool(value["structured_match_available"], "structured_match_available")
-    semantic_available = _projection_bool(value["semantic_similarity_available"], "semantic_similarity_available")
+    invalidated_available = projection_bool(value["invalidated_at_available"], "invalidated_at_available")
+    system_from_available = projection_bool(value["system_from_available"], "system_from_available")
+    system_to_available = projection_bool(value["system_to_available"], "system_to_available")
+    valid_from_available = projection_bool(value["valid_from_available"], "valid_from_available")
+    valid_to_available = projection_bool(value["valid_to_available"], "valid_to_available")
+    trust_category_available = projection_bool(value["trust_category_available"], "trust_category_available")
+    trust_available = projection_bool(value["supplied_trust_available"], "supplied_trust_available")
+    version_available = projection_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
+    structured_available = projection_bool(value["structured_match_available"], "structured_match_available")
+    semantic_available = projection_bool(value["semantic_similarity_available"], "semantic_similarity_available")
     raw_version = value["supplied_trust_version"]
-    if not version_available and isinstance(raw_version, NoneType):
+    if not version_available and raw_version is None:
         supplied_version = 0
     else:
-        supplied_version = _projection_int(raw_version, "supplied_trust_version", 0, 2_147_483_647)
+        supplied_version = projection_int(raw_version, "supplied_trust_version", 0, 2_147_483_647)
     result = proposition_projection(
         proposition_id=value["proposition_id"],
         subject_entity_id=value["subject_entity_id"],
@@ -467,39 +494,39 @@ def proposition_projection_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def _decode_projection_rows(
+def decode_projection_rows(
     rows: object,
     projection_id: PropositionProjectionQuery,
     vector_index_id: str,
     limit: int,
-) -> list[PropositionProjection]:
+) -> list[dict]:
     if not isinstance(rows, list):
         raise InvalidRequestError("Proposition projection query must return a list")
     if len(rows) > limit or len(rows) > MAX_PROPOSITION_PROJECTION_ROWS:
         raise InvalidRequestError("Proposition projection query returned more rows than requested")
-    decoded: dict[str, PropositionProjection] = {}
+    decoded: dict[str, dict] = {}
     for row in rows:
         projection = proposition_projection_from_graph_row(row, projection_id, vector_index_id)
         proposition_id = projection["proposition_id"]
-        if proposition_id in decoded and decoded[proposition_id] != projection:
+        if proposition_id in decoded and decoded.get(proposition_id, {}) != projection:
             raise InvalidRequestError(f"conflicting Proposition projections for Proposition ID: {proposition_id}")
         decoded[proposition_id] = projection
-    result = [decoded[proposition_id] for proposition_id in sorted(decoded)]
+    result = [decoded.get(proposition_id, {}) for proposition_id in sorted(decoded)]
     return result
 
 
-def relation_proposition_projection_from_graph_row(value: object) -> RelationPropositionProjection:
+def relation_proposition_projection_from_graph_row(value: object) -> dict:
     """Decode a one-hop row while reusing the Section 7 Proposition projection codec."""
     if not isinstance(value, Mapping) or set(value) != RELATION_ONE_HOP_RESULT_FIELDS:
         raise InvalidRequestError("relation one-hop row has invalid fields")
     projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
-    result: RelationPropositionProjection = {
+    result: dict = {
         "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP_V1),
-        "object_label": _projection_text(
+        "object_label": projection_text(
             value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "object_type": _projection_object_type(value["object_type"], "relation object type"),
-        "predicate_cardinality": _projection_cardinality(
+        "object_type": projection_object_type(value["object_type"], "relation object type"),
+        "predicate_cardinality": projection_cardinality(
             value["predicate_cardinality"],
             "relation Predicate cardinality",
         ),
@@ -507,7 +534,7 @@ def relation_proposition_projection_from_graph_row(value: object) -> RelationPro
     return result
 
 
-def validate_relation_proposition_projection(value: object) -> RelationPropositionProjection:
+def validate_relation_proposition_projection(value: object) -> dict:
     """Validate and copy one in-memory relation result."""
     if not isinstance(value, Mapping) or set(value) != {
         "projection",
@@ -522,30 +549,31 @@ def validate_relation_proposition_projection(value: object) -> RelationPropositi
     cardinality = value["predicate_cardinality"]
     if not isinstance(cardinality, PredicateCardinality):
         raise InvalidRequestError("relation result predicate_cardinality must be a PredicateCardinality")
-    result: RelationPropositionProjection = {
+    result: dict = {
         "projection": validate_proposition_projection(value["projection"]),
-        "object_label": _projection_text(
+        "object_label": projection_text(
             value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
-    if result["projection"]["projection_id"] != PropositionProjectionQuery.RELATION_ONE_HOP_V1:
+    if result.get("projection", {})["projection_id"] != PropositionProjectionQuery.RELATION_ONE_HOP_V1:
         raise InvalidRequestError("relation result requires a relation one-hop projection")
     return result
 
 
-def _decode_relation_projection_rows(rows: object, limit: int) -> list[RelationPropositionProjection]:
+def decode_relation_projection_rows(rows: object, limit: int) -> list[dict]:
     if not isinstance(rows, list) or len(rows) > limit:
         raise InvalidRequestError("relation one-hop query returned an invalid collection")
-    decoded: dict[str, RelationPropositionProjection] = {}
+    decoded: dict[str, dict] = {}
     for row in rows:
         item = relation_proposition_projection_from_graph_row(row)
         proposition_id = item["projection"]["proposition_id"]
-        if proposition_id in decoded and decoded[proposition_id] != item:
+        if proposition_id in decoded and decoded.get(proposition_id, {}) != item:
             raise InvalidRequestError(f"conflicting relation projections for Proposition ID: {proposition_id}")
         decoded[proposition_id] = item
-    return [decoded[proposition_id] for proposition_id in sorted(decoded)]
+    result = [decoded.get(proposition_id, {}) for proposition_id in sorted(decoded)]
+    return result
 
 
 def is_write_cypher(cypher: str) -> bool:
@@ -625,7 +653,7 @@ class MemGraphConnection:
         self.last_connect_attempt = 0.0
         # pymgclient connections may be shared between threads but not used
         # concurrently. Serialize all connection and cursor access.
-        self._lock = threading.RLock()
+        self.internal_lock = threading_RLock()
 
     def connect(self):
         """Establish a connection to MemGraph.
@@ -633,11 +661,11 @@ class MemGraphConnection:
         Returns the connection on success, or an empty tuple on failure. Sets
         ``available`` so callers can distinguish readiness before a read.
         """
-        with self._lock:
-            result = self._connect_unlocked()
+        with self.internal_lock:
+            result = self.connect_unlocked()
             return result
 
-    def _connect_unlocked(self):
+    def connect_unlocked(self):
         """Establish a connection while the caller holds the connection lock."""
         if self.conn:
             result = self.conn
@@ -645,12 +673,12 @@ class MemGraphConnection:
 
         # Respect cooldown after a failed attempt
         if self.connection_attempted and not self.available:
-            elapsed = time.monotonic() - self.last_connect_attempt
+            elapsed = time_monotonic() - self.last_connect_attempt
             if elapsed < RECONNECT_COOLDOWN_SECONDS:
                 result = ()
                 return result
 
-        self.last_connect_attempt = time.monotonic()
+        self.last_connect_attempt = time_monotonic()
         self.connection_attempted = True
 
         try:
@@ -663,7 +691,7 @@ class MemGraphConnection:
             if self.password:
                 connect_params["password"] = self.password
 
-            self.conn = mgclient.connect(**connect_params)
+            self.conn = mgclient_connect(**connect_params)
             self.conn.autocommit = True
             self.available = True
             logger.debug("Connected to MemGraph at %s:%d", self.host, self.port)
@@ -691,7 +719,7 @@ class MemGraphConnection:
 
     def disconnect(self):
         """Close the connection to MemGraph."""
-        with self._lock:
+        with self.internal_lock:
             if self.conn:
                 self.conn.close()
                 self.conn = ()
@@ -701,7 +729,7 @@ class MemGraphConnection:
 
     def is_connected(self) -> bool:
         """Check if the connection is active."""
-        with self._lock:
+        with self.internal_lock:
             if not self.conn:
                 result = False
                 return result
@@ -724,19 +752,13 @@ class MemGraphConnection:
         service unavailability are never conflated.
         Mutating or ambiguous Cypher is rejected before connecting.
         """
-        if is_write_cypher(query):
+        if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
             raise ValueError("ENGRAM graph access is read-only")
 
-        result = self._execute_read_query(query, parameters)
-        return result
-
-    def _execute_read_query(self, query: str, parameters=()) -> list:
-        """Execute a query already constrained to a read-only internal shape."""
-
-        with self._lock:
+        with self.internal_lock:
             connection = self.conn
             if not connection:
-                connection = self._connect_unlocked()
+                connection = self.connect_unlocked()
                 if not connection:
                     raise RuntimeError(f"MemGraph is unavailable at {self.host}:{self.port}")
 
@@ -765,7 +787,8 @@ class MemGraphConnection:
 
     def visibility_parameters(self) -> dict:
         """Return exact non-user visibility parameters for every graph read."""
-        return visibility_parameters(self.visibility_scope)
+        result = visibility_parameters(self.visibility_scope)
+        return result
 
     def vector_search_propositions(
         self,
@@ -777,10 +800,9 @@ class MemGraphConnection:
     ) -> list:
         """Search active proof-canonical Propositions through one fixed ANN query.
 
-        Generic ``CALL`` remains forbidden on :meth:`execute`. This method is
-        the sole procedure exception and exposes no caller-supplied Cypher;
-        only a validated vector-index identifier and bounded scalar parameters
-        reach the hard-coded read query.
+        Generic ``CALL`` remains forbidden on :meth:`execute`. This method
+        exposes no caller-supplied Cypher; only a validated vector-index
+        identifier and bounded scalar parameters reach its fixed read query.
         """
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
             raise ValueError("invalid vector index name")
@@ -794,41 +816,8 @@ class MemGraphConnection:
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
             raise ValueError("min_similarity must be between 0 and 1")
-        query = """
-            CALL vector_search.search(
-                $index_name, $limit, $query_embedding
-            ) YIELD node, distance
-            WITH node AS proposition, 1.0 - distance AS similarity
-            MATCH (proposition)-[:USES_PREDICATE]->(predicate:Predicate)
-            MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity)
-            MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity)
-            MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion)
-            WHERE subject_binding.role = 'subject' AND object_binding.role = 'object'
-              AND similarity >= $min_similarity
-              AND proposition.lifecycle_disposition = 'active'
-              AND proposition.retired_at IS NULL
-              AND assertion.lifecycle_disposition = 'active'
-              AND assertion.retired_at IS NULL
-              AND support.retired_at IS NULL
-              AND predicate.canonical_id <> 'generic_relation'
-              AND (proposition.visibility_kind = 'global'
-                OR ($visibility_kind IN ['company', 'engagement']
-                  AND proposition.visibility_kind = 'company'
-                  AND proposition.company_id = $company_id)
-                OR ($visibility_kind = 'engagement'
-                  AND proposition.visibility_kind = 'engagement'
-                  AND proposition.company_id = $company_id
-                  AND proposition.customer_id = $customer_id
-                  AND proposition.engagement_id = $engagement_id))
-            RETURN DISTINCT proposition.id AS proposition_id,
-                   subject.primary_label AS subject,
-                   coalesce(predicate.label, predicate.canonical_id) AS predicate,
-                   object.primary_label AS object,
-                   similarity
-            ORDER BY similarity DESC, proposition.id
-        """
-        result = self._execute_read_query(
-            query,
+        result = self.execute(
+            VECTOR_SEARCH_PROPOSITIONS_QUERY,
             {
                 "index_name": index_name,
                 "limit": limit,
@@ -844,9 +833,9 @@ class MemGraphConnection:
         *,
         projection_id: PropositionProjectionQuery,
         limit: int = 10,
-    ) -> list[PropositionProjection]:
+    ) -> list[dict]:
         """Run one allow-listed structured Proposition projection and strictly decode its rows."""
-        term = _projection_text(
+        term = projection_text(
             value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False
         )
         if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY_V1:
@@ -855,34 +844,36 @@ class MemGraphConnection:
             query = STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY
         else:
             raise InvalidRequestError("structured Proposition projection query identifier is unsupported")
-        row_limit = _projection_int(limit, "Proposition projection limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
-        rows = self._execute_read_query(query, {"value": term, "limit": row_limit})
-        result = _decode_projection_rows(rows, projection_id, "", row_limit)
+        row_limit = projection_int(limit, "Proposition projection limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
+        rows = self.execute(query, {"value": term, "limit": row_limit})
+        result = decode_projection_rows(rows, projection_id, "", row_limit)
         return result
 
-    def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[CanonicalEntityMatch]:
+    def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve an entity surface through one fixed, read-only query."""
-        term = _projection_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
-        row_limit = _projection_int(limit, "canonical entity match limit", 1, MAX_RELATION_CANDIDATES)
-        rows = self._execute_read_query(CANONICAL_ENTITY_MATCH_QUERY, {"surface": term, "limit": row_limit})
+        term = projection_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        row_limit = projection_int(limit, "canonical entity match limit", 1, MAX_RELATION_CANDIDATES)
+        rows = self.execute(CANONICAL_ENTITY_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise InvalidRequestError("canonical entity query returned an invalid collection")
         decoded = [canonical_entity_match_from_graph_row(row) for row in rows]
         if len({row["canonical_id"] for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical entity query returned duplicate identities")
-        return sorted(decoded, key=lambda row: row["canonical_id"])
+        result = sorted(decoded, key=lambda row: row["canonical_id"])
+        return result
 
-    def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[CanonicalPredicateMatch]:
+    def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve a Predicate surface through one fixed, read-only query."""
-        term = _projection_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
-        row_limit = _projection_int(limit, "canonical Predicate match limit", 1, MAX_RELATION_CANDIDATES)
-        rows = self._execute_read_query(CANONICAL_PREDICATE_MATCH_QUERY, {"surface": term, "limit": row_limit})
+        term = projection_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        row_limit = projection_int(limit, "canonical Predicate match limit", 1, MAX_RELATION_CANDIDATES)
+        rows = self.execute(CANONICAL_PREDICATE_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise InvalidRequestError("canonical Predicate query returned an invalid collection")
         decoded = [canonical_predicate_match_from_graph_row(row) for row in rows]
         if len({row["canonical_id"] for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical Predicate query returned duplicate identities")
-        return sorted(decoded, key=lambda row: row["canonical_id"])
+        result = sorted(decoded, key=lambda row: row["canonical_id"])
+        return result
 
     def relation_one_hop_proposition_projections(
         self,
@@ -891,14 +882,14 @@ class MemGraphConnection:
         *,
         limit: int = MAX_RELATION_PLAN_ROWS,
         include_historical: bool = False,
-    ) -> list[RelationPropositionProjection]:
+    ) -> list[dict]:
         """Execute only the allow-listed parameterized one-hop Proposition template."""
-        subject = _projection_identifier(subject_entity_id, "relation subject_entity_id")
-        predicate = _projection_identifier(predicate_id, "relation predicate_id")
+        subject = projection_identifier(subject_entity_id, "relation subject_entity_id")
+        predicate = projection_identifier(predicate_id, "relation predicate_id")
         if not isinstance(include_historical, bool):
             raise InvalidRequestError("relation include_historical must be a boolean")
-        row_limit = _projection_int(limit, "relation one-hop limit", 1, MAX_RELATION_PLAN_ROWS)
-        rows = self._execute_read_query(
+        row_limit = projection_int(limit, "relation one-hop limit", 1, MAX_RELATION_PLAN_ROWS)
+        rows = self.execute(
             RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY,
             {
                 "subject_entity_id": subject,
@@ -907,7 +898,8 @@ class MemGraphConnection:
                 "limit": row_limit,
             },
         )
-        return _decode_relation_projection_rows(rows, row_limit)
+        result = decode_relation_projection_rows(rows, row_limit)
+        return result
 
     def vector_search_proposition_projections(
         self,
@@ -916,7 +908,7 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 10,
         min_similarity: float = 0.45,
-    ) -> list[PropositionProjection]:
+    ) -> list[dict]:
         """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties."""
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
             raise InvalidRequestError("invalid Proposition projection vector index name")
@@ -924,14 +916,15 @@ class MemGraphConnection:
             raise InvalidRequestError("Proposition projection embedding must be a non-empty list")
         if len(embedding) > MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS:
             raise InvalidRequestError(
-                f"Proposition projection embedding exceeds the limit of {MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS} dimensions"
+                "Proposition projection embedding exceeds the limit of "
+                f"{MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS} dimensions"
             )
         for component in embedding:
-            if isinstance(component, bool) or not isinstance(component, (int, float)) or not math.isfinite(float(component)):
+            if isinstance(component, bool) or not isinstance(component, (int, float)) or not math_isfinite(float(component)):
                 raise InvalidRequestError("Proposition projection embedding must contain finite numeric values")
-        row_limit = _projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
-        similarity = _projection_score(min_similarity, True, "Proposition projection min_similarity")
-        rows = self._execute_read_query(
+        row_limit = projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
+        similarity = projection_score(min_similarity, True, "Proposition projection min_similarity")
+        rows = self.execute(
             VECTOR_PROPOSITION_PROJECTION_QUERY,
             {
                 "index_name": index_name,
@@ -940,23 +933,18 @@ class MemGraphConnection:
                 "min_similarity": similarity,
             },
         )
-        result = _decode_projection_rows(rows, PropositionProjectionQuery.VECTOR_V1, index_name, row_limit)
+        result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR_V1, index_name, row_limit)
         return result
 
-    def proposition_projection_by_id(self, proposition_id: str) -> list[PropositionProjection]:
+    def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
         """Re-read one Proposition through the fixed canonical projection for publication revalidation."""
-        identifier = _projection_identifier(proposition_id, "Proposition projection revalidation proposition_id")
-        rows = self._execute_read_query(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
-        result = _decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
-        return result
-
-    def execute_read(self, query: str, parameters=()) -> list:
-        """Read-only alias for execute()."""
-        result = self.execute(query, parameters)
+        identifier = projection_identifier(proposition_id, "Proposition projection revalidation proposition_id")
+        rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
+        result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
         return result
 
 
-def create_graph_client(
+def connect_graph(
     host: str = "localhost",
     port: int = 7687,
     username: str = "",
@@ -964,10 +952,10 @@ def create_graph_client(
     deployment_mode: str = "",
     visibility_scope=(),
 ) -> MemGraphConnection:
-    """Create a MemGraph connection.
+    """Connect to Memgraph and verify its deployment schema.
 
     The connection and deployment-specific schema preflight are attempted
-    immediately. An unreachable or incompatible graph fails startup rather
+    immediately. An unreachable or invalid graph fails startup rather
     than presenting an empty query result as graph readiness.
     """
     if deployment_mode not in {"standalone", "tapestry_managed"}:
@@ -983,7 +971,7 @@ def create_graph_client(
         raise RuntimeError(f"Memgraph is unavailable at {host}:{port}")
     schema_path = Path(__file__).resolve().parents[1] / "schema.cypher"
     report = verify_schema(client, schema_path, deployment_mode)
-    if not report.get("compatible", False):
+    if not report.get("valid", False):
         client.disconnect()
         raise RuntimeError(f"Memgraph schema preflight failed: {report}")
     client.schema_report = report

@@ -9,13 +9,11 @@ from engram.schema_catalog import (
     validate_schema_contract,
 )
 
-RETIRED_ORDINARY_INDEXES = set()
-
 
 def prove_empty_graph(connection) -> dict:
     """Require zero nodes and relationships before catalog removal."""
-    node_rows = connection.execute_read("MATCH (n) RETURN count(n) AS nodes")
-    relationship_rows = connection.execute_read("MATCH ()-[r]->() RETURN count(r) AS relationships")
+    node_rows = connection.execute("MATCH (n) RETURN count(n) AS nodes")
+    relationship_rows = connection.execute("MATCH ()-[r]->() RETURN count(r) AS relationships")
     if not node_rows or not relationship_rows:
         raise RuntimeError("Memgraph graph-count inspection returned no receipt")
     shape = {
@@ -28,14 +26,15 @@ def prove_empty_graph(connection) -> dict:
 
 
 def allowed_catalog_keys(schema_path: Path) -> dict:
-    """Return corrected standalone definitions plus exact retired index targets."""
+    """Return the exact current standalone definitions."""
     corrected = validate_schema_contract(schema_path.read_text(encoding="utf-8"))
-    return {
-        "ordinary_indexes": catalog_keys(corrected, "ordinary_indexes") | RETIRED_ORDINARY_INDEXES,
+    result = {
+        "ordinary_indexes": catalog_keys(corrected, "ordinary_indexes"),
         "text_indexes": catalog_keys(corrected, "text_indexes"),
         "vector_indexes": catalog_keys(corrected, "vector_indexes"),
         "constraints": catalog_keys(corrected, "constraints"),
     }
+    return result
 
 
 def catalog_drop_statements(catalog: dict) -> list[str]:
@@ -79,7 +78,8 @@ def resolve_schema_reset(connection, schema_path: Path) -> dict:
             unrecognized[group] = sorted(values)
     if unrecognized:
         raise RuntimeError(f"standalone reset found unrecognized definitions: {unrecognized}")
-    return {"compatible": True, "graph": shape, "statements": catalog_drop_statements(catalog)}
+    result = {"valid": True, "graph": shape, "statements": catalog_drop_statements(catalog)}
+    return result
 
 
 def apply_schema_reset(connection, schema_path: Path) -> dict:

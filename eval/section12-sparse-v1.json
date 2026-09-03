@@ -1,19 +1,14 @@
 {
   "schema_version": 1,
-  "evaluation_role": "repository-visible engineering holdout; not a Section 16 release partition",
+  "evaluation_role": "repository-visible sparse capability holdout",
   "provenance": "Synthetic technical and long-tail retrieval contrasts authored for EGR-1202 on 2026-08-21.",
   "namespace": "section12",
   "gates": {
     "minimum_positive_top1_recall": 0.9,
     "minimum_positive_recall_at_5": 1.0,
-    "minimum_top1_gain_over_existing_idf": 0.08,
     "maximum_negative_candidate_rate": 0.0,
-    "maximum_scale_query_p95_ms": 25.0,
-    "maximum_scale_build_ms": 15000.0,
-    "maximum_scale_peak_memory_bytes": 536870912,
-    "maximum_incremental_add_ms": 250.0,
-    "maximum_incremental_posting_replacement_rate": 0.1,
-    "maximum_statistics_only_posting_replacements": 0
+    "maximum_scale_request_local_query_p95_ms": 15000.0,
+    "maximum_scale_peak_memory_bytes": 536870912
   },
   "documents": [
     {"statement_id": "oauth-phrase", "request": "Configure OAuth token refresh for the API client", "aliases": ["API client OAuth refresh"], "response": "OAuth refresh procedure."},

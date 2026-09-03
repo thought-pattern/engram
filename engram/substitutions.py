@@ -13,7 +13,7 @@ from engram.nltk_data import ensure_resource
 
 
 @lru_cache(maxsize=1)
-def _ensure_punkt() -> None:
+def ensure_punkt() -> None:
     """Ensure the punkt tokenizers are present (cached, runs once)."""
     ensure_resource("tokenizers/punkt", "punkt")
     ensure_resource("tokenizers/punkt_tab", "punkt_tab")
@@ -43,8 +43,8 @@ def get_all_input_subs(maps: dict) -> dict[str, str]:
     Returns contractions and custom substitutions merged.
     """
     result = {}
-    result.update(maps["contractions"])
-    result.update(maps["custom"])
+    result.update(maps.get("contractions", {}))
+    result.update(maps.get("custom", {}))
     return result
 
 
@@ -86,7 +86,7 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
 
         lower_core = core.lower()
         if lower_core in subs:
-            replacement = subs[lower_core]
+            replacement = subs.get(lower_core, "")
             if core.isupper():
                 replacement = replacement.upper()
             elif core[0].isupper():
@@ -171,7 +171,7 @@ def split_sentences(text: str) -> list[str]:
         result = []
         return result
 
-    _ensure_punkt()
+    ensure_punkt()
     sentences = sent_tokenize(text)
 
     cleaned = [s.strip() for s in sentences if s.strip()]

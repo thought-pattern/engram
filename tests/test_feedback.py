@@ -3,27 +3,19 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
-import pytest
+from pytest import approx as pytest_approx, raises as pytest_raises
 
-from engram import persistence, service as service_module
-from engram.artifacts import (
-    CachedResponseArtifact,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
-)
+from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.config import engram_config, sparse_config
 from engram.constants import Tier
 from engram.core import Engram
-from engram.errors import ConflictError, InvalidRequestError, PersistenceError
+from engram.errors import ConflictError, InvalidRequestError
 from engram.feedback import (
-    FeedbackObservation,
     FeedbackObservationKind,
     FeedbackOutcome,
     FeedbackReferenceKind,
     FeedbackStore,
     LifecycleHandoffStatus,
-    NegativeResolutionKey,
     NegativeResolutionStore,
     canonical_fingerprint,
     constraint_fingerprint,
@@ -39,7 +31,6 @@ from engram.feedback import (
     feedback_observation_with_changes,
     feedback_policy,
     feedback_state,
-    feedback_state_signature,
     feedback_statistics,
     feedback_statistics_from_dict,
     feedback_statistics_from_json,
@@ -58,7 +49,7 @@ from engram.identity import build_retrieval_representation, build_standalone_ide
 from engram.mutations import mutation_receipt_to_dict
 from engram.repository import ArtifactRepository
 from engram.resolution import ResolutionOutcome, resolution_budget
-from engram.service import EngramCore, open_engram_core
+from engram.service import EngramCore
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 NOW_TEXT = "2026-08-15T12:00:00Z"
@@ -75,7 +66,7 @@ def observation(
     observed_at: str = NOW_TEXT,
     generation: int = 3,
     reason: str = "",
-) -> FeedbackObservation:
+) -> dict:
     scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
     identity = build_standalone_identity("What is Engram?", scope)
     result = feedback_observation(
@@ -113,14 +104,14 @@ def test_feedback_statistics_codec_preserves_the_complete_schema() -> None:
     assert feedback_statistics_from_json(feedback_statistics_to_json(statistics)) == statistics
 
 
-def apply(store: FeedbackStore, request_id: str, *values: FeedbackObservation, status=LifecycleHandoffStatus.NOT_APPLICABLE):
+def apply(store: FeedbackStore, request_id: str, *values: dict, status=LifecycleHandoffStatus.NOT_APPLICABLE):
     candidate = store.prepare(request_id, tuple(values), status)
     if not candidate["replayed"]:
         store.replace_from_snapshot(candidate["after"])
     return candidate
 
 
-def artifact(statement_id: str = "stmt-artifact") -> CachedResponseArtifact:
+def artifact(statement_id: str = "stmt-artifact") -> dict:
     scope = scope_key(namespace="tenant-a")
     request = "What is Engram?"
     result = cached_response_artifact(
@@ -137,8 +128,6 @@ def artifact(statement_id: str = "stmt-artifact") -> CachedResponseArtifact:
         valid_from_available=False,
         valid_until="",
         valid_until_available=False,
-        knowledge_epoch=1,
-        knowledge_epoch_available=True,
         superseded_by="",
         provenance=artifact_provenance("tapestry:test", "regulator", NOW_TEXT),
         statistics=artifact_statistics(),
@@ -150,8 +139,6 @@ def artifact(statement_id: str = "stmt-artifact") -> CachedResponseArtifact:
 def engine_with_artifact() -> Engram:
     engine = Engram()
     engine.response_repository = ArtifactRepository((artifact(),))
-    engine.namespace_epochs.initialize("tenant-a", 1)
-    persistence.synchronize_response_statement_projections(engine, ())
     return engine
 
 
@@ -159,16 +146,13 @@ def negative_key(
     *,
     request: str = "unknown request",
     namespace: str = "tenant-a",
-    epoch: int = 1,
     plan: str = "plan-a",
-) -> NegativeResolutionKey:
+) -> dict:
     scope = scope_key(namespace=namespace)
     result = negative_resolution_key(
         query_identity=build_standalone_identity(request, scope),
         scope=scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
-        knowledge_epoch=epoch,
-        knowledge_epoch_available=True,
         normalization_version=1,
         resolver_plan_fingerprint=canonical_fingerprint(plan),
         capability_readiness_fingerprint=canonical_fingerprint("ready"),
@@ -187,9 +171,9 @@ def test_feedback_contract_round_trip_is_deterministic_and_strict() -> None:
     assert statement_feedback_key_from_json(statement_feedback_key_to_json(statement_key)) == statement_key
     malformed = feedback_observation_to_dict(value)
     malformed["schema_version"] = 2
-    with pytest.raises(InvalidRequestError, match="schema_version"):
+    with pytest_raises(InvalidRequestError, match="schema_version"):
         feedback_observation_from_dict(malformed)
-    with pytest.raises(InvalidRequestError, match="must contain an object"):
+    with pytest_raises(InvalidRequestError, match="must contain an object"):
         feedback_observation_from_json("[]")
 
 
@@ -203,7 +187,7 @@ def test_feedback_receipts_apply_once_and_conflicting_retries_fail() -> None:
     assert first["replayed"] is False
     assert replay["replayed"] is True
     assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 1
-    with pytest.raises(ConflictError, match="different observation"):
+    with pytest_raises(ConflictError, match="different observation"):
         apply(store, "feedback-1", feedback_observation_with_changes(value, {"outcome": FeedbackOutcome.REJECTED_QUALITY}))
 
 
@@ -220,18 +204,18 @@ def test_feedback_accepts_the_declared_thousand_observation_batch() -> None:
     assert candidate["after"]["relationship_records"][0]["raw"]["accept_count"] == 1_000
 
 
-def test_feedback_store_snapshots_share_only_immutable_aggregate_records() -> None:
+def test_feedback_store_snapshots_isolate_aggregate_records() -> None:
     store = FeedbackStore()
     apply(store, "feedback-immutable", observation("feedback-immutable", FeedbackOutcome.ACCEPTED))
     snapshot = store.snapshot()
     record = snapshot["statement_records"][0]
 
-    with pytest.raises(TypeError):
-        record["last_observed_at"] = "2026-08-15T13:00:00Z"
-    with pytest.raises(TypeError):
-        record["raw"]["accept_count"] = 99
+    record["last_observed_at"] = "2026-08-15T13:00:00Z"
+    record["raw"]["accept_count"] = 99
 
-    assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 1
+    fresh = store.snapshot()["statement_records"][0]
+    assert fresh["last_observed_at"] != record["last_observed_at"]
+    assert fresh["raw"]["accept_count"] == 1
 
 
 def test_modified_prepared_feedback_state_cannot_use_the_fast_publication_path() -> None:
@@ -242,7 +226,7 @@ def test_modified_prepared_feedback_state_cannot_use_the_fast_publication_path()
     )
     candidate["after"]["statement_evictions"] = 1
 
-    with pytest.raises(InvalidRequestError, match="modified before publication"):
+    with pytest_raises(InvalidRequestError, match="modified before publication"):
         store.replace_from_snapshot(candidate["after"])
 
     assert store.snapshot()["statement_records"] == ()
@@ -277,9 +261,9 @@ def test_feedback_partitions_isolate_scope_query_generation_and_policy() -> None
 
 
 def test_constraints_are_bounded_and_require_json_values() -> None:
-    with pytest.raises(InvalidRequestError, match="JSON limit"):
+    with pytest_raises(InvalidRequestError, match="JSON limit"):
         constraint_fingerprint("UNKNOWN", {"large": "x" * 70_000}, "")
-    with pytest.raises(InvalidRequestError, match="JSON values"):
+    with pytest_raises(InvalidRequestError, match="JSON values"):
         constraint_fingerprint("UNKNOWN", {"invalid": object()}, "")
 
 
@@ -302,7 +286,7 @@ def test_history_uses_sample_floor_priors_and_deterministic_aging() -> None:
 
     assert below_floor["available"] is False
     assert available["available"] is True
-    assert available["value"] == pytest.approx(6 / 9)
+    assert available["value"] == pytest_approx(6 / 9)
     assert aged["available"] is False
     assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 5
     assert feedback_history_from_json(feedback_history_to_json(available)) == available
@@ -345,29 +329,7 @@ def test_feedback_capacity_and_bucket_retention_are_bounded_and_inspectable() ->
     assert inspection["receipts"]
 
 
-def test_feedback_persistence_round_trip_and_legacy_statistics_remain_separate() -> None:
-    engine = Engram()
-    value = observation("feedback-1", FeedbackOutcome.ACCEPTED)
-    candidate = engine.feedback_store.prepare("feedback-1", (value,))
-    engine.feedback_store.replace_from_snapshot(candidate["after"])
-    encoded = persistence.to_dict(engine)
-
-    restored = persistence.load_engram_from_dict(encoded)
-    without_feedback = dict(encoded)
-    without_feedback.pop("feedback_state")
-    migrated = persistence.load_engram_from_dict(without_feedback)
-
-    assert restored.feedback_store.snapshot() == engine.feedback_store.snapshot()
-    assert restored.feedback_store.prepare("feedback-1", (value,))["replayed"] is True
-    assert migrated.feedback_store.snapshot()["statement_records"] == ()
-    malformed = dict(encoded)
-    malformed["feedback_state"] = dict(encoded["feedback_state"])
-    malformed["feedback_state"]["schema_version"] = 2
-    with pytest.raises(InvalidRequestError, match="feedback state schema_version"):
-        persistence.load_engram_from_dict(malformed)
-
-
-def test_negative_store_has_fixed_ttl_capacity_exact_isolation_and_invalidation() -> None:
+def test_negative_store_has_fixed_ttl_capacity_and_exact_isolation() -> None:
     store = NegativeResolutionStore(max_records=2, ttl_seconds=10)
     first = negative_key(request="first")
     second = negative_key(request="second")
@@ -384,24 +346,20 @@ def test_negative_store_has_fixed_ttl_capacity_exact_isolation_and_invalidation(
     assert store.lookup(changed_plan, "2026-08-15T12:01:03Z")["hit"] is False
     assert store.inspect()["invalidations"] >= 1
     store.admit(changed_plan, "2026-08-15T12:01:04Z")
-    assert store.invalidate_epoch_snapshot({"epochs": {"tenant-a": 2}}) == 2
 
 
-def test_negative_contract_requires_available_epoch_and_round_trips() -> None:
+def test_negative_contract_round_trips_without_graph_state() -> None:
     key = negative_key()
     assert negative_resolution_key_from_json(negative_resolution_key_to_json(key)) == key
-    with pytest.raises(InvalidRequestError, match="available knowledge epoch"):
-        negative_resolution_key_with_changes(key, {"knowledge_epoch_available": False})
 
 
 def test_core_negative_hit_bypasses_resolvers_and_plan_changes_do_not_reuse() -> None:
     engine = Engram()
-    engine.namespace_epochs.initialize("tenant-a", 1)
     core = EngramCore(engine, clock=lambda: NOW)
 
     first = core.resolve_request("Unknown concept", "miss-1", namespace="tenant-a", configured_resolvers=("exact",))
     hit = core.resolve_request("Unknown concept", "miss-2", namespace="tenant-a", configured_resolvers=("exact",))
-    changed = core.resolve_request("Unknown concept", "miss-3", namespace="tenant-a", configured_resolvers=("exact", "pattern"))
+    changed = core.resolve_request("Unknown concept", "miss-3", namespace="tenant-a", configured_resolvers=("exact", "sparse"))
 
     assert first["outcome"] == ResolutionOutcome.MISS
     assert "negative_resolution_hit" not in first["reason_codes"]
@@ -415,37 +373,39 @@ def test_core_negative_hit_bypasses_resolvers_and_plan_changes_do_not_reuse() ->
 
 
 def test_non_exact_plans_do_not_cache_misses_that_can_hide_new_knowledge() -> None:
-    engine = Engram()
-    engine.namespace_epochs.initialize("tenant-a", 1)
-    engine.store("Unrelated answer", keyword_source="orchid tulip")
+    engine = Engram(engram_config(sparse=sparse_config(enabled=True)))
     core = EngramCore(engine, clock=lambda: NOW)
     budget = resolution_budget()
 
     first = core.resolve_request(
         "quasar nebula",
-        "lexical-miss-1",
+        "sparse-miss-1",
         namespace="tenant-a",
-        configured_resolvers=("lexical",),
+        configured_resolvers=("sparse",),
         budget=budget,
     )
-    engine.store("Newly learned answer", keyword_source="quasar nebula")
+    core.learn_response(
+        "quasar nebula",
+        "Newly learned answer",
+        "sparse-new-knowledge",
+        namespace="tenant-a",
+    )
     second = core.resolve_request(
         "quasar nebula",
-        "lexical-miss-2",
+        "sparse-miss-2",
         namespace="tenant-a",
-        configured_resolvers=("lexical",),
+        configured_resolvers=("sparse",),
         budget=budget,
     )
 
     assert first["outcome"] == ResolutionOutcome.MISS
     assert core.inspect_feedback_learning()["negative_resolution"]["admissions"] == 0
     assert "negative_resolution_hit" not in second["reason_codes"]
-    assert any(result["reason_code"] == "lexical_candidates" for result in second["resolver_results"])
+    assert any(result["reason_code"] == "sparse_candidates" for result in second["resolver_results"])
 
 
 def test_negative_hit_honors_zero_diagnostic_budget() -> None:
     engine = Engram()
-    engine.namespace_epochs.initialize("tenant-a", 1)
     core = EngramCore(engine, clock=lambda: NOW)
     core.resolve_request("Unknown concept", "budget-prime", namespace="tenant-a", configured_resolvers=("exact",))
 
@@ -463,40 +423,13 @@ def test_negative_hit_honors_zero_diagnostic_budget() -> None:
     assert "diagnostic_bytes" in hit["budget"]["exhausted_dimensions"]
 
 
-@pytest.mark.parametrize("failing_hook", ("checkpoint", "telemetry"))
-def test_negative_hit_does_not_hide_publication_failures(monkeypatch, failing_hook: str) -> None:
-    engine = Engram()
-    engine.namespace_epochs.initialize("tenant-a", 1)
-    core = EngramCore(engine, clock=lambda: NOW)
-    core.resolve_request("Unknown concept", "publication-prime", namespace="tenant-a", configured_resolvers=("exact",))
-
-    def fail_publication(*_args, **_kwargs):
-        raise RuntimeError("injected publication failure")
-
-    def reject_resolver_fallback(*_args, **_kwargs):
-        raise AssertionError("negative hit unexpectedly fell through to resolvers")
-
-    if failing_hook == "checkpoint":
-        monkeypatch.setattr(core, "_checkpoint", fail_publication)
-    else:
-        monkeypatch.setattr(core, "_record_resolution_telemetry", fail_publication)
-    monkeypatch.setattr(core._resolution_orchestrator, "_resolve_with_plan", reject_resolver_fallback)
-
-    with pytest.raises(RuntimeError, match="injected publication failure"):
-        core.resolve_request("Unknown concept", "publication-hit", namespace="tenant-a", configured_resolvers=("exact",))
-
-
-def test_negative_owner_abstains_without_epoch_and_fails_open() -> None:
+def test_negative_cache_requires_no_durable_graph_generation() -> None:
     core = EngramCore(Engram(), clock=lambda: NOW)
-    first = core.resolve_request("Unknown concept", "no-epoch-1", namespace="tenant-a", configured_resolvers=("exact",))
-    second = core.resolve_request("Unknown concept", "no-epoch-2", namespace="tenant-a", configured_resolvers=("exact",))
-    core.engram.namespace_epochs.initialize("tenant-a", 1)
-    core._negative_resolutions.lookup = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected"))
-    fail_open = core.resolve_request("Another unknown", "fail-open", namespace="tenant-a", configured_resolvers=("exact",))
+    first = core.resolve_request("Unknown concept", "negative-1", namespace="tenant-a", configured_resolvers=("exact",))
+    second = core.resolve_request("Unknown concept", "negative-2", namespace="tenant-a", configured_resolvers=("exact",))
 
     assert "negative_resolution_hit" not in first["reason_codes"]
-    assert "negative_resolution_hit" not in second["reason_codes"]
-    assert fail_open["budget"]["resolvers"] == 1
+    assert "negative_resolution_hit" in second["reason_codes"]
 
 
 def test_policy_filtered_exact_miss_is_never_negative_admitted() -> None:
@@ -538,7 +471,7 @@ def test_core_feedback_candidacy_verdict_retry_conflict_and_stale_handoff() -> N
     assert inspection["statement_record_count"] == 1
     assert inspection["statements"][0]["statistics"]["candidate_count"] == 1
     assert inspection["statements"][0]["statistics"]["rejected_stale"] == 1
-    with pytest.raises(ConflictError, match="different observation"):
+    with pytest_raises(ConflictError, match="different observation"):
         core.record_resolution_feedback("resolution-1", "feedback-1", "rejected_quality", statement_id, "outdated")
 
 
@@ -604,110 +537,37 @@ def test_concurrent_external_verdicts_are_serialized_without_lost_updates() -> N
     assert record["raw"]["rejected_context"] == 20
 
 
-def test_feedback_checkpoint_failure_retries_cached_resolution_without_double_credit(tmp_path, monkeypatch) -> None:
-    store_path = tmp_path / "feedback-recovery.json"
-    engine = engine_with_artifact()
-    persistence.save(engine, store_path)
-    core = open_engram_core(store_path=store_path)
-    real_save = service_module.persistence.save_feedback_state
-
-    def fail_save(*_args, **_kwargs):
-        raise OSError("injected feedback checkpoint failure")
-
-    monkeypatch.setattr(service_module.persistence, "save_feedback_state", fail_save)
-    with pytest.raises(PersistenceError, match="feedback checkpoint"):
-        core.resolve_request("What is Engram?", "recovery-source", namespace="tenant-a", configured_resolvers=("exact",))
-    assert core.engram.feedback_store.snapshot()["statement_records"] == ()
-    assert core.status()["durability"] == "healthy"
-
-    monkeypatch.setattr(service_module.persistence, "save_feedback_state", real_save)
-    replay = core.resolve_request("What is Engram?", "recovery-source", namespace="tenant-a", configured_resolvers=("exact",))
-
-    assert replay["outcome"] == ResolutionOutcome.ANSWER
-    restored = persistence.load_engram(store_path)
-    feedback_record = restored.feedback_store.snapshot()["statement_records"][0]
-    assert feedback_record["raw"]["candidate_count"] == 1
-
-
-def test_feedback_checkpoint_recovers_a_committed_after_state(tmp_path, monkeypatch) -> None:
-    store_path = tmp_path / "feedback-after-recovery.json"
-    engine = engine_with_artifact()
-    persistence.save(engine, store_path)
-    core = open_engram_core(store_path=store_path)
-    real_save = service_module.persistence.save_feedback_state
-
-    def commit_then_fail(engram, state, path):
-        real_save(engram, state, path)
-        raise OSError("injected post-commit feedback checkpoint failure")
-
-    monkeypatch.setattr(service_module.persistence, "save_feedback_state", commit_then_fail)
+def test_feedback_replay_is_process_local_and_does_not_claim_durability() -> None:
+    core = EngramCore(engine_with_artifact(), clock=lambda: NOW)
     result = core.resolve_request(
         "What is Engram?",
-        "after-recovery-source",
+        "process-feedback-source",
         namespace="tenant-a",
         configured_resolvers=("exact",),
     )
+    statement_id = result.get("selected_candidate", {}).get("statement_id", "")
 
-    assert result["outcome"] == ResolutionOutcome.ANSWER
-    assert core.status()["durability"] == "healthy"
-    assert core.status()["dirty"] is False
-    assert core.engram.feedback_store.snapshot()["statement_records"][0]["raw"]["candidate_count"] == 1
-    assert persistence.load_feedback_state(store_path)["statement_records"][0]["raw"]["candidate_count"] == 1
-
-
-def test_feedback_checkpoint_marks_divergent_recovery_degraded(tmp_path, monkeypatch) -> None:
-    store_path = tmp_path / "feedback-divergent-recovery.json"
-    engine = engine_with_artifact()
-    persistence.save(engine, store_path)
-    core = open_engram_core(store_path=store_path)
-    real_save = service_module.persistence.save_feedback_state
-    divergent = FeedbackStore()
-    apply(divergent, "divergent-feedback", observation("divergent-source", FeedbackOutcome.ACCEPTED))
-    divergent_state = divergent.snapshot()
-
-    def diverge_then_fail(engram, _state, path):
-        real_save(engram, divergent_state, path)
-        raise OSError("injected divergent feedback checkpoint failure")
-
-    monkeypatch.setattr(service_module.persistence, "save_feedback_state", diverge_then_fail)
-    with pytest.raises(PersistenceError, match="feedback checkpoint"):
-        core.resolve_request(
-            "What is Engram?",
-            "divergent-recovery-source",
-            namespace="tenant-a",
-            configured_resolvers=("exact",),
-        )
-
-    assert core.status()["durability"] == "degraded"
-    assert core.engram.feedback_store.snapshot()["statement_records"] == ()
-    assert feedback_state_signature(persistence.load_feedback_state(store_path)) == feedback_state_signature(divergent_state)
-
-
-def test_uncheckpointed_feedback_replay_does_not_proposition_durability(tmp_path) -> None:
-    core = EngramCore(
-        engine_with_artifact(),
-        store_path=str(tmp_path / "not-yet-checkpointed.json"),
-        checkpoint_on_mutation=False,
-        clock=lambda: NOW,
+    first = core.record_resolution_feedback(
+        "process-feedback-source",
+        "process-feedback",
+        "accepted",
+        statement_id,
     )
-    result = core.resolve_request(
-        "What is Engram?",
-        "durability-source",
-        namespace="tenant-a",
-        configured_resolvers=("exact",),
+    replay = core.record_resolution_feedback(
+        "process-feedback-source",
+        "process-feedback",
+        "accepted",
+        statement_id,
     )
-    statement_id = result["selected_candidate"]["statement_id"]
 
-    first = core.record_resolution_feedback("durability-source", "durability-feedback", "accepted", statement_id)
-    replay = core.record_resolution_feedback("durability-source", "durability-feedback", "accepted", statement_id)
-
-    assert first["durable"] is False
-    assert replay["durable"] is False
-    assert core.status()["dirty"] is True
+    assert first.get("idempotent") is False
+    assert replay.get("idempotent") is True
+    assert "durable" not in first
+    assert core.status().get("memory_only") is True
 
 
-def test_legacy_proposal_path_uses_shared_feedback_owner() -> None:
-    core = EngramCore(clock=lambda: NOW, checkpoint_on_mutation=False)
+def test_proposal_path_uses_shared_feedback_owner() -> None:
+    core = EngramCore(clock=lambda: NOW)
     learned = core.learn_response("What is cached?", "A regulated answer.", "learn-1", namespace="tenant-a")
     proposal = core.propose("What is cached?", "proposal-1", namespace="tenant-a")
     resolved = core.resolve(proposal["proposal_id"], "rejected_context", learned["statement_id"], "wrong context")
@@ -719,20 +579,23 @@ def test_legacy_proposal_path_uses_shared_feedback_owner() -> None:
     assert inspection["statements"][0]["statistics"]["rejected_context"] == 1
 
 
-def test_generation_unavailable_legacy_stale_feedback_excludes_only_legacy_candidate() -> None:
-    engine = Engram()
-    statement_id = engine.store(
-        "A legacy regulated response.",
-        keyword_source="What is legacy?",
-        template={"tapestry": {"namespace": "tenant-a", "context_fingerprint": "", "metadata": {}}},
+def test_stale_resolution_leaves_dynamic_response_for_explicit_retirement() -> None:
+    core = EngramCore(clock=lambda: NOW)
+    learned = core.learn_response(
+        "What is cached?",
+        "A regulated answer.",
+        "learn-before-stale-retirement",
+        namespace="tenant-a",
     )
-    core = EngramCore(engine, clock=lambda: NOW, checkpoint_on_mutation=False)
-    proposal = core.propose("What is legacy?", "legacy-proposal-1", namespace="tenant-a")
+    statement_id = learned["statement_id"]
+    proposal = core.propose("What is cached?", "proposal-before-stale-retirement", namespace="tenant-a")
 
-    resolved = core.resolve(proposal["proposal_id"], "rejected_stale", statement_id)
-    excluded = core.propose("What is legacy?", "legacy-proposal-2", namespace="tenant-a")
+    resolved = core.resolve(proposal["proposal_id"], "rejected_stale", statement_id, "support became stale")
+    artifact_after_resolution = core.engram.response_repository.get_artifact(statement_id)
+    retired = core.retire_response(statement_id, "support became stale", "explicit-stale-retirement")
+    artifact_after_retirement = core.engram.response_repository.get_artifact(statement_id)
 
-    assert resolved["lifecycle_status"] == "pending"
-    assert excluded["candidates"] == []
-    assert core.engram.feedback_store.stale_excluded(statement_id, 0, False) is True
-    assert core.engram.feedback_store.stale_excluded(statement_id, 1, True) is False
+    assert resolved["lifecycle_status"] == "not_applicable"
+    assert artifact_after_resolution["lifecycle"] == LifecycleState.ACTIVE
+    assert retired["retired"] is True
+    assert artifact_after_retirement["lifecycle"] == LifecycleState.RETIRED

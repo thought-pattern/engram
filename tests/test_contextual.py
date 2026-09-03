@@ -2,9 +2,9 @@
 
 from datetime import timedelta
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram import persistence, sessions
+from engram import sessions
 from engram.constants import ExpectedObjectType, QualifierKind, QueryOperator
 from engram.contextual import (
     classify_query_frame_operator,
@@ -16,6 +16,7 @@ from engram.contextual import (
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.identity import entity_reference, identity_qualifier, relation_reference
+from engram.models import session_from_dict, session_to_dict
 from engram.service import EngramCore
 
 
@@ -31,7 +32,8 @@ def compact_frame(**changes):
         "topic": "Ada Lovelace",
     }
     values.update(changes)
-    return compact_query_frame(**values)
+    result = compact_query_frame(**values)
+    return result
 
 
 def test_compact_query_frame_codec_is_exact_bounded_and_deterministic() -> None:
@@ -46,49 +48,41 @@ def test_compact_query_frame_codec_is_exact_bounded_and_deterministic() -> None:
 
     malformed = dict(encoded)
     malformed["extra"] = True
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
         compact_query_frame_from_dict(malformed)
-    with pytest.raises(InvalidRequestError, match="subjects exceed"):
+    with pytest_raises(InvalidRequestError, match="subjects exceed"):
         compact_frame(subjects=tuple(entity_reference(f"Entity {index}") for index in range(5)))
 
 
-def test_session_persistence_preserves_compact_frame_and_legacy_absence() -> None:
+def test_session_codec_preserves_compact_frame_and_concrete_absence() -> None:
     engine = Engram()
-    session_id = sessions.create_session(engine, session_id="Sarah")
+    session_id = sessions.start_session(engine, session_id="Sarah")
     engine.sessions[session_id]["previous_query_frame"] = compact_frame()
     engine.sessions[session_id]["query_frame_turn"] = 3
 
-    restored = persistence.load_engram_from_dict(persistence.to_dict(engine))
-    restored_session = sessions.get_session(restored, session_id, create_if_missing=False)
+    restored_session = session_from_dict(session_to_dict(engine.sessions.get(session_id, {})))
 
     assert restored_session["previous_query_frame"] == compact_frame()
     assert restored_session["query_frame_turn"] == 3
 
-    serialized = persistence.to_dict(engine)
-    del serialized["sessions"][0]["previous_query_frame"]
-    del serialized["sessions"][0]["query_frame_turn"]
-    legacy = persistence.load_engram_from_dict(serialized)
-    assert legacy.sessions[session_id]["previous_query_frame"] == {}
-    assert legacy.sessions[session_id]["query_frame_turn"] == 0
+    serialized = session_to_dict(engine.sessions.get(session_id, {}))
+    invalid_frame = dict(serialized)
+    invalid_frame["previous_query_frame"] = False
+    with pytest_raises(ValueError, match="previous_query_frame must be an object"):
+        session_from_dict(invalid_frame)
 
-    invalid_frame = persistence.to_dict(engine)
-    invalid_frame["sessions"][0]["previous_query_frame"] = False
-    with pytest.raises(ValueError, match="previous_query_frame must be an object"):
-        persistence.load_engram_from_dict(invalid_frame)
-
-    invalid_turn = persistence.to_dict(engine)
-    invalid_turn["sessions"][0]["query_frame_turn"] = False
-    with pytest.raises(ValueError, match="query_frame_turn"):
-        persistence.load_engram_from_dict(invalid_turn)
+    invalid_turn = dict(serialized)
+    invalid_turn["query_frame_turn"] = False
+    with pytest_raises(ValueError, match="query_frame_turn"):
+        session_from_dict(invalid_turn)
 
     engine.sessions[session_id]["query_frame_turn"] = 2
-    with pytest.raises(ValueError, match="source_turn must match"):
-        persistence.to_dict(engine)
+    with pytest_raises(ValueError, match="source_turn must match"):
+        session_to_dict(engine.sessions.get(session_id, {}))
 
 
-def test_resolve_request_checkpoints_contextual_frame_when_configured(tmp_path) -> None:
-    store_path = tmp_path / "contextual-frame.json"
-    core = EngramCore(Engram(), store_path=str(store_path))
+def test_resolve_request_keeps_contextual_frame_in_process_memory() -> None:
+    core = EngramCore(Engram())
 
     core.resolve_request(
         "When was Ada Lovelace born?",
@@ -97,15 +91,13 @@ def test_resolve_request_checkpoints_contextual_frame_when_configured(tmp_path) 
         configured_resolvers=("exact",),
     )
 
-    restored = persistence.load_engram(store_path)
-    session = restored.sessions["Sarah"]
-    assert core.status()["dirty"] is False
+    session = core.engram.sessions["Sarah"]
     assert session["query_frame_turn"] == 1
     assert session["previous_query_frame"]["operator"] == QueryOperator.WHEN
     assert session["previous_query_frame"]["subjects"][0]["surface"] == "Ada Lovelace"
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("query_text", "expected"),
     [
         ("Who wrote Hamlet?", QueryOperator.WHO),
@@ -142,7 +134,7 @@ def test_contextual_operator_classification_handles_lead_and_inheritance() -> No
     assert inherited["source_turn"] == 7
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("operator", "expected"),
     [
         (QueryOperator.WHO, ExpectedObjectType.PERSON),
@@ -166,7 +158,7 @@ def test_expected_object_type_inference_is_closed_and_unknown_tolerant(
 
 
 def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     core.resolve_request(
         "When was Ada Lovelace born?",
         "sarah-1",
@@ -186,7 +178,7 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     assert current["subjects"][0]["surface"] == "Ada Lovelace"
     assert current["relation"]["surface"] == "born"
     assert current["expected_object_type"] == ExpectedObjectType.PLACE
-    cached_frame = core._resolution_requests["sarah-2"]["frame"]
+    cached_frame = core.resolution_requests["sarah-2"]["frame"]
     assert {(item["field_name"], item["source_turn"]) for item in cached_frame["inheritance"]} == {
         ("subjects", 1),
         ("relation", 1),
@@ -194,7 +186,7 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
 
 
 def test_self_contained_request_and_other_user_do_not_receive_prior_context() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     core.resolve_request(
         "When was Ada Lovelace born?",
         "sarah-context",
@@ -214,15 +206,15 @@ def test_self_contained_request_and_other_user_do_not_receive_prior_context() ->
     assert [subject["surface"] for subject in sarah["subjects"]] == ["London"]
     assert sarah["relation"]["surface"] == ""
     assert robin["subjects"] == ()
-    sarah_reset = core._resolution_requests["sarah-reset"]["frame"]
-    robin_first = core._resolution_requests["robin-first"]["frame"]
+    sarah_reset = core.resolution_requests["sarah-reset"]["frame"]
+    robin_first = core.resolution_requests["robin-first"]["frame"]
     assert sarah_reset["inheritance"] == ()
     assert robin_first["inheritance"] == ()
 
 
 def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
-    sessions.create_session(core.engram, session_id="Sarah")
+    core = EngramCore()
+    sessions.start_session(core.engram, session_id="Sarah")
     core.engram.sessions["Sarah"]["active_topic"] = "Ada Lovelace"
     core.resolve_request(
         "When was Ada Lovelace born?",
@@ -233,7 +225,7 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     core.engram.sessions["Sarah"]["active_topic"] = "Grace Hopper"
     core.resolve_request("And then?", "topic-2", user_id="Sarah", configured_resolvers=("exact",))
 
-    topic_frame = core._resolution_requests["topic-2"]["frame"]
+    topic_frame = core.resolution_requests["topic-2"]["frame"]
     assert topic_frame["inheritance"] == ()
     assert topic_frame["identity"]["operator"] == QueryOperator.UNKNOWN
     core.engram.sessions["Sarah"]["last_active"] -= timedelta(days=1)
@@ -241,8 +233,25 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     assert "Sarah" not in core.engram.sessions
 
 
+def test_caller_topic_predicate_is_retained_in_contextual_frames() -> None:
+    core = EngramCore()
+    core.set_predicate("Sarah", "topic", "Kyoto")
+
+    core.resolve_request(
+        "When is the spring festival?",
+        "predicate-topic",
+        user_id="Sarah",
+        configured_resolvers=("exact",),
+    )
+
+    session = core.engram.sessions.get("Sarah", {})
+    previous_frame = session.get("previous_query_frame", {})
+    assert session.get("active_topic", "") == ""
+    assert previous_frame.get("topic", "") == "Kyoto"
+
+
 def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> None:
-    core = EngramCore(checkpoint_on_mutation=False)
+    core = EngramCore()
     core.resolve_request(
         "Where was Ada Lovelace born?",
         "distance-1",
@@ -253,7 +262,7 @@ def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> 
 
     core.resolve_request("And then?", "distance-4", user_id="Sarah", configured_resolvers=("exact",))
 
-    distant_frame = core._resolution_requests["distance-4"]["frame"]
+    distant_frame = core.resolution_requests["distance-4"]["frame"]
     assert distant_frame["inheritance"] == ()
     assert distant_frame["identity"]["operator"] == QueryOperator.UNKNOWN
 
@@ -261,11 +270,11 @@ def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> 
 def test_compact_frame_rejects_duplicate_or_malformed_identity_values() -> None:
     duplicate = entity_reference("Ada Lovelace")
     duplicate_qualifier = identity_qualifier(QualifierKind.CURRENT, "current")
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         compact_frame(subjects=(duplicate,) * 2)
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         compact_frame(confidence=float("nan"))
-    with pytest.raises(InvalidRequestError, match="qualifiers must be unique"):
+    with pytest_raises(InvalidRequestError, match="qualifiers must be unique"):
         compact_frame(qualifiers=(duplicate_qualifier,) * 2)
-    with pytest.raises(InvalidRequestError, match="schema_version"):
+    with pytest_raises(InvalidRequestError, match="schema_version"):
         compact_frame(schema_version=True)

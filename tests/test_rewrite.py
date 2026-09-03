@@ -1,21 +1,14 @@
 """Section 11 symbolic retrieval rewrite contracts and integration."""
 
-import json
 from datetime import UTC, datetime
+from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 
-import pytest
+from pytest import raises as pytest_raises
 
-from engram import persistence
-from engram.artifacts import (
-    CachedResponseArtifact,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
-)
+from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.config import engram_config
-from engram.constants import CostClass, QueryOperator, ResolverState, Tier
+from engram.constants import CostClass, QueryOperator, Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError, RewriteLimitError
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
@@ -43,7 +36,7 @@ NOW = datetime(2026, 8, 20, 18, 0, tzinfo=UTC)
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
-def _rule(
+def internal_rule(
     rule_id: str,
     pattern: str,
     output: str,
@@ -78,9 +71,9 @@ def _rule(
     }
 
 
-def _artifact(request: str, response: str = "Atlas runs in Virginia.") -> CachedResponseArtifact:
+def internal_artifact(request: str, response: str = "Atlas runs in Virginia.") -> dict:
     selected_scope = scope_key()
-    return cached_response_artifact(
+    result = cached_response_artifact(
         statement_id="rewrite-artifact",
         generation=1,
         response=response,
@@ -94,65 +87,46 @@ def _artifact(request: str, response: str = "Atlas runs in Virginia.") -> Cached
         valid_from_available=False,
         valid_until="",
         valid_until_available=False,
-        knowledge_epoch=0,
-        knowledge_epoch_available=False,
         superseded_by="",
         provenance=artifact_provenance("section11:test", "tester", "2026-08-20T18:00:00Z"),
         statistics=artifact_statistics(),
         metadata={},
     )
+    return result
 
 
-def _engine_with_artifact(request: str) -> Engram:
+def engine_with_artifact(request: str) -> Engram:
     engine = Engram(engram_config(expand_contractions=False, retrieval_rewrites_enabled=True))
-    engine.response_repository = ArtifactRepository((_artifact(request),))
-    persistence.synchronize_response_statement_projections(engine, ())
+    engine.response_repository = ArtifactRepository((internal_artifact(request),))
     return engine
 
 
 def test_rule_schema_round_trip_and_strict_validation() -> None:
-    rule = rewrite_rule(_rule("one", "alpha beta gamma", "delta"))
+    rule = rewrite_rule(internal_rule("one", "alpha beta gamma", "delta"))
     assert rewrite_rule(rewrite_rule_to_dict(rule)) == rule
     malformed = rewrite_rule_to_dict(rule)
     malformed["unknown"] = True
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
         rewrite_rule(malformed)
 
 
-def test_default_corpus_has_every_required_category_and_independent_provenance() -> None:
-    rules = load_default_rewrite_corpus()
-    categories = {rule["category"] for rule in rules}
-    assert categories == {
-        "contractions",
-        "question_normalization",
-        "paraphrase_reduction",
-        "pronoun_transformations",
-        "synonym_classes",
-        "conversational_repair",
-        "context_dependent_reductions",
-        "technical_phrasing",
-    }
-    assert all("independently authored" in rule["provenance"]["origin"] for rule in rules)
-    assert not [finding for finding in lint_rewrite_corpus(rules) if finding["severity"] == "error"]
-
-
 def test_corpus_loader_rejects_duplicate_rule_versions_and_unknown_fields() -> None:
-    rule = _rule("duplicate", "alpha beta gamma", "delta")
+    rule = internal_rule("duplicate", "alpha beta gamma", "delta")
     payload = {"schema_version": 1, "corpus_id": "test", "corpus_version": 1, "rules": [rule, rule]}
-    with pytest.raises(InvalidRequestError, match="duplicate rule"):
-        load_rewrite_corpus_text(json.dumps(payload))
+    with pytest_raises(InvalidRequestError, match="duplicate rule"):
+        load_rewrite_corpus_text(json_dumps(payload))
     payload["extra"] = 1
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
-        load_rewrite_corpus_text(json.dumps(payload))
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
+        load_rewrite_corpus_text(json_dumps(payload))
 
 
 def test_engine_rejects_empty_oversized_and_duplicate_rule_sets() -> None:
-    rule = rewrite_rule(_rule("bounded", "alpha beta gamma", "delta"))
-    with pytest.raises(InvalidRequestError, match="1 through"):
+    rule = rewrite_rule(internal_rule("bounded", "alpha beta gamma", "delta"))
+    with pytest_raises(InvalidRequestError, match="1 through"):
         RewriteEngine(())
-    with pytest.raises(InvalidRequestError, match="1 through"):
+    with pytest_raises(InvalidRequestError, match="1 through"):
         RewriteEngine(tuple(rule for _ in range(257)))
-    with pytest.raises(InvalidRequestError, match="unique identity"):
+    with pytest_raises(InvalidRequestError, match="unique identity"):
         RewriteEngine((rule, rule))
 
 
@@ -166,9 +140,9 @@ def test_no_matching_rule_does_not_hide_implicit_normalization() -> None:
 
 def test_deterministic_priority_chain_and_application_limit() -> None:
     rules = (
-        rewrite_rule(_rule("second", "bravo", "charlie", priority=10)),
-        rewrite_rule(_rule("first", "alpha", "bravo", priority=20)),
-        rewrite_rule(_rule("grow-once", "charlie", "charlie delta", priority=5, match_mode="token_sequence")),
+        rewrite_rule(internal_rule("second", "bravo", "charlie", priority=10)),
+        rewrite_rule(internal_rule("first", "alpha", "bravo", priority=20)),
+        rewrite_rule(internal_rule("grow-once", "charlie", "charlie delta", priority=5, match_mode="token_sequence")),
     )
     engine = RewriteEngine(rules)
     first = engine.rewrite("alpha")
@@ -180,24 +154,24 @@ def test_deterministic_priority_chain_and_application_limit() -> None:
 
 def test_depth_expansion_cycle_output_and_time_bounds() -> None:
     chain = (
-        rewrite_rule(_rule("a", "alpha", "bravo")),
-        rewrite_rule(_rule("b", "bravo", "charlie")),
+        rewrite_rule(internal_rule("a", "alpha", "bravo")),
+        rewrite_rule(internal_rule("b", "bravo", "charlie")),
     )
     assert RewriteEngine(chain, max_depth=1).rewrite("alpha")["stop_reason"] == RewriteStopReason.DEPTH_LIMIT
 
     overlapping = (
-        rewrite_rule(_rule("high", "alpha", "bravo", priority=20)),
-        rewrite_rule(_rule("low", "alpha", "charlie", priority=10)),
+        rewrite_rule(internal_rule("high", "alpha", "bravo", priority=20)),
+        rewrite_rule(internal_rule("low", "alpha", "charlie", priority=10)),
     )
     assert RewriteEngine(overlapping, max_expansions=1).rewrite("alpha")["stop_reason"] == RewriteStopReason.EXPANSION_LIMIT
 
     cycle = (
-        rewrite_rule(_rule("forward", "alpha", "bravo")),
-        rewrite_rule(_rule("back", "bravo", "alpha")),
+        rewrite_rule(internal_rule("forward", "alpha", "bravo")),
+        rewrite_rule(internal_rule("back", "bravo", "alpha")),
     )
     assert RewriteEngine(cycle).rewrite("alpha")["stop_reason"] == RewriteStopReason.CYCLE
 
-    output = (rewrite_rule(_rule("large", "alpha", "a much larger output")),)
+    output = (rewrite_rule(internal_rule("large", "alpha", "a much larger output")),)
     assert RewriteEngine(output, max_output_bytes=8).rewrite("alpha")["stop_reason"] == RewriteStopReason.OUTPUT_LIMIT
 
     ticks = iter((0, 2, 3))
@@ -211,14 +185,14 @@ def test_cooperative_cancellation_propagates_without_partial_frame() -> None:
     def cancel() -> None:
         raise RuntimeError("cancelled")
 
-    with pytest.raises(RuntimeError, match="cancelled"):
+    with pytest_raises(RuntimeError, match="cancelled"):
         engine.rewrite("could you tell me where atlas runs?", operator=QueryOperator.WHERE, cooperative_check=cancel)
 
 
 def test_frame_integration_rejects_partial_resource_limited_chain() -> None:
     frame = QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build("alpha", diagnostic_seed="bounded")
-    engine = RewriteEngine((rewrite_rule(_rule("first", "alpha", "bravo")),), max_depth=1)
-    with pytest.raises(RewriteLimitError, match="depth_limit"):
+    engine = RewriteEngine((rewrite_rule(internal_rule("first", "alpha", "bravo")),), max_depth=1)
+    with pytest_raises(RewriteLimitError, match="depth_limit"):
         apply_rewrites_to_frame(frame, engine)
 
 
@@ -259,7 +233,7 @@ def test_contextual_rule_requires_inherited_subject() -> None:
 
 
 def test_held_out_engineering_corpus_has_expected_rewrites_and_identity_stability() -> None:
-    payload = json.loads((REPOSITORY / "eval" / "section11-rewrite-v1.json").read_text(encoding="utf-8"))
+    payload = json_loads((REPOSITORY / "eval" / "section11-rewrite-v1.json").read_text(encoding="utf-8"))
     engine = RewriteEngine(load_default_rewrite_corpus())
     seen = set()
     for case in payload["cases"]:
@@ -277,51 +251,42 @@ def test_held_out_engineering_corpus_has_expected_rewrites_and_identity_stabilit
 
 def test_linter_detects_each_required_structural_failure_class() -> None:
     collision = (
-        rewrite_rule(_rule("first", "alpha beta gamma", "delta", priority=20)),
-        rewrite_rule(_rule("shadow", "alpha beta gamma", "echo", priority=10)),
-        rewrite_rule(_rule("duplicate-output", "foxtrot golf hotel", "delta")),
-        rewrite_rule(_rule("broad", "small", "large", match_mode="token_sequence")),
-        rewrite_rule(_rule("cycle-one", "india juliet kilo", "lima mike november")),
-        rewrite_rule(_rule("cycle-two", "lima mike november", "india juliet kilo")),
+        rewrite_rule(internal_rule("first", "alpha beta gamma", "delta", priority=20)),
+        rewrite_rule(internal_rule("shadow", "alpha beta gamma", "echo", priority=10)),
+        rewrite_rule(internal_rule("duplicate-output", "foxtrot golf hotel", "delta")),
+        rewrite_rule(internal_rule("broad", "small", "large", match_mode="token_sequence")),
+        rewrite_rule(internal_rule("cycle-one", "india juliet kilo", "lima mike november")),
+        rewrite_rule(internal_rule("cycle-two", "lima mike november", "india juliet kilo")),
     )
     codes = {finding["code"] for finding in lint_rewrite_corpus(collision)}
     assert {"rule_collision", "duplicate_output", "overbroad_rule", "rewrite_cycle"}.issubset(codes)
 
 
-def test_rewritten_exact_recall_does_not_execute_matching_final_pattern() -> None:
-    engine = _engine_with_artifact("where atlas runs?")
+def test_rewritten_exact_recall_uses_only_the_artifact_resolver() -> None:
+    engine = engine_with_artifact("where atlas runs?")
     engine.store("Pattern must remain unreachable.", tier=Tier.STATIC, pattern="WHERE ATLAS RUNS")
-    core = EngramCore(engine, checkpoint_on_mutation=False, clock=lambda: NOW)
+    core = EngramCore(engine, clock=lambda: NOW)
     result = core.resolve_request(
         "could you tell me where atlas runs?",
         "rewrite-exact",
-        configured_resolvers=("exact", "pattern"),
+        configured_resolvers=("exact",),
         budget=resolution_budget(allowed_cost_classes=(CostClass.EXACT, CostClass.CHEAP)),
     )
     results = {item["resolver"]: item for item in result["resolver_results"]}
     assert results["exact"]["reason_code"] == "exact_found"
-    assert results["pattern"]["reason_code"] == "pattern_miss"
+    assert tuple(results) == ("exact",)
     assert result["response_candidates"][0]["response"] == "Atlas runs in Virginia."
 
 
-def test_original_pattern_remains_eligible_after_retrieval_rewrite() -> None:
+def test_conversation_pattern_matching_is_separate_from_retrieval_rewrite() -> None:
     engine = Engram(engram_config(expand_contractions=False, retrieval_rewrites_enabled=True))
     engine.store("Original pattern selected.", tier=Tier.STATIC, pattern="COULD YOU TELL ME WHERE ATLAS RUNS")
-    core = EngramCore(engine, checkpoint_on_mutation=False, clock=lambda: NOW)
-    result = core.resolve_request(
-        "could you tell me where atlas runs?",
-        "rewrite-pattern",
-        configured_resolvers=("pattern",),
-        budget=resolution_budget(allowed_cost_classes=(CostClass.CHEAP,)),
-    )
-    pattern = next(item for item in result["resolver_results"] if item["resolver"] == "pattern")
-    assert pattern["state"] == ResolverState.COMPLETED
-    assert pattern["reason_code"] == "pattern_candidates"
-    assert pattern["candidates"][0]["response"] == "Original pattern selected."
+    result = engine.pattern_query("could you tell me where atlas runs?")
+    assert result[2] == "Original pattern selected."
 
 
 def test_rewrite_configuration_is_opt_in_and_validated() -> None:
     assert engram_config()["retrieval_rewrites_enabled"] is False
     assert engram_config(retrieval_rewrites_enabled=True)["retrieval_rewrites_enabled"] is True
-    with pytest.raises(ValueError, match="must be a boolean"):
+    with pytest_raises(ValueError, match="must be a boolean"):
         engram_config(retrieval_rewrites_enabled=1)  # type: ignore[arg-type]

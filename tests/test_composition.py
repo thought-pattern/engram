@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-import pytest
+from pytest import fail as pytest_fail, mark as pytest_mark, raises as pytest_raises
 
 from engram.composition import (
     composition_plan,
@@ -48,8 +48,8 @@ from engram.service import EngramCore
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
 
 
-def _canonical(canonical_id: str, label: str, object_type: ExpectedObjectType):
-    return canonical_resolution(
+def internal_canonical(canonical_id: str, label: str, object_type: ExpectedObjectType):
+    result = canonical_resolution(
         CanonicalResolutionStatus.SELECTED,
         canonical_id=canonical_id,
         primary_label=label,
@@ -58,23 +58,25 @@ def _canonical(canonical_id: str, label: str, object_type: ExpectedObjectType):
         candidate_ids=(canonical_id,),
         evidence=("test_identity",),
     )
+    return result
 
 
-def _plan(operator: GraphCompositionOperator = GraphCompositionOperator.LOOKUP, final=ExpectedObjectType.PLACE):
-    return linear_composition_plan(
-        _canonical("entity:microsoft", "Microsoft", ExpectedObjectType.ENTITY),
+def internal_plan(operator: GraphCompositionOperator = GraphCompositionOperator.LOOKUP, final=ExpectedObjectType.PLACE):
+    result = linear_composition_plan(
+        internal_canonical("entity:microsoft", "Microsoft", ExpectedObjectType.ENTITY),
         (
-            _canonical("predicate:founded-by", "founded by", ExpectedObjectType.PERSON),
-            _canonical("predicate:born-in", "born in", final),
+            internal_canonical("predicate:founded-by", "founded by", ExpectedObjectType.PERSON),
+            internal_canonical("predicate:born-in", "born in", final),
         ),
         operator,
         final,
         max_rows=32,
         max_candidates_per_step=4,
     )
+    return result
 
 
-def _relation(
+def internal_relation(
     proposition_id: str,
     subject_id: str,
     predicate_id: str,
@@ -85,7 +87,7 @@ def _relation(
     cardinality: PredicateCardinality = PredicateCardinality.SINGLE,
     trust_available: bool = True,
 ):
-    return relation_proposition_projection_from_graph_row(
+    result = relation_proposition_projection_from_graph_row(
         {
             "proposition_id": proposition_id,
             "subject_entity_id": subject_id,
@@ -118,9 +120,10 @@ def _relation(
             "predicate_cardinality": cardinality.value,
         }
     )
+    return result
 
 
-FOUNDER = _relation(
+FOUNDER = internal_relation(
     "proposition:microsoft-founder",
     "entity:microsoft",
     "predicate:founded-by",
@@ -128,7 +131,7 @@ FOUNDER = _relation(
     "Founder",
     ExpectedObjectType.PERSON,
 )
-BIRTHPLACE = _relation(
+BIRTHPLACE = internal_relation(
     "proposition:founder-born-in",
     "entity:founder",
     "predicate:born-in",
@@ -138,14 +141,15 @@ BIRTHPLACE = _relation(
 )
 
 
-def _frame():
-    return QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build(
+def internal_frame():
+    result = QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build(
         "Where was Microsoft's founder born?",
         scope_key(namespace="public"),
     )
+    return result
 
 
-def _current(item):
+def internal_current(item):
     values = dict(item["projection"])
     values.update(
         {
@@ -158,29 +162,31 @@ def _current(item):
             "vector_index_id_available": False,
         }
     )
-    return proposition_projection(**values)
+    result = proposition_projection(**values)
+    return result
 
 
-def _execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
-    selected_plan = plan or _plan()
+def execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
+    selected_plan = plan or internal_plan()
     rows = {
         ("entity:microsoft", "predicate:founded-by"): [FOUNDER],
         ("entity:founder", "predicate:born-in"): [BIRTHPLACE],
     }
     selected_query = query or (lambda subject, predicate, limit: rows.get((subject, predicate), [])[:limit])
-    frame = _frame()
+    frame = internal_frame()
     evaluator = PropositionEligibilityEvaluator()
-    current = {item["projection"]["proposition_id"]: _current(item) for item in current_items}
-    return execute_composition_plan(
+    current = {item["projection"]["proposition_id"]: internal_current(item) for item in current_items}
+    result = execute_composition_plan(
         selected_plan,
         selected_query,
         lambda projection: evaluator.evaluate(projection, frame),
         lambda projection: evaluator.revalidate(projection, frame, lambda proposition_id: (current[proposition_id],)),
     )
+    return result
 
 
 def test_plan_codec_carries_only_fixed_predicates_bindings_and_non_time_limits() -> None:
-    plan = _plan()
+    plan = internal_plan()
     serialized = composition_plan_to_dict(plan)
 
     assert composition_plan_from_json(composition_plan_to_json(plan)) == plan
@@ -188,15 +194,15 @@ def test_plan_codec_carries_only_fixed_predicates_bindings_and_non_time_limits()
     assert [step["subject_binding"] for step in plan["steps"]] == ["$root", "$hop1"]
     assert "timeout" not in serialized
     assert "cypher" not in serialized
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         composition_plan_to_json({**plan, "cypher": "MATCH (n) RETURN n"})
 
 
 def test_plan_rejects_cartesian_and_cyclic_bindings() -> None:
-    steps = list(_plan()["steps"])
+    steps = list(internal_plan()["steps"])
     cartesian = dict(steps[1])
     cartesian["subject_binding"] = "$unbound"
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         composition_plan(
             GraphCompositionOperator.LOOKUP,
             "entity:microsoft",
@@ -207,7 +213,7 @@ def test_plan_rejects_cartesian_and_cyclic_bindings() -> None:
 
     cycle = dict(steps[1])
     cycle["object_binding"] = "$root"
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         composition_plan(
             GraphCompositionOperator.LOOKUP,
             "entity:microsoft",
@@ -222,12 +228,12 @@ def test_compiler_preserves_a_repeated_predicate_at_two_distinct_positions() -> 
         "Who is Sarah's married partner married to?",
         scope_key(namespace="public"),
     )
-    root = _canonical("entity:sarah", "Sarah", ExpectedObjectType.PERSON)
+    root = internal_canonical("entity:sarah", "Sarah", ExpectedObjectType.PERSON)
 
     predicates = resolve_composition_predicates(
         frame,
         root,
-        lambda surface, **_kwargs: (
+        lambda surface, **internal_kwargs: (
             [
                 {
                     "canonical_id": "predicate:married-to",
@@ -277,7 +283,7 @@ def test_boolean_plan_requires_explicit_bounded_branches() -> None:
     )
 
     assert len({step["branch"] for step in plan["steps"]}) == 2
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         composition_plan(
             GraphCompositionOperator.AND,
             "entity:microsoft",
@@ -308,7 +314,7 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
         "$result",
         ExpectedObjectType.PLACE,
     )
-    location = _relation(
+    location = internal_relation(
         "proposition:microsoft-location",
         "entity:microsoft",
         "predicate:located-in",
@@ -330,11 +336,12 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
             "$result",
             max_rows=16,
         )
-        return _execute(
+        result = execute(
             plan=plan,
             query=lambda subject, predicate, limit: selected_rows.get((subject, predicate), [])[:limit],
             current_items=(FOUNDER, location),
         )
+        return result
 
     conjunction = run(GraphCompositionOperator.AND)
     assert (conjunction["truth_available"], conjunction["truth_value"], conjunction["direct_result"]) == (
@@ -350,7 +357,7 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
     assert (disjunction["truth_available"], disjunction["truth_value"]) == (True, True)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("operator", "expected"),
     (
         (GraphCompositionOperator.COUNT, "2"),
@@ -361,7 +368,7 @@ def test_boolean_execution_uses_complete_branches_without_guessing() -> None:
 )
 def test_aggregates_require_complete_typed_distinct_results(operator, expected) -> None:
     values = (
-        _relation(
+        internal_relation(
             "proposition:founder-score-10",
             "entity:founder",
             "predicate:score",
@@ -370,7 +377,7 @@ def test_aggregates_require_complete_typed_distinct_results(operator, expected) 
             ExpectedObjectType.NUMBER,
             cardinality=PredicateCardinality.MULTI,
         ),
-        _relation(
+        internal_relation(
             "proposition:founder-score-2",
             "entity:founder",
             "predicate:score",
@@ -381,10 +388,10 @@ def test_aggregates_require_complete_typed_distinct_results(operator, expected) 
         ),
     )
     plan = linear_composition_plan(
-        _canonical("entity:microsoft", "Microsoft", ExpectedObjectType.ENTITY),
+        internal_canonical("entity:microsoft", "Microsoft", ExpectedObjectType.ENTITY),
         (
-            _canonical("predicate:founded-by", "founded by", ExpectedObjectType.PERSON),
-            _canonical("predicate:score", "score", ExpectedObjectType.NUMBER),
+            internal_canonical("predicate:founded-by", "founded by", ExpectedObjectType.PERSON),
+            internal_canonical("predicate:score", "score", ExpectedObjectType.NUMBER),
         ),
         operator,
         ExpectedObjectType.NUMBER,
@@ -395,7 +402,7 @@ def test_aggregates_require_complete_typed_distinct_results(operator, expected) 
         ("entity:microsoft", "predicate:founded-by"): [FOUNDER],
         ("entity:founder", "predicate:score"): list(values),
     }
-    result = _execute(
+    result = execute(
         plan=plan,
         query=lambda subject, predicate, limit: rows.get((subject, predicate), [])[:limit],
         current_items=(FOUNDER, *values),
@@ -407,7 +414,7 @@ def test_aggregates_require_complete_typed_distinct_results(operator, expected) 
 
 
 def test_two_hop_execution_preserves_order_and_phrases_one_complete_path() -> None:
-    execution = _execute()
+    execution = execute()
 
     assert execution["direct_result"] is True
     assert execution["graph_rows"] == 4
@@ -416,11 +423,11 @@ def test_two_hop_execution_preserves_order_and_phrases_one_complete_path() -> No
         "proposition:microsoft-founder",
         "proposition:founder-born-in",
     )
-    assert phrase_composition_result(_plan(), execution) == "Microsoft — founded by → born in: London."
+    assert phrase_composition_result(internal_plan(), execution) == "Microsoft — founded by → born in: London."
 
 
 def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() -> None:
-    cycle = _relation(
+    cycle = internal_relation(
         "proposition:founder-born-in",
         "entity:founder",
         "predicate:born-in",
@@ -429,19 +436,22 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
         ExpectedObjectType.PLACE,
     )
 
-    def cycle_query(subject, predicate, _limit):
-        return [FOUNDER] if subject == "entity:microsoft" else [cycle] if predicate == "predicate:born-in" else []
+    def cycle_query(subject, predicate, internal_limit):
+        assert internal_limit > 0
+        result = [FOUNDER] if subject == "entity:microsoft" else [cycle] if predicate == "predicate:born-in" else []
+        return result
 
-    cycle_result = _execute(query=cycle_query, current_items=(FOUNDER, cycle))
+    cycle_result = execute(query=cycle_query, current_items=(FOUNDER, cycle))
     assert cycle_result["direct_result"] is False
     assert CompositionReason.CYCLE in cycle_result["reasons"]
 
-    def failed_query(subject, _predicate, _limit):
+    def failed_query(subject, internal_predicate, internal_limit):
+        del internal_predicate, internal_limit
         if subject == "entity:founder":
             raise RuntimeError("graph unavailable")
         return [FOUNDER]
 
-    failed = _execute(query=failed_query)
+    failed = execute(query=failed_query)
     assert failed["complete_paths"] == ()
     assert len(failed["partial_paths"]) == 1
     assert CompositionReason.DEPENDENCY_FAILED in failed["reasons"]
@@ -449,7 +459,7 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
 
 def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_partial_rows() -> None:
     extras = [
-        _relation(
+        internal_relation(
             f"proposition:founder-{index}",
             "entity:microsoft",
             "predicate:founded-by",
@@ -460,7 +470,12 @@ def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_parti
         for index in range(5)
     ]
 
-    result = _execute(query=lambda _subject, _predicate, limit: extras[:limit])
+    def saturated_query(internal_subject, internal_predicate, limit):
+        del internal_subject, internal_predicate
+        result = extras[:limit]
+        return result
+
+    result = execute(query=saturated_query)
 
     assert result["truncated"] is True
     assert result["direct_result"] is False
@@ -469,7 +484,7 @@ def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_parti
 
 
 def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
-    unknown = _relation(
+    unknown = internal_relation(
         "proposition:founder-born-in",
         "entity:founder",
         "predicate:born-in",
@@ -482,8 +497,8 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
         ("entity:microsoft", "predicate:founded-by"): [FOUNDER],
         ("entity:founder", "predicate:born-in"): [unknown],
     }
-    result = _execute(
-        plan=_plan(GraphCompositionOperator.COUNT),
+    result = execute(
+        plan=internal_plan(GraphCompositionOperator.COUNT),
         query=lambda subject, predicate, limit: rows.get((subject, predicate), [])[:limit],
     )
 
@@ -491,7 +506,7 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
     assert result["direct_result"] is False
     assert CompositionReason.CARDINALITY_UNKNOWN in result["reasons"]
 
-    second_founder = _relation(
+    second_founder = internal_relation(
         "proposition:microsoft-founder-2",
         "entity:microsoft",
         "predicate:founded-by",
@@ -500,7 +515,7 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
         ExpectedObjectType.PERSON,
         cardinality=PredicateCardinality.MULTI,
     )
-    same_place = _relation(
+    same_place = internal_relation(
         "proposition:founder-2-born-in",
         "entity:founder-2",
         "predicate:born-in",
@@ -513,12 +528,12 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
         ("entity:founder", "predicate:born-in"): [BIRTHPLACE],
         ("entity:founder-2", "predicate:born-in"): [same_place],
     }
-    duplicate_count = _execute(
-        plan=_plan(GraphCompositionOperator.COUNT),
+    duplicate_count = execute(
+        plan=internal_plan(GraphCompositionOperator.COUNT),
         query=lambda subject, predicate, limit: duplicate_rows.get((subject, predicate), [])[:limit],
         current_items=(FOUNDER, second_founder, BIRTHPLACE, same_place),
     )
-    deduplicated_lookup = _execute(
+    deduplicated_lookup = execute(
         query=lambda subject, predicate, limit: duplicate_rows.get((subject, predicate), [])[:limit],
         current_items=(FOUNDER, second_founder, BIRTHPLACE, same_place),
     )
@@ -530,14 +545,14 @@ def test_count_refuses_unknown_or_duplicate_cardinality() -> None:
 
 
 def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -> None:
-    execution = _execute()
-    frame = _frame()
+    execution = execute()
+    frame = internal_frame()
     evaluator = PropositionEligibilityEvaluator()
     terminal = execution["complete_paths"][0][-1]
     decision = evaluator.revalidate(
         terminal["proposition"]["projection"],
         frame,
-        lambda _proposition_id: (_current(BIRTHPLACE),),
+        lambda internal_proposition_id: (internal_current(BIRTHPLACE),),
     )
     base = proposition_evidence_record(terminal["proposition"]["projection"], decision, frame, "structured_graph")
     steps = tuple(
@@ -564,23 +579,23 @@ def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -
         "proposition:microsoft-founder",
         "proposition:founder-born-in",
     ]
-    with pytest.raises(InvalidRequestError, match="ordered"):
+    with pytest_raises(InvalidRequestError, match="ordered"):
         proposition_evidence_record_with_changes(base, {"schema_version": 2, "path": tuple(reversed(steps))})
 
 
 def test_cooperative_cancellation_propagates_before_graph_work() -> None:
-    with pytest.raises(RuntimeError, match="cancelled"):
+    with pytest_raises(RuntimeError, match="cancelled"):
         execute_composition_plan(
-            _plan(),
-            lambda *_args: pytest.fail("query must not run"),
-            lambda _projection: pytest.fail("evaluate must not run"),
-            lambda _projection: pytest.fail("revalidate must not run"),
+            internal_plan(),
+            lambda *internal_args: pytest_fail("query must not run"),
+            lambda internal_projection: pytest_fail("evaluate must not run"),
+            lambda internal_projection: pytest_fail("revalidate must not run"),
             lambda: (_ for _ in ()).throw(RuntimeError("cancelled")),
         )
 
 
 def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence(monkeypatch) -> None:
-    founder = _relation(
+    founder = internal_relation(
         "proposition:microsoft-founder",
         "entity:microsoft",
         "predicate:founded-by",
@@ -608,7 +623,8 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
                 "edge_surfaces": (),
                 "entity_type": ExpectedObjectType.ENTITY,
             }
-            return [row][:limit] if surface.casefold() == "microsoft" else []
+            result = [row][:limit] if surface.casefold() == "microsoft" else []
+            return result
 
         def canonical_predicate_matches(self, surface, *, limit):
             normalized = surface.casefold()
@@ -627,7 +643,8 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
                     "synonyms": ("born",),
                     "object_type": ExpectedObjectType.PLACE,
                 }
-            return [row][:limit] if row else []
+            result = [row][:limit] if row else []
+            return result
 
         def relation_one_hop_proposition_projections(
             self,
@@ -638,20 +655,22 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
             include_historical=False,
         ):
             self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
-            return self.rows.get((subject_entity_id, predicate_id), [])[:limit]
+            result = self.rows.get((subject_entity_id, predicate_id), [])[:limit]
+            return result
 
         def proposition_projection_by_id(self, proposition_id):
-            return [
-                _current(item)
+            result = [
+                internal_current(item)
                 for items in self.rows.values()
                 for item in items
                 if item["projection"]["proposition_id"] == proposition_id
             ]
+            return result
 
     graph = CompositionGraph()
     engine = Engram()
-    engine._graph_client = graph
-    monkeypatch.setattr("engram.relation._named_entity_surfaces", lambda _text: ("Microsoft",))
+    engine.internal_graph_client = graph
+    monkeypatch.setattr("engram.relation.named_entity_surfaces", lambda internal_text: ("Microsoft",))
     frame = QueryFrameBuilder(engine, lambda: 1, lambda: NOW).build(
         "Where was Microsoft's founder born?",
         scope_key(namespace="public"),
@@ -686,7 +705,7 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
         "proposition:microsoft-founder",
         "proposition:founder-born-in",
     )
-    assert [(subject, predicate) for subject, predicate, _limit, _historical in graph.one_hop_calls] == [
+    assert [(subject, predicate) for subject, predicate, internal_limit, historical in graph.one_hop_calls] == [
         ("entity:microsoft", "predicate:founded-by"),
         ("entity:founder", "predicate:born-in"),
     ]
@@ -698,7 +717,7 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     assert exhausted["consumption"]["graph_rows"] <= constrained["max_graph_rows"]
     assert exhausted["consumption"]["exhausted_dimensions"] == ("graph_rows",)
 
-    core_result = EngramCore(engine, checkpoint_on_mutation=False).resolve_request(
+    core_result = EngramCore(engine).resolve_request(
         "Where was Microsoft's founder born?",
         "composition-core-1",
         user_id="Sarah",

@@ -1,12 +1,12 @@
 """Tests for the tiered response pipeline."""
 
-from engram import pipeline, sessions
+from engram import pipeline
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
 
 
-def _counting_llm(response: str = "Generated answer."):
+def counting_llm(response: str = "Generated answer."):
     """A stub LLM that records its calls; returns (fn, calls list)."""
     calls: list[tuple[str, list[str]]] = []
 
@@ -21,7 +21,7 @@ def _counting_llm(response: str = "Generated answer."):
 def test_pattern_tier_pattern_match_answers_first() -> None:
     engram = Engram()
     engram.store("Support is available 9 to 5.", pattern="SUPPORT HOURS", tier=Tier.STATIC)
-    llm_fn, calls = _counting_llm()
+    llm_fn, calls = counting_llm()
 
     result = pipeline.respond(engram, "support hours", llm_fn=llm_fn)
 
@@ -32,10 +32,10 @@ def test_pattern_tier_pattern_match_answers_first() -> None:
 
 def test_pattern_tier_configured_fallback_does_not_preempt() -> None:
     # The store-level fallback text must not stop the pipeline from
-    # reaching the cache and LLM tiers.
+    # reaching conversational retrieval and the LLM.
     config = engram_config(fallback_response="Tell me more.")
     engram = Engram(config=config)
-    llm_fn, calls = _counting_llm()
+    llm_fn, calls = counting_llm()
 
     result = pipeline.respond(engram, "something entirely new", llm_fn=llm_fn)
 
@@ -43,14 +43,14 @@ def test_pattern_tier_configured_fallback_does_not_preempt() -> None:
     assert len(calls) == 1
 
 
-def test_cache_tier_confident_match_answers_without_llm() -> None:
+def test_statement_tier_confident_match_answers_without_llm() -> None:
     engram = Engram()
     stmt_id = engram.store("Paris is the capital of France.")
-    llm_fn, calls = _counting_llm()
+    llm_fn, calls = counting_llm()
 
     result = pipeline.respond(engram, "paris capital france", llm_fn=llm_fn)
 
-    assert result["source"] == "cache"
+    assert result["source"] == "statement"
     assert result["response"] == "Paris is the capital of France."
     assert result["score"] >= 0.7
     assert calls == []
@@ -58,10 +58,10 @@ def test_cache_tier_confident_match_answers_without_llm() -> None:
     assert engram.get_statement(stmt_id)["hit_count"] == 1
 
 
-def test_cache_tier_weak_match_goes_to_llm_with_context() -> None:
+def test_statement_tier_weak_match_goes_to_llm_with_context() -> None:
     engram = Engram()
     engram.store("Paris is the capital of France.")
-    llm_fn, calls = _counting_llm()
+    llm_fn, calls = counting_llm()
 
     # Only partial keyword overlap: below the confidence threshold.
     result = pipeline.respond(engram, "france pastries and wine culture", llm_fn=llm_fn)
@@ -72,94 +72,27 @@ def test_cache_tier_weak_match_goes_to_llm_with_context() -> None:
     assert "Paris is the capital of France." in context_statements
 
 
-def test_llm_tier_llm_response_is_learned_and_cached_next_time() -> None:
+def test_llm_tier_does_not_store_generated_responses_as_statements() -> None:
     engram = Engram()
-    llm_fn, calls = _counting_llm("The boiling point is 100 Celsius.")
+    llm_fn, calls = counting_llm("The boiling point is 100 Celsius.")
 
     first = pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn)
     second = pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn)
 
     assert first["source"] == "llm"
-    assert second["source"] == "cache"
-    assert second["response"] == "The boiling point is 100 Celsius."
-    assert len(calls) == 1  # the LLM was consulted exactly once
-
-
-def test_llm_tier_learn_false_skips_caching() -> None:
-    engram = Engram()
-    llm_fn, calls = _counting_llm()
-
-    pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn, learn=False)
-    result = pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn, learn=False)
-
-    assert result["source"] == "llm"
     assert len(calls) == 2
+    assert second["source"] == "llm"
+    assert engram.statements == []
 
 
 def test_llm_tier_llm_updates_session_context() -> None:
     engram = Engram()
-    llm_fn, calls = _counting_llm("Paris is lovely in spring.")
+    llm_fn, calls = counting_llm("Paris is lovely in spring.")
 
-    pipeline.respond(engram, "tell me about paris", session_id="user1", llm_fn=llm_fn)
+    pipeline.respond(engram, "tell me about paris", context_id="user1", llm_fn=llm_fn)
 
     session = engram.sessions["user1"]
     assert session["previous_response"] == "Paris is lovely in spring."
-
-
-def test_llm_tier_llm_response_has_non_user_provenance() -> None:
-    engram = Engram()
-    llm_fn, _ = _counting_llm("A generated answer.")
-
-    pipeline.chat(engram, "a novel question", user_id="alice", llm_fn=llm_fn)
-
-    stmt = next(s for s in engram.statements if s["text"] == "A generated answer.")
-    assert stmt["introduced_by_user_id"] == ""
-    assert stmt["source_label"] == "llm"
-
-
-def test_llm_tier_contextual_cache_key_does_not_leak_to_fresh_session() -> None:
-    engram = Engram()
-    sessions.create_session(engram, "paris")
-    sessions.update_session_context(
-        engram,
-        "paris",
-        "Paris is the capital of France.",
-    )
-    paris_llm, _ = _counting_llm("Paris has about 2.1 million residents.")
-
-    first = pipeline.respond(
-        engram,
-        "What is its population?",
-        session_id="paris",
-        llm_fn=paris_llm,
-    )
-
-    fresh_llm, fresh_calls = _counting_llm("Which place do you mean?")
-    fresh = pipeline.respond(
-        engram,
-        "What is its population?",
-        session_id="fresh",
-        llm_fn=fresh_llm,
-    )
-
-    assert first["source"] == "llm"
-    assert fresh["source"] == "llm"
-    assert fresh["response"] == "Which place do you mean?"
-    assert len(fresh_calls) == 1
-
-    sessions.create_session(engram, "same-context")
-    sessions.update_session_context(
-        engram,
-        "same-context",
-        "Paris is the capital of France.",
-    )
-    same = pipeline.respond(
-        engram,
-        "What is its population?",
-        session_id="same-context",
-    )
-    assert same["source"] == "cache"
-    assert same["response"] == "Paris has about 2.1 million residents."
 
 
 def test_none_tier_no_answer_returns_retrieval() -> None:
@@ -231,14 +164,14 @@ def test_question_routing_question_hitting_catchall_consults_retrieval() -> None
 
     result = pipeline.respond(engram, "python programming language?")
 
-    assert result["source"] == "cache"
+    assert result["source"] == "statement"
     assert result["response"] == "Python is a versatile programming language."
 
 
 def test_question_routing_question_prefers_llm_over_shrug() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
-    llm_fn, calls = _counting_llm("A deep answer.")
+    llm_fn, calls = counting_llm("A deep answer.")
 
     result = pipeline.respond(engram, "What is the meaning of life?", llm_fn=llm_fn)
 
@@ -258,7 +191,7 @@ def test_question_routing_question_without_answer_gets_deferred_shrug() -> None:
 
 def test_graph_backed_pattern_tier_reports_graph_provenance(monkeypatch) -> None:
     engram = Engram()
-    monkeypatch.setattr(engram, "pattern_query", lambda *_args, **_kwargs: ({}, [], "Sarah is married to Abraham."))
+    monkeypatch.setattr(engram, "pattern_query", lambda *internal_args, **internal_kwargs: ({}, [], "Sarah is married to Abraham."))
 
     result = pipeline.respond(engram, "Who is Sarah married to?")
 
@@ -270,7 +203,7 @@ def test_question_routing_statement_hitting_catchall_answers_immediately() -> No
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
     engram.store("Python is a versatile programming language.")
-    llm_fn, calls = _counting_llm()
+    llm_fn, calls = counting_llm()
 
     result = pipeline.respond(engram, "i enjoy the python programming language", llm_fn=llm_fn)
 
@@ -300,13 +233,13 @@ def test_pipeline_result_detail_pattern_tier_carries_pattern_and_captures() -> N
     assert result["captured"] == ["alice"]
 
 
-def test_pipeline_result_detail_cache_tier_has_empty_pattern_fields() -> None:
+def test_pipeline_result_detail_statement_tier_has_empty_pattern_fields() -> None:
     engram = Engram()
     engram.store("Paris is the capital of France.")
 
     result = pipeline.respond(engram, "paris capital france")
 
-    assert result["source"] == "cache"
+    assert result["source"] == "statement"
     assert result["pattern"] == ""
     assert result["captured"] == []
 
@@ -322,14 +255,14 @@ def test_conversational_composition_chat_uses_final_matched_sentence_instead_of_
     assert result["pattern"] == "SECOND"
 
 
-def test_conversational_composition_low_level_pattern_query_keeps_legacy_combination() -> None:
+def test_conversational_composition_pattern_query_selects_one_turn_candidate() -> None:
     engram = Engram()
     engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
     engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
 
     result = engram.pattern_query("First. Second.")
 
-    assert result[2] == "First reply. Second reply."
+    assert result[2] == "Second reply."
 
 
 def test_conversational_composition_repetition_feedback_gets_an_acknowledgment_not_another_probe() -> None:
@@ -347,14 +280,14 @@ def test_conversational_composition_repetition_feedback_gets_an_acknowledgment_n
     assert result["response"] != "Why do you say that?"
 
 
-def test_deferred_shrug_retraction_phantom_shrug_removed_when_cache_answers() -> None:
+def test_deferred_shrug_retraction_phantom_shrug_removed_when_statement_answers() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
     engram.store("Python is a versatile programming language.")
 
-    result = pipeline.respond(engram, "python programming language?", session_id="s1")
+    result = pipeline.respond(engram, "python programming language?", context_id="s1")
 
-    assert result["source"] == "cache"
+    assert result["source"] == "statement"
     session = engram.sessions["s1"]
     # Only the answer the user actually saw is in the history
     assert session["response_history"] == ["Python is a versatile programming language."]
@@ -365,27 +298,27 @@ def test_deferred_shrug_retraction_shrug_stays_in_history_when_actually_shown() 
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
 
-    result = pipeline.respond(engram, "What is the meaning of life?", session_id="s2")
+    result = pipeline.respond(engram, "What is the meaning of life?", context_id="s2")
 
     assert result["source"] == "pattern"
     assert engram.sessions["s2"]["response_history"] == ["Tell me more."]
 
 
 def test_content_keyword_gate_question_words_alone_are_no_evidence() -> None:
-    """A keyword set of only question words must not clear the cache bar."""
+    """A keyword set of only question words must not clear the statement bar."""
     engram = Engram()
     engram.store("Alright!", pattern="WHY NOT", tier=Tier.STATIC)
 
     result = pipeline.respond(engram, "why why why why why")
 
-    assert result["source"] != "cache"
+    assert result["source"] != "statement"
 
 
-def test_content_keyword_gate_single_content_keyword_still_caches() -> None:
+def test_content_keyword_gate_single_content_keyword_still_retrieves_statement() -> None:
     engram = Engram()
-    engram.learn_from_response("boiling point of water", "It boils at 100 C.")
+    engram.store("It boils at 100 C.", keyword_source="boiling point of water")
 
     result = pipeline.respond(engram, "water?")
 
-    assert result["source"] == "cache"
+    assert result["source"] == "statement"
     assert result["response"] == "It boils at 100 C."

@@ -31,8 +31,8 @@ def normalize_user_id(user_id: str = "") -> str:
     return user_id
 
 
-def create_session(engram, session_id: str = "", metadata=()) -> str:
-    """Create a new session.
+def start_session(engram, session_id: str = "", metadata=()) -> str:
+    """Start a new session and return its identifier.
 
     Args:
         engram: Engram instance.
@@ -48,17 +48,18 @@ def create_session(engram, session_id: str = "", metadata=()) -> str:
 
     with engram.session_lock:
         # Check session limit
-        if len(engram.sessions) >= engram.config["max_sessions"]:
-            if engram.config["session_overflow"] == SessionOverflow.REJECT:
+        if len(engram.sessions) >= engram.config.get("max_sessions", 0):
+            if engram.config.get("session_overflow", SessionOverflow.REJECT) == SessionOverflow.REJECT:
                 raise SessionLimitExceededError("Maximum sessions reached")
-            elif engram.config["session_overflow"] == SessionOverflow.EXPIRE_OLDEST:
-                _expire_oldest_session(engram)
+            elif engram.config.get("session_overflow", SessionOverflow.REJECT) == SessionOverflow.EXPIRE_OLDEST:
+                expire_oldest_session(engram)
             else:  # LRU
-                _expire_lru_session(engram)
+                expire_lru_session(engram)
 
         sess = session(session_id=session_id, metadata=metadata)
-        engram.sessions[sess["session_id"]] = sess
-        result = sess["session_id"]
+        identifier = sess.get("session_id", "")
+        engram.sessions[identifier] = sess
+        result = identifier
         return result
 
 
@@ -76,7 +77,7 @@ def get_session(engram, session_id: str, create_if_missing: bool = True):
     with engram.session_lock:
         session = engram.sessions.get(session_id, {})
         if not session and create_if_missing:
-            create_session(engram, session_id=session_id)
+            start_session(engram, session_id=session_id)
             session = engram.sessions.get(session_id, {})
         return session
 
@@ -130,14 +131,14 @@ def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:
         Number of sessions removed.
     """
     if not inactive_threshold:
-        inactive_threshold = timedelta(seconds=engram.config["session_ttl_seconds"])
+        inactive_threshold = timedelta(seconds=engram.config.get("session_ttl_seconds", 0))
 
     cutoff = datetime.now(UTC) - inactive_threshold
     expired_ids: list[str] = []
 
     with engram.session_lock:
         for sid, session in engram.sessions.items():
-            if session["last_active"] < cutoff:
+            if session.get("last_active", EARLIEST_UTC) < cutoff:
                 expired_ids.append(sid)
         for sid in expired_ids:
             del engram.sessions[sid]
@@ -157,27 +158,31 @@ def list_sessions(engram, active_since: datetime = EARLIEST_UTC) -> list:
         List of matching sessions.
     """
     with engram.session_lock:
-        filtered = [s for s in engram.sessions.values() if s["last_active"] >= active_since]
+        filtered = [s for s in engram.sessions.values() if s.get("last_active", EARLIEST_UTC) >= active_since]
         return filtered
 
 
-def _expire_oldest_session(engram) -> None:
+def expire_oldest_session(engram) -> bool:
     """Remove the oldest session by creation time.
 
     Used when session limit is reached and overflow policy is EXPIRE_OLDEST.
     """
     if not engram.sessions:
-        return
-    oldest = min(engram.sessions.values(), key=lambda s: s["created_at"])
-    del engram.sessions[oldest["session_id"]]
+        return False
+    oldest = min(engram.sessions.values(), key=lambda s: s.get("created_at", EARLIEST_UTC))
+    identifier = oldest.get("session_id", "")
+    del engram.sessions[identifier]
+    return True
 
 
-def _expire_lru_session(engram) -> None:
+def expire_lru_session(engram) -> bool:
     """Remove the least recently used session.
 
     Used when session limit is reached and overflow policy is LRU.
     """
     if not engram.sessions:
-        return
-    lru = min(engram.sessions.values(), key=lambda s: s["last_active"])
-    del engram.sessions[lru["session_id"]]
+        return False
+    lru = min(engram.sessions.values(), key=lambda s: s.get("last_active", EARLIEST_UTC))
+    identifier = lru.get("session_id", "")
+    del engram.sessions[identifier]
+    return True

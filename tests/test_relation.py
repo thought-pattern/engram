@@ -2,19 +2,15 @@
 
 from datetime import UTC, datetime
 
-import pytest
+from pytest import fail as pytest_fail, raises as pytest_raises
 
 from engram.constants import PROPOSITION_PROJECTION_FIELDS, CanonicalResolutionStatus, ExpectedObjectType, RelationPlanTemplate
 from engram.contextual import enrich_query_frame
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import (
-    CanonicalEntityMatch,
-    CanonicalPredicateMatch,
     MemGraphConnection,
-    PropositionProjection,
     PropositionProjectionQuery,
-    RelationPropositionProjection,
     proposition_projection,
     relation_proposition_projection_from_graph_row,
 )
@@ -34,7 +30,7 @@ NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
 
 
-def _proposition_row(proposition_id: str = "proposition:ada-birthplace", object_id: str = "entity:london") -> dict[str, object]:
+def proposition_row(proposition_id: str = "proposition:ada-birthplace", object_id: str = "entity:london") -> dict[str, object]:
     return {
         "proposition_id": proposition_id,
         "subject_entity_id": "entity:ada-lovelace",
@@ -65,24 +61,25 @@ def _proposition_row(proposition_id: str = "proposition:ada-birthplace", object_
     }
 
 
-def _relation_result(
+def internal_relation_result(
     proposition_id: str = "proposition:ada-birthplace",
     object_id: str = "entity:london",
     object_label: str = "London",
     object_type: str = "PLACE",
     predicate_cardinality: str = "SINGLE",
-) -> RelationPropositionProjection:
+) -> dict:
     row = {
-        **_proposition_row(proposition_id, object_id),
+        **proposition_row(proposition_id, object_id),
         "object_label": object_label,
         "object_type": object_type,
         "predicate_cardinality": predicate_cardinality,
     }
-    return relation_proposition_projection_from_graph_row(row)
+    result = relation_proposition_projection_from_graph_row(row)
+    return result
 
 
-def _current(result: RelationPropositionProjection) -> PropositionProjection:
-    values = dict(result["projection"])
+def internal_current(result: dict) -> dict:
+    values = dict(result.get("projection", {}))
     values.update(
         {
             "projection_id": PropositionProjectionQuery.BY_ID_V1,
@@ -94,22 +91,24 @@ def _current(result: RelationPropositionProjection) -> PropositionProjection:
             "vector_index_id_available": False,
         }
     )
-    return proposition_projection(**values)
+    result = proposition_projection(**values)
+    return result
 
 
-def _frame(engine: Engram, text: str):
+def internal_frame(engine: Engram, text: str):
     budget = capture_resolution_budget(lambda: START_NS)
     base = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         text,
         scope_key(namespace="tenant-a"),
         budget=budget,
     )
-    return enrich_query_frame(base, current_turn=1)
+    result = enrich_query_frame(base, current_turn=1)
+    return result
 
 
-def _lease(frame):
+def internal_lease(frame):
     budget = frame["budget"]
-    return build_resolver_budget(
+    result = build_resolver_budget(
         max_candidates=budget["max_candidates"],
         max_graph_rows=budget["max_graph_rows"],
         max_vector_results=budget["max_vector_results"],
@@ -119,13 +118,14 @@ def _lease(frame):
         max_diagnostic_bytes=budget["max_diagnostic_bytes"],
         max_working_memory_bytes=budget["max_working_memory_bytes"],
     )
+    return result
 
 
-def _entity_match(
+def internal_entity_match(
     canonical_id: str = "entity:ada-lovelace",
     label: str = "Ada Lovelace",
-) -> CanonicalEntityMatch:
-    result: CanonicalEntityMatch = {
+) -> dict:
+    result: dict = {
         "canonical_id": canonical_id,
         "primary_label": label,
         "aliases": ("Ada",),
@@ -135,12 +135,12 @@ def _entity_match(
     return result
 
 
-def _predicate_match(
+def predicate_match(
     canonical_id: str = "predicate:birth-place",
     label: str = "birth place",
     object_type: ExpectedObjectType = ExpectedObjectType.PLACE,
-) -> CanonicalPredicateMatch:
-    result: CanonicalPredicateMatch = {
+) -> dict:
+    result: dict = {
         "canonical_id": canonical_id,
         "primary_label": label,
         "synonyms": ("born", "born in"),
@@ -152,22 +152,26 @@ def _predicate_match(
 class RelationGraph:
     available = True
 
-    def __init__(self, results: tuple[RelationPropositionProjection, ...] = ()) -> None:
-        self.results = list(results or (_relation_result(),))
+    def __init__(self, results: tuple[dict, ...] = ()) -> None:
+        self.results = list(results or (internal_relation_result(),))
         self.one_hop_calls: list[tuple[str, str, int, bool]] = []
 
     def canonical_entity_matches(self, surface, *, limit):
-        return [_entity_match()][:limit] if surface.casefold() in {"ada lovelace", "ada"} else []
+        result = [internal_entity_match()][:limit] if surface.casefold() in {"ada lovelace", "ada"} else []
+        return result
 
     def canonical_predicate_matches(self, surface, *, limit):
-        return [_predicate_match()][:limit] if surface.casefold() in {"born", "bear", "born in"} else []
+        result = [predicate_match()][:limit] if surface.casefold() in {"born", "bear", "born in"} else []
+        return result
 
     def relation_one_hop_proposition_projections(self, subject_entity_id, predicate_id, *, limit, include_historical=False):
         self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
-        return self.results[:limit]
+        result = self.results[:limit]
+        return result
 
     def proposition_projection_by_id(self, proposition_id):
-        return [_current(result) for result in self.results if result["projection"]["proposition_id"] == proposition_id]
+        result = [internal_current(result) for result in self.results if result["projection"]["proposition_id"] == proposition_id]
+        return result
 
 
 class ChangingRelationGraph(RelationGraph):
@@ -182,18 +186,19 @@ class ChangingRelationGraph(RelationGraph):
             return rows
         values = dict(rows[0])
         values["object_entity_id"] = "entity:changed"
-        return [proposition_projection(**values)]
+        result = [proposition_projection(**values)]
+        return result
 
 
 def test_subject_resolution_reports_tied_canonical_entities_as_ambiguous() -> None:
     engine = Engram()
-    frame = _frame(engine, "Where was Ada Lovelace born?")
+    frame = internal_frame(engine, "Where was Ada Lovelace born?")
 
     result = resolve_canonical_subject(
         frame,
-        lambda _surface, **_kwargs: [
-            _entity_match("entity:ada-lovelace"),
-            _entity_match("entity:ada-byron", "Ada Lovelace"),
+        lambda internal_surface, **internal_kwargs: [
+            internal_entity_match("entity:ada-lovelace"),
+            internal_entity_match("entity:ada-byron", "Ada Lovelace"),
         ],
     )
 
@@ -204,10 +209,10 @@ def test_subject_resolution_reports_tied_canonical_entities_as_ambiguous() -> No
 
 def test_subject_resolution_uses_named_entity_and_alias_evidence(monkeypatch) -> None:
     engine = Engram()
-    frame = _frame(engine, "Where was she born?")
-    monkeypatch.setattr("engram.relation._named_entity_surfaces", lambda _text: ("Ada",))
+    frame = internal_frame(engine, "Where was she born?")
+    monkeypatch.setattr("engram.relation.named_entity_surfaces", lambda internal_text: ("Ada",))
 
-    result = resolve_canonical_subject(frame, lambda _surface, **_kwargs: [_entity_match()])
+    result = resolve_canonical_subject(frame, lambda internal_surface, **internal_kwargs: [internal_entity_match()])
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "entity:ada-lovelace"
@@ -216,9 +221,9 @@ def test_subject_resolution_uses_named_entity_and_alias_evidence(monkeypatch) ->
 
 def test_subject_resolution_accepts_proposition_edge_surface_evidence() -> None:
     engine = Engram()
-    frame = _frame(engine, "Where was Lovelace born?")
+    frame = internal_frame(engine, "Where was Lovelace born?")
 
-    result = resolve_canonical_subject(frame, lambda _surface, **_kwargs: [_entity_match()])
+    result = resolve_canonical_subject(frame, lambda internal_surface, **internal_kwargs: [internal_entity_match()])
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert "edge_surface" in result["evidence"]
@@ -226,7 +231,7 @@ def test_subject_resolution_accepts_proposition_edge_surface_evidence() -> None:
 
 def test_explicit_subject_identity_bypasses_surface_lookup() -> None:
     engine = Engram()
-    base = _frame(engine, "Ada")
+    base = internal_frame(engine, "Ada")
     identity = base["identity"]
     explicit = query_identity(
         canonical_form=identity["canonical_form"],
@@ -239,7 +244,7 @@ def test_explicit_subject_identity_bypasses_surface_lookup() -> None:
     )
     frame = query_frame_with_changes(base, {"identity": explicit})
 
-    result = resolve_canonical_subject(frame, lambda *_args, **_kwargs: pytest.fail("lookup must not run"))
+    result = resolve_canonical_subject(frame, lambda *internal_args, **internal_kwargs: pytest_fail("lookup must not run"))
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["score"] == 1.0
@@ -248,11 +253,11 @@ def test_explicit_subject_identity_bypasses_surface_lookup() -> None:
 
 def test_predicate_synonyms_and_expected_type_disambiguate_same_surface() -> None:
     engine = Engram()
-    frame = _frame(engine, "Where was Ada Lovelace born?")
-    date = _predicate_match("predicate:birth-date", "birth date", ExpectedObjectType.DATE)
-    place = _predicate_match()
+    frame = internal_frame(engine, "Where was Ada Lovelace born?")
+    date = predicate_match("predicate:birth-date", "birth date", ExpectedObjectType.DATE)
+    place = predicate_match()
 
-    result = resolve_canonical_predicate(frame, lambda _surface, **_kwargs: [date, place])
+    result = resolve_canonical_predicate(frame, lambda internal_surface, **internal_kwargs: [date, place])
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "predicate:birth-place"
@@ -261,15 +266,15 @@ def test_predicate_synonyms_and_expected_type_disambiguate_same_surface() -> Non
 
 def test_dependency_preposition_paraphrase_resolves_predicate() -> None:
     engine = Engram()
-    frame = _frame(engine, "Where did Ada Lovelace work at the Admiralty?")
-    match: CanonicalPredicateMatch = {
+    frame = internal_frame(engine, "Where did Ada Lovelace work at the Admiralty?")
+    match: dict = {
         "canonical_id": "predicate:employer",
         "primary_label": "employer",
         "synonyms": ("work at",),
         "object_type": ExpectedObjectType.ENTITY,
     }
 
-    result = resolve_canonical_predicate(frame, lambda surface, **_kwargs: [match] if surface == "work at" else [])
+    result = resolve_canonical_predicate(frame, lambda surface, **internal_kwargs: [match] if surface == "work at" else [])
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "predicate:employer"
@@ -306,9 +311,9 @@ def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() ->
         "expected_object_type",
         "max_rows",
     }
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         validate_one_hop_query_plan({**plan, "cypher": "MATCH (n) RETURN n"})
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         one_hop_query_plan(
             canonical_resolution(
                 CanonicalResolutionStatus.AMBIGUOUS,
@@ -326,16 +331,17 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
 
     def execute(query, parameters=()):
         captured.update({"query": query, "parameters": parameters})
-        return [
+        result = [
             {
-                **_proposition_row(),
+                **proposition_row(),
                 "object_label": "London",
                 "object_type": "PLACE",
                 "predicate_cardinality": "SINGLE",
             }
         ]
+        return result
 
-    client._execute_read_query = execute
+    client.execute = execute
 
     result = client.relation_one_hop_proposition_projections(
         "entity:ada-lovelace",
@@ -345,16 +351,16 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
 
     assert len(result) == 1
     assert result[0]["projection"]["projection_id"] == PropositionProjectionQuery.RELATION_ONE_HOP_V1
-    assert captured["parameters"] == {
+    assert captured.get("parameters", {}) == {
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",
         "include_historical": False,
         "limit": 10,
     }
-    assert "entity:ada-lovelace" not in captured["query"]
-    assert "predicate:birth-place" not in captured["query"]
-    assert "CALL " not in captured["query"]
-    assert set(_proposition_row()) == PROPOSITION_PROJECTION_FIELDS
+    assert "entity:ada-lovelace" not in captured.get("query", "")
+    assert "predicate:birth-place" not in captured.get("query", "")
+    assert "CALL " not in captured.get("query", "")
+    assert set(proposition_row()) == PROPOSITION_PROJECTION_FIELDS
 
 
 def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> None:
@@ -382,7 +388,7 @@ def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> No
             }
         ]
 
-    client._execute_read_query = execute
+    client.execute = execute
 
     entities = client.canonical_entity_matches("Ada", limit=2)
     predicates = client.canonical_predicate_matches("born", limit=2)
@@ -401,9 +407,9 @@ def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> No
 
 def test_core_one_hop_boundary_rejects_a_result_outside_the_requested_binding() -> None:
     engine = Engram()
-    engine._graph_client = RelationGraph()
+    engine.internal_graph_client = RelationGraph()
 
-    with pytest.raises(ValueError, match="requested canonical binding"):
+    with pytest_raises(ValueError, match="requested canonical binding"):
         engine.relation_one_hop_proposition_projections(
             "entity:other",
             "predicate:birth-place",
@@ -414,10 +420,10 @@ def test_core_one_hop_boundary_rejects_a_result_outside_the_requested_binding() 
 def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evidence() -> None:
     engine = Engram()
     graph = RelationGraph()
-    engine._graph_client = graph
-    frame = _frame(engine, "Where was Ada Lovelace born?")
+    engine.internal_graph_client = graph
+    frame = internal_frame(engine, "Where was Ada Lovelace born?")
 
-    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, _lease(frame))
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, internal_lease(frame))
 
     assert result["reason_code"] == "relation_proposition_candidate"
     assert len(result["candidates"]) == 1
@@ -434,10 +440,10 @@ def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evide
 def test_relation_resolver_requests_history_and_keeps_open_bounds_as_evidence() -> None:
     engine = Engram()
     graph = RelationGraph()
-    engine._graph_client = graph
-    frame = _frame(engine, "Where was Ada Lovelace born in 2024?")
+    engine.internal_graph_client = graph
+    frame = internal_frame(engine, "Where was Ada Lovelace born in 2024?")
 
-    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, _lease(frame))
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, internal_lease(frame))
 
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, True)]
     assert result["candidates"] == ()
@@ -447,12 +453,12 @@ def test_relation_resolver_requests_history_and_keeps_open_bounds_as_evidence() 
 
 
 def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_results() -> None:
-    second = _relation_result("proposition:ada-other-place", "entity:oxford", "Oxford")
+    second = internal_relation_result("proposition:ada-other-place", "entity:oxford", "Oxford")
     engine = Engram()
-    engine._graph_client = RelationGraph((_relation_result(), second))
-    frame = _frame(engine, "Where was Ada Lovelace born?")
+    engine.internal_graph_client = RelationGraph((internal_relation_result(), second))
+    frame = internal_frame(engine, "Where was Ada Lovelace born?")
 
-    ambiguous = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, _lease(frame))
+    ambiguous = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, internal_lease(frame))
 
     assert ambiguous["candidates"] == ()
     assert ambiguous["reason_code"] == "relation_proposition_conflict"
@@ -470,9 +476,9 @@ def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_res
     )
 
     mismatch_engine = Engram()
-    mismatch_engine._graph_client = RelationGraph((_relation_result(object_type="DATE"),))
-    mismatch_frame = _frame(mismatch_engine, "Where was Ada Lovelace born?")
-    mismatch = StructuredGraphResolver(mismatch_engine, lambda: START_NS).resolve(mismatch_frame, _lease(mismatch_frame))
+    mismatch_engine.internal_graph_client = RelationGraph((internal_relation_result(object_type="DATE"),))
+    mismatch_frame = internal_frame(mismatch_engine, "Where was Ada Lovelace born?")
+    mismatch = StructuredGraphResolver(mismatch_engine, lambda: START_NS).resolve(mismatch_frame, internal_lease(mismatch_frame))
 
     assert mismatch["candidates"] == ()
     assert mismatch["proposition_evidence"][0]["features"]["values"]["object_type_match"] == 0.0
@@ -481,7 +487,7 @@ def test_relation_resolver_suppresses_phrase_for_multiple_or_type_mismatched_res
 
 def test_core_keeps_unique_graph_phrase_as_evidence_not_an_unsupported_answer() -> None:
     engine = Engram()
-    engine._graph_client = RelationGraph()
+    engine.internal_graph_client = RelationGraph()
     core = EngramCore(engine)
 
     result = core.resolve_request(
@@ -502,7 +508,7 @@ def test_core_keeps_unique_graph_phrase_as_evidence_not_an_unsupported_answer() 
 def test_fusion_suppresses_relation_phrase_if_current_proposition_changes_after_discovery() -> None:
     engine = Engram()
     graph = ChangingRelationGraph()
-    engine._graph_client = graph
+    engine.internal_graph_client = graph
     core = EngramCore(engine)
 
     result = core.resolve_request(
