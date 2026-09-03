@@ -343,6 +343,7 @@ def test_visibility_authority_result_must_match_exact_input() -> None:
         return result
 
     def wrong_ownership(scope, internal_ownership):
+        del internal_ownership
         result = visibility_authorization(
             True,
             scope,

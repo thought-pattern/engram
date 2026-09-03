@@ -229,6 +229,7 @@ def test_template_graph_operations_graph_query_no_client():
 
 def test_template_graph_operations_graph_query_callback_failure_is_visible():
     def graph_fn(internal_query, internal_params):
+        del internal_query, internal_params
         raise RuntimeError("injected graph callback failure")
 
     processor = TemplateProcessor()
@@ -317,6 +318,7 @@ def test_template_graph_operations_triple_query_subject():
 
 def test_template_graph_operations_triple_query_callback_failure_is_visible():
     def graph_fn(internal_query, internal_params):
+        del internal_query, internal_params
         raise RuntimeError("injected triple callback failure")
 
     processor = TemplateProcessor()

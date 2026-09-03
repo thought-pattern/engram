@@ -53,6 +53,7 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
         available = True
 
         def structured_proposition_projections(self, internal_value, *, projection_id, limit):
+            del internal_value
             entered.set()
             assert release.wait(timeout=5)
             return []
@@ -121,6 +122,7 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
         available = True
 
         def execute(self, internal_query, internal_parameters=()):
+            del internal_query, internal_parameters
             entered.set()
             assert release.wait(timeout=5)
             return []

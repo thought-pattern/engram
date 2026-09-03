@@ -23,7 +23,12 @@ def test_data_directory_configure_path_idempotent():
 def test_ensure_runtime_resource_check_never_downloads(monkeypatch: pytest_MonkeyPatch) -> None:
     """The default resource path is offline and reports absence."""
     calls = []
-    monkeypatch.setattr(nltk_data, "is_available", lambda internal_path: False)
+
+    def unavailable(internal_path):
+        assert internal_path == "corpora/missing"
+        return False
+
+    monkeypatch.setattr(nltk_data, "is_available", unavailable)
     monkeypatch.setattr(nltk_data, "nltk_download", lambda *args, **kwargs: calls.append((args, kwargs)))
 
     assert nltk_data.ensure_resource("corpora/missing", "missing") is False
@@ -34,7 +39,13 @@ def test_ensure_explicit_bootstrap_can_download(monkeypatch: pytest_MonkeyPatch)
     """Only an explicit setup-time flag authorizes acquisition."""
     availability = iter((False, True))
     calls = []
-    monkeypatch.setattr(nltk_data, "is_available", lambda internal_path: next(availability))
+
+    def availability_probe(internal_path):
+        assert internal_path == "corpora/missing"
+        result = next(availability)
+        return result
+
+    monkeypatch.setattr(nltk_data, "is_available", availability_probe)
     monkeypatch.setattr(nltk_data, "nltk_download", lambda *args, **kwargs: calls.append((args, kwargs)))
 
     assert nltk_data.ensure_resource("corpora/missing", "missing", download=True) is True

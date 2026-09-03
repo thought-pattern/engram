@@ -1453,6 +1453,7 @@ def test_executor_propagates_cancellation_without_publishing_partial_results() -
 
     class CancellableResolver(FakeResolver):
         def resolve(self, current_frame, current_budget, cooperative_check=()) -> dict:
+            del current_frame, current_budget
             cooperative_check()
             self.calls += 1
             result = self.internal_result

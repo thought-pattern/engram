@@ -108,6 +108,7 @@ def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
         available = True
 
         def execute(self, internal_query, internal_parameters=()):
+            del internal_query, internal_parameters
             raise RuntimeError(secret)
 
     engine = Engram()
@@ -127,6 +128,7 @@ def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -
         description = ()
 
         def execute(self, internal_query, internal_parameters):
+            del internal_query, internal_parameters
             raise RuntimeError(secret)
 
     class FailingConnection:

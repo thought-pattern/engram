@@ -437,6 +437,7 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
     )
 
     def cycle_query(subject, predicate, internal_limit):
+        assert internal_limit > 0
         result = [FOUNDER] if subject == "entity:microsoft" else [cycle] if predicate == "predicate:born-in" else []
         return result
 
@@ -445,6 +446,7 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
     assert CompositionReason.CYCLE in cycle_result["reasons"]
 
     def failed_query(subject, internal_predicate, internal_limit):
+        del internal_predicate, internal_limit
         if subject == "entity:founder":
             raise RuntimeError("graph unavailable")
         return [FOUNDER]
@@ -468,7 +470,12 @@ def test_candidate_sentinel_marks_completeness_unknown_instead_of_counting_parti
         for index in range(5)
     ]
 
-    result = execute(query=lambda internal_subject, internal_predicate, limit: extras[:limit])
+    def saturated_query(internal_subject, internal_predicate, limit):
+        del internal_subject, internal_predicate
+        result = extras[:limit]
+        return result
+
+    result = execute(query=saturated_query)
 
     assert result["truncated"] is True
     assert result["direct_result"] is False

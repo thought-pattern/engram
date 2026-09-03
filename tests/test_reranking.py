@@ -218,6 +218,7 @@ def test_fusion_counts_an_isolated_reranker_exception_as_a_fallback(monkeypatch)
     reranker = enabled_reranker()
 
     def fail(internal_shortlist, cooperative_check) -> dict:
+        del internal_shortlist
         raise RuntimeError("simulated reranker failure")
 
     monkeypatch.setattr(reranker, "rerank", fail)
