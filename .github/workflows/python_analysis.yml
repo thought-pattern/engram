@@ -19,24 +19,14 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "20"
-
       - name: Install analysis tools
         run: pip install --upgrade isort ruff bandit vulture pytest
-
-      - name: Install Pyright
-        run: npm install --global pyright
 
       - name: Import-order check
         run: isort --check-only .
 
       - name: Lint
         run: ruff check --line-length 132 .
-
-      - name: Type check
-        run: pyright
 
       - name: Bytecode compilation check
         run: python -m compileall -q engram scripts eval tests
@@ -57,6 +47,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
       # pymgclient builds from source and needs OpenSSL headers and CMake.
       - name: Install build prerequisites
         run: sudo apt-get update && sudo apt-get install -y libssl-dev cmake
@@ -68,6 +62,12 @@ jobs:
 
       - name: Check dependency compatibility
         run: pip check
+
+      - name: Install Pyright
+        run: npm install --global pyright
+
+      - name: Type check
+        run: pyright
 
       - name: Provision NLP resources
         run: |
