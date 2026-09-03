@@ -41,6 +41,7 @@ from engram.artifacts import (
 from engram.constants import Tier
 from engram.errors import InvalidRequestError, LifecycleError
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+
 from .support_fixtures import ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_B
 
 
@@ -350,9 +351,7 @@ def test_artifact_dictionary_revalidates_mutation_and_copies_nested_records() ->
 
 
 def test_support_is_bounded_ordered_and_duplicate_free() -> None:
-    artifact = accepted_artifact(
-        support_references=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A)
-    )
+    artifact = accepted_artifact(support_references=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A))
     assert artifact["support_references"] == (
         ASSERTION_REFERENCE_B,
         ASSERTION_REFERENCE_A,
@@ -362,9 +361,7 @@ def test_support_is_bounded_ordered_and_duplicate_free() -> None:
         ASSERTION_REFERENCE_A,
     ]
     with pytest.raises(InvalidRequestError, match="duplicate"):
-        accepted_artifact(
-            support_references=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_A)
-        )
+        accepted_artifact(support_references=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_A))
 
 
 def test_metadata_is_deeply_immutable_and_json_concrete() -> None:

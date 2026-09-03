@@ -828,7 +828,9 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
 
     assert len(report["results"][0]["candidates"]) == 1
     assert report["reservations"][1]["lease"]["max_candidates"] == 0
-    assert tuple(record["proposition_id"] for record in report["results"][1]["proposition_evidence"]) == ("proposition-after-candidate",)
+    assert tuple(record["proposition_id"] for record in report["results"][1]["proposition_evidence"]) == (
+        "proposition-after-candidate",
+    )
     assert report["results"][1]["accounting"] == ()
 
 

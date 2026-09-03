@@ -223,9 +223,7 @@ def test_current_restart_preserves_prepared_receipt_state() -> None:
         (lambda state: state.pop("response_state"), "requires response_state"),
         (lambda state: state["response_state"].update({"extra": {}}), "invalid fields"),
         (
-            lambda state: state["response_state"].update(
-                {"schema_version": RESPONSE_STATE_SCHEMA_VERSION + 1}
-            ),
+            lambda state: state["response_state"].update({"schema_version": RESPONSE_STATE_SCHEMA_VERSION + 1}),
             "unsupported response_state",
         ),
         (lambda state: state["response_state"].update({"artifacts": {}}), "must be arrays"),

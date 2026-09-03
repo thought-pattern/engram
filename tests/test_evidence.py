@@ -19,14 +19,26 @@ from engram.evidence import (
 )
 from engram.identity import scope_key
 from engram.resolution import (
-    PropositionEvidenceRecord,
-    PropositionOwnership,
     DisclosureBasis,
     EvidencePackageTruncationReason,
+    PropositionEvidenceRecord,
+    PropositionOwnership,
     build_evidence_package,
     canonical_proposition_references,
     canonical_proposition_references_from_dict,
     canonical_proposition_references_to_dict,
+    disclosure_decision,
+    disclosure_decision_from_dict,
+    disclosure_decision_to_dict,
+    disclosure_decision_with_changes,
+    empty_evidence_package,
+    evidence_package,
+    evidence_package_from_dict,
+    evidence_package_from_json,
+    evidence_package_to_dict,
+    evidence_package_to_json,
+    evidence_package_with_changes,
+    feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
     proposition_evidence_record_from_json,
@@ -40,24 +52,12 @@ from engram.resolution import (
     proposition_validity_inputs_from_dict,
     proposition_validity_inputs_to_dict,
     proposition_validity_inputs_with_changes,
-    disclosure_decision,
-    disclosure_decision_from_dict,
-    disclosure_decision_to_dict,
-    disclosure_decision_with_changes,
-    empty_evidence_package,
-    evidence_package,
-    evidence_package_from_dict,
-    evidence_package_from_json,
-    evidence_package_to_dict,
-    evidence_package_to_json,
-    evidence_package_with_changes,
-    feature_set,
     validate_canonical_proposition_references,
+    validate_disclosure_decision,
+    validate_evidence_package,
     validate_proposition_evidence_record,
     validate_proposition_trust_inputs,
     validate_proposition_validity_inputs,
-    validate_disclosure_decision,
-    validate_evidence_package,
 )
 
 
@@ -201,8 +201,18 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
     )
 
     contracts = (
-        (references, validate_canonical_proposition_references, canonical_proposition_references_to_dict, canonical_proposition_references_from_dict),
-        (validity, validate_proposition_validity_inputs, proposition_validity_inputs_to_dict, proposition_validity_inputs_from_dict),
+        (
+            references,
+            validate_canonical_proposition_references,
+            canonical_proposition_references_to_dict,
+            canonical_proposition_references_from_dict,
+        ),
+        (
+            validity,
+            validate_proposition_validity_inputs,
+            proposition_validity_inputs_to_dict,
+            proposition_validity_inputs_from_dict,
+        ),
         (trust, validate_proposition_trust_inputs, proposition_trust_inputs_to_dict, proposition_trust_inputs_from_dict),
         (disclosure, validate_disclosure_decision, disclosure_decision_to_dict, disclosure_decision_from_dict),
     )
@@ -711,14 +721,17 @@ def test_evidence_package_rejects_conflicting_same_id_projections() -> None:
 
 def test_evidence_package_applies_count_limit_after_canonical_ordering() -> None:
     records = tuple(
-        _change_record(_record(), proposition_id=f"proposition:{index:02d}", path=(f"proposition:{index:02d}",)) for index in reversed(range(12))
+        _change_record(_record(), proposition_id=f"proposition:{index:02d}", path=(f"proposition:{index:02d}",))
+        for index in reversed(range(12))
     )
 
     package = build_evidence_package(records)
 
     assert package["retained_count"] == 10
     assert package["omitted_count"] == 2
-    assert tuple(record["proposition_id"] for record in package["records"]) == tuple(f"proposition:{index:02d}" for index in range(10))
+    assert tuple(record["proposition_id"] for record in package["records"]) == tuple(
+        f"proposition:{index:02d}" for index in range(10)
+    )
     assert package["truncation_reasons"] == (EvidencePackageTruncationReason.RECORD_LIMIT,)
     assert len(evidence_package_to_json(package).encode("utf-8")) <= 65_536
 

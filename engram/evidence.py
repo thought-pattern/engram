@@ -7,21 +7,21 @@ from datetime import datetime
 
 from engram.constants import (
     CANONICAL_COMPLETENESS_FLOOR_V1,
-    PROPOSITION_DISCLOSURE_POLICY_VERSION,
-    PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
-    PROPOSITION_EVIDENCE_PRODUCERS,
-    PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
     EMPTY_SCOPE_KEY,
     EVIDENCE_USEFULNESS_DECISION_FIELDS,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_VISIBILITY_GRANTS,
+    PROPOSITION_DISCLOSURE_POLICY_VERSION,
+    PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
+    PROPOSITION_EVIDENCE_PRODUCERS,
+    PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
     SEMANTIC_SIMILARITY_FLOOR_V1,
     SOURCE_AGREEMENT_FLOOR_V1,
     STRUCTURED_MATCH_FLOOR_V1,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
-    PropositionEligibilityReason,
     EvidenceUsefulnessReason,
+    PropositionEligibilityReason,
     TemporalAxis,
     TemporalQueryOperator,
 )
@@ -32,22 +32,22 @@ from engram.resolution import (
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
     MAX_RESOLUTION_VALUES,
+    DisclosureBasis,
+    DisclosureDecision,
     PropositionEvidenceRecord,
     PropositionOwnership,
     PropositionValidityInputs,
-    DisclosureBasis,
-    DisclosureDecision,
     QueryFrame,
     canonical_proposition_references,
+    disclosure_decision,
+    feature_set,
     proposition_evidence_record as build_proposition_evidence_record,
     proposition_evidence_record_to_json,
     proposition_evidence_record_with_changes,
     proposition_trust_inputs,
     proposition_validity_inputs,
-    disclosure_decision,
-    feature_set,
-    validate_proposition_evidence_record,
     validate_disclosure_decision,
+    validate_proposition_evidence_record,
     validate_query_frame,
 )
 
@@ -347,7 +347,10 @@ def visibility_authorization(
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise InvalidRequestError("visibility authorization scope must be a ScopeKey") from error
-    if not isinstance(ownership, PropositionOwnership) or ownership not in {PropositionOwnership.COMPANY, PropositionOwnership.CUSTOMER}:
+    if not isinstance(ownership, PropositionOwnership) or ownership not in {
+        PropositionOwnership.COMPANY,
+        PropositionOwnership.CUSTOMER,
+    }:
         raise InvalidRequestError("visibility authorization ownership must be COMPANY or CUSTOMER")
     normalized_authority = _token(authority_id, "visibility authorization authority_id")
     normalized_policy = _token(policy_version, "visibility authorization policy_version")
@@ -385,7 +388,10 @@ def visibility_grant(scope: object, ownership: object) -> VisibilityGrant:
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise InvalidRequestError("visibility grant scope must be a ScopeKey") from error
-    if not isinstance(ownership, PropositionOwnership) or ownership not in {PropositionOwnership.COMPANY, PropositionOwnership.CUSTOMER}:
+    if not isinstance(ownership, PropositionOwnership) or ownership not in {
+        PropositionOwnership.COMPANY,
+        PropositionOwnership.CUSTOMER,
+    }:
         raise InvalidRequestError("visibility grant ownership must be COMPANY or CUSTOMER")
     result: VisibilityGrant = {"scope": validated_scope, "ownership": ownership}
     return result
@@ -871,7 +877,9 @@ class PropositionEligibilityEvaluator:
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_MISSING)
             return result
         if projection["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
-            result = proposition_exclusion_decision(projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True)
+            result = proposition_exclusion_decision(
+                projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
+            )
             return result
         discovered_identity = (
             discovered["proposition_id"],
@@ -886,7 +894,9 @@ class PropositionEligibilityEvaluator:
             projection["object_entity_id"],
         )
         if discovered_identity != current_identity:
-            result = proposition_exclusion_decision(projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True)
+            result = proposition_exclusion_decision(
+                projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
+            )
             return result
         decision = self.evaluate(projection, frame)
         result = proposition_eligibility_decision_with_changes(decision, {"revalidated": True})
@@ -1026,15 +1036,21 @@ def _merge_proposition_evidence_group(records: tuple[PropositionEvidenceRecord, 
         unavailable.update(record["features"]["unavailable"])
         for name, value in record["features"]["values"].items():
             if name in values and values[name] != value:
-                raise InvalidRequestError(f"conflicting measured feature {name} for Proposition evidence ID: {base['proposition_id']}")
+                raise InvalidRequestError(
+                    f"conflicting measured feature {name} for Proposition evidence ID: {base['proposition_id']}"
+                )
             values[name] = value
     if len(sources) > 1:
         if "source_agreement" in values and values["source_agreement"] != 1.0:
-            raise InvalidRequestError(f"conflicting measured feature source_agreement for Proposition evidence ID: {base['proposition_id']}")
+            raise InvalidRequestError(
+                f"conflicting measured feature source_agreement for Proposition evidence ID: {base['proposition_id']}"
+            )
         values["source_agreement"] = 1.0
         reasons.add("source_agreement")
     elif "source_agreement" in values:
-        raise InvalidRequestError(f"source_agreement requires multiple sources for Proposition evidence ID: {base['proposition_id']}")
+        raise InvalidRequestError(
+            f"source_agreement requires multiple sources for Proposition evidence ID: {base['proposition_id']}"
+        )
     unavailable.difference_update(values)
     if len(reasons) > MAX_PROPOSITION_SELECTION_REASONS:
         raise InvalidRequestError(f"merged Proposition evidence reasons exceed the limit of {MAX_PROPOSITION_SELECTION_REASONS}")

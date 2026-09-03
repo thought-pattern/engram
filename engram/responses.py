@@ -344,9 +344,7 @@ class AcceptedResponseService:
             if not isinstance(support_records, list) or not all(isinstance(record, dict) for record in support_records):
                 raise InvalidRequestError("learn response metadata support must be an array of objects")
             try:
-                support_references = tuple(
-                    validate_support_reference(record) for record in support_records
-                )
+                support_references = tuple(validate_support_reference(record) for record in support_records)
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
             artifact = cached_response_artifact(

@@ -953,7 +953,9 @@ class Engram:
         """Intersect discovered Proposition hits with typed response support."""
         _run_cooperative_check(cooperative_check)
         _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
-        support_scores = {str(row.get("proposition_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("proposition_id")}
+        support_scores = {
+            str(row.get("proposition_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("proposition_id")
+        }
         result = self._vector_supported_match_components_from_scores(
             support_scores,
             source_working_bytes=_estimate_working_bytes(rows),

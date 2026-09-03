@@ -767,7 +767,9 @@ def support_record_ids(value: object, name: str, *, allow_empty: bool) -> tuple[
         raise InvalidRequestError(f"{name} must be a tuple")
     if len(value) > MAX_INDEX_SUPPORT_IDS:
         raise InvalidRequestError(f"{name} exceed the limit of {MAX_INDEX_SUPPORT_IDS}")
-    result = tuple(sorted({_bounded_text(record_id, name, MAX_SUPPORT_REFERENCE_ID_BYTES, allow_empty=False) for record_id in value}))
+    result = tuple(
+        sorted({_bounded_text(record_id, name, MAX_SUPPORT_REFERENCE_ID_BYTES, allow_empty=False) for record_id in value})
+    )
     if not allow_empty and not result:
         raise InvalidRequestError(f"{name} must not be empty")
     return result
@@ -2250,15 +2252,13 @@ def _mutation_is_consistent(before: IndexState, candidate: IndexState, statement
         statement_ids = candidate["record_to_statements"].get(record_id, ())
         for owner_id in statement_ids:
             owner_record_ids = tuple(
-                reference.get("id", "")
-                for reference in candidate["statement_to_references"].get(owner_id, ())
+                reference.get("id", "") for reference in candidate["statement_to_references"].get(owner_id, ())
             )
             if record_id not in owner_record_ids:
                 result = False
                 return result
         candidate_record_ids = tuple(
-            reference.get("id", "")
-            for reference in candidate["statement_to_references"].get(statement_id, ())
+            reference.get("id", "") for reference in candidate["statement_to_references"].get(statement_id, ())
         )
         if record_id in candidate_record_ids and statement_id not in statement_ids:
             result = False

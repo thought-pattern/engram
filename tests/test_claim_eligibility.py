@@ -8,9 +8,9 @@ import pytest
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.evidence import (
+    ExactScopeVisibilityAuthority,
     PropositionEligibilityEvaluator,
     PropositionEligibilityReason,
-    ExactScopeVisibilityAuthority,
     proposition_evidence_record,
     proposition_validity_inputs_from_eligibility,
     revalidate_propositions,
@@ -18,7 +18,12 @@ from engram.evidence import (
     visibility_authorization,
     visibility_grant,
 )
-from engram.graph import PropositionProjection, PropositionProjectionQuery, proposition_projection, proposition_projection_from_graph_row
+from engram.graph import (
+    PropositionProjection,
+    PropositionProjectionQuery,
+    proposition_projection,
+    proposition_projection_from_graph_row,
+)
 from engram.identity import ScopeKey, scope_key
 from engram.resolution import PropositionOwnership, QueryFrame, QueryFrameBuilder, query_frame_with_changes
 
