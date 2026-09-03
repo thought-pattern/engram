@@ -1808,7 +1808,9 @@ class StructuredGraphResolver:
                 )
                 candidates.append(
                     resolution_candidate(
-                        candidate_id=_candidate_id(CandidateSource.UTILITY, item["projection"]["proposition_id"], frame["diagnostic_id"]),
+                        candidate_id=_candidate_id(
+                            CandidateSource.UTILITY, item["projection"]["proposition_id"], frame["diagnostic_id"]
+                        ),
                         statement_id=item["projection"]["proposition_id"],
                         response=response,
                         source=CandidateSource.UTILITY,
@@ -2409,7 +2411,11 @@ def execution_report_canonical_proposition_evidence(value: object, cooperative_c
         if resolver_result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
         for record in resolver_result["proposition_evidence"]
     )
-    result = canonicalize_proposition_evidence(records, cooperative_check) if cooperative_check else canonicalize_proposition_evidence(records)
+    result = (
+        canonicalize_proposition_evidence(records, cooperative_check)
+        if cooperative_check
+        else canonicalize_proposition_evidence(records)
+    )
     return result
 
 
@@ -2450,7 +2456,9 @@ def _bound_validated_resolver_result(result: ResolverResult, lease: ResolverBudg
         for candidate in candidates
     ]
     evidence_sizes = [_json_size(_trusted_evidence_reference_to_dict(reference)) for reference in evidence]
-    proposition_evidence_sizes = [_json_size(_trusted_proposition_evidence_record_to_dict(record)) for record in proposition_evidence]
+    proposition_evidence_sizes = [
+        _json_size(_trusted_proposition_evidence_record_to_dict(record)) for record in proposition_evidence
+    ]
     flattened_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
         *evidence_sizes,
@@ -3050,7 +3058,8 @@ class ResolutionOrchestrator:
             _run_cooperative_check(cooperative_check)
 
         unexpected_proposition_records = any(
-            result["proposition_evidence"] and result["resolver"] not in PROPOSITION_EVIDENCE_PRODUCERS for result in execution["results"]
+            result["proposition_evidence"] and result["resolver"] not in PROPOSITION_EVIDENCE_PRODUCERS
+            for result in execution["results"]
         )
         if unexpected_proposition_records:
             append_reason("proposition_evidence_untrusted_producer")
@@ -3206,7 +3215,11 @@ class ResolutionOrchestrator:
             }
         )
         resolver_results = tuple(
-            _trusted_resolver_result_with_changes(result, {"proposition_evidence": ()}) if result["proposition_evidence"] else result
+            (
+                _trusted_resolver_result_with_changes(result, {"proposition_evidence": ()})
+                if result["proposition_evidence"]
+                else result
+            )
             for result in execution["results"]
         )
         response_evidence = decision["evidence"]

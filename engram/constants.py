@@ -696,7 +696,9 @@ EVIDENCE_USEFULNESS_POLICY_FIELDS = set(
 )
 VISIBILITY_AUTHORIZATION_FIELDS = set({"allowed", "scope", "ownership", "authority_id", "policy_version", "reason_code"})
 VISIBILITY_GRANT_FIELDS = set({"scope", "ownership"})
-PROPOSITION_ELIGIBILITY_DECISION_FIELDS = set({"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"})
+PROPOSITION_ELIGIBILITY_DECISION_FIELDS = set(
+    {"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"}
+)
 EVIDENCE_REFERENCE_SCHEMA_VERSION = 1
 EVIDENCE_REFERENCE_FIELDS = set({"schema_version", "evidence_id", "resolver", "kind", "scope", "provenance", "diagnostics"})
 CANDIDATE_SCHEMA_VERSION = 1
@@ -1322,7 +1324,8 @@ PROPOSITION_PROJECTION_BY_ID_QUERY = (
     "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
     "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
-    + PROPOSITION_PROJECTION_RETURN + "0.0 AS structured_match, false AS structured_match_available, "
+    + PROPOSITION_PROJECTION_RETURN
+    + "0.0 AS structured_match, false AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT 2"
 )

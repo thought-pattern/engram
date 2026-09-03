@@ -4,7 +4,6 @@ Engram validates structure for safe storage and transport. It does not
 interpret epistemic state; Tapestry performs current-state validation.
 """
 
-
 SUPPORT_CONTRACT = "tapestry-engram-support-v1"
 REPRESENTATION_CONTRACT = "tapestry-ke-representation-v1"
 SUPPORT_REFERENCE_FIELDS = {
@@ -85,9 +84,7 @@ def validate_support_reference(value) -> dict:
         proposition_revision = support_revision(proposition_revision, "support support_revision")
     elif proposition_revision != {}:
         raise ValueError("Assertion support_revision must be {}")
-    digest = support_text(
-        value.get("dependency_state_digest", ""), "support dependency_state_digest"
-    )
+    digest = support_text(value.get("dependency_state_digest", ""), "support dependency_state_digest")
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
     return {

@@ -61,6 +61,7 @@ from engram.indexes import (
     validate_support_scan_plan,
 )
 from engram.models import statement
+
 from .support_fixtures import (
     ASSERTION_REFERENCE_A,
     ASSERTION_REFERENCE_B,
@@ -194,9 +195,7 @@ def test_atomic_exact_refresh_rejects_non_eligibility_changes_and_stale_generati
     owner = IndexOwner((original,))
     key = build_scoped_retrieval_key(scope_key(), "Who acquired GitHub?")
 
-    changed_support = index_projection_with_changes(
-        original, {"support_references": (ASSERTION_REFERENCE_D,)}
-    )
+    changed_support = index_projection_with_changes(original, {"support_references": (ASSERTION_REFERENCE_D,)})
     with pytest.raises(InvalidRequestError, match="may change only"):
         owner.atomic_refresh_exact_lookup(key, (changed_support,), owner.snapshot()["state_generation"])
     with pytest.raises(ConflictError, match="stale index state generation"):
@@ -359,9 +358,7 @@ def test_support_maps_and_matched_record_lookup_are_bidirectional() -> None:
         REFERENCE_IDS.get("b", ""),
         REFERENCE_IDS.get("c", ""),
     )
-    assert result["matches"][0]["matched_record_ids"] == (
-        REFERENCE_IDS.get("b", ""),
-    )
+    assert result["matches"][0]["matched_record_ids"] == (REFERENCE_IDS.get("b", ""),)
     assert result["matches"][1]["matched_record_ids"] == (
         REFERENCE_IDS.get("b", ""),
         REFERENCE_IDS.get("c", ""),
@@ -483,9 +480,7 @@ def test_classification_fixture() -> None:
 
 
 def test_malformed_current_support_is_explicitly_excluded() -> None:
-    item = projection_from_statement(
-        {"id": "malformed", "template": {"tapestry": {"support": "not-an-array"}}}
-    )
+    item = projection_from_statement({"id": "malformed", "template": {"tapestry": {"support": "not-an-array"}}})
     state = build_index_state((item,))
 
     assert item["exclusion_reason"] == IndexIssueReason.MALFORMED_SUPPORT.value
@@ -528,12 +523,8 @@ def test_checker_reports_corruption_and_expected_safe_exclusions() -> None:
     legacy = projection("legacy", eligible=False, exclusion_reason=IndexIssueReason.MISSING_IDENTITY.value)
     state = build_index_state((active, legacy))
     corrupt = state.copy()
-    corrupt["record_to_statements"] = MappingProxyType(
-        {REFERENCE_IDS.get("d", ""): ("active",)}
-    )
-    corrupt["statement_to_references"] = MappingProxyType(
-        {"active": (ASSERTION_REFERENCE_D,), "malformed": ()}
-    )
+    corrupt["record_to_statements"] = MappingProxyType({REFERENCE_IDS.get("d", ""): ("active",)})
+    corrupt["statement_to_references"] = MappingProxyType({"active": (ASSERTION_REFERENCE_D,), "malformed": ()})
     corrupt["direct_retrieval"] = MappingProxyType({})
 
     report = check_index_state(corrupt)
@@ -660,9 +651,7 @@ def test_index_state_maps_are_immutable() -> None:
 
 
 def test_index_state_is_an_exact_validated_non_aliasing_dictionary() -> None:
-    state = build_index_state(
-        (projection("stmt-1", "key", support=(ASSERTION_REFERENCE_A,)),)
-    )
+    state = build_index_state((projection("stmt-1", "key", support=(ASSERTION_REFERENCE_A,)),))
     copied = validate_index_state(state)
 
     assert type(state) is dict
@@ -746,9 +735,7 @@ def test_checked_repair_has_bounded_dry_run_and_atomic_apply() -> None:
 
     applied = owner.repair(expected, dry_run=False)
     assert applied["applied"] is True
-    assert owner.snapshot()["record_to_statements"] == {
-        REFERENCE_IDS.get("a", ""): ("stmt-a",)
-    }
+    assert owner.snapshot()["record_to_statements"] == {REFERENCE_IDS.get("a", ""): ("stmt-a",)}
     assert check_index_state(owner.snapshot())["consistent"] is True
 
 
@@ -794,9 +781,7 @@ def test_current_statement_support_is_indexed_but_exact_identity_is_not_invented
     )
     state = engram.index_snapshot()
 
-    assert state["record_to_statements"] == {
-        REFERENCE_IDS.get("a", ""): (statement_id,)
-    }
+    assert state["record_to_statements"] == {REFERENCE_IDS.get("a", ""): (statement_id,)}
     assert state["statement_to_retrieval"][statement_id] == ()
     assert IndexIssueReason.MISSING_IDENTITY in {issue["reason"] for issue in state["build_report"]["issues"]}
 
@@ -815,9 +800,7 @@ def test_current_support_metadata_updates_and_eviction_update_both_maps() -> Non
     )
 
     assert same_id == statement_id
-    assert engram.index_snapshot()["record_to_statements"] == {
-        REFERENCE_IDS.get("b", ""): (statement_id,)
-    }
+    assert engram.index_snapshot()["record_to_statements"] == {REFERENCE_IDS.get("b", ""): (statement_id,)}
 
     engram.retire_statement(statement_id)
     assert engram.index_snapshot()["record_to_statements"] == {}
@@ -833,12 +816,8 @@ def test_current_support_metadata_rebuilds_after_persistence_load() -> None:
 
     loaded = persistence.load_engram_json(persistence.save_json(engram))
 
-    assert loaded.index_snapshot()["record_to_statements"] == {
-        REFERENCE_IDS.get("c", ""): (statement_id,)
-    }
-    assert loaded.index_snapshot()["statement_to_references"] == {
-        statement_id: (ASSERTION_REFERENCE_C,)
-    }
+    assert loaded.index_snapshot()["record_to_statements"] == {REFERENCE_IDS.get("c", ""): (statement_id,)}
+    assert loaded.index_snapshot()["statement_to_references"] == {statement_id: (ASSERTION_REFERENCE_C,)}
 
 
 def test_vector_support_path_does_not_iterate_statement_corpus() -> None:

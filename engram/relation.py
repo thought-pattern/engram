@@ -21,7 +21,12 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.errors import InvalidRequestError
-from engram.graph import CanonicalEntityMatch, CanonicalPredicateMatch, RelationPropositionProjection, validate_relation_proposition_projection
+from engram.graph import (
+    CanonicalEntityMatch,
+    CanonicalPredicateMatch,
+    RelationPropositionProjection,
+    validate_relation_proposition_projection,
+)
 from engram.identity import normalize_retrieval_key
 from engram.resolution import validate_query_frame
 from engram.spacy_setup import get_nlp

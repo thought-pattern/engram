@@ -25,13 +25,14 @@ from engram.repository import (
     admission_plan_to_dict,
     build_repository_state,
     check_repository_state,
-    statement_projection_from_artifact,
     repository_check_report_to_dict,
     repository_state,
+    statement_projection_from_artifact,
     tier_admission_policy,
     validate_repository_check_report,
     validate_repository_state,
 )
+
 from .support_fixtures import ASSERTION_REFERENCE_A
 
 

@@ -9,8 +9,8 @@ from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import (
     PROPOSITION_PROJECTION_FIELDS,
-    PropositionProjectionQuery,
     MemGraphConnection,
+    PropositionProjectionQuery,
     proposition_projection_from_graph_row,
     proposition_projection_to_dict,
     validate_proposition_projection,
@@ -90,9 +90,7 @@ def test_projection_accepts_available_zero_trust_revision() -> None:
     row = _row()
     row["supplied_trust_version"] = 0
 
-    projection = proposition_projection_from_graph_row(
-        row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1
-    )
+    projection = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
 
     assert projection["supplied_trust_version"] == 0
     assert projection["supplied_trust_version_available"] is True
@@ -210,7 +208,12 @@ def test_projection_boundary_deduplicates_identical_rows_and_rejects_conflicts()
     client._execute_read_query = lambda query, parameters=(): [_row(), deepcopy(_row())]
 
     assert (
-        len(client.structured_proposition_projections("Turing", projection_id=PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, limit=2)) == 1
+        len(
+            client.structured_proposition_projections(
+                "Turing", projection_id=PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, limit=2
+            )
+        )
+        == 1
     )
 
     conflict = _row()

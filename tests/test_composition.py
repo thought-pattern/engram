@@ -34,12 +34,12 @@ from engram.resolution import (
     QueryFrameBuilder,
     ResolutionOutcome,
     build_evidence_package,
+    evidence_package_from_json,
+    evidence_package_to_json,
     proposition_evidence_path_step,
     proposition_evidence_record_from_json,
     proposition_evidence_record_to_json,
     proposition_evidence_record_with_changes,
-    evidence_package_from_json,
-    evidence_package_to_json,
     validate_proposition_evidence_path_step,
 )
 from engram.resolvers import StructuredGraphResolver, resolver_budget, resolver_budget_with_changes
@@ -641,7 +641,12 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
             return self.rows.get((subject_entity_id, predicate_id), [])[:limit]
 
         def proposition_projection_by_id(self, proposition_id):
-            return [_current(item) for items in self.rows.values() for item in items if item["projection"]["proposition_id"] == proposition_id]
+            return [
+                _current(item)
+                for items in self.rows.values()
+                for item in items
+                if item["projection"]["proposition_id"] == proposition_id
+            ]
 
     graph = CompositionGraph()
     engine = Engram()
@@ -675,7 +680,9 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     assert result["candidates"][0]["response"] == "Microsoft — founded by → born in: London."
     assert len(result["proposition_evidence"]) == 1
     assert result["proposition_evidence"][0]["schema_version"] == 2
-    assert tuple(validate_proposition_evidence_path_step(step)["proposition_id"] for step in result["proposition_evidence"][0]["path"]) == (
+    assert tuple(
+        validate_proposition_evidence_path_step(step)["proposition_id"] for step in result["proposition_evidence"][0]["path"]
+    ) == (
         "proposition:microsoft-founder",
         "proposition:founder-born-in",
     )

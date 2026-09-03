@@ -18,14 +18,6 @@ from engram.constants import (
     CANDIDATE_SCHEMA_VERSION,
     CANONICAL_PROPOSITION_REFERENCES_FIELDS,
     CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION,
-    PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
-    PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
-    PROPOSITION_EVIDENCE_RECORD_FIELDS,
-    PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
-    PROPOSITION_TRUST_INPUTS_FIELDS,
-    PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
-    PROPOSITION_VALIDITY_INPUTS_FIELDS,
-    PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
     DEFAULT_RESOLUTION_MAX_CANDIDATES,
     DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES,
@@ -50,11 +42,6 @@ from engram.constants import (
     MAX_ACCOUNTING_KEYWORD_BYTES,
     MAX_ACCOUNTING_KEYWORDS,
     MAX_CANDIDATE_ID_BYTES,
-    MAX_PROPOSITION_IDENTIFIER_BYTES,
-    MAX_PROPOSITION_SELECTION_REASONS,
-    MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
-    MAX_PROPOSITION_TIMESTAMP_BYTES,
-    MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     MAX_COMPOSITION_BINDING_BYTES,
     MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_DIAGNOSTIC_ID_BYTES,
@@ -71,6 +58,11 @@ from engram.constants import (
     MAX_JSON_DEPTH,
     MAX_JSON_ITEMS,
     MAX_JSON_STRING_BYTES,
+    MAX_PROPOSITION_IDENTIFIER_BYTES,
+    MAX_PROPOSITION_SELECTION_REASONS,
+    MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
+    MAX_PROPOSITION_TIMESTAMP_BYTES,
+    MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     MAX_REASON_CODE_BYTES,
     MAX_REQUEST_BYTES,
     MAX_REQUIRED_SOURCE_LABEL_BYTES,
@@ -93,6 +85,14 @@ from engram.constants import (
     MIN_RESOLUTION_CANDIDATES,
     MIN_RESOLUTION_OUTPUT_BYTES,
     MIN_RESOLUTION_RESOLVERS,
+    PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
+    PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
+    PROPOSITION_EVIDENCE_RECORD_FIELDS,
+    PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
+    PROPOSITION_TRUST_INPUTS_FIELDS,
+    PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
+    PROPOSITION_VALIDITY_INPUTS_FIELDS,
+    PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     QUERY_FRAME_FIELDS,
     QUERY_FRAME_SCHEMA_VERSION,
     RESOLUTION_BUDGET_FIELDS,
@@ -103,13 +103,13 @@ from engram.constants import (
     RESOLVER_RESULT_SCHEMA_VERSION,
     REWRITE_TRACE_STEP_FIELDS,
     CandidateSource,
-    PropositionOwnership,
     CostClass,
     DisclosureBasis,
     EvidenceKind,
     EvidencePackageTruncationReason,
     ExpectedObjectType,
     GraphCompositionOperator,
+    PropositionOwnership,
     ResolutionOutcome,
     ResolverState,
     TemporalAxis,
@@ -1137,7 +1137,9 @@ def proposition_validity_inputs(
         requested_end_available,
         "Proposition requested_end",
     )
-    system_lower, system_lower_available = _require_proposition_timestamp(system_from, system_from_available, "Proposition system_from")
+    system_lower, system_lower_available = _require_proposition_timestamp(
+        system_from, system_from_available, "Proposition system_from"
+    )
     system_upper, system_upper_available = _require_proposition_timestamp(system_to, system_to_available, "Proposition system_to")
     invalidated, invalidated_available = _require_proposition_timestamp(
         invalidated_at,
@@ -1554,7 +1556,9 @@ def proposition_evidence_path_step(
         raise InvalidRequestError("Proposition evidence path filter is unsupported")
     if not isinstance(aggregation_inputs, tuple):
         raise InvalidRequestError("Proposition evidence path aggregation_inputs must be a tuple")
-    normalized_aggregation = tuple(_path_binding(value, "Proposition evidence path aggregation input") for value in aggregation_inputs)
+    normalized_aggregation = tuple(
+        _path_binding(value, "Proposition evidence path aggregation input") for value in aggregation_inputs
+    )
     if normalized_aggregation != tuple(sorted(set(normalized_aggregation))):
         raise InvalidRequestError("Proposition evidence path aggregation_inputs must be unique and sorted")
     result: PropositionEvidencePathStep = {
@@ -1612,7 +1616,9 @@ def proposition_evidence_path_step_to_dict(value: object) -> dict[str, object]:
 def proposition_evidence_path_step_from_dict(value: object) -> PropositionEvidencePathStep:
     data = _exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     try:
-        operator = GraphCompositionOperator(_require_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False))
+        operator = GraphCompositionOperator(
+            _require_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False)
+        )
     except ValueError as error:
         raise InvalidRequestError("Proposition evidence path operator is unsupported") from error
     raw_filters = _require_list(data["filters"], "Proposition evidence path filters")
@@ -1655,7 +1661,8 @@ def proposition_evidence_record(
     if not isinstance(source_contributions, tuple):
         raise InvalidRequestError("Proposition evidence source_contributions must be a tuple")
     contributions = tuple(
-        _require_identifier(value, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for value in source_contributions
+        _require_identifier(value, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES)
+        for value in source_contributions
     )
     if not contributions or len(contributions) > MAX_PROPOSITION_SOURCE_CONTRIBUTIONS:
         raise InvalidRequestError(
@@ -1688,19 +1695,25 @@ def proposition_evidence_record(
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
     if version == 1:
-        normalized_path: tuple[object, ...] = tuple(_require_identifier(value, "Proposition evidence path identifier") for value in path)
+        normalized_path: tuple[object, ...] = tuple(
+            _require_identifier(value, "Proposition evidence path identifier") for value in path
+        )
         if normalized_path != (normalized_proposition_id,):
             raise InvalidRequestError("Section 7 Proposition evidence path must be the singleton proposition_id")
     else:
         normalized_path = tuple(validate_proposition_evidence_path_step(value) for value in path)
         if not 1 <= len(normalized_path) <= MAX_COMPOSITION_PATH_PROPOSITIONS:
-            raise InvalidRequestError(f"composed Proposition evidence path must contain 1 through {MAX_COMPOSITION_PATH_PROPOSITIONS} steps")
+            raise InvalidRequestError(
+                f"composed Proposition evidence path must contain 1 through {MAX_COMPOSITION_PATH_PROPOSITIONS} steps"
+            )
         steps = normalized_path
         if tuple(step["position"] for step in steps) != tuple(range(len(steps))):
             raise InvalidRequestError("composed Proposition evidence path positions must be contiguous and ordered")
         proposition_ids = tuple(step["proposition_id"] for step in steps)
         if len(set(proposition_ids)) != len(proposition_ids) or normalized_proposition_id not in proposition_ids:
-            raise InvalidRequestError("composed Proposition evidence path must contain unique Propositions including proposition_id")
+            raise InvalidRequestError(
+                "composed Proposition evidence path must contain unique Propositions including proposition_id"
+            )
         entity_ids = [steps[0]["subject_entity_id"]]
         for index, step in enumerate(steps):
             entity_ids.append(step["object_entity_id"])
@@ -1717,7 +1730,9 @@ def proposition_evidence_record(
         _require_identifier(value, "Proposition evidence selection reason", MAX_REASON_CODE_BYTES) for value in selection_reasons
     )
     if not reasons or len(reasons) > MAX_PROPOSITION_SELECTION_REASONS:
-        raise InvalidRequestError(f"Proposition evidence selection_reasons must contain 1 through {MAX_PROPOSITION_SELECTION_REASONS} values")
+        raise InvalidRequestError(
+            f"Proposition evidence selection_reasons must contain 1 through {MAX_PROPOSITION_SELECTION_REASONS} values"
+        )
     if reasons != tuple(sorted(set(reasons))):
         raise InvalidRequestError("Proposition evidence selection_reasons must be unique and sorted")
     result: PropositionEvidenceRecord = {
@@ -2700,7 +2715,8 @@ def resolver_result_from_dict(value: object) -> ResolverResult:
         candidates=tuple(candidate_from_dict(_freeze_mapping(item, "resolver candidate")) for item in candidates),
         evidence=tuple(evidence_reference_from_dict(_freeze_mapping(item, "resolver evidence item")) for item in evidence),
         proposition_evidence=tuple(
-            proposition_evidence_record_from_dict(_freeze_mapping(item, "resolver Proposition evidence item")) for item in proposition_evidence
+            proposition_evidence_record_from_dict(_freeze_mapping(item, "resolver Proposition evidence item"))
+            for item in proposition_evidence
         ),
         accounting=tuple(
             accounting_observation_from_dict(_freeze_mapping(item, "resolver accounting item")) for item in accounting

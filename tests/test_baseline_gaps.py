@@ -55,9 +55,5 @@ def test_section2_proposition_support_reverse_index_preserves_current_metadata()
     )
 
     state = engram.index_snapshot()
-    assert state["record_to_statements"] == {
-        REFERENCE_IDS.get("proposition_a", ""): (statement_id,)
-    }
-    assert state["statement_to_references"] == {
-        statement_id: (PROPOSITION_REFERENCE_A,)
-    }
+    assert state["record_to_statements"] == {REFERENCE_IDS.get("proposition_a", ""): (statement_id,)}
+    assert state["statement_to_references"] == {statement_id: (PROPOSITION_REFERENCE_A,)}

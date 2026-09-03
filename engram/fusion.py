@@ -831,7 +831,9 @@ class EngramCandidateAuthority:
                 False,
                 (FusionPolicyReason.OBJECT_TYPE_FEATURE_MISMATCH,),
             )
-        decision = PropositionEligibilityEvaluator(getattr(self._engram, "proposition_visibility_authority", ())).evaluate(current, frame)
+        decision = PropositionEligibilityEvaluator(getattr(self._engram, "proposition_visibility_authority", ())).evaluate(
+            current, frame
+        )
         if not decision["eligible"]:
             return candidate_eligibility(False, False, False, (FusionPolicyReason.ARTIFACT_INELIGIBLE,))
         return candidate_eligibility(True, True, True)
@@ -875,7 +877,9 @@ class EngramCandidateAuthority:
         predicate_labels = tuple_values[3]
         terminal_labels = tuple_values[4]
         terminal_types = tuple_values[5]
-        if not 1 <= len(proposition_ids) <= 2 or not (len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(proposition_ids)):
+        if not 1 <= len(proposition_ids) <= 2 or not (
+            len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(proposition_ids)
+        ):
             return candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
         if (
             len(candidate["evidence"]) != len(proposition_ids)
@@ -1077,10 +1081,7 @@ class EngramCandidateAuthority:
             retained_support = tuple(
                 reference["evidence_id"] for reference in candidate["evidence"] if reference["kind"] == EvidenceKind.SUPPORT
             )
-            support_ids = {
-                reference.get("id", "")
-                for reference in artifact["support_references"]
-            }
+            support_ids = {reference.get("id", "") for reference in artifact["support_references"]}
             if any(reference_id not in support_ids for reference_id in retained_support):
                 answer_eligible = False
                 reasons = tuple(dict.fromkeys((*reasons, FusionPolicyReason.SUPPORT_REFERENCE_STALE)))
