@@ -1,20 +1,21 @@
 """Reproducible Section 7 evidence codec, package, normalization, and orchestration benchmark."""
 
-import argparse
-import hashlib
-import json
-import platform
-import statistics
-import sys
-import time
-import tracemalloc
+from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
+from hashlib import sha256 as hashlib_sha256
+from json import dumps as json_dumps
 from pathlib import Path
+from platform import platform as platform_platform, python_version as platform_python_version
+from statistics import median as statistics_median
+from sys import path as sys_path
+from time import perf_counter_ns as time_perf_counter_ns
+from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY))
+if str(REPOSITORY) not in sys_path:
+    sys_path.insert(0, str(REPOSITORY))
 
+from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
 from engram.evidence import (
     canonicalize_proposition_evidence,
@@ -23,40 +24,34 @@ from engram.evidence import (
     evidence_usefulness_policy_to_dict,
 )
 from engram.identity import scope_key
+from engram.repository import tier_admission_policy
 from engram.resolution import (
-    PropositionEvidenceRecord,
-    PropositionOwnership,
+    CostClass,
     DisclosureBasis,
-    QueryFrame,
+    PropositionOwnership,
     QueryFrameBuilder,
     ResolutionOutcome,
-    ResolverResult,
     ResolverState,
     budget_consumption_to_dict,
     build_evidence_package,
     canonical_proposition_references,
     capture_resolution_budget,
+    disclosure_decision,
+    evidence_package_from_json,
+    evidence_package_to_json,
+    feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_json,
     proposition_evidence_record_to_dict,
     proposition_evidence_record_to_json,
     proposition_trust_inputs,
     proposition_validity_inputs,
-    disclosure_decision,
-    evidence_package_from_json,
-    evidence_package_to_json,
-    feature_set,
     resolution_budget,
     resolution_result_to_json,
     resolver_result,
 )
-from engram.resolvers import (
-    ResolutionAccountingFinalizer,
-    ResolutionOrchestrator,
-    ResolverBudget,
-    ResolverExecutor,
-    ResolverRegistry,
-)
+from engram.resolvers import ResolutionAccountingFinalizer, ResolutionOrchestrator, ResolverExecutor, ResolverRegistry
+from engram.responses import AcceptedResponseService
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/evidence/benchmark-2026-08-19.json")
@@ -78,11 +73,11 @@ def measure(operation, samples: int) -> dict[str, float]:
     operation()
     values = []
     for _ in range(samples):
-        started = time.perf_counter_ns()
+        started = time_perf_counter_ns()
         operation()
-        values.append((time.perf_counter_ns() - started) / 1_000_000)
+        values.append((time_perf_counter_ns() - started) / 1_000_000)
     result = {
-        "p50_ms": statistics.median(values),
+        "p50_ms": statistics_median(values),
         "p95_ms": percentile(values, 0.95),
         "p99_ms": percentile(values, 0.99),
         "max_ms": max(values),
@@ -90,7 +85,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def record(index: int) -> PropositionEvidenceRecord:
+def record(index: int) -> dict:
     """Construct one content-neutral, currently eligible synthetic record."""
     proposition_id = f"proposition-benchmark-{index:04d}"
     result = proposition_evidence_record(
@@ -128,25 +123,27 @@ def record(index: int) -> PropositionEvidenceRecord:
 class SyntheticResolver:
     """Bounded synthetic resolver used only by the offline benchmark."""
 
-    cost_class = next(iter(resolution_budget()["allowed_cost_classes"]))
+    cost_class = next(iter(resolution_budget().get("allowed_cost_classes", tuple(CostClass))))
 
-    def __init__(self, name: str, result: ResolverResult, *, fail: bool = False) -> None:
+    def __init__(self, name: str, result: dict, *, fail: bool = False) -> None:
         self.name = name
-        self._result = result
-        self._fail = fail
+        self.internal_result = result
+        self.internal_fail = fail
 
-    def available(self, frame: QueryFrame) -> bool:
+    def available(self, frame: dict) -> bool:
         result = True
         return result
 
-    def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
-        if self._fail:
+    def resolve(self, frame: dict, budget: dict, cooperative_check=()) -> dict:
+        if cooperative_check:
+            cooperative_check()
+        if self.internal_fail:
             raise RuntimeError("synthetic dependency failure")
-        result = self._result
+        result = self.internal_result
         return result
 
 
-def build_result(samples: int) -> dict[str, object]:
+def measure_evidence(samples: int) -> dict[str, object]:
     """Run warmed engineering benchmarks and return a bounded evidence artifact."""
     records = tuple(record(index) for index in range(1_000))
     ten_records = records[:10]
@@ -170,26 +167,26 @@ def build_result(samples: int) -> dict[str, object]:
 
     canonical_forward = canonicalize_proposition_evidence(records)
     canonical_reverse = canonicalize_proposition_evidence(tuple(reversed(records)))
-    canonical_digest = hashlib.sha256(
-        json.dumps(
+    canonical_digest = hashlib_sha256(
+        json_dumps(
             [proposition_evidence_record_to_dict(value) for value in canonical_forward],
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    reverse_digest = hashlib.sha256(
-        json.dumps(
+    reverse_digest = hashlib_sha256(
+        json_dumps(
             [proposition_evidence_record_to_dict(value) for value in canonical_reverse],
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
 
-    tracemalloc.start()
+    tracemalloc_start()
     memory_result = canonicalize_proposition_evidence(records)
     memory_package = build_evidence_package(memory_result, max_records=10)
-    _, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    _, peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
 
     engine = Engram()
     budget = capture_resolution_budget(lambda: START_NS)
@@ -214,7 +211,9 @@ def build_result(samples: int) -> dict[str, object]:
     )
     registry = ResolverRegistry((successful, failed))
     executor = ResolverExecutor(lambda: START_NS)
-    finalizer = ResolutionAccountingFinalizer(engine, max_requests=max(1_000, samples + 2))
+    coordinator = AtomicMutationCoordinator(engine.response_repository, engine.mutation_receipts)
+    response_service = AcceptedResponseService(coordinator, tier_admission_policy(engine.config.get("capacity", 1)))
+    finalizer = ResolutionAccountingFinalizer(engine, response_service, max_requests=max(1_000, samples + 2))
     orchestrator = ResolutionOrchestrator(registry, executor, finalizer)
     request_number = 0
 
@@ -228,27 +227,32 @@ def build_result(samples: int) -> dict[str, object]:
     partial_result, partial_finalization = resolve_partial_failure()
     package_value = build_evidence_package(ten_records)
     package_bytes = len(evidence_package_to_json(package_value).encode("utf-8"))
-    all_included = all(evaluate_evidence_usefulness(policy, value)["included"] for value in records)
+    all_included = all(evaluate_evidence_usefulness(policy, value).get("included", False) for value in records)
     gates = {
         "thousand_record_peak_under_64_mib": peak_bytes < 67_108_864,
         "package_within_64_kib": package_bytes <= 65_536,
-        "package_retains_ten_records": package_value["retained_count"] == 10,
+        "package_retains_ten_records": package_value.get("retained_count", 0) == 10,
         "normalization_is_order_independent": canonical_digest == reverse_digest,
         "frozen_policy_includes_qualified_synthetic_records": all_included,
-        "partial_failure_returns_evidence": partial_result["outcome"] == ResolutionOutcome.EVIDENCE,
-        "partial_failure_is_visible": any(value["state"] == ResolverState.FAILED for value in partial_result["resolver_results"]),
+        "partial_failure_returns_evidence": partial_result.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.EVIDENCE,
+        "partial_failure_is_visible": any(
+            value.get("state", ResolverState.COMPLETED) == ResolverState.FAILED
+            for value in partial_result.get("resolver_results", [])
+        ),
         "partial_failure_contains_full_records_only_in_package": (
-            partial_result["evidence_package"]["retained_count"] == 10
-            and all(not value["proposition_evidence"] for value in partial_result["resolver_results"])
+            partial_result.get("evidence_package", {}).get("retained_count", 0) == 10
+            and all(not value.get("proposition_evidence", ()) for value in partial_result.get("resolver_results", []))
         ),
         "proposition_only_has_no_response_accounting": (
-            partial_finalization["candidate_statement_ids"] == () and not partial_finalization["success_applied"]
+            partial_finalization.get("candidate_statement_ids", ()) == () and not partial_finalization.get("success_applied", False)
         ),
         "complete_output_accounting_is_exact": (
-            partial_result["budget"]["output_bytes"] == len(resolution_result_to_json(partial_result).encode("utf-8"))
+            partial_result.get("budget", {}).get("output_bytes", 0)
+            == len(resolution_result_to_json(partial_result).encode("utf-8"))
         ),
         "working_memory_within_frame_budget": (
-            partial_result["budget"]["working_memory_bytes"] <= frame["budget"]["max_working_memory_bytes"]
+            partial_result.get("budget", {}).get("working_memory_bytes", 0)
+            <= frame.get("budget", {}).get("max_working_memory_bytes", 0)
         ),
     }
     result = {
@@ -256,12 +260,12 @@ def build_result(samples: int) -> dict[str, object]:
         "benchmark_version": "section7-evidence-benchmark-current-1",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
-        "environment": {"python": platform.python_version(), "platform": platform.platform()},
+        "environment": {"python": platform_python_version(), "platform": platform_platform()},
         "policy": evidence_usefulness_policy_to_dict(policy),
         "policy_provenance": {
             "selection": "hand_authored_conservative_unfitted",
             "unit_conformance_or_benchmark_data_used_for_parameter_selection": False,
-            "empirical_calibration_owner": "Section 16",
+            "empirical_calibration_owner": "release qualification",
         },
         "samples": samples,
         "normalization_samples": normalization_samples,
@@ -274,12 +278,14 @@ def build_result(samples: int) -> dict[str, object]:
         "thousand_record_peak_bytes": peak_bytes,
         "thousand_record_normalized_count": len(memory_result),
         "ten_record_package_bytes": package_bytes,
-        "ten_record_package_retained": memory_package["retained_count"],
-        "ten_record_package_omitted_from_thousand": memory_package["omitted_count"],
+        "ten_record_package_retained": memory_package.get("retained_count", 0),
+        "ten_record_package_omitted_from_thousand": memory_package.get("omitted_count", 0),
         "canonical_digest": canonical_digest,
-        "partial_failure_outcome": partial_result["outcome"].value,
-        "partial_failure_resolver_states": [value["state"].value for value in partial_result["resolver_results"]],
-        "partial_failure_budget": budget_consumption_to_dict(partial_result["budget"]),
+        "partial_failure_outcome": partial_result.get("outcome", ResolutionOutcome.MISS).value,
+        "partial_failure_resolver_states": [
+            value.get("state", ResolverState.COMPLETED).value for value in partial_result.get("resolver_results", [])
+        ],
+        "partial_failure_budget": budget_consumption_to_dict(partial_result.get("budget", {})),
         "gates": gates,
         "all_gates_passed": all(gates.values()),
     }
@@ -288,22 +294,22 @@ def build_result(samples: int) -> dict[str, object]:
 
 def main() -> int:
     """Run the benchmark and optionally write its JSON artifact."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--stdout", action="store_true")
     args = parser.parse_args()
     if args.samples < 10:
         parser.error("--samples must be at least 10")
-    result = build_result(args.samples)
-    text = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    result = measure_evidence(args.samples)
+    text = json_dumps(result, indent=2, sort_keys=True) + "\n"
     if args.stdout:
         print(text, end="")
     else:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text, encoding="utf-8")
         print(args.output)
-    result = 0 if result["all_gates_passed"] else 1
+    result = 0 if result.get("all_gates_passed", False) else 1
     return result
 
 

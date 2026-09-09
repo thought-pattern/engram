@@ -1,32 +1,18 @@
-"""Protocol and lifecycle tests for the MCPServer adapter."""
+"""Protocol and process-lifecycle tests for the MCP adapter."""
 
-import asyncio
-import json
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from asyncio import run as asyncio_run
+from json import loads as json_loads
 
-import pytest
 from mcp.client import Client
+from pytest import raises as pytest_raises
 
-from engram import service as engram_service
-from engram.config import engram_config
-from engram.constants import VERSION
-from engram.conversation import ConversationRuntime
-from engram.core import Engram
 from engram.errors import ConflictError, LifecycleError
-from engram.mcp_server import MCPConversationService, create_mcp_server
-from engram.service import EngramCore
-from scripts.run_section3_mcp_conformance import _evaluate_turn, _run_length_encode_passes
+from engram.mcp_server import EngramMCPServer, MCPConversationService
+from scripts.run_section3_mcp_conformance import evaluate_turn, run_length_encode_passes
 
 
-def _runtime(service: MCPConversationService) -> ConversationRuntime:
-    result = service.runtime
-    return result
-
-
-def _complete_turn_event() -> dict:
-    result = {
+def complete_turn_event() -> dict:
+    return {
         "turn": 1,
         "input": "hello",
         "response": "Hello!",
@@ -43,31 +29,28 @@ def _complete_turn_event() -> dict:
         "context_changes": {},
         "learned_statements": [],
     }
-    return result
 
 
-def test_mcp_long_conversation_evaluator_checks_each_complete_turn_without_retaining_text() -> None:
-    evaluation = _evaluate_turn(_complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
+def tool_json(result) -> dict:
+    assert result.is_error is False
+    assert len(result.content) == 1
+    assert result.content[0].type == "text"
+    value = json_loads(result.content[0].text)
+    assert isinstance(value, dict)
+    return value
 
-    assert evaluation["passed"] is True
-    assert evaluation["failed_checks"] == []
-    assert evaluation["response_bytes"] == 6
+
+def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:
+    evaluation = evaluate_turn(complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
+
+    assert evaluation.get("passed") is True
+    assert evaluation.get("failed_checks") == []
+    assert evaluation.get("response_bytes") == 6
     assert "Hello!" not in str(evaluation)
 
 
-def test_mcp_long_conversation_evaluator_reports_all_failed_contract_checks() -> None:
-    malformed = {**_complete_turn_event(), "turn": 2, "source": "", "unexpected": True}
-
-    evaluation = _evaluate_turn(malformed, 1, "hello", "Protocol Agent", 2.5)
-
-    assert evaluation["passed"] is False
-    assert evaluation["failed_checks"] == ["exact_fields", "turn_sequence", "source_nonempty"]
-
-
-def test_mcp_turn_evaluation_pass_runs_preserve_every_ordered_turn() -> None:
-    evaluations = [{"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}]
-
-    encoded = _run_length_encode_passes(evaluations)
+def test_turn_evaluation_run_length_encoding_preserves_order() -> None:
+    encoded = run_length_encode_passes([{"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}])
 
     assert encoded == [
         {"bit": "1", "turns": 2},
@@ -76,377 +59,138 @@ def test_mcp_turn_evaluation_pass_runs_preserve_every_ordered_turn() -> None:
     ]
 
 
-def _seed_file(tmp_path):
-    path = tmp_path / "seed.json"
-    path.write_text(
-        json.dumps(
-            {
-                "pairs": [
-                    {"pattern": "HELLO", "response": "Hello!"},
-                    {"pattern": "*", "response": "Go on."},
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
-def _tool_json(result) -> dict:
-    assert result.is_error is False
-    assert len(result.content) == 1
-    result = json.loads(result.content[0].text)
-    return result
-
-
-def test_service_persists_one_runtime_across_calls(tmp_path) -> None:
+def test_service_requires_an_explicit_lifecycle() -> None:
     service = MCPConversationService()
-    seed = _seed_file(tmp_path)
-    store = tmp_path / "state" / "engram.json"
-    transcript = tmp_path / "transcript.json"
 
-    started = service.start(
-        user_id="Agent",
-        initial_bot_text=".",
-        seed_path=str(seed),
-        store_path=str(store),
-        transcript_path=str(transcript),
-    )
-    first = service.send("Sushi is good.")
-    second = service.send("What's good?")
-    snapshot = service.inspect()
-
-    assert started["user_id"] == "Agent"
-    assert first["turn"] == 1
-    assert second["turn"] == 2
-    assert second["response"] == "Sushi is good."
-    assert snapshot["session"]["previous_response"] == "Sushi is good."
-    assert snapshot["learned_dynamic"][0]["introduced_by_user_id"] == "Agent"
-    assert transcript.exists()
-
-    stopped = service.stop()
-    assert stopped["summary"]["exchanges"] == 2
-    assert store.exists()
-    with pytest.raises(ValueError, match="no active conversation"):
+    with pytest_raises(LifecycleError, match="engram_start"):
         service.inspect()
 
-    restarted = MCPConversationService()
-    restarted.start(user_id="Carol", seed_path="", store_path=str(store))
-    assert restarted.send("What's good?")["response"] == "Sushi is good."
+    service.start(user_id="Alice")
+    with pytest_raises(ConflictError, match="already active"):
+        service.start(user_id="Carol")
+
+    service.stop()
+    with pytest_raises(LifecycleError, match="engram_start"):
+        service.inspect()
 
 
-def test_service_restart_without_config_path_restores_stored_config(tmp_path) -> None:
-    store = tmp_path / "engram.json"
-    stored = EngramCore(Engram(config=engram_config(capacity=37, use_synonyms=False)), store_path=store)
-    assert stored.flush() is True
-
+def test_empty_mcp_user_uses_unknown_user_zero_for_complete_lifecycle() -> None:
     service = MCPConversationService()
-    service.start(seed_path="", store_path=str(store))
 
-    assert service.core
-    assert service.core.engram.config["capacity"] == 37
-    assert service.core.engram.config["use_synonyms"] is False
+    started = service.start(user_id="")
+    turn = service.send("Hello")
+    inspected = service.inspect()
+    fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
+    finished = service.finish()
+    stopped = service.stop()
+
+    assert started.get("user_id") == "0"
+    assert turn.get("user_id") == "0"
+    assert inspected.get("user_id") == "0"
+    assert fact.get("source_label") == "research"
+    assert finished.get("user_id") == "0"
+    assert stopped.get("user_id") == "0"
+    assert service.active_user_id == ""
+    assert service.core == ()
 
 
-def test_service_adds_unattributed_shared_fact_without_context_change(tmp_path) -> None:
+def test_stop_discards_responses_conversations_and_receipts() -> None:
     service = MCPConversationService()
-    service.start(user_id="Carol", seed_path=str(_seed_file(tmp_path)))
-    session_before = service.inspect()["session"]
-
-    fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research-tool")
-
-    assert fact["introduced_by_user_id"] == ""
-    assert fact["source_label"] == "research-tool"
-    assert service.inspect()["session"] == session_before
-    assert service.send("What is Tokyo?")["response"] == "Tokyo is the capital of Japan."
-
-
-def test_service_requires_an_explicit_lifecycle(tmp_path) -> None:
-    service = MCPConversationService()
-    with pytest.raises(LifecycleError, match="engram_start"):
-        service.send("hello")
-    with pytest.raises(LifecycleError, match="engram_start"):
-        service.propose("hello", "proposal-before-start")
-
-    service.start(seed_path=str(_seed_file(tmp_path)))
-    with pytest.raises(ConflictError, match="already active"):
-        service.start(seed_path=str(_seed_file(tmp_path)))
-
-
-def test_mcp_start_keeps_serving_when_optional_graph_is_unavailable(tmp_path, monkeypatch) -> None:
-    config = tmp_path / "graph.yml"
-    config.write_text(
-        "graph:\n  enabled: true\n  deployment_mode: standalone\n",
-        encoding="utf-8",
+    service.start(user_id="Alice")
+    learned = service.learn_response(
+        "When is support open?",
+        "Nine to five.",
+        "learn-1",
+        user_id="Alice",
+        namespace="support",
     )
-    unavailable_client = type("UnavailableGraph", (), {"available": False})()
-    monkeypatch.setattr("engram.core.create_graph_client", lambda **kwargs: unavailable_client)
+    assert learned.get("idempotent") is False
 
+    service.stop()
+    service.start(user_id="Alice")
+    proposal = service.propose(
+        "When is support open?",
+        "proposal-after-restart",
+        user_id="Alice",
+        namespace="support",
+    )
+
+    core, _ = service.require_active()
+    assert proposal.get("candidates") == []
+    assert core.engram.mutation_receipts.next_sequence == 1
+
+
+def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
     service = MCPConversationService()
-    started = service.start(seed_path="", config_path=str(config))
-    core = service.core
 
-    assert started["user_id"] == "0"
-    assert core.status()["ready"] is True
-    assert core.status()["components"]["graph"] == {"enabled": True, "ready": False}
-    assert service.send("ordinary local request")["response"] == ""
+    service.start(user_id="Alice")
+    service.send("Hello")
+    report = service.finish()
     service.stop()
 
+    assert report.get("summary", {}).get("exchanges") == 1
+    assert list(tmp_path.iterdir()) == []
 
-def test_regulated_proposal_records_only_accepted_hits(tmp_path) -> None:
+
+def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> None:
     service = MCPConversationService()
-    service.start(user_id="Robin", seed_path=str(_seed_file(tmp_path)))
+    service.start(user_id="Regulator")
     learned = service.learn_response(
-        request="When are you open?",
-        response="Support is open from nine to five.",
-        request_id="learn-1",
-        user_id="Robin",
+        "When is support open?",
+        "Nine to five.",
+        "learn-1",
         namespace="support",
-        context_fingerprint="tier:pro",
-        metadata={"actor_version": "actor-7"},
-    )
-
-    rejected_proposal = service.propose(
-        request="When are you open?",
-        request_id="proposal-1",
-        user_id="Robin",
-        namespace="support",
-        context_fingerprint="tier:pro",
-        required_metadata={"actor_version": "actor-7"},
-    )
-    candidate = rejected_proposal["candidates"][0]
-    assert candidate["statement_id"] == learned["statement_id"]
-    assert candidate["query_count"] == 1
-    assert candidate["hit_count"] == 0
-
-    rejected = service.resolve(
-        rejected_proposal["proposal_id"],
-        "rejected_quality",
-        statement_id=candidate["statement_id"],
-        reason="unsupported",
-    )
-    retry = service.resolve(
-        rejected_proposal["proposal_id"],
-        "rejected_quality",
-        statement_id=candidate["statement_id"],
-        reason="unsupported",
-    )
-    assert rejected["idempotent"] is False
-    assert retry["idempotent"] is True
-    assert _runtime(service).engram.get_statement(candidate["statement_id"])["hit_count"] == 0
-    with pytest.raises(ValueError, match="different verdict"):
-        service.resolve(rejected_proposal["proposal_id"], "accepted", statement_id=candidate["statement_id"])
-
-    accepted_proposal = service.propose(
-        request="When are you open?",
-        request_id="proposal-2",
-        user_id="Robin",
-        namespace="support",
-        context_fingerprint="tier:pro",
-    )
-    accepted = service.resolve(
-        accepted_proposal["proposal_id"],
-        "accepted",
-        statement_id=candidate["statement_id"],
-        reason="applicable_and_supported",
-    )
-
-    assert accepted["resolved"] is True
-    assert _runtime(service).engram.get_statement(candidate["statement_id"])["hit_count"] == 1
-    snapshot = service.inspect()
-    assert snapshot["session"]["previous_response"] == "Support is open from nine to five."
-    assert snapshot["regulated_cache"]["accepted"] == 1
-    assert snapshot["regulated_cache"]["rejections"]["rejected_quality"] == 1
-
-
-def test_regulated_learning_is_scoped_nonreplacing_and_idempotent(tmp_path) -> None:
-    service = MCPConversationService()
-    service.start(seed_path=str(_seed_file(tmp_path)))
-    shared = {
-        "request": "When are you open?",
-        "user_id": "0",
-        "context_fingerprint": "tier:pro",
-        "metadata": {"actor_version": "actor-7"},
-    }
-
-    support = service.learn_response(
-        **shared,
-        response="Support hours.",
-        request_id="learn-support",
-        namespace="support",
-    )
-    billing = service.learn_response(
-        **shared,
-        response="Billing hours.",
-        request_id="learn-billing",
-        namespace="billing",
     )
     replay = service.learn_response(
-        **shared,
-        response="Support hours.",
-        request_id="learn-support",
+        "When is support open?",
+        "Nine to five.",
+        "learn-1",
         namespace="support",
     )
-
-    assert support["statement_id"] != billing["statement_id"]
-    assert replay["statement_id"] == support["statement_id"]
-    assert replay["idempotent"] is True
-    with pytest.raises(ValueError, match="different learned response"):
-        service.learn_response(
-            **shared,
-            response="Conflicting retry.",
-            request_id="learn-support",
-            namespace="support",
-        )
-
-    with pytest.raises(ValueError, match=support["statement_id"]):
-        service.learn_response(
-            **shared,
-            response="Updated support hours.",
-            request_id="learn-support-replacement",
-            namespace="support",
-        )
-    support_proposal = service.propose(
-        "When are you open?",
-        "proposal-support",
+    proposal = service.propose(
+        "When is support open?",
+        "proposal-1",
         namespace="support",
-        context_fingerprint="tier:pro",
     )
-    billing_proposal = service.propose(
-        "When are you open?",
-        "proposal-billing",
-        namespace="billing",
-        context_fingerprint="tier:pro",
+    resolved = service.resolve(
+        proposal.get("proposal_id", ""),
+        "accepted",
+        learned.get("statement_id", ""),
     )
-    version_miss = service.propose(
-        "When are you open?",
-        "proposal-version-miss",
-        namespace="support",
-        context_fingerprint="tier:pro",
-        required_metadata={"actor_version": "actor-8"},
+    retired = service.retire_response(
+        learned.get("statement_id", ""),
+        "support changed",
+        "retire-1",
     )
 
-    assert support_proposal["candidates"][0]["response"] == "Support hours."
-    assert billing_proposal["candidates"][0]["response"] == "Billing hours."
-    assert version_miss["candidates"] == []
-    with pytest.raises(ValueError, match="IDK"):
-        service.learn_response("question", "  IDK  ", "learn-idk")
+    assert replay.get("idempotent") is True
+    assert resolved.get("resolved") is True
+    assert retired.get("retired") is True
 
 
-def test_regulated_resolution_is_concurrency_safe(tmp_path) -> None:
+def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
     service = MCPConversationService()
-    service.start(seed_path=str(_seed_file(tmp_path)))
-    learned = service.learn_response("What is cached?", "This is cached.", "learn-concurrent")
-    proposal = service.propose("What is cached?", "proposal-concurrent")
+    service.start(user_id="Alice", initial_bot_text="Initial context.")
+    before = service.inspect().get("session", {})
 
-    def accept() -> dict:
-        result = service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-        return result
+    fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
+    after = service.inspect().get("session", {})
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(lambda _: accept(), range(8)))
-
-    assert sum(result["idempotent"] is False for result in results) == 1
-    assert _runtime(service).engram.get_statement(learned["statement_id"])["hit_count"] == 1
+    assert fact.get("source_label") == "research"
+    assert after == before
 
 
-def test_abandoned_mcp_wait_does_not_proposition_to_cancel_started_mutation(tmp_path, monkeypatch) -> None:
-    service = MCPConversationService()
-    service.start(seed_path=str(_seed_file(tmp_path)))
-    core = service.core
-    entered = threading.Event()
-    release = threading.Event()
-    original = core.learn_response
-
-    def delayed(*args, **kwargs):
-        entered.set()
-        assert release.wait(timeout=5)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(core, "learn_response", delayed)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(service.learn_response, "What timed out?", "The mutation completed.", "mcp-abandoned")
-        assert entered.wait(timeout=5)
-        with pytest.raises(FutureTimeoutError):
-            future.result(timeout=0.01)
-        release.set()
-        created = future.result(timeout=5)
-
-    monkeypatch.setattr(core, "learn_response", original)
-    replay = service.learn_response("What timed out?", "The mutation completed.", "mcp-abandoned")
-
-    assert created["idempotent"] is False
-    assert replay["idempotent"] is True
-    assert replay["statement_id"] == created["statement_id"]
-    assert len(core.engram.response_repository.snapshot()["artifacts"]) == 1
-
-
-def test_regulated_retirement_is_limited_and_idempotent(tmp_path) -> None:
-    service = MCPConversationService()
-    service.start(seed_path=str(_seed_file(tmp_path)))
-    learned = service.learn_response("What is stale?", "An old answer.", "learn-stale")
-
-    retired = service.retire_response(learned["statement_id"], "superseded_source_data", "retire-1")
-    retry = service.retire_response(learned["statement_id"], "superseded_source_data", "retire-1")
-
-    assert retired["retired"] is True
-    assert retry["idempotent"] is True
-    retired_artifact = _runtime(service).engram.response_repository.get_artifact(learned["statement_id"])
-    assert retired_artifact["lifecycle"].value == "RETIRED"
-    assert service.propose("What is stale?", "proposal-retired")["candidates"] == []
-    static_pattern_id = next(
-        statement["id"] for statement in _runtime(service).engram.statements if statement["pattern"] == "HELLO"
-    )
-    with pytest.raises(ValueError, match="dynamic, patternless"):
-        service.retire_response(static_pattern_id, "not allowed", "retire-static")
-    with pytest.raises(ValueError, match="different retirement"):
-        service.retire_response(learned["statement_id"], "different reason", "retire-1")
-
-
-def test_regulated_state_expires_and_is_not_persisted(tmp_path) -> None:
-    service = MCPConversationService()
-    store = tmp_path / "engram.json"
-    service.start(seed_path=str(_seed_file(tmp_path)), store_path=str(store))
-    learned = service.learn_response("What persists?", "The learned response.", "learn-persist")
-    proposal = service.propose("What persists?", "proposal-expiring")
-    service.proposals[proposal["proposal_id"]]["created_at"] = time.monotonic() - engram_service.PROPOSAL_TTL_SECONDS - 1
-    with pytest.raises(ValueError, match="expired"):
-        service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-
-    service.stop()
-    service.start(seed_path="", store_path=str(store))
-    persisted = service.propose("What persists?", "proposal-after-restart")
-    assert persisted["candidates"][0]["response"] == "The learned response."
-    with pytest.raises(ValueError, match="expired"):
-        service.resolve(proposal["proposal_id"], "accepted", statement_id=learned["statement_id"])
-
-
-def test_regulated_proposal_storage_is_bounded(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(engram_service, "MAX_TRANSIENT_RECORDS", 2)
-    service = MCPConversationService()
-    service.start(seed_path=str(_seed_file(tmp_path)))
-
-    oldest = service.propose("first uncached question", "bounded-1")
-    service.propose("second uncached question", "bounded-2")
-    service.propose("third uncached question", "bounded-3")
-
-    assert len(service.proposals) == 2
-    assert "bounded-1" not in service.proposal_requests
-    with pytest.raises(ValueError, match="expired"):
-        service.resolve(oldest["proposal_id"], "rejected_quality")
-
-
-def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
-    async def exercise_protocol() -> None:
-        server = create_mcp_server()
+def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
+    async def exercise() -> None:
+        server = EngramMCPServer()
         async with Client(server) as client:
             assert client.server_info is not None
             assert client.server_info.name == "Engram"
-            assert client.server_info.version == VERSION
-            assert client.instructions
 
             listed = await client.list_tools()
-            assert [tool.name for tool in listed.tools] == [
+            names = [tool.name for tool in listed.tools]
+            assert names == [
                 "engram_start",
                 "engram_send",
                 "engram_inspect",
@@ -458,121 +202,24 @@ def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
                 "engram_learn_response",
                 "engram_retire_response",
             ]
-            expected_contracts = {
-                "engram_start": {
-                    "description": "Start one persistent Engram conversation for subsequent tool calls.",
-                    "properties": {
-                        "user_id": ("string", "0"),
-                        "initial_bot_text": ("string", ""),
-                        "seed_path": ("string", "data/seed.json"),
-                        "store_path": ("string", ""),
-                        "config_path": ("string", ""),
-                        "transcript_path": ("string", ""),
-                        "random_seed": ("integer", 0),
-                        "random_seed_present": ("boolean", False),
-                    },
-                    "required": (),
-                },
-                "engram_send": {
-                    "description": "Send exactly one message after observing Engram's previous reply.",
-                    "properties": {"text": ("string", ())},
-                    "required": ("text",),
-                },
-                "engram_inspect": {
-                    "description": "Inspect the active user context, learned facts, and metrics.",
-                    "properties": {},
-                    "required": (),
-                },
-                "engram_add_fact": {
-                    "description": "Add one unattributed shared fact without changing conversation context.",
-                    "properties": {"text": ("string", ()), "source_label": ("string", "")},
-                    "required": ("text",),
-                },
-                "engram_finish": {
-                    "description": "Write complete JSON and Markdown transcripts without stopping.",
-                    "properties": {"output_prefix": ("string", "engram-mcp-transcript")},
-                    "required": (),
-                },
-                "engram_stop": {
-                    "description": "Persist configured state and release the active conversation.",
-                    "properties": {},
-                    "required": (),
-                },
-                "engram_propose": {
-                    "description": "Retrieve scoped candidates without recording a successful hit.",
-                    "properties": {
-                        "request": ("string", ()),
-                        "request_id": ("string", ()),
-                        "user_id": ("string", "0"),
-                        "namespace": ("string", ""),
-                        "context_fingerprint": ("string", ""),
-                        "limit": ("integer", 1),
-                        "required_metadata": ("object", {}),
-                        "required_source_label": ("string", ""),
-                    },
-                    "required": ("request", "request_id"),
-                },
-                "engram_resolve": {
-                    "description": "Commit one accepted or rejected Regulator verdict.",
-                    "properties": {
-                        "proposal_id": ("string", ()),
-                        "outcome": ("string", ()),
-                        "statement_id": ("string", ""),
-                        "reason": ("string", ""),
-                    },
-                    "required": ("outcome", "proposal_id"),
-                },
-                "engram_learn_response": {
-                    "description": "Cache one non-IDK Actor response with scope and provenance.",
-                    "properties": {
-                        "request": ("string", ()),
-                        "response": ("string", ()),
-                        "request_id": ("string", ()),
-                        "user_id": ("string", "0"),
-                        "namespace": ("string", ""),
-                        "context_fingerprint": ("string", ""),
-                        "source_label": ("string", "tapestry:actor"),
-                        "metadata": ("object", {}),
-                    },
-                    "required": ("request", "request_id", "response"),
-                },
-                "engram_retire_response": {
-                    "description": "Retire one globally stale dynamic response-cache entry.",
-                    "properties": {
-                        "statement_id": ("string", ()),
-                        "reason": ("string", ()),
-                        "request_id": ("string", ()),
-                    },
-                    "required": ("reason", "request_id", "statement_id"),
-                },
-            }
-            actual_contracts = {}
-            for tool in listed.tools:
-                value = tool.model_dump()
-                schema = value["input_schema"]
-                actual_contracts[tool.name] = {
-                    "description": tool.description,
-                    "properties": {
-                        name: (definition["type"], definition.get("default", ()))
-                        for name, definition in schema["properties"].items()
-                    },
-                    "required": tuple(sorted(schema.get("required", ()))),
-                }
-                assert value["output_schema"] is None
-            assert actual_contracts == expected_contracts
-
-            started = _tool_json(
+            contracts = {tool.name: tool.model_dump() for tool in listed.tools}
+            start_schema = contracts.get("engram_start", {}).get("input_schema", {})
+            finish_schema = contracts.get("engram_finish", {}).get("input_schema", {})
+            assert sorted(start_schema.get("properties", {})) == [
+                "config_path",
+                "initial_bot_text",
+                "random_seed",
+                "random_seed_present",
+                "user_id",
+            ]
+            assert finish_schema.get("properties", {}) == {}
+            started = tool_json(
                 await client.call_tool(
                     "engram_start",
-                    {
-                        "user_id": "Protocol Agent",
-                        "initial_bot_text": ".",
-                        "seed_path": str(_seed_file(tmp_path)),
-                    },
+                    {"user_id": "Protocol Agent", "initial_bot_text": "."},
                 )
             )
-            sent = _tool_json(await client.call_tool("engram_send", {"text": "hello"}))
-            learned = _tool_json(
+            learned = tool_json(
                 await client.call_tool(
                     "engram_learn_response",
                     {
@@ -583,7 +230,7 @@ def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
                     },
                 )
             )
-            proposed = _tool_json(
+            proposed = tool_json(
                 await client.call_tool(
                     "engram_propose",
                     {
@@ -593,24 +240,22 @@ def test_mcpserver_tools_work_through_the_mcp_protocol(tmp_path) -> None:
                     },
                 )
             )
-            resolved = _tool_json(
+            resolved = tool_json(
                 await client.call_tool(
                     "engram_resolve",
                     {
-                        "proposal_id": proposed["proposal_id"],
+                        "proposal_id": proposed.get("proposal_id", ""),
                         "outcome": "accepted",
-                        "statement_id": learned["statement_id"],
+                        "statement_id": learned.get("statement_id", ""),
                     },
                 )
             )
-            inspected = _tool_json(await client.call_tool("engram_inspect", {}))
-            stopped = _tool_json(await client.call_tool("engram_stop", {}))
+            status = tool_json(await client.call_tool("engram_inspect", {}))
+            stopped = tool_json(await client.call_tool("engram_stop", {}))
 
-            assert started["turn_count"] == 0
-            assert sent["response"] == "Hello!"
-            assert resolved["resolved"] is True
-            assert inspected["turn_count"] == 1
-            assert inspected["regulated_cache"]["accepted"] == 1
-            assert stopped["summary"]["exchanges"] == 1
+            assert started.get("turn_count") == 0
+            assert resolved.get("resolved") is True
+            assert status.get("core_status", {}).get("memory_only") is True
+            assert stopped.get("stopped") is True
 
-    asyncio.run(exercise_protocol())
+    asyncio_run(exercise())

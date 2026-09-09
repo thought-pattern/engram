@@ -1,9 +1,9 @@
 """Section 1 contract, normalization, extraction, and conformance tests."""
 
-import json
+from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.errors import IdentityValidationError, UnsupportedIdentityVersionError
 from engram.identity import (
@@ -59,20 +59,20 @@ from engram.identity import (
 NORMALIZATION_FIXTURE = Path(__file__).parent / "fixtures" / "identity" / "normalization-v1.json"
 
 
-def _fixture() -> dict:
-    result = json.loads(NORMALIZATION_FIXTURE.read_text(encoding="utf-8"))
+def fixture() -> dict:
+    result = json_loads(NORMALIZATION_FIXTURE.read_text(encoding="utf-8"))
     return result
 
 
-def _none_paths(value, path: str = "root") -> list[str]:
+def none_paths(value, path: str = "root") -> list[str]:
     if value is None:
         result = [path]
         return result
     if isinstance(value, dict):
-        result = [nested for key, item in value.items() for nested in _none_paths(item, f"{path}.{key}")]
+        result = [nested for key, item in value.items() for nested in none_paths(item, f"{path}.{key}")]
         return result
     if isinstance(value, (list, tuple, set)):
-        result = [nested for index, item in enumerate(value) for nested in _none_paths(item, f"{path}[{index}]")]
+        result = [nested for index, item in enumerate(value) for nested in none_paths(item, f"{path}[{index}]")]
         return result
     result = []
     return result
@@ -97,7 +97,7 @@ def test_scope_key_codec_equality_and_order_are_deterministic() -> None:
     assert scope_key_to_json(support) == scope_key_to_json(restored)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("value", "message"),
     [
         ({"schema_version": 2, "namespace": "", "context_fingerprint": ""}, "unsupported scope schema_version"),
@@ -106,15 +106,15 @@ def test_scope_key_codec_equality_and_order_are_deterministic() -> None:
     ],
 )
 def test_scope_key_invalid_scope_payloads_fail_explicitly(value: dict, message: str) -> None:
-    with pytest.raises(IdentityValidationError, match=message):
+    with pytest_raises(IdentityValidationError, match=message):
         scope_key_from_dict(value)
 
 
 def test_scope_key_scope_bounds_are_utf8_bytes_and_controls_are_rejected() -> None:
     scope_key(context_fingerprint="x" * MAX_CONTEXT_FINGERPRINT_BYTES)
-    with pytest.raises(IdentityValidationError, match="exceeds"):
+    with pytest_raises(IdentityValidationError, match="exceeds"):
         scope_key(context_fingerprint="é" * (MAX_CONTEXT_FINGERPRINT_BYTES // 2 + 1))
-    with pytest.raises(IdentityValidationError, match="control"):
+    with pytest_raises(IdentityValidationError, match="control"):
         scope_key(namespace="bad\nnamespace")
 
 
@@ -144,7 +144,7 @@ def test_identity_contracts_component_and_query_identity_codecs_round_trip() -> 
 
     assert restored == query
     assert query_identity_to_json(restored) == query_identity_to_json(query)
-    assert _none_paths(query_identity_to_dict(query)) == []
+    assert none_paths(query_identity_to_dict(query)) == []
     assert "null" not in query_identity_to_json(query)
 
 
@@ -162,16 +162,16 @@ def test_identity_contracts_unknown_operator_and_empty_relation_are_concrete() -
 def test_identity_contracts_unsupported_versions_and_unknown_fields_are_rejected() -> None:
     payload = query_identity_to_dict(build_standalone_identity("Who created Python?"))
     payload["schema_version"] = IDENTITY_SCHEMA_VERSION + 1
-    with pytest.raises(UnsupportedIdentityVersionError, match="identity schema_version"):
+    with pytest_raises(UnsupportedIdentityVersionError, match="identity schema_version"):
         query_identity_from_dict(payload)
 
     payload = query_identity_to_dict(build_standalone_identity("Who created Python?"))
     payload["unexpected"] = "value"
-    with pytest.raises(IdentityValidationError, match="unsupported fields"):
+    with pytest_raises(IdentityValidationError, match="unsupported fields"):
         query_identity_from_dict(payload)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     "factory",
     [
         lambda: entity_reference("Ada Lovelace", "not a canonical id"),
@@ -182,7 +182,7 @@ def test_identity_contracts_unsupported_versions_and_unknown_fields_are_rejected
     ],
 )
 def test_identity_contracts_malformed_components_fail_without_reinterpretation(factory) -> None:
-    with pytest.raises(IdentityValidationError):
+    with pytest_raises(IdentityValidationError):
         factory()
 
 
@@ -200,23 +200,23 @@ def test_identity_contracts_leaf_records_are_exact_revalidated_dictionaries() ->
 
     malformed_entity = dict(query["entities"][0])
     malformed_entity["unexpected"] = "value"
-    with pytest.raises(IdentityValidationError, match="unsupported fields"):
+    with pytest_raises(IdentityValidationError, match="unsupported fields"):
         validate_entity_reference(malformed_entity)
 
     malformed_qualifier = dict(query["qualifiers"][0])
     malformed_qualifier["value"] = "Not Normalized"
-    with pytest.raises(IdentityValidationError, match="already use retrieval normalization"):
+    with pytest_raises(IdentityValidationError, match="already use retrieval normalization"):
         validate_identity_qualifier(malformed_qualifier)
 
 
-@pytest.mark.parametrize("case", _fixture()["normalization_cases"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", fixture()["normalization_cases"], ids=lambda case: case["id"])
 def test_retrieval_normalization_golden_normalization_cases(case: dict) -> None:
-    assert normalize_retrieval_key(case["input"]) == case["expected"]
+    assert normalize_retrieval_key(case.get("input", "")) == case.get("expected", "")
 
 
-@pytest.mark.parametrize("case", _fixture()["normalization_cases"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", fixture()["normalization_cases"], ids=lambda case: case["id"])
 def test_retrieval_normalization_normalization_is_idempotent(case: dict) -> None:
-    once = normalize_retrieval_key(case["input"])
+    once = normalize_retrieval_key(case.get("input", ""))
     assert normalize_retrieval_key(once) == once
 
 
@@ -226,7 +226,7 @@ def test_retrieval_normalization_empty_and_punctuation_only_inputs_are_concrete(
 
 
 def test_retrieval_normalization_normalization_version_is_explicit() -> None:
-    with pytest.raises(UnsupportedIdentityVersionError, match="normalization_version"):
+    with pytest_raises(UnsupportedIdentityVersionError, match="normalization_version"):
         normalize_retrieval_key("request", RETRIEVAL_NORMALIZATION_VERSION + 1)
 
 
@@ -240,7 +240,7 @@ def test_retrieval_normalization_generated_normalization_corpus_is_idempotent() 
             assert normalize_retrieval_key(normalized) == normalized
 
 
-@pytest.mark.parametrize("symbol", ["<", ">", "<=", ">=", "==", "!=", "$", "%", "|", "&", "*"])
+@pytest_mark.parametrize("symbol", ["<", ">", "<=", ">=", "==", "!=", "$", "%", "|", "&", "*"])
 def test_retrieval_normalization_identity_bearing_symbols_survive_normalization(symbol: str) -> None:
     assert symbol in normalize_retrieval_key(f"left {symbol} right")
 
@@ -288,14 +288,14 @@ def test_scoped_retrieval_and_representations_representation_deduplicates_by_nor
 
 
 def test_scoped_retrieval_and_representations_representation_enforces_bounds_and_concrete_tuple_input() -> None:
-    with pytest.raises(IdentityValidationError, match="must be a tuple"):
+    with pytest_raises(IdentityValidationError, match="must be a tuple"):
         retrieval_representation("request", aliases=["alias"])
-    with pytest.raises(IdentityValidationError, match="exceed"):
+    with pytest_raises(IdentityValidationError, match="exceed"):
         retrieval_representation(
             "request",
             aliases=tuple(f"alias {index}" for index in range(MAX_RETRIEVAL_ALIASES + 1)),
         )
-    with pytest.raises(IdentityValidationError, match="non-whitespace"):
+    with pytest_raises(IdentityValidationError, match="non-whitespace"):
         build_retrieval_representation("   ")
 
 
@@ -309,7 +309,7 @@ def test_scoped_retrieval_and_representations_maximum_alias_payload_round_trips_
     assert retrieval_representation_from_json(retrieval_representation_to_json(retrieval)) == retrieval
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("input_text", "expected"),
     [
         ("Who created Python?", QueryOperator.WHO),
@@ -346,7 +346,7 @@ def test_identity_extraction_qualifiers_are_preserved_outside_lexical_terms() ->
     assert "current" in lexical_terms
 
 
-@pytest.mark.parametrize("symbol", ["<", ">", "<=", ">=", "==", "!="])
+@pytest_mark.parametrize("symbol", ["<", ">", "<=", ">=", "==", "!="])
 def test_identity_extraction_symbolic_comparisons_are_typed_qualifiers(symbol: str) -> None:
     request = f"Is latency {symbol} 100 ms?"
     qualifiers = extract_qualifiers(request, extract_operator(request))
@@ -368,7 +368,7 @@ def test_identity_extraction_entity_and_technical_identifier_extraction_is_surfa
     assert all(entity["canonical_id"] == "" for entity in entities)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("input_text", "expected"),
     [
         ("When was Ada Lovelace born?", "born"),
@@ -436,19 +436,19 @@ def test_authoritative_identity_authoritative_contract_rejects_null_malformed_an
     identity = query_identity_to_dict(build_standalone_identity("Who created Python?"))
     retrieval = retrieval_representation_to_dict(build_retrieval_representation("Who created Python?"))
 
-    identity["relation"] = None
-    with pytest.raises(IdentityValidationError, match="identity relation must be an object"):
+    identity["relation"] = json_loads("null")
+    with pytest_raises(IdentityValidationError, match="identity relation must be an object"):
         load_authoritative_identity(identity, retrieval)
 
-    with pytest.raises(IdentityValidationError, match="exceeds"):
+    with pytest_raises(IdentityValidationError, match="exceeds"):
         query_identity(canonical_form="x" * (MAX_CANONICAL_FORM_BYTES + 1))
 
 
-@pytest.mark.parametrize("case", _fixture()["identity_contrasts"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", fixture()["identity_contrasts"], ids=lambda case: case["id"])
 def test_identity_conformance_corpus_adversarial_pairs_produce_distinct_scoped_keys(case: dict) -> None:
     scope = scope_key("conformance", "v1")
-    left = build_standalone_identity(case["left"], scope)
-    right = build_standalone_identity(case["right"], scope)
+    left = build_standalone_identity(case.get("left", ""), scope)
+    right = build_standalone_identity(case.get("right", ""), scope)
 
     assert left != right
     assert build_scoped_retrieval_key(scope, left["canonical_form"]) != build_scoped_retrieval_key(
@@ -470,7 +470,7 @@ def test_identity_conformance_corpus_same_language_in_different_scopes_produces_
 
 
 def test_identity_conformance_corpus_generated_scoped_key_properties() -> None:
-    requests = tuple(case["input"] for case in _fixture()["normalization_cases"])
+    requests = tuple(case["input"] for case in fixture()["normalization_cases"])
     scopes = (scope_key(), scope_key("support", "free"), scope_key("support", "pro"))
 
     for request in requests:
@@ -494,5 +494,5 @@ def test_identity_conformance_corpus_contract_outputs_are_recursively_concrete()
         "keys": [scoped_retrieval_key_to_dict(binding["key"]) for binding in bindings],
     }
 
-    assert _none_paths(outputs) == []
-    assert "null" not in json.dumps(outputs, sort_keys=True)
+    assert none_paths(outputs) == []
+    assert "null" not in json_dumps(outputs, sort_keys=True)

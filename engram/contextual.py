@@ -1,7 +1,6 @@
 """Bounded Section 8 query-frame retention and follow-up enrichment."""
 
-import math
-from collections.abc import Mapping
+from math import isfinite as math_isfinite
 
 from engram.constants import (
     COMPACT_QUERY_FRAME_FIELDS,
@@ -17,7 +16,6 @@ from engram.constants import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
-    QueryIdentity,
     entity_reference_from_dict,
     entity_reference_to_dict,
     extract_operator,
@@ -31,16 +29,10 @@ from engram.identity import (
     validate_identity_qualifier,
     validate_relation_reference,
 )
-from engram.resolution import QueryFrame, inheritance_provenance, query_frame_with_changes, validate_query_frame
+from engram.resolution import inheritance_provenance, query_frame_with_changes, validate_query_frame
 from engram.temporal import temporal_query, temporal_query_from_dict, temporal_query_to_dict, validate_temporal_query
 
-CompactQueryFrame = dict
-
-
-FrameOperatorClassification = dict
-
-
-_FOLLOW_UP_LEADS = (
+FOLLOW_UP_LEADS = (
     "and ",
     "also ",
     "what about ",
@@ -48,10 +40,10 @@ _FOLLOW_UP_LEADS = (
     "then ",
     "instead ",
 )
-_FOLLOW_UP_REFERENTS = set({"it", "its", "that", "this", "they", "them", "their", "there", "he", "she"})
+FOLLOW_UP_REFERENTS = set({"it", "its", "that", "this", "they", "them", "their", "there", "he", "she"})
 
 
-def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
+def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
     if not isinstance(value, str):
         raise InvalidRequestError(f"{name} must be a string")
     if not allow_empty and not value:
@@ -63,23 +55,23 @@ def _text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) ->
     return value
 
 
-def _turn(value: object, name: str) -> int:
+def internal_turn(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1_000_000:
         raise InvalidRequestError(f"{name} must be an integer from 1 through 1000000")
     return value
 
 
-def _confidence(value: object, name: str) -> float:
+def internal_confidence(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError(f"{name} must be numeric")
     result = float(value)
-    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+    if not math_isfinite(result) or not 0.0 <= result <= 1.0:
         raise InvalidRequestError(f"{name} must be finite and from 0 through 1")
     return result
 
 
-def _mapping(value: object, name: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
+def internal_mapping(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
     return value
 
@@ -96,7 +88,7 @@ def compact_query_frame(
     temporal_query_value: object = (),
     topic: object = "",
     schema_version: object = COMPACT_QUERY_FRAME_SCHEMA_VERSION,
-) -> CompactQueryFrame:
+) -> dict:
     """Build the only query interpretation retained in user context."""
     if (
         isinstance(schema_version, bool)
@@ -133,7 +125,7 @@ def compact_query_frame(
     qualifier_keys = tuple((value["kind"], value["value"]) for value in validated_qualifiers)
     if len(qualifier_keys) != len(set(qualifier_keys)):
         raise InvalidRequestError("compact query frame qualifiers must be unique")
-    result: CompactQueryFrame = {
+    result: dict = {
         "schema_version": COMPACT_QUERY_FRAME_SCHEMA_VERSION,
         "operator": operator,
         "subjects": validated_subjects,
@@ -141,15 +133,15 @@ def compact_query_frame(
         "expected_object_type": expected_object_type,
         "temporal_query": validated_temporal,
         "qualifiers": validated_qualifiers,
-        "source_turn": _turn(source_turn, "compact query frame source_turn"),
-        "confidence": _confidence(confidence, "compact query frame confidence"),
-        "topic": _text(topic, "compact query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True),
+        "source_turn": internal_turn(source_turn, "compact query frame source_turn"),
+        "confidence": internal_confidence(confidence, "compact query frame confidence"),
+        "topic": internal_text(topic, "compact query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True),
     }
     return result
 
 
-def validate_compact_query_frame(value: object) -> CompactQueryFrame:
-    data = _mapping(value, "CompactQueryFrame")
+def validate_compact_query_frame(value: object) -> dict:
+    data = internal_mapping(value, "CompactQueryFrame")
     observed = set(data)
     if observed != COMPACT_QUERY_FRAME_FIELDS:
         raise InvalidRequestError(
@@ -172,7 +164,7 @@ def validate_compact_query_frame(value: object) -> CompactQueryFrame:
     return result
 
 
-def compact_query_frame_to_dict(value: object) -> dict[str, object]:
+def compact_query_frame_to_dict(value: object) -> dict:
     frame = validate_compact_query_frame(value)
     result = {
         "schema_version": frame["schema_version"],
@@ -189,8 +181,8 @@ def compact_query_frame_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def compact_query_frame_from_dict(value: object) -> CompactQueryFrame:
-    data = _mapping(value, "CompactQueryFrame")
+def compact_query_frame_from_dict(value: object) -> dict:
+    data = internal_mapping(value, "CompactQueryFrame")
     observed = set(data)
     if observed != COMPACT_QUERY_FRAME_FIELDS:
         raise InvalidRequestError(
@@ -203,17 +195,19 @@ def compact_query_frame_from_dict(value: object) -> CompactQueryFrame:
     if not isinstance(raw_subjects, list) or not isinstance(raw_qualifiers, list):
         raise InvalidRequestError("serialized compact query frame collections must be lists")
     try:
-        operator = QueryOperator(_text(data["operator"], "compact operator", 32, allow_empty=False))
-        expected = ExpectedObjectType(_text(data["expected_object_type"], "compact expected_object_type", 32, allow_empty=False))
+        operator = QueryOperator(internal_text(data["operator"], "compact operator", 32, allow_empty=False))
+        expected = ExpectedObjectType(
+            internal_text(data["expected_object_type"], "compact expected_object_type", 32, allow_empty=False)
+        )
     except ValueError as error:
         raise InvalidRequestError("serialized compact query frame enum is unsupported") from error
     result = compact_query_frame(
         operator=operator,
-        subjects=tuple(entity_reference_from_dict(_mapping(item, "compact subject")) for item in raw_subjects),
-        relation=relation_reference_from_dict(_mapping(data["relation"], "compact relation")),
+        subjects=tuple(entity_reference_from_dict(internal_mapping(item, "compact subject")) for item in raw_subjects),
+        relation=relation_reference_from_dict(internal_mapping(data["relation"], "compact relation")),
         expected_object_type=expected,
-        temporal_query_value=temporal_query_from_dict(_mapping(data["temporal_query"], "compact temporal query")),
-        qualifiers=tuple(identity_qualifier_from_dict(_mapping(item, "compact qualifier")) for item in raw_qualifiers),
+        temporal_query_value=temporal_query_from_dict(internal_mapping(data["temporal_query"], "compact temporal query")),
+        qualifiers=tuple(identity_qualifier_from_dict(internal_mapping(item, "compact qualifier")) for item in raw_qualifiers),
         source_turn=data["source_turn"],
         confidence=data["confidence"],
         topic=data["topic"],
@@ -243,14 +237,14 @@ def infer_expected_object_type(operator: object) -> ExpectedObjectType:
 
 def is_elliptical_follow_up(request: object) -> bool:
     """Recognize bounded surface evidence for a context-dependent follow-up."""
-    text = _text(request, "follow-up request", 4_096, allow_empty=False)
+    text = internal_text(request, "follow-up request", 4_096, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     tokens = normalized.split()
     if not tokens:
         return False
-    if normalized.startswith(_FOLLOW_UP_LEADS):
+    if normalized.startswith(FOLLOW_UP_LEADS):
         return True
-    if any(token in _FOLLOW_UP_REFERENTS for token in tokens):
+    if any(token in FOLLOW_UP_REFERENTS for token in tokens):
         return True
     result = len(tokens) <= 4 and tokens[0] in {
         "who",
@@ -265,18 +259,18 @@ def is_elliptical_follow_up(request: object) -> bool:
     return result
 
 
-def classify_query_frame_operator(request: object, previous: object = {}) -> FrameOperatorClassification:
+def classify_query_frame_operator(request: object, previous: object = {}) -> dict:
     """Classify or conservatively inherit the existing QueryOperator vocabulary."""
-    text = _text(request, "operator request", 4_096, allow_empty=False)
+    text = internal_text(request, "operator request", 4_096, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     contextual_text = normalized
-    for lead in _FOLLOW_UP_LEADS:
+    for lead in FOLLOW_UP_LEADS:
         if normalized.startswith(lead):
             contextual_text = normalized[len(lead) :]
             break
     current = extract_operator(contextual_text)
     if current != QueryOperator.UNKNOWN:
-        result: FrameOperatorClassification = {
+        result: dict = {
             "operator": current,
             "confidence": 0.98,
             "inherited": False,
@@ -302,18 +296,19 @@ def classify_query_frame_operator(request: object, previous: object = {}) -> Fra
     return result
 
 
-def _topic_continues(previous: CompactQueryFrame, topic: str, follow_up: bool) -> bool:
-    prior_topic = normalize_retrieval_key(previous["topic"]) if previous["topic"] else ""
+def topic_continues(previous: dict, topic: str, follow_up: bool) -> bool:
+    prior_topic = normalize_retrieval_key(previous.get("topic", "")) if previous.get("topic", "") else ""
     current_topic = normalize_retrieval_key(topic) if topic else ""
     if prior_topic and current_topic:
-        return prior_topic == current_topic
+        result = prior_topic == current_topic
+        return result
     if current_topic and not prior_topic:
         return False
     return follow_up
 
 
-def _frame_confidence(frame: QueryFrame, inherited_confidence: float = 0.0) -> float:
-    identity = frame["identity"]
+def frame_confidence(frame: dict, inherited_confidence: float = 0.0) -> float:
+    identity = frame.get("identity", {})
     observations = []
     if identity["operator"] != QueryOperator.UNKNOWN:
         observations.append(0.98)
@@ -321,7 +316,7 @@ def _frame_confidence(frame: QueryFrame, inherited_confidence: float = 0.0) -> f
         observations.append(0.95 if all(value["canonical_id"] for value in identity["entities"]) else 0.75)
     if identity["relation"]["surface"]:
         observations.append(0.95 if identity["relation"]["canonical_id"] else 0.7)
-    if frame["expected_object_type"] != ExpectedObjectType.UNKNOWN:
+    if frame.get("expected_object_type", ExpectedObjectType.UNKNOWN) != ExpectedObjectType.UNKNOWN:
         observations.append(0.9)
     if inherited_confidence:
         observations.append(inherited_confidence)
@@ -335,11 +330,11 @@ def enrich_query_frame(
     previous: object = {},
     current_turn: object,
     topic: object = "",
-) -> QueryFrame:
+) -> dict:
     """Populate expected type and inherit only missing fields from nearby context."""
     frame = validate_query_frame(value)
-    turn = _turn(current_turn, "current query frame turn")
-    current_topic = _text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
+    turn = internal_turn(current_turn, "current query frame turn")
+    current_topic = internal_text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
     identity = frame["identity"]
     operator = identity["operator"]
     subjects = identity["entities"][:MAX_CONTEXTUAL_SUBJECTS]
@@ -351,8 +346,8 @@ def enrich_query_frame(
         expected = infer_expected_object_type(operator)
     provenance = list(frame["inheritance"])
     normalized_request = normalize_retrieval_key(frame["original_text"])
-    explicit_follow_up = normalized_request.startswith(_FOLLOW_UP_LEADS) or any(
-        token in _FOLLOW_UP_REFERENTS for token in normalized_request.split()
+    explicit_follow_up = normalized_request.startswith(FOLLOW_UP_LEADS) or any(
+        token in FOLLOW_UP_REFERENTS for token in normalized_request.split()
     )
     temporal_follow_up = not subjects and temporal["operator"] != TemporalQueryOperator.UNSPECIFIED
     follow_up = explicit_follow_up or temporal_follow_up or (not subjects and is_elliptical_follow_up(frame["original_text"]))
@@ -365,7 +360,7 @@ def enrich_query_frame(
             not self_contained
             and 1 <= distance <= MAX_CONTEXTUAL_TURN_DISTANCE
             and prior["confidence"] >= MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE
-            and _topic_continues(prior, current_topic, follow_up)
+            and topic_continues(prior, current_topic, follow_up)
         ):
             eligible_previous = prior
     classification = classify_query_frame_operator(frame["original_text"], eligible_previous)
@@ -404,7 +399,7 @@ def enrich_query_frame(
 
     if expected == ExpectedObjectType.UNKNOWN:
         expected = infer_expected_object_type(operator)
-    updated_identity: QueryIdentity = query_identity(
+    updated_identity: dict = query_identity(
         canonical_form=identity["canonical_form"],
         operator=operator,
         entities=subjects,
@@ -427,7 +422,7 @@ def enrich_query_frame(
     return result
 
 
-def compact_query_frame_from_frame(value: object, *, source_turn: object, topic: object = "") -> CompactQueryFrame:
+def compact_query_frame_from_frame(value: object, *, source_turn: object, topic: object = "") -> dict:
     """Project one enriched runtime frame into bounded user-owned context."""
     frame = validate_query_frame(value)
     result = compact_query_frame(
@@ -438,7 +433,7 @@ def compact_query_frame_from_frame(value: object, *, source_turn: object, topic:
         temporal_query_value=frame["temporal_query"],
         qualifiers=frame["identity"]["qualifiers"],
         source_turn=source_turn,
-        confidence=_frame_confidence(frame),
+        confidence=frame_confidence(frame),
         topic=topic,
     )
     return result

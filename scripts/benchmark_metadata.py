@@ -1,9 +1,9 @@
 """Shared source-state metadata for reproducible Engram benchmarks."""
 
-import hashlib
-import subprocess
 from datetime import UTC, datetime
+from hashlib import sha256 as hashlib_sha256
 from pathlib import Path
+from subprocess import run as subprocess_run
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 SOURCE_GLOBS = (
@@ -21,8 +21,8 @@ SOURCE_FILES = (
 )
 
 
-def _git_output(*arguments: str) -> str:
-    process = subprocess.run(
+def git_output(*arguments: str) -> str:
+    process = subprocess_run(
         ["git", *arguments],
         cwd=REPOSITORY,
         check=True,
@@ -37,7 +37,7 @@ def _git_output(*arguments: str) -> str:
 
 def governed_source_sha256(repository: Path = REPOSITORY) -> str:
     """Digest governed code and configuration while excluding output artifacts."""
-    digest = hashlib.sha256()
+    digest = hashlib_sha256()
     paths = []
     for root_name, patterns in SOURCE_GLOBS:
         for pattern in patterns:
@@ -55,12 +55,12 @@ def governed_source_sha256(repository: Path = REPOSITORY) -> str:
 
 def benchmark_source_state() -> dict[str, object]:
     """Capture base revision, dirty paths, and a content digest for one run."""
-    status = _git_output("status", "--short")
+    status = git_output("status", "--short")
     changed_paths = tuple(sorted(line[3:].strip().replace("\\", "/") for line in status.splitlines() if len(line) > 3))
     result = {
-        "repository": _git_output("remote", "get-url", "origin"),
-        "branch": _git_output("branch", "--show-current"),
-        "base_commit": _git_output("rev-parse", "HEAD"),
+        "repository": git_output("remote", "get-url", "origin"),
+        "branch": git_output("branch", "--show-current"),
+        "base_commit": git_output("rev-parse", "HEAD"),
         "working_tree_dirty": bool(changed_paths),
         "changed_paths": changed_paths,
         "governed_source_sha256": governed_source_sha256(),

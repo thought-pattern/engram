@@ -12,15 +12,15 @@ Install once after dependencies:
 
 from functools import lru_cache
 
-import spacy
+from spacy import load as spacy_load
 
 from engram.constants import MODEL_NAME
 
 
-def _load(model_name: str, disable):
+def internal_load(model_name: str, disable):
     """Load a pre-provisioned spaCy model. Returns () when it is absent."""
     try:
-        nlp = spacy.load(model_name, disable=list(disable))
+        nlp = spacy_load(model_name, disable=list(disable))
         return nlp
     except OSError:
         result = ()
@@ -39,5 +39,5 @@ def get_nlp(disable=()):
         A loaded spaCy Language object, or falsy () if the model cannot be
         loaded (so callers degrade gracefully rather than crash).
     """
-    nlp = _load(MODEL_NAME, disable)
+    nlp = internal_load(MODEL_NAME, disable)
     return nlp

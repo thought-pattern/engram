@@ -1,12 +1,16 @@
 """Tests for text processing."""
 
-import pytest
+from pytest import MonkeyPatch as pytest_MonkeyPatch, raises as pytest_raises
 
 from engram import text as text_module
 from engram.constants import DEFAULT_STOPWORDS
 from engram.text import (
+    correct_spelling,
     expand_query,
     extract_keywords,
+    extract_name,
+    first_clause,
+    is_known_word,
     lemmatize_word,
     normalize,
     normalize_with_stemming,
@@ -14,8 +18,6 @@ from engram.text import (
     stem_text,
     stem_word,
 )
-
-"""Tests for text normalization."""
 
 
 def test_normalize_lowercase() -> None:
@@ -107,13 +109,13 @@ def test_extract_keywords_custom_stopwords() -> None:
     assert result == ["word"]
 
 
-def test_required_nltk_failure_is_not_silently_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unavailable(_text: str) -> list[str]:
+def test_required_nltk_failure_is_not_silently_degraded(monkeypatch: pytest_MonkeyPatch) -> None:
+    def unavailable(internal_text: str) -> list[str]:
         raise LookupError("required tokenizer missing")
 
     monkeypatch.setattr(text_module, "word_tokenize", unavailable)
 
-    with pytest.raises(LookupError, match="required tokenizer missing"):
+    with pytest_raises(LookupError, match="required tokenizer missing"):
         extract_keywords("required tokenizer", DEFAULT_STOPWORDS)
 
 
@@ -238,14 +240,12 @@ def test_lemmatization_lemmatize_default_noun() -> None:
 
 
 def test_correct_spelling_corrects_transposition_typo() -> None:
-    from engram.text import correct_spelling
 
     vocabulary = {"about", "capital", "france"}
     assert correct_spelling("tell me abotu france", vocabulary) == "tell me about france"
 
 
 def test_correct_spelling_never_corrects_real_english_words() -> None:
-    from engram.text import correct_spelling
 
     # "abort" is not in the store, but it is a real word -- leave it alone.
     vocabulary = {"about"}
@@ -253,21 +253,18 @@ def test_correct_spelling_never_corrects_real_english_words() -> None:
 
 
 def test_correct_spelling_never_corrects_short_tokens() -> None:
-    from engram.text import correct_spelling
 
     vocabulary = {"cat"}
     assert correct_spelling("cta", vocabulary) == "cta"
 
 
 def test_correct_spelling_keeps_vocabulary_tokens() -> None:
-    from engram.text import correct_spelling
 
     vocabulary = {"about", "capital"}
     assert correct_spelling("about capital", vocabulary) == "about capital"
 
 
 def test_correct_spelling_ambiguous_candidates_left_alone() -> None:
-    from engram.text import correct_spelling
 
     # Two vocabulary words at the same distance: do not guess.
     vocabulary = {"gramx", "gramy"}
@@ -275,7 +272,6 @@ def test_correct_spelling_ambiguous_candidates_left_alone() -> None:
 
 
 def test_correct_spelling_empty_vocabulary_is_no_op() -> None:
-    from engram.text import correct_spelling
 
     assert correct_spelling("abotu anything", set()) == "abotu anything"
 
@@ -284,25 +280,21 @@ def test_correct_spelling_empty_vocabulary_is_no_op() -> None:
 
 
 def test_first_clause_cuts_new_subject_verb_clause() -> None:
-    from engram.text import first_clause
 
     assert first_clause("tired i have been working really hard") == "tired"
 
 
 def test_first_clause_strips_dangling_conjunction() -> None:
-    from engram.text import first_clause
 
     assert first_clause("exhausted and i want to sleep") == "exhausted"
 
 
 def test_first_clause_single_clause_unchanged() -> None:
-    from engram.text import first_clause
 
     assert first_clause("really happy about the results") == "really happy about the results"
 
 
 def test_first_clause_short_capture_unchanged() -> None:
-    from engram.text import first_clause
 
     assert first_clause("alice") == "alice"
     assert first_clause("") == ""
@@ -312,14 +304,12 @@ def test_first_clause_short_capture_unchanged() -> None:
 
 
 def test_first_clause_relative_clauses_keeps_relative_clause_after_noun() -> None:
-    from engram.text import first_clause
 
     assert first_clause("a friend you can trust") == "a friend you can trust"
     assert first_clause("the movie i saw yesterday") == "the movie i saw yesterday"
 
 
 def test_first_clause_relative_clauses_still_cuts_after_non_noun() -> None:
-    from engram.text import first_clause
 
     assert first_clause("tired i have been working really hard") == "tired"
 
@@ -338,7 +328,6 @@ def test_stem_short_tokens_longer_tokens_still_stem() -> None:
 
 
 def test_spell_correction_inflections_inflected_real_words_never_corrected() -> None:
-    from engram.text import correct_spelling
 
     # "died", "asking", "notes" are absent from the words corpus but are
     # real inflections; correcting them corrupts valid input.
@@ -349,14 +338,12 @@ def test_spell_correction_inflections_inflected_real_words_never_corrected() -> 
 
 
 def test_spell_correction_inflections_genuine_typos_still_corrected() -> None:
-    from engram.text import correct_spelling
 
     vocabulary = {"gravity", "about"}
     assert correct_spelling("gravty is strong", vocabulary) == "gravity is strong"
 
 
 def test_spell_correction_inflections_is_known_word_covers_lemmas() -> None:
-    from engram.text import is_known_word
 
     assert is_known_word("died")
     assert is_known_word("tests")
@@ -369,33 +356,28 @@ def test_spell_correction_inflections_is_known_word_covers_lemmas() -> None:
 
 
 def test_extract_name_strips_filler_and_trailing_markers() -> None:
-    from engram.text import extract_name
 
     assert extract_name("still jason by the way") == "jason"
     assert extract_name("actually bob") == "bob"
 
 
 def test_extract_name_plain_and_multiword_names_kept() -> None:
-    from engram.text import extract_name
 
     assert extract_name("jason") == "jason"
     assert extract_name("mary jane") == "mary jane"
 
 
 def test_extract_name_falls_back_to_input_when_nothing_namelike() -> None:
-    from engram.text import extract_name
 
     assert extract_name("12345") == "12345"
     assert extract_name("") == ""
 
 
 def test_first_clause_question_boundary_cuts_at_embedded_question() -> None:
-    from engram.text import first_clause
 
     assert first_clause("the sky what is the moon") == "the sky"
 
 
 def test_first_clause_question_boundary_relative_pronoun_after_noun_kept() -> None:
-    from engram.text import first_clause
 
     assert first_clause("the man who is tall") == "the man who is tall"

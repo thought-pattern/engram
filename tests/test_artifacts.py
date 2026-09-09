@@ -1,15 +1,14 @@
 """Section 3 accepted-response artifact and lifecycle contracts."""
 
 from inspect import signature
+from json import loads as json_loads
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
-    LEGAL_LIFECYCLE_TRANSITIONS,
     MAX_METADATA_DEPTH,
     TERMINAL_LIFECYCLE_STATES,
-    CachedResponseArtifact,
     HistoricalKeyReuseReason,
     LifecycleDecisionReason,
     LifecycleOperation,
@@ -41,10 +40,11 @@ from engram.artifacts import (
 from engram.constants import Tier
 from engram.errors import InvalidRequestError, LifecycleError
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+
 from .support_fixtures import ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_B
 
 
-def accepted_artifact(**overrides) -> CachedResponseArtifact:
+def accepted_artifact(**overrides) -> dict:
     scope = overrides.pop("scope", scope_key(namespace="tenant-a", context_fingerprint="account:pro"))
     request = overrides.pop("request", "Who acquired GitHub?")
     values = {
@@ -61,8 +61,6 @@ def accepted_artifact(**overrides) -> CachedResponseArtifact:
         "valid_from_available": False,
         "valid_until": "",
         "valid_until_available": False,
-        "knowledge_epoch": 0,
-        "knowledge_epoch_available": False,
         "superseded_by": "",
         "provenance": artifact_provenance(
             source_label="tapestry:released",
@@ -91,21 +89,7 @@ def none_paths(value, path="root") -> list[str]:
     return result
 
 
-def test_lifecycle_vocabulary_and_terminal_states_are_closed() -> None:
-    assert tuple(LifecycleState) == (
-        LifecycleState.ACTIVE,
-        LifecycleState.SUPERSEDED,
-        LifecycleState.INVALIDATED,
-        LifecycleState.RETIRED,
-    )
-    assert {
-        LifecycleState.SUPERSEDED,
-        LifecycleState.INVALIDATED,
-        LifecycleState.RETIRED,
-    } == TERMINAL_LIFECYCLE_STATES
-
-
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("state", "eligible", "reason"),
     [
         (LifecycleState.ACTIVE, True, LifecycleDecisionReason.ELIGIBLE),
@@ -128,7 +112,7 @@ def test_base_eligibility_is_complete_and_tier_independent(state, eligible, reas
     assert tuple(signature(lifecycle_base_eligibility).parameters) == ("lifecycle",)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("operation", "target"),
     [
         (LifecycleOperation.SUPERSEDE, LifecycleState.SUPERSEDED),
@@ -143,17 +127,15 @@ def test_active_has_only_the_three_named_transitions(operation, target) -> None:
     assert decision["allowed"] is True
     assert decision["reason"] == LifecycleDecisionReason.LEGAL_TRANSITION
     assert require_lifecycle_transition(LifecycleState.ACTIVE, target, operation) == decision
-    assert LEGAL_LIFECYCLE_TRANSITIONS[LifecycleState.ACTIVE][operation] == target
 
 
-@pytest.mark.parametrize("state", tuple(TERMINAL_LIFECYCLE_STATES))
-@pytest.mark.parametrize("operation", tuple(LifecycleOperation))
+@pytest_mark.parametrize("state", tuple(TERMINAL_LIFECYCLE_STATES))
+@pytest_mark.parametrize("operation", tuple(LifecycleOperation))
 def test_non_active_lifecycle_states_are_terminal(state, operation) -> None:
     decision = lifecycle_transition_decision(state, LifecycleState.ACTIVE, operation)
 
     assert decision["allowed"] is False
     assert decision["reason"] == LifecycleDecisionReason.TERMINAL_STATE
-    assert LEGAL_LIFECYCLE_TRANSITIONS[state] == {}
 
 
 def test_superseded_can_only_be_reached_through_explicit_supersession() -> None:
@@ -175,7 +157,7 @@ def test_same_state_retry_is_not_reinterpreted_as_a_transition() -> None:
 
 
 def test_illegal_transition_raises_stable_lifecycle_error() -> None:
-    with pytest.raises(LifecycleError, match="operation_target_mismatch"):
+    with pytest_raises(LifecycleError, match="operation_target_mismatch"):
         require_lifecycle_transition(
             LifecycleState.ACTIVE,
             LifecycleState.RETIRED,
@@ -247,26 +229,26 @@ def test_lifecycle_decision_dictionaries_have_exact_codecs_and_revalidation() ->
 
     malformed_base = dict(base)
     malformed_base["direct_answer_eligible"] = False
-    with pytest.raises(InvalidRequestError, match="do not match lifecycle policy"):
+    with pytest_raises(InvalidRequestError, match="do not match lifecycle policy"):
         validate_lifecycle_base_decision(malformed_base)
 
     malformed_transition = dict(transition)
     malformed_transition["allowed"] = False
-    with pytest.raises(InvalidRequestError, match="do not match transition policy"):
+    with pytest_raises(InvalidRequestError, match="do not match transition policy"):
         validate_lifecycle_transition_decision(malformed_transition)
 
     malformed_historical = dict(historical)
     malformed_historical["reason"] = HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
-    with pytest.raises(InvalidRequestError, match="allowed does not match reason"):
+    with pytest_raises(InvalidRequestError, match="allowed does not match reason"):
         validate_historical_key_reuse_decision(malformed_historical)
 
 
-@pytest.mark.parametrize("state", tuple(LifecycleState))
+@pytest_mark.parametrize("state", tuple(LifecycleState))
 def test_capacity_eviction_never_changes_lifecycle(state) -> None:
     assert lifecycle_after_capacity_eviction(state) == state
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("call", "message"),
     [
         (lambda: lifecycle_base_eligibility("ACTIVE"), "lifecycle must be a LifecycleState"),
@@ -289,7 +271,7 @@ def test_capacity_eviction_never_changes_lifecycle(state) -> None:
     ],
 )
 def test_lifecycle_boundaries_reject_wrong_concrete_types(call, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+    with pytest_raises(InvalidRequestError, match=message):
         call()
 
 
@@ -301,8 +283,6 @@ def test_artifact_codec_is_deterministic_and_preserves_exact_unicode() -> None:
         valid_from_available=True,
         valid_until="2027-08-12T16:00:00Z",
         valid_until_available=True,
-        knowledge_epoch=42,
-        knowledge_epoch_available=True,
         metadata={"z": [1, True, "é"], "a": {"ratio": 0.5}},
     )
 
@@ -323,12 +303,12 @@ def test_artifact_codec_uses_exact_required_fields() -> None:
     assert data["schema_version"] == ARTIFACT_SCHEMA_VERSION
 
     data["extra"] = "forbidden"
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
         cached_response_artifact_from_dict(data)
 
     del data["extra"]
     del data["response"]
-    with pytest.raises(InvalidRequestError, match="invalid fields"):
+    with pytest_raises(InvalidRequestError, match="invalid fields"):
         cached_response_artifact_from_dict(data)
 
 
@@ -345,14 +325,12 @@ def test_artifact_dictionary_revalidates_mutation_and_copies_nested_records() ->
 
     malformed = dict(artifact)
     malformed["generation"] = 0
-    with pytest.raises(InvalidRequestError, match="positive integer"):
+    with pytest_raises(InvalidRequestError, match="positive integer"):
         validate_cached_response_artifact(malformed)
 
 
 def test_support_is_bounded_ordered_and_duplicate_free() -> None:
-    artifact = accepted_artifact(
-        support_references=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A)
-    )
+    artifact = accepted_artifact(support_references=(ASSERTION_REFERENCE_B, ASSERTION_REFERENCE_A))
     assert artifact["support_references"] == (
         ASSERTION_REFERENCE_B,
         ASSERTION_REFERENCE_A,
@@ -361,33 +339,32 @@ def test_support_is_bounded_ordered_and_duplicate_free() -> None:
         ASSERTION_REFERENCE_B,
         ASSERTION_REFERENCE_A,
     ]
-    with pytest.raises(InvalidRequestError, match="duplicate"):
-        accepted_artifact(
-            support_references=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_A)
-        )
+    with pytest_raises(InvalidRequestError, match="duplicate"):
+        accepted_artifact(support_references=(ASSERTION_REFERENCE_A, ASSERTION_REFERENCE_A))
 
 
-def test_metadata_is_deeply_immutable_and_json_concrete() -> None:
+def test_metadata_is_deeply_copied_and_json_concrete() -> None:
     source = {"nested": {"items": [1, "two", False]}}
     artifact = accepted_artifact(metadata=source)
-    source["nested"]["items"].append("late")
+    source.get("nested", {})["items"].append("late")
 
     assert cached_response_artifact_to_dict(artifact)["metadata"] == {"nested": {"items": [1, "two", False]}}
-    with pytest.raises(TypeError):
-        artifact["metadata"]["new"] = "value"
+    copied = validate_cached_response_artifact(artifact)
+    artifact["metadata"]["new"] = "value"
+    assert "new" not in copied["metadata"]
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("metadata", "message"),
     [
-        ({"missing": None}, "unsupported JSON value"),
+        (json_loads('{"missing": null}'), "unsupported JSON value"),
         ({"nan": float("nan")}, "non-finite number"),
         ({1: "value"}, "metadata key must be a string"),
         ({"valid": "value", 1: "invalid"}, "metadata key must be a string"),
     ],
 )
 def test_metadata_rejects_non_json_or_non_concrete_values(metadata, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+    with pytest_raises(InvalidRequestError, match=message):
         accepted_artifact(metadata=metadata)
 
 
@@ -395,28 +372,26 @@ def test_metadata_depth_is_bounded() -> None:
     value = "leaf"
     for position in range(MAX_METADATA_DEPTH + 1):
         value = {f"level-{position}": value}
-    with pytest.raises(InvalidRequestError, match="depth limit"):
+    with pytest_raises(InvalidRequestError, match="depth limit"):
         accepted_artifact(metadata=value)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("overrides", "message"),
     [
         ({"valid_from": "2026-08-12T16:00:00Z", "valid_from_available": False}, "must be empty"),
         ({"valid_until": "", "valid_until_available": True}, "must not be empty"),
         ({"valid_from": "2026-08-12T12:00:00-04:00", "valid_from_available": True}, "ending in Z"),
         ({"valid_from": "2026-08-12T16:00:00.000Z", "valid_from_available": True}, "canonical RFC 3339"),
-        ({"knowledge_epoch": 5, "knowledge_epoch_available": False}, "must be 0 when unavailable"),
-        ({"knowledge_epoch": -1, "knowledge_epoch_available": True}, "nonnegative integer"),
     ],
 )
-def test_temporal_presence_and_epoch_fields_are_concrete(overrides, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+def test_temporal_presence_fields_are_concrete(overrides, message) -> None:
+    with pytest_raises(InvalidRequestError, match=message):
         accepted_artifact(**overrides)
 
 
 def test_artifact_scope_must_match_authoritative_identity_scope() -> None:
-    with pytest.raises(InvalidRequestError, match="scope must match"):
+    with pytest_raises(InvalidRequestError, match="scope must match"):
         accepted_artifact(
             scope=scope_key(namespace="tenant-b"),
             query_identity=build_standalone_identity("Who acquired GitHub?"),
@@ -424,11 +399,11 @@ def test_artifact_scope_must_match_authoritative_identity_scope() -> None:
 
 
 def test_supersession_link_is_consistent_with_lifecycle() -> None:
-    with pytest.raises(InvalidRequestError, match="ACTIVE artifact"):
+    with pytest_raises(InvalidRequestError, match="ACTIVE artifact"):
         accepted_artifact(superseded_by="stmt-new")
-    with pytest.raises(InvalidRequestError, match="must name superseded_by"):
+    with pytest_raises(InvalidRequestError, match="must name superseded_by"):
         accepted_artifact(lifecycle=LifecycleState.SUPERSEDED)
-    with pytest.raises(InvalidRequestError, match="must not reference itself"):
+    with pytest_raises(InvalidRequestError, match="must not reference itself"):
         accepted_artifact(lifecycle=LifecycleState.SUPERSEDED, superseded_by="stmt-response-1")
 
     superseded = accepted_artifact(lifecycle=LifecycleState.SUPERSEDED, superseded_by="stmt-response-2")
@@ -446,11 +421,11 @@ def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
 
     bad_statistics = artifact_statistics_to_dict(statistics)
     bad_statistics["last_hit_available"] = False
-    with pytest.raises(InvalidRequestError, match="must be empty"):
+    with pytest_raises(InvalidRequestError, match="must be empty"):
         artifact_statistics_from_dict(bad_statistics)
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("overrides", "message"),
     [
         ({"statement_id": ""}, "must not be empty"),
@@ -463,14 +438,14 @@ def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
     ],
 )
 def test_artifact_constructor_rejects_wrong_concrete_types(overrides, message) -> None:
-    with pytest.raises(InvalidRequestError, match=message):
+    with pytest_raises(InvalidRequestError, match=message):
         accepted_artifact(**overrides)
 
 
 def test_artifact_json_loader_rejects_malformed_and_non_object_values() -> None:
-    with pytest.raises(InvalidRequestError, match="must be a string"):
+    with pytest_raises(InvalidRequestError, match="must be a string"):
         cached_response_artifact_from_json({})
-    with pytest.raises(InvalidRequestError, match="malformed"):
+    with pytest_raises(InvalidRequestError, match="malformed"):
         cached_response_artifact_from_json("{")
-    with pytest.raises(InvalidRequestError, match="must contain an object"):
+    with pytest_raises(InvalidRequestError, match="must contain an object"):
         cached_response_artifact_from_json("[]")

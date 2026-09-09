@@ -1,16 +1,16 @@
 """Tests for spaCy-backed features: phrase keywords and context-aware lemmas."""
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import spacy_setup
 from engram.config import engram_config
-from engram.constants import DEFAULT_STOPWORDS
+from engram.constants import DEFAULT_STOPWORDS, LEARNED_ACKNOWLEDGMENTS
 from engram.core import Engram
 from engram.pattern import PatternMatcher
 from engram.spacy_setup import get_nlp
 from engram.text import extract_keywords_spacy, lemmatize_text_spacy
 
-requires_model = pytest.mark.skipif(not get_nlp(), reason="en_core_web_sm not installed")
+requires_model = pytest_mark.skipif(not get_nlp(), reason="en_core_web_sm not installed")
 
 
 def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
@@ -20,16 +20,16 @@ def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
         calls.append((model_name, disable))
         raise OSError("model is not provisioned")
 
-    monkeypatch.setattr(spacy_setup.spacy, "load", missing_model)
+    monkeypatch.setattr(spacy_setup, "spacy_load", missing_model)
 
-    assert spacy_setup._load("missing_model", ("ner",)) == ()
+    assert spacy_setup.internal_load("missing_model", ("ner",)) == ()
     assert calls == [("missing_model", ["ner"])]
 
 
 def test_enabled_spacy_feature_fails_transport_neutral_preflight(monkeypatch):
     monkeypatch.setattr("engram.core.get_nlp", lambda disable=(): ())
 
-    with pytest.raises(ValueError, match="pre-provisioned English model"):
+    with pytest_raises(ValueError, match="pre-provisioned English model"):
         Engram(config=engram_config(use_spacy_facts=True))
 
 
@@ -84,7 +84,6 @@ def test_spacy_lemmatization_matcher_uses_spacy_lemmas():
 
 @requires_model
 def test_spacy_fact_learning_learns_relational_fact():
-    from engram.core import Engram
 
     config = engram_config(use_spacy_facts=True, learn_user_facts=True)
     engram = Engram(config=config)
@@ -93,8 +92,6 @@ def test_spacy_fact_learning_learns_relational_fact():
     # No copula: the default NLTK extractor cannot learn from this.
     result = engram.pattern_query("Einstein developed the theory of relativity")
 
-    from engram.constants import LEARNED_ACKNOWLEDGMENTS
-
     assert result[2] in LEARNED_ACKNOWLEDGMENTS
     patterns = [s["pattern"] for s in engram.statements]
     assert "EINSTEIN" in patterns
@@ -102,7 +99,6 @@ def test_spacy_fact_learning_learns_relational_fact():
 
 @requires_model
 def test_spacy_fact_learning_default_extractor_skips_relational_fact():
-    from engram.core import Engram
 
     engram = Engram()
     engram.store("Tell me more.", pattern="*")

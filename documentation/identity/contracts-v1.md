@@ -2,12 +2,12 @@
 
 ## Status and boundary
 
-`engram.identity` implements the pure identity foundation used by exact indexes
-and accepted-response commits.
+`engram.identity` implements the pure identity foundation used by exact
+accepted-response retrieval and commits.
 
-The contracts are immutable dataclasses with deterministic dictionary and compact
-JSON codecs. Runtime fields have one concrete type; empty strings, tuples, and an
-empty `ScopeKey` represent absence.
+The contracts are validated dictionaries with deterministic mapping and compact
+JSON codecs. Runtime fields have one concrete type; empty strings, tuples, and
+an empty `ScopeKey` represent absence.
 
 ## Contracts
 
@@ -70,14 +70,15 @@ Standalone construction uses the normalized request as its canonical form. This 
 
 ### `ScopedRetrievalKey`
 
-The immutable logical key is:
+The logical key is:
 
 ```text
 (ScopeKey, normalization_version, normalized representation)
 ```
 
-Its schema-versioned JSON codec supports fixtures and diagnostics. Disposable
-indexes consume the value as an in-memory key.
+Its schema-versioned JSON codec supports external transport, fixtures, and
+diagnostics. Exact retrieval derives its request-local comparison signature
+from this value.
 
 ### `RetrievalRepresentation`
 
@@ -95,8 +96,9 @@ indexes consume the value as an in-memory key.
 The canonical representation is required. Aliases are retrieval data separate from
 matcher `pattern_aliases`. Construction normalizes each value for comparison,
 removes aliases equivalent to the canonical representation, and retains the first
-spelling of each distinct alias. `bindings(scope)` emits one `RetrievalKeyBinding`
-per surviving representation with `canonical` or `alias` provenance.
+spelling of each distinct alias. `retrieval_representation_bindings(value,
+scope)` emits one `RetrievalKeyBinding` dictionary per surviving representation
+with `canonical` or `alias` provenance.
 
 ## Bounds
 
@@ -123,7 +125,7 @@ Scope and contract fields reject control and surrogate characters. Raw request a
 ## Retrieval normalization version 1
 
 `normalize_retrieval_key` and `engram.text.normalize` have separate versioned
-behavior for identity and legacy retrieval.
+behavior because identity keys and conversational matcher text have different owners.
 
 Version 1 performs these ordered operations:
 
@@ -155,7 +157,11 @@ Contextual resolution owns graph identity, ambiguous predicates, and conversatio
 
 ## Authoritative input
 
-`QueryIdentity.from_dict` and `RetrievalRepresentation.from_dict` strictly decode JSON-compatible mappings. `validate_authoritative_identity` verifies supported versions and normalization compatibility and requires the canonical representation to produce a non-empty key in the supplied scope. It returns the supplied identity unchanged.
+`query_identity_from_dict` and `retrieval_representation_from_dict` strictly
+decode JSON-compatible mappings. `validate_authoritative_identity` verifies the
+current schema and normalization versions and requires the canonical
+representation to produce a non-empty key in the supplied scope. It returns the
+supplied identity unchanged after validation.
 
 Canonical IDs receive syntax validation. Contextual resolution and eligibility
 evaluate graph existence, visibility, trust, and temporal state.

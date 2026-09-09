@@ -1,13 +1,11 @@
 """Core ENGRAM implementation."""
 
-import heapq
-import logging
-import random
-import threading
-import time
-from collections.abc import Mapping
 from difflib import SequenceMatcher
+from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from logging import getLogger as logging_getLogger
 from pathlib import Path
+from random import choice as random_choice
+from threading import Lock as threading_Lock, RLock as threading_RLock
 
 from sentence_transformers import SentenceTransformer
 
@@ -35,8 +33,6 @@ from engram.constants import (
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
     MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
-    PERSISTENCE_STATUS_SCHEMA_VERSION,
-    PERSISTENCE_VERSION,
     REPETITION_ESCAPE_RESPONSE,
     REPETITION_FEEDBACK_MARKERS,
     REPETITION_HISTORY_SIZE,
@@ -59,39 +55,17 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
-from engram.eligibility import NamespaceEpochState
-from engram.errors import InvalidRequestError
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
 from engram.graph import (
-    CanonicalEntityMatch,
-    CanonicalPredicateMatch,
-    PropositionProjection,
     PropositionProjectionQuery,
-    RelationPropositionProjection,
     canonical_entity_match_from_graph_row,
     canonical_predicate_match_from_graph_row,
-    create_graph_client,
+    connect_graph,
     is_write_cypher,
     proposition_projection_to_dict,
     validate_proposition_projection,
     validate_relation_proposition_projection,
-)
-from engram.identity import ScopedRetrievalKey
-from engram.indexes import (
-    MAX_INDEX_SUPPORT_SCAN_EDGES,
-    ExactLookupResult,
-    IndexCheckReport,
-    IndexOwner,
-    IndexProjection,
-    IndexRepairResult,
-    IndexState,
-    SupportLookupResult,
-    index_state_exact_lookup,
-    index_state_support_lookup,
-    index_state_support_scan_plan,
-    projection_from_statement,
-    validate_index_projection,
 )
 from engram.models import (
     keyword_entry,
@@ -112,12 +86,13 @@ from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
 from engram.reranking import TransparentLogisticReranker
+from engram.resources import estimate_working_bytes, require_working_memory
 from engram.scoring import score_statement_components
-from engram.semantic import SemanticIndexCheckReport, SemanticIndexState, SemanticSearchResult, StandaloneSemanticIndexOwner
+from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
-from engram.sparse import SparseIndexCheckReport, SparseIndexOwner, SparseIndexState, SparseSearchResult
+from engram.sparse import search_sparse_artifacts
 from engram.substitutions import expand_contractions, split_sentences, substitution_maps
-from engram.telemetry import operational_telemetry, record_rebuild, telemetry_snapshot
+from engram.telemetry import operational_telemetry, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
     correct_spelling,
@@ -126,15 +101,16 @@ from engram.text import (
     extract_keywords,
     extract_keywords_spacy,
     get_synonyms,
+    initialize_nltk_readers,
     normalize,
     restore_capture_case,
 )
 from engram.utilities import UtilityRegistry
 
-logger = logging.getLogger(__name__)
+logger = logging_getLogger(__name__)
 
 
-def _run_cooperative_check(check=()) -> None:
+def run_cooperative_check(check=()) -> None:
     """Run an optional resolver-owned cooperative callback."""
     if check:
         if not callable(check):
@@ -142,48 +118,13 @@ def _run_cooperative_check(check=()) -> None:
         check()
 
 
-def _estimate_working_bytes(value: object, seen=()) -> int:
-    """Return a conservative, bounded-size estimate for resolution working data."""
-    visited = seen if isinstance(seen, set) else set()
-    if isinstance(value, str):
-        result = len(value.encode("utf-8")) + 49
-        return result
-    if isinstance(value, bytes):
-        result = len(value) + 33
-        return result
-    if isinstance(value, (bool, int, float)):
-        result = 32
-        return result
-    identity = id(value)
-    if identity in visited:
-        result = 0
-        return result
-    visited.add(identity)
-    if isinstance(value, dict):
-        result = 64 + sum(
-            _estimate_working_bytes(key, visited) + _estimate_working_bytes(item, visited) for key, item in value.items()
-        )
-        return result
-    if isinstance(value, (list, tuple, set)):
-        result = 64 + sum(_estimate_working_bytes(item, visited) for item in value)
-        return result
-    result = len(str(value).encode("utf-8")) + 64
-    return result
-
-
-def _require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
-    """Raise before retaining work that exceeds a resolver's memory estimate."""
-    if maximum_bytes and estimated_bytes > maximum_bytes:
-        raise MemoryError("resolution working-memory estimate exceeded")
-
-
-def _reports_repetition(text: str) -> bool:
+def reports_repetition(text: str) -> bool:
     normalized_text = normalize(text)
     result = any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
     return result
 
 
-def _response_repeats(candidate: str, recent_responses: list[str], *, allow_similarity: bool = True) -> bool:
+def response_repeats(candidate: str, recent_responses: list[str], *, allow_similarity: bool = True) -> bool:
     normalized_candidate = normalize(candidate)
     if not normalized_candidate:
         result = False
@@ -204,29 +145,14 @@ def _response_repeats(candidate: str, recent_responses: list[str], *, allow_simi
     return result
 
 
-def _input_repeats(candidate: str, recent_inputs: list[str]) -> bool:
+def input_repeats(candidate: str, recent_inputs: list[str]) -> bool:
     normalized_candidate = normalize(candidate)
     result = bool(normalized_candidate and any(normalized_candidate == normalize(recent_input) for recent_input in recent_inputs))
     return result
 
 
-def _pattern_has_wildcard(pattern: str) -> bool:
+def pattern_has_wildcard(pattern: str) -> bool:
     result = any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
-    return result
-
-
-def _response_cache_scope(template) -> tuple[str, str]:
-    """Return the caller-owned namespace and context attached to a response."""
-    if not isinstance(template, dict):
-        result = "", ""
-        return result
-    tapestry_metadata = template.get("tapestry")
-    if not isinstance(tapestry_metadata, dict):
-        result = "", ""
-        return result
-    namespace = tapestry_metadata.get("namespace", "")
-    context_fingerprint = tapestry_metadata.get("context_fingerprint", "")
-    result = str(namespace), str(context_fingerprint)
     return result
 
 
@@ -297,49 +223,22 @@ class Engram:
         self.template_processor = TemplateProcessor(srai_limit=self.config.get("srai_depth_limit", 100))
 
         # Concurrency control. Mutations acquire locks in this order:
-        # mutation_lock, statement_lock, keyword_lock, then the private index
-        # owner lock. Index readers retain an immutable snapshot after the
-        # owner lock is released, so they never nest it with statement_lock.
-        # statement_lock also guards the pattern matcher
+        # mutation_lock, statement_lock, then keyword_lock. statement_lock also guards the pattern matcher
         # and pattern_to_statement map (mutated on store/evict, read on match),
         # and thereby the shared template processor, whose recursion counters
         # are only touched while the pattern pipeline holds statement_lock.
         # count_lock guards the top-level metrics counters.
-        self.mutation_lock = threading.RLock()
-        self.statement_lock = threading.RLock()
-        self.keyword_lock = threading.RLock()
-        self.session_lock = threading.RLock()
-        self.count_lock = threading.Lock()
-        self._index_owner = IndexOwner()
+        self.mutation_lock = threading_RLock()
+        self.statement_lock = threading_RLock()
+        self.keyword_lock = threading_RLock()
+        self.session_lock = threading_RLock()
+        self.count_lock = threading_Lock()
         self.response_repository = ArtifactRepository()
-        self._sparse_index_owner = SparseIndexOwner(
-            self.config.get("sparse") or {},
-            self.response_repository.snapshot()["state_generation"],
-        )
-        self._semantic_index_owner = StandaloneSemanticIndexOwner(
-            self.config.get("semantic") or {},
-            self.response_repository.snapshot()["state_generation"],
-        )
+        self.semantic_retriever = StandaloneSemanticRetriever(self.config.get("semantic") or {})
         self.reranker = TransparentLogisticReranker(self.config.get("reranker") or {})
         self.utility_registry = UtilityRegistry(self.config.get("utility") or {})
-        self.namespace_epochs = NamespaceEpochState()
         self.mutation_receipts = MutationReceiptLedger()
         self.feedback_store = FeedbackStore()
-        self.response_quarantine: tuple[object, ...] = ()
-        self.persistence_status = {
-            "schema_version": PERSISTENCE_STATUS_SCHEMA_VERSION,
-            "ready": True,
-            "source_available": False,
-            "source_version": 0,
-            "current_version": PERSISTENCE_VERSION,
-            "migration_required": False,
-            "manifest_present": False,
-            "runtime_manifest_matches_source": False,
-            "quarantine_count": 0,
-            "quarantine_reasons": {},
-            "derived_state_rebuilt": False,
-            "manifest": {},
-        }
 
         self.query_count = 0
         self.hit_count = 0
@@ -351,11 +250,11 @@ class Engram:
         # cache, matcher, conversation, or regulated-response paths from serving.
         # Graph access is capability-based: production uses MemGraphConnection,
         # while deterministic benchmarks may provide the same narrow methods.
-        self._graph_client: object = ()
-        self._graph_embedding_model = ()
+        self.internal_graph_client: object = ()
+        self.graph_embedding_model = ()
         graph_config = self.config.get("graph") or {}
         if graph_config.get("enabled"):
-            self._graph_client = create_graph_client(
+            self.internal_graph_client = connect_graph(
                 host=graph_config["host"],
                 port=graph_config["port"],
                 username=graph_config["username"],
@@ -365,9 +264,9 @@ class Engram:
             )
         if graph_config.get("vector_enabled"):
             try:
-                self._load_graph_embedding_model()
+                self.load_graph_embedding_model()
             except Exception as error:
-                self._graph_embedding_model = ()
+                self.graph_embedding_model = ()
                 logger.warning("Optional graph vector model is unavailable: %s", type(error).__name__)
         try:
             self.component_status = self.preflight_components()
@@ -377,7 +276,7 @@ class Engram:
     @property
     def graph_client(self):
         """Return the graph client created during Engram initialization."""
-        result = self._graph_client
+        result = self.internal_graph_client
         return result
 
     def preflight_components(self) -> dict:
@@ -393,12 +292,13 @@ class Engram:
         if missing_nltk:
             missing_names = ", ".join(download_name for _, download_name in missing_nltk)
             raise RuntimeError(f"required NLTK resources are unavailable: {missing_names}")
+        initialize_nltk_readers()
         if vector_enabled and not graph_enabled:
             raise RuntimeError("vector recall requires graph access to be enabled")
-        graph_ready = bool(graph_enabled and self._graph_client and getattr(self._graph_client, "available", True))
+        graph_ready = bool(graph_enabled and self.internal_graph_client and getattr(self.internal_graph_client, "available", True))
         spacy_phrasing_enabled = graph_ready
         vector_ready = False
-        if vector_enabled and graph_ready and self._graph_embedding_model:
+        if vector_enabled and graph_ready and self.graph_embedding_model:
             try:
                 vector_ready = self.warm_vector_recall()
             except Exception as error:
@@ -412,10 +312,10 @@ class Engram:
             "graph": {"enabled": graph_enabled, "ready": graph_ready},
             "vector": {"enabled": vector_enabled, "ready": vector_ready},
             "sparse": {
-                "enabled": self._sparse_index_owner.enabled,
-                "ready": self._sparse_index_owner.available,
+                "enabled": bool((self.config.get("sparse") or {}).get("enabled", False)),
+                "ready": bool((self.config.get("sparse") or {}).get("enabled", False)),
             },
-            "semantic": self._semantic_index_owner.health(),
+            "semantic": self.semantic_retriever.health(),
             "reranker": self.reranker.health(),
             "utility": self.utility_registry.health(),
             "spacy": {
@@ -429,12 +329,14 @@ class Engram:
         """Return current readiness without contacting optional dependencies."""
         result = {name: dict(value) for name, value in self.component_status.items()}
         graph = result["graph"]
-        graph["ready"] = bool(graph["enabled"] and self._graph_client and getattr(self._graph_client, "available", True))
+        graph["ready"] = bool(
+            graph["enabled"] and self.internal_graph_client and getattr(self.internal_graph_client, "available", True)
+        )
         vector = result["vector"]
-        vector["ready"] = bool(vector["enabled"] and graph["ready"] and self._graph_embedding_model and vector["ready"])
+        vector["ready"] = bool(vector["enabled"] and graph["ready"] and self.graph_embedding_model and vector["ready"])
         sparse = result["sparse"]
-        sparse["ready"] = bool(sparse["enabled"] and self._sparse_index_owner.available)
-        result["semantic"] = self._semantic_index_owner.health()
+        sparse["ready"] = bool(sparse["enabled"])
+        result["semantic"] = self.semantic_retriever.health()
         result["reranker"] = self.reranker.health()
         result["utility"] = self.utility_registry.health()
         return result
@@ -444,23 +346,6 @@ class Engram:
         with self.count_lock:
             result = telemetry_snapshot(self.operational_metrics)
             return result
-
-    def _record_rebuild_telemetry(
-        self,
-        kind: str,
-        started_ns: int,
-        *,
-        succeeded: bool,
-        applied: bool = True,
-    ) -> None:
-        with self.count_lock:
-            record_rebuild(
-                self.operational_metrics,
-                kind,
-                time.monotonic_ns() - started_ns,
-                succeeded=succeeded,
-                applied=applied,
-            )
 
     def graph_query(self, cypher: str, params=()) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
@@ -481,11 +366,11 @@ class Engram:
         if not client:
             result = []
             return result
-        execute_read = getattr(client, "execute_read", ())
-        if not callable(execute_read):
+        execute = getattr(client, "execute", ())
+        if not callable(execute):
             return []
         try:
-            records = execute_read(cypher, params)
+            records = execute(cypher, params)
             if not isinstance(records, list):
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
@@ -503,7 +388,7 @@ class Engram:
         result = self.graph_query(cypher, params)
         return result
 
-    def _load_graph_embedding_model(self) -> None:
+    def load_graph_embedding_model(self) -> None:
         """Load the configured local embedding model during initialization."""
         graph_config = self.config.get("graph") or {}
         model_name = str(graph_config.get("vector_model") or "").strip()
@@ -514,19 +399,19 @@ class Engram:
         model_source = model_path or model_name
         if model_path and not Path(model_path).is_dir():
             raise FileNotFoundError(f"vector model path does not exist: {model_path}")
-        self._graph_embedding_model = SentenceTransformer(
+        self.graph_embedding_model = SentenceTransformer(
             model_source,
             device="cpu",
             local_files_only=True,
         )
 
-    def _encode_graph_query(self, text: str) -> list[float]:
+    def encode_graph_query(self, text: str) -> list[float]:
         """Encode one graph-recall query with the startup-loaded local model."""
         graph_config = self.config.get("graph") or {}
         dimension = int(graph_config.get("vector_dimension") or 0)
-        if not self._graph_embedding_model:
+        if not self.graph_embedding_model:
             raise RuntimeError("vector recall model was not initialized")
-        encoded = self._graph_embedding_model.encode(
+        encoded = self.graph_embedding_model.encode(
             [text],
             normalize_embeddings=True,
             show_progress_bar=False,
@@ -554,7 +439,7 @@ class Engram:
             result = []
             return result
         try:
-            embedding = self._encode_graph_query(text)
+            embedding = self.encode_graph_query(text)
             rows = search(
                 embedding,
                 index_name=graph_config["vector_index_name"],
@@ -575,7 +460,7 @@ class Engram:
         limit: int = 0,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[PropositionProjection]:
+    ) -> list[dict]:
         """Return strictly decoded wire-safe ANN Proposition projections."""
         graph_config = self.config.get("graph") or {}
         client = self.graph_client
@@ -587,10 +472,10 @@ class Engram:
             result = []
             return result
         try:
-            _run_cooperative_check(cooperative_check)
-            embedding = self._encode_graph_query(text)
-            _require_working_memory(_estimate_working_bytes(embedding), max_working_memory_bytes)
-            _run_cooperative_check(cooperative_check)
+            run_cooperative_check(cooperative_check)
+            embedding = self.encode_graph_query(text)
+            require_working_memory(estimate_working_bytes(embedding), max_working_memory_bytes)
+            run_cooperative_check(cooperative_check)
             row_limit = max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])
             rows = search(
                 embedding,
@@ -601,12 +486,12 @@ class Engram:
             if not isinstance(rows, list) or len(rows) > row_limit:
                 raise ValueError("vector Proposition projection boundary returned an invalid collection")
             validated_rows = [validate_proposition_projection(row) for row in rows]
-            _require_working_memory(
-                _estimate_working_bytes(embedding)
-                + _estimate_working_bytes([proposition_projection_to_dict(row) for row in validated_rows]),
+            require_working_memory(
+                estimate_working_bytes(embedding)
+                + estimate_working_bytes([proposition_projection_to_dict(row) for row in validated_rows]),
                 max_working_memory_bytes,
             )
-            _run_cooperative_check(cooperative_check)
+            run_cooperative_check(cooperative_check)
             return validated_rows
         except (TimeoutError, MemoryError):
             raise
@@ -618,7 +503,7 @@ class Engram:
             result = []
             return result
 
-    def current_proposition_projection(self, proposition_id: str) -> tuple[PropositionProjection, ...]:
+    def current_proposition_projection(self, proposition_id: str) -> tuple[dict, ...]:
         """Re-read one canonical Proposition through the fixed by-ID capability."""
         client = self.graph_client
         lookup = getattr(client, "proposition_projection_by_id", ())
@@ -641,7 +526,7 @@ class Engram:
         search = getattr(client, "vector_search_propositions", ())
         if not client or not callable(search):
             raise RuntimeError("configured graph client lacks vector Proposition search")
-        embedding = self._encode_graph_query("Engram vector recall readiness")
+        embedding = self.encode_graph_query("Engram vector recall readiness")
         search(
             embedding,
             index_name=graph_config["vector_index_name"],
@@ -654,119 +539,6 @@ class Engram:
         result = True
         return result
 
-    def index_snapshot(self) -> IndexState:
-        """Return the currently visible immutable index state."""
-        result = self._index_owner.snapshot()
-        return result
-
-    def exact_lookup(self, key: ScopedRetrievalKey) -> ExactLookupResult:
-        """Look up one scoped exact key against a single immutable snapshot."""
-        state = self.index_snapshot()
-        result = index_state_exact_lookup(state, key)
-        return result
-
-    def support_lookup(self, proposition_ids: tuple[str, ...]) -> SupportLookupResult:
-        """Find statements supported by the supplied matched Proposition IDs."""
-        state = self.index_snapshot()
-        result = index_state_support_lookup(state, proposition_ids)
-        return result
-
-    def check_indexes(self) -> IndexCheckReport:
-        """Compare live indexes with projections from current statements."""
-        with self.mutation_lock:
-            with self.statement_lock:
-                sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
-            result = self._index_owner.check_against(sources)
-            return result
-
-    def check_index_projections(self, projections) -> IndexCheckReport:
-        """Compare live indexes with one explicit projection set, including empty."""
-        result = self._index_owner.check_against(tuple(projections))
-        return result
-
-    def repair_indexes(self, *, dry_run: bool = True) -> IndexRepairResult:
-        """Repair indexes from current authoritative statements."""
-        with self.mutation_lock, self.statement_lock:
-            sources = tuple(projection_from_statement(statement_value) for statement_value in self.statements)
-            result = self._index_owner.repair(sources, dry_run=dry_run)
-            return result
-
-    def repair_index_projections(self, projections, *, dry_run: bool = True) -> IndexRepairResult:
-        """Repair indexes from one explicit projection set, including empty."""
-        with self.mutation_lock:
-            result = self._index_owner.repair(tuple(projections), dry_run=dry_run)
-            return result
-
-    def rebuild_indexes(self, *, apply: bool = False) -> IndexRepairResult:
-        """Alias current-statement repair with rebuild-oriented wording."""
-        if not isinstance(apply, bool):
-            raise ValueError("index rebuild apply must be a boolean")
-        started_ns = time.monotonic_ns()
-        try:
-            result = self.repair_indexes(dry_run=not apply)
-        except Exception:
-            self._record_rebuild_telemetry("primary", started_ns, succeeded=False, applied=apply)
-            raise
-        self._record_rebuild_telemetry("primary", started_ns, succeeded=True, applied=apply)
-        return result
-
-    def sparse_index_snapshot(self) -> SparseIndexState:
-        """Return the current immutable sparse secondary-index state."""
-        result = self._sparse_index_owner.snapshot()
-        return result
-
-    def rebuild_sparse_index(self) -> SparseIndexState:
-        """Atomically rebuild sparse retrieval from authoritative artifacts."""
-        repository = self.response_repository.snapshot()
-        started_ns = time.monotonic_ns()
-        try:
-            result = self._sparse_index_owner.rebuild(
-                repository["artifacts"].values(),
-                repository["state_generation"],
-            )
-            self._record_rebuild_telemetry("sparse", started_ns, succeeded=True)
-            return result
-        except Exception as error:
-            self._sparse_index_owner.mark_unavailable(error)
-            self._record_rebuild_telemetry("sparse", started_ns, succeeded=False)
-            raise
-
-    def synchronize_sparse_index(
-        self,
-        repository_state: Mapping[str, object],
-        changed_statement_ids: tuple[str, ...] = (),
-    ) -> bool:
-        """Publish a repository-derived sparse generation without affecting mutation success."""
-        rebuild_started_ns = time.monotonic_ns() if not changed_statement_ids else 0
-        try:
-            artifacts = repository_state["artifacts"]
-            generation = repository_state["state_generation"]
-            if not isinstance(artifacts, Mapping) or not isinstance(generation, int):
-                raise InvalidRequestError("repository state is malformed for sparse synchronization")
-            if changed_statement_ids:
-                self._sparse_index_owner.synchronize(artifacts, generation, changed_statement_ids)
-            else:
-                self._sparse_index_owner.rebuild(artifacts.values(), generation)
-                self._record_rebuild_telemetry("sparse", rebuild_started_ns, succeeded=True)
-            result = True
-            return result
-        except Exception as error:
-            self._sparse_index_owner.mark_unavailable(error)
-            if rebuild_started_ns:
-                self._record_rebuild_telemetry("sparse", rebuild_started_ns, succeeded=False)
-            logger.warning("Sparse index synchronization failed: %s", type(error).__name__)
-            result = False
-            return result
-
-    def check_sparse_index(self) -> SparseIndexCheckReport:
-        """Compare the live sparse index with authoritative response artifacts."""
-        repository = self.response_repository.snapshot()
-        result = self._sparse_index_owner.check_against(
-            repository["artifacts"].values(),
-            repository["state_generation"],
-        )
-        return result
-
     def sparse_candidates(
         self,
         text: str,
@@ -774,70 +546,18 @@ class Engram:
         *,
         limit: int,
         max_working_memory_bytes: int,
-    ) -> SparseSearchResult:
-        """Search the immutable sparse index under the common memory budget."""
-        result = self._sparse_index_owner.search(
+    ) -> dict:
+        """Search request-local sparse structures derived from the current artifacts."""
+        repository = self.response_repository.snapshot()
+        result = search_sparse_artifacts(
+            tuple(repository.get("artifacts", {}).values()),
             text,
             scope,
+            self.config.get("sparse") or {},
             limit=limit,
             max_working_memory_bytes=max_working_memory_bytes,
         )
         return result
-
-    def semantic_index_snapshot(self) -> SemanticIndexState:
-        """Return the immutable standalone semantic-index state."""
-        return self._semantic_index_owner.snapshot()
-
-    def rebuild_semantic_index(self) -> SemanticIndexState:
-        """Atomically rebuild standalone embeddings from authoritative artifacts."""
-        repository = self.response_repository.snapshot()
-        started_ns = time.monotonic_ns()
-        try:
-            result = self._semantic_index_owner.rebuild(
-                repository["artifacts"].values(),
-                repository["state_generation"],
-            )
-            self._record_rebuild_telemetry("semantic", started_ns, succeeded=True)
-            return result
-        except Exception as error:
-            self._semantic_index_owner.mark_unavailable(error)
-            self._record_rebuild_telemetry("semantic", started_ns, succeeded=False)
-            raise
-
-    def synchronize_semantic_index(
-        self,
-        repository_state: Mapping[str, object],
-        changed_statement_ids: tuple[str, ...] = (),
-    ) -> bool:
-        """Publish a repository-derived embedding generation without affecting mutation success."""
-        if not self._semantic_index_owner.enabled:
-            return True
-        rebuild_started_ns = time.monotonic_ns() if not changed_statement_ids else 0
-        try:
-            artifacts = repository_state["artifacts"]
-            generation = repository_state["state_generation"]
-            if not isinstance(artifacts, Mapping) or not isinstance(generation, int):
-                raise InvalidRequestError("repository state is malformed for semantic synchronization")
-            if changed_statement_ids:
-                self._semantic_index_owner.synchronize(artifacts, generation, changed_statement_ids)
-            else:
-                self._semantic_index_owner.rebuild(artifacts.values(), generation)
-                self._record_rebuild_telemetry("semantic", rebuild_started_ns, succeeded=True)
-            return True
-        except Exception as error:
-            self._semantic_index_owner.mark_unavailable(error)
-            if rebuild_started_ns:
-                self._record_rebuild_telemetry("semantic", rebuild_started_ns, succeeded=False)
-            logger.warning("Standalone semantic index synchronization failed: %s", type(error).__name__)
-            return False
-
-    def check_semantic_index(self) -> SemanticIndexCheckReport:
-        """Compare standalone semantic projections with authoritative artifacts."""
-        repository = self.response_repository.snapshot()
-        return self._semantic_index_owner.check_against(
-            repository["artifacts"].values(),
-            repository["state_generation"],
-        )
 
     def semantic_candidates(
         self,
@@ -848,74 +568,34 @@ class Engram:
         max_vector_results: int,
         max_working_memory_bytes: int,
         cooperative_check=(),
-    ) -> SemanticSearchResult:
-        """Search standalone request embeddings under shared request budgets."""
-        return self._semantic_index_owner.search(
+    ) -> dict:
+        """Search request-local embeddings derived from the current artifacts."""
+        repository = self.response_repository.snapshot()
+        result = self.semantic_retriever.search(
             text,
             scope,
+            tuple(repository.get("artifacts", {}).values()),
             limit=limit,
             max_vector_results=max_vector_results,
             max_working_memory_bytes=max_working_memory_bytes,
             cooperative_check=cooperative_check,
         )
-
-    def add_index_projection(self, projection: IndexProjection) -> IndexState:
-        """Atomically add one generic index projection."""
-        try:
-            validated_projection = validate_index_projection(projection)
-        except InvalidRequestError as error:
-            raise ValueError("projection must be an IndexProjection") from error
-        with self.mutation_lock:
-            result = self._index_owner.add(validated_projection)
-            return result
-
-    def replace_index_projection(self, projection: IndexProjection) -> IndexState:
-        """Atomically replace one generic index projection."""
-        try:
-            validated_projection = validate_index_projection(projection)
-        except InvalidRequestError as error:
-            raise ValueError("projection must be an IndexProjection") from error
-        with self.mutation_lock:
-            result = self._index_owner.replace(validated_projection)
-            return result
-
-    def remove_index_projection(self, statement_id: str) -> IndexState:
-        """Atomically remove one generic index projection."""
-        with self.mutation_lock:
-            result = self._index_owner.remove(statement_id)
-            return result
-
-    def update_index_support(self, statement_id: str, support_references: tuple[dict, ...]) -> IndexState:
-        """Atomically replace one projection's ordered typed support references."""
-        with self.mutation_lock:
-            result = self._index_owner.update_support(statement_id, support_references)
-            return result
-
-    def _replace_statement_index_projection(self, statement_value: dict) -> None:
-        projection = projection_from_statement(statement_value)
-        if self._index_owner.has_projection(projection["statement_id"]):
-            self._index_owner.replace_in_place(projection)
-        else:
-            self._index_owner.add_in_place(projection)
-
-    def _remove_index_projection_if_present(self, statement_id: str) -> None:
-        if self._index_owner.has_projection(statement_id):
-            self._index_owner.remove_in_place(statement_id)
+        return result
 
     def vector_supported_matches(
         self,
         text: str,
         *,
         limit: int,
-        statement_filter=(),
+        artifact_filter=(),
     ) -> list[tuple[dict, float]]:
         """Rank scoped cached responses through their KG support Propositions."""
         result = [
-            (match["statement"], match["retrieval_score"])
+            (match["artifact"], match["retrieval_score"])
             for match in self.vector_supported_match_components(
                 text,
                 limit=limit,
-                statement_filter=statement_filter,
+                artifact_filter=artifact_filter,
             )
         ]
         return result
@@ -925,17 +605,17 @@ class Engram:
         text: str,
         *,
         limit: int,
-        statement_filter=(),
+        artifact_filter=(),
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
         """Return support matches with raw similarity separate from response ranking."""
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         rows = self.graph_vector_propositions(text, limit=limit)
         result = self.vector_supported_proposition_match_components(
             rows,
             limit=limit,
-            statement_filter=statement_filter,
+            artifact_filter=artifact_filter,
             cooperative_check=cooperative_check,
             max_working_memory_bytes=max_working_memory_bytes,
         )
@@ -946,31 +626,33 @@ class Engram:
         rows: list[dict],
         *,
         limit: int,
-        statement_filter=(),
+        artifact_filter=(),
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
         """Intersect discovered Proposition hits with typed response support."""
-        _run_cooperative_check(cooperative_check)
-        _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
-        support_scores = {str(row.get("proposition_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("proposition_id")}
-        result = self._vector_supported_match_components_from_scores(
+        run_cooperative_check(cooperative_check)
+        require_working_memory(estimate_working_bytes(rows), max_working_memory_bytes)
+        support_scores = {
+            str(row.get("proposition_id")): float(row.get("similarity") or 0.0) for row in rows if row.get("proposition_id")
+        }
+        result = self.vector_supported_match_components_from_scores(
             support_scores,
-            source_working_bytes=_estimate_working_bytes(rows),
+            source_working_bytes=estimate_working_bytes(rows),
             limit=limit,
-            statement_filter=statement_filter,
+            artifact_filter=artifact_filter,
             cooperative_check=cooperative_check,
             max_working_memory_bytes=max_working_memory_bytes,
         )
         return result
 
-    def _vector_supported_match_components_from_scores(
+    def vector_supported_match_components_from_scores(
         self,
-        support_scores: Mapping[str, float],
+        support_scores: dict[str, float],
         *,
         source_working_bytes: int,
         limit: int,
-        statement_filter=(),
+        artifact_filter=(),
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
@@ -978,71 +660,62 @@ class Engram:
             result = []
             return result
         graph_settings = self.config.get("graph") or {}
-        vector_weight = float(graph_settings["vector_weight"])
-        scan_limit = int(graph_settings.get("vector_support_scan_limit", MAX_INDEX_SUPPORT_SCAN_EDGES))
-        state = self._index_owner._trusted_snapshot()
-        scan_plan = index_state_support_scan_plan(state, tuple(support_scores), scan_limit)
-        if not scan_plan["complete"]:
-            logger.warning(
-                "vector_support_scan_incomplete: matched support fan-out %s exceeds configured limit %s; abstaining",
-                scan_plan["edge_count"],
-                scan_plan["scan_limit"],
-            )
-            result = []
-            return result
+        vector_weight = float(graph_settings.get("vector_weight", 0.0))
+        scan_limit = int(graph_settings.get("vector_support_scan_limit", 100_000))
         if limit < 1:
             result = []
             return result
         scored: list[tuple[float, int, dict]] = []
         scored_bytes = 64
-        seen_statement_ids = set()
-        retained_bytes = source_working_bytes + _estimate_working_bytes(support_scores)
-        with self.statement_lock:
-            for record_id in scan_plan["queried_record_ids"]:
-                for statement_id in reversed(state["record_to_statements"].get(record_id, ())):
-                    _run_cooperative_check(cooperative_check)
-                    if statement_id in seen_statement_ids:
-                        continue
-                    seen_statement_ids.add(statement_id)
-                    retained_bytes += _estimate_working_bytes(statement_id)
-                    _require_working_memory(retained_bytes, max_working_memory_bytes)
-                    index = self.statement_index.get(statement_id, -1)
-                    if index < 0:
-                        continue
-                    statement_value = self.statements[index]
-                    if statement_filter and not statement_filter(statement_value):
-                        continue
-                    similarities = [
-                        support_scores[reference.get("id", "")]
-                        for reference in state["statement_to_references"].get(statement_id, ())
-                        if reference.get("id", "") in support_scores
-                    ]
-                    if not similarities:
-                        continue
-                    semantic_similarity = max(similarities)
-                    priority = float(statement_value.get("priority", 0))
-                    score = semantic_similarity * vector_weight + priority
-                    if len(scored) >= limit and (score, index) <= (scored[0][0], scored[0][1]):
-                        continue
-                    components = {
-                        "statement": statement_value,
-                        "retrieval_score": score,
-                        "semantic_similarity": semantic_similarity,
-                        "vector_weight": vector_weight,
-                        "priority": priority,
-                    }
-                    ranked = (score, index, components)
-                    if len(scored) < limit:
-                        ranked_bytes = _estimate_working_bytes(ranked)
-                        heapq.heappush(scored, ranked)
-                        scored_bytes += ranked_bytes
-                    else:
-                        ranked_bytes = _estimate_working_bytes(ranked)
-                        removed = heapq.heapreplace(scored, ranked)
-                        scored_bytes += ranked_bytes - _estimate_working_bytes(removed)
-                    _require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
+        retained_bytes = source_working_bytes + estimate_working_bytes(support_scores)
+        repository = self.response_repository.snapshot()
+        edge_count = 0
+        for index, artifact in enumerate(repository.get("artifacts", {}).values()):
+            run_cooperative_check(cooperative_check)
+            if artifact_filter and not artifact_filter(artifact):
+                continue
+            similarities = []
+            for reference in artifact.get("support_references", ()):
+                reference_id = reference.get("id", "")
+                if reference_id not in support_scores:
+                    continue
+                edge_count += 1
+                if edge_count > scan_limit:
+                    logger.warning(
+                        "vector_support_scan_incomplete: relevant response support fan-out %s exceeds configured limit %s",
+                        edge_count,
+                        scan_limit,
+                    )
+                    return []
+                similarities.append(support_scores.get(reference_id, 0.0))
+            if not similarities:
+                continue
+            retained_bytes += estimate_working_bytes(artifact.get("statement_id", ""))
+            require_working_memory(retained_bytes, max_working_memory_bytes)
+            semantic_similarity = max(similarities)
+            priority = 0.0
+            score = semantic_similarity * vector_weight
+            if len(scored) >= limit and (score, index) <= (scored[0][0], scored[0][1]):
+                continue
+            components = {
+                "artifact": artifact,
+                "retrieval_score": score,
+                "semantic_similarity": semantic_similarity,
+                "vector_weight": vector_weight,
+                "priority": priority,
+            }
+            ranked = (score, index, components)
+            if len(scored) < limit:
+                ranked_bytes = estimate_working_bytes(ranked)
+                heapq_heappush(scored, ranked)
+                scored_bytes += ranked_bytes
+            else:
+                ranked_bytes = estimate_working_bytes(ranked)
+                removed = heapq_heapreplace(scored, ranked)
+                scored_bytes += ranked_bytes - estimate_working_bytes(removed)
+            require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         result = [components for _, _, components in scored]
         return result
 
@@ -1098,102 +771,11 @@ class Engram:
         result = format_graph_facts(vector_facts) if vector_facts else ""
         return result
 
-    def learn_from_response(
-        self,
-        query: str,
-        response: str,
-        tier: Tier = Tier.DYNAMIC,
-        template=(),
-        introduced_by_user_id: str = "",
-        source_label: str = "",
-    ) -> str:
-        """Learn from an LLM response by storing it for future retrieval.
-
-        This is the primary mechanism for ENGRAM to grow its knowledge base.
-        When the high-cost LLM provides a response, call this method to cache
-        it for future similar queries.
-
-        The response is indexed under the query's keywords (not its own), so
-        future phrasings of the same question retrieve it through the keyword
-        path -- no brittle prefix pattern is generated. The query gets the
-        same spelling correction retrieval applies, so a typo'd learn and a
-        clean retrieval key the same entry. Re-learning a query with the same
-        keyword set replaces the cached response in place and resets its hit
-        statistics, since the new content is unproven.
-
-        Args:
-            query: The original user query.
-            response: The LLM's response to cache.
-            tier: Storage tier (default DYNAMIC for evictable).
-            template: Optional structured metadata to carry on the stored
-                entry. Caller metadata is opaque except for the reserved
-                `tapestry.namespace` and `tapestry.context_fingerprint` values,
-                which isolate response-cache replacement.
-
-        Returns:
-            Statement ID of the stored (or updated) response.
-        """
-        if not isinstance(introduced_by_user_id, str):
-            raise ValueError("introduced_by_user_id must be a string")
-        if not isinstance(source_label, str):
-            raise ValueError("source_label must be a string")
-
-        normalized = normalize(query)
-        if self.config["use_spell_correction"]:
-            with self.keyword_lock:
-                vocabulary = set(self.keywords)
-            normalized = correct_spelling(normalized, vocabulary)
-        keywords = self._extract_keywords(normalized)
-        keyword_set = set(keywords)
-        response_scope = _response_cache_scope(template)
-
-        # Dedup: a previously learned entry for the same keyword set is the
-        # same cached question within one caller-owned scope -- update it
-        # instead of accumulating duplicates. Unscoped callers retain the
-        # original behavior without colliding with scoped cache entries.
-        if keyword_set:
-            with self.mutation_lock, self.statement_lock, self.keyword_lock:
-                candidate_ids: set[str] = set()
-                for kw in keywords:
-                    if kw in self.keywords:
-                        candidate_ids.update(self.keywords[kw]["statement_ids"])
-                for stmt_id in candidate_ids:
-                    if stmt_id not in self.statement_index:
-                        continue
-                    idx = self.statement_index[stmt_id]
-                    stmt = self.statements[idx]
-                    if (
-                        stmt["tier"] == Tier.DYNAMIC
-                        and not stmt["pattern"]
-                        and set(stmt["keywords"]) == keyword_set
-                        and _response_cache_scope(stmt["template"]) == response_scope
-                    ):
-                        stmt["text"] = response
-                        stmt["template"] = dict(template or ())
-                        stmt["introduced_by_user_id"] = introduced_by_user_id
-                        stmt["source_label"] = source_label
-                        stmt["hit_count"] = 0
-                        stmt["query_count"] = 0
-                        stmt["last_hit"] = ""
-                        self._replace_statement_index_projection(stmt)
-                        result = stmt["id"]
-                        return result
-
-        stmt_id = self.store(
-            text=response,
-            tier=tier,
-            template=template,
-            keyword_source=normalized,
-            introduced_by_user_id=introduced_by_user_id,
-            source_label=source_label,
-        )
-        return stmt_id
-
     # =========================================================================
     # Statement Operations
     # =========================================================================
 
-    def _extract_keywords(self, normalized_text: str) -> list:
+    def internal_extract_keywords(self, normalized_text: str) -> list:
         """Extract keywords using the configured extractor (token or phrase).
 
         Both store-time indexing and query-time retrieval go through here so the
@@ -1234,9 +816,8 @@ class Engram:
             template: Optional structured template (JSON/dict).
             priority: Optional priority override (added to the calibrated
                 keyword score; preferred among equal pattern matches).
-            keyword_source: Optional text to index the statement under instead
-                of the pattern/text -- e.g. the question a cached response
-                answers, so the answer is retrieved by the question's terms.
+            keyword_source: Optional text to index the conversational statement
+                under instead of its pattern or rendered text.
 
         Returns:
             Assigned statement ID.
@@ -1258,7 +839,7 @@ class Engram:
         # Index under keyword_source when given, else the pattern, else the text
         source = keyword_source or pattern or text
         normalized = normalize(source)
-        keywords = self._extract_keywords(normalized)
+        keywords = self.internal_extract_keywords(normalized)
 
         stmt = statement(
             text=text,
@@ -1274,8 +855,6 @@ class Engram:
             introduced_by_user_id=introduced_by_user_id,
             source_label=source_label,
         )
-        index_projection = projection_from_statement(stmt)
-
         with self.mutation_lock, self.statement_lock, self.keyword_lock:
             if stmt["id"] in self.statement_index:
                 raise ValueError(f"duplicate statement id: {stmt['id']}")
@@ -1291,9 +870,6 @@ class Engram:
                 dynamic_count = sum(1 for s in self.statements if s["tier"] == Tier.DYNAMIC)
                 while dynamic_count >= self.config["capacity"]:
                     if not eviction_mod.evict_dynamic(self):
-                        # Every remaining DYNAMIC statement is protected by
-                        # min_hit_rate; admit the new statement over capacity
-                        # rather than drop it silently.
                         break
                     dynamic_count -= 1
 
@@ -1303,7 +879,6 @@ class Engram:
                 if kw not in self.keywords:
                     self.keywords[kw] = keyword_entry(keyword=kw)
                 self.keywords[kw]["statement_ids"].add(stmt["id"])
-            self._index_owner.add_in_place(index_projection)
 
         result = stmt["id"]
         return result
@@ -1329,7 +904,7 @@ class Engram:
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
 
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         normalized = normalize(text)
         uncorrected = normalized
         if self.config["use_spell_correction"]:
@@ -1337,7 +912,7 @@ class Engram:
                 vocabulary = set(self.keywords)
             normalized = correct_spelling(normalized, vocabulary)
 
-        keywords = self._extract_keywords(normalized)
+        keywords = self.internal_extract_keywords(normalized)
         if not keywords:
             result = query_result(matches=[], keywords=[], resolved_query=text)
             result["features"] = {}
@@ -1345,7 +920,7 @@ class Engram:
                 "spelling_correction_applied": normalized != uncorrected,
                 "phrase_keywords_enabled": bool(self.config["use_phrase_keywords"]),
                 "synonym_expansion_count": 0,
-                "working_memory_bytes": _estimate_working_bytes(keywords),
+                "working_memory_bytes": estimate_working_bytes(keywords),
             }
             return result
 
@@ -1357,7 +932,7 @@ class Engram:
                 max_synonyms_per_word=self.config["max_synonyms_per_word"],
             )
             for keyword in keywords:
-                _run_cooperative_check(cooperative_check)
+                run_cooperative_check(cooperative_check)
                 synonyms = tuple(
                     synonym
                     for synonym in get_synonyms(keyword, max_synonyms=self.config["max_synonyms_per_word"])
@@ -1368,21 +943,19 @@ class Engram:
 
         candidate_ids: set[str] = set()
         retained_bytes = (
-            _estimate_working_bytes(keywords)
-            + _estimate_working_bytes(search_keywords)
-            + _estimate_working_bytes(synonyms_by_keyword)
+            estimate_working_bytes(keywords) + estimate_working_bytes(search_keywords) + estimate_working_bytes(synonyms_by_keyword)
         )
-        _require_working_memory(retained_bytes, max_working_memory_bytes)
+        require_working_memory(retained_bytes, max_working_memory_bytes)
         with self.keyword_lock:
             for keyword in search_keywords:
-                _run_cooperative_check(cooperative_check)
+                run_cooperative_check(cooperative_check)
                 if keyword in self.keywords:
                     for statement_id in self.keywords[keyword]["statement_ids"]:
                         if statement_id in candidate_ids:
                             continue
                         candidate_ids.add(statement_id)
-                        retained_bytes += _estimate_working_bytes(statement_id)
-                        _require_working_memory(retained_bytes, max_working_memory_bytes)
+                        retained_bytes += estimate_working_bytes(statement_id)
+                        require_working_memory(retained_bytes, max_working_memory_bytes)
         if not candidate_ids:
             result = query_result(matches=[], keywords=keywords, resolved_query=text)
             result["features"] = {}
@@ -1399,7 +972,7 @@ class Engram:
         with self.statement_lock, self.keyword_lock:
             total = len(self.statements)
             for statement_id in candidate_ids:
-                _run_cooperative_check(cooperative_check)
+                run_cooperative_check(cooperative_check)
                 if statement_id not in self.statement_index:
                     continue
                 index = self.statement_index[statement_id]
@@ -1422,16 +995,16 @@ class Engram:
                 if score > 0:
                     ranked = (score, index, statement_value, components)
                     if len(scored) < limit:
-                        ranked_bytes = _estimate_working_bytes(ranked)
-                        heapq.heappush(scored, ranked)
+                        ranked_bytes = estimate_working_bytes(ranked)
+                        heapq_heappush(scored, ranked)
                         scored_bytes += ranked_bytes
                     elif (score, index) > (scored[0][0], scored[0][1]):
-                        ranked_bytes = _estimate_working_bytes(ranked)
-                        removed = heapq.heapreplace(scored, ranked)
-                        scored_bytes += ranked_bytes - _estimate_working_bytes(removed)
-                    _require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
+                        ranked_bytes = estimate_working_bytes(ranked)
+                        removed = heapq_heapreplace(scored, ranked)
+                        scored_bytes += ranked_bytes - estimate_working_bytes(removed)
+                    require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
         scored.sort(key=lambda value: (value[0], value[1]), reverse=True)
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         result = query_result(
             matches=[(statement_value, score) for score, _, statement_value, _ in scored],
             keywords=keywords,
@@ -1465,14 +1038,14 @@ class Engram:
             or max_working_memory_bytes < 0
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         processed_text = text
         sentences = split_sentences(processed_text) or ([processed_text] if processed_text.strip() else [])
         values = []
-        retained_bytes = _estimate_working_bytes(sentences)
-        _require_working_memory(retained_bytes, max_working_memory_bytes)
+        retained_bytes = estimate_working_bytes(sentences)
+        require_working_memory(retained_bytes, max_working_memory_bytes)
         for sentence in sentences:
-            _run_cooperative_check(cooperative_check)
+            run_cooperative_check(cooperative_check)
             match_text = sentence
             if self.config["use_spell_correction"]:
                 with self.keyword_lock:
@@ -1480,7 +1053,7 @@ class Engram:
                 match_text = correct_spelling(normalize(sentence), vocabulary)
             with self.statement_lock:
                 matched = self.pattern_matcher.match(match_text, that=that, topic=topic)
-                _run_cooperative_check(cooperative_check)
+                run_cooperative_check(cooperative_check)
                 if not matched:
                     continue
                 response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = matched
@@ -1492,7 +1065,7 @@ class Engram:
                     triple_match = (
                         carries_pattern and statement_value["topic"] == matched_topic and statement_value["that"] == matched_that
                     )
-                    if triple_match and (not selected or statement_value["priority"] > selected["priority"]):
+                    if triple_match and (not selected or statement_value["priority"] > selected.get("priority", 0)):
                         selected = statement_value
                 if not selected:
                     continue
@@ -1506,55 +1079,12 @@ class Engram:
                     "topic": matched_topic,
                     "that": matched_that,
                 }
-                retained_bytes += _estimate_working_bytes(discovery)
-                _require_working_memory(retained_bytes, max_working_memory_bytes)
+                retained_bytes += estimate_working_bytes(discovery)
+                require_working_memory(retained_bytes, max_working_memory_bytes)
                 values.append(discovery)
             if len(values) >= limit:
                 break
         return values
-
-    def structured_graph_evidence(
-        self,
-        text: str,
-        *,
-        row_limit: int = 5,
-        cooperative_check=(),
-        max_working_memory_bytes: int = 0,
-    ) -> list[dict]:
-        """Return bounded raw legacy graph rows without phrasing or pattern fallback."""
-        if not isinstance(row_limit, int) or isinstance(row_limit, bool) or row_limit < 0:
-            raise ValueError("row_limit must be a nonnegative integer")
-        if (
-            isinstance(max_working_memory_bytes, bool)
-            or not isinstance(max_working_memory_bytes, int)
-            or max_working_memory_bytes < 0
-        ):
-            raise ValueError("max_working_memory_bytes must be a nonnegative integer")
-        if not row_limit or not self.graph_client:
-            result = []
-            return result
-        _run_cooperative_check(cooperative_check)
-        rows = []
-        entities = extract_entities(text)
-        if entities:
-            for entity in entities:
-                _run_cooperative_check(cooperative_check)
-                rows.extend(self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]}))
-                _run_cooperative_check(cooperative_check)
-                _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
-                if len(rows) >= row_limit:
-                    break
-        else:
-            keywords = extract_keywords(normalize(text), self.config["stopwords"])
-            for keyword in keywords[:3]:
-                _run_cooperative_check(cooperative_check)
-                rows.extend(self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": keyword}))
-                _run_cooperative_check(cooperative_check)
-                _require_working_memory(_estimate_working_bytes(rows), max_working_memory_bytes)
-                if len(rows) >= row_limit:
-                    break
-        result = [dict(row) for row in rows[:row_limit] if isinstance(row, dict)]
-        return result
 
     def structured_proposition_projections(
         self,
@@ -1563,7 +1093,7 @@ class Engram:
         row_limit: int = 10,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[PropositionProjection]:
+    ) -> list[dict]:
         """Run only fixed structured Proposition projections and reject conflicting rows."""
         if not isinstance(row_limit, int) or isinstance(row_limit, bool) or not 0 <= row_limit <= 1_000:
             raise ValueError("row_limit must be an integer from 0 through 1000")
@@ -1578,7 +1108,7 @@ class Engram:
         if not row_limit or not client or not callable(search):
             result = []
             return result
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         requests: list[tuple[PropositionProjectionQuery, str]] = []
         entities = extract_entities(text)
         if entities:
@@ -1592,9 +1122,9 @@ class Engram:
                 (PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
                 for keyword in keywords[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
-        retained: dict[str, PropositionProjection] = {}
+        retained: dict[str, dict] = {}
         for projection_id, value in requests:
-            _run_cooperative_check(cooperative_check)
+            run_cooperative_check(cooperative_check)
             remaining = row_limit - len(retained)
             if not remaining:
                 break
@@ -1604,15 +1134,15 @@ class Engram:
             validated_rows = [validate_proposition_projection(row) for row in rows]
             for row in validated_rows:
                 proposition_id = row["proposition_id"]
-                if proposition_id in retained and retained[proposition_id] != row:
+                if proposition_id in retained and retained.get(proposition_id, {}) != row:
                     raise ValueError(f"conflicting structured Proposition projections for Proposition ID: {proposition_id}")
                 retained[proposition_id] = row
-            _run_cooperative_check(cooperative_check)
-            _require_working_memory(
-                _estimate_working_bytes([proposition_projection_to_dict(projection) for projection in retained.values()]),
+            run_cooperative_check(cooperative_check)
+            require_working_memory(
+                estimate_working_bytes([proposition_projection_to_dict(projection) for projection in retained.values()]),
                 max_working_memory_bytes,
             )
-        result = [retained[proposition_id] for proposition_id in sorted(retained)]
+        result = [retained.get(proposition_id, {}) for proposition_id in sorted(retained)]
         return result
 
     def canonical_entity_matches(
@@ -1621,18 +1151,18 @@ class Engram:
         *,
         limit: int = MAX_RELATION_CANDIDATES,
         cooperative_check=(),
-    ) -> list[CanonicalEntityMatch]:
+    ) -> list[dict]:
         """Resolve an entity surface through the fixed graph capability."""
         client = self.graph_client
         search = getattr(client, "canonical_entity_matches", ())
         if not client or not callable(search):
             return []
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         rows = search(surface, limit=limit)
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical entity boundary returned an invalid collection")
         result = [canonical_entity_match_from_graph_row(row) for row in rows]
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         return result
 
     def canonical_predicate_matches(
@@ -1641,18 +1171,18 @@ class Engram:
         *,
         limit: int = MAX_RELATION_CANDIDATES,
         cooperative_check=(),
-    ) -> list[CanonicalPredicateMatch]:
+    ) -> list[dict]:
         """Resolve a Predicate surface through the fixed graph capability."""
         client = self.graph_client
         search = getattr(client, "canonical_predicate_matches", ())
         if not client or not callable(search):
             return []
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         rows = search(surface, limit=limit)
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical Predicate boundary returned an invalid collection")
         result = [canonical_predicate_match_from_graph_row(row) for row in rows]
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         return result
 
     def relation_one_hop_proposition_projections(
@@ -1664,7 +1194,7 @@ class Engram:
         include_historical: bool = False,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
-    ) -> list[RelationPropositionProjection]:
+    ) -> list[dict]:
         """Run the fixed one-hop Proposition template and enforce its output boundary."""
         if isinstance(row_limit, bool) or not isinstance(row_limit, int) or not 0 <= row_limit <= MAX_RELATION_PLAN_ROWS:
             raise ValueError(f"relation row_limit must be an integer from 0 through {MAX_RELATION_PLAN_ROWS}")
@@ -1674,7 +1204,7 @@ class Engram:
         search = getattr(client, "relation_one_hop_proposition_projections", ())
         if not row_limit or not client or not callable(search):
             return []
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         rows = search(
             subject_entity_id,
             predicate_id,
@@ -1689,8 +1219,8 @@ class Engram:
             for row in result
         ):
             raise ValueError("relation one-hop boundary returned a Proposition outside the requested canonical binding")
-        _require_working_memory(
-            _estimate_working_bytes(
+        require_working_memory(
+            estimate_working_bytes(
                 [
                     {
                         "projection": proposition_projection_to_dict(row["projection"]),
@@ -1703,15 +1233,14 @@ class Engram:
             ),
             max_working_memory_bytes,
         )
-        _run_cooperative_check(cooperative_check)
+        run_cooperative_check(cooperative_check)
         return result
 
     def query(
         self,
         text: str,
-        session_id: str = "",
+        context_id: str = "",
         limit: int = 5,
-        user_id: str = "",
         statement_filter=(),
         record_candidates: bool = True,
     ) -> dict:
@@ -1719,10 +1248,8 @@ class Engram:
 
         Args:
             text: Query text.
-            session_id: Optional legacy session label for context expansion.
+            context_id: Optional conversation context for query expansion.
             limit: Maximum results (default: 5).
-            user_id: Optional caller-owned user label. Missing labels supplied
-                through this argument normalize to "0".
             statement_filter: Optional predicate applied before scoring and
                 candidacy accounting. Intended for integrations that isolate
                 caller-owned response-cache scopes.
@@ -1741,12 +1268,6 @@ class Engram:
             raise ValueError("statement_filter must be callable")
         if not isinstance(record_candidates, bool):
             raise ValueError("record_candidates must be a boolean")
-        if user_id:
-            normalized_user_id = sessions_mod.normalize_user_id(user_id)
-            if session_id and session_id != normalized_user_id:
-                raise ValueError("session_id and user_id must identify the same context")
-            session_id = normalized_user_id
-
         with self.count_lock:
             self.query_count += 1
 
@@ -1759,8 +1280,8 @@ class Engram:
                 expanded_text,
                 self.substitution_maps["contractions"],
             )
-        if session_id:
-            session = sessions_mod.get_session(self, session_id, create_if_missing=True)
+        if context_id:
+            session = sessions_mod.get_session(self, context_id, create_if_missing=True)
             if session:
                 with self.session_lock:
                     session_touch(session)
@@ -1789,9 +1310,8 @@ class Engram:
     def pattern_query(
         self,
         text: str,
-        session_id: str = "",
+        context_id: str = "",
         user_id: str = "",
-        combine_sentences: bool = True,
     ) -> tuple:
         """Query using AIML-style pattern matching.
 
@@ -1800,27 +1320,18 @@ class Engram:
 
         Args:
             text: User input text (may contain multiple sentences).
-            session_id: Optional legacy session label for context.
+            context_id: Optional conversation context used for turn state.
             user_id: Optional caller-owned user label. When supplied, learned
                 conversational facts record this attribution.
-            combine_sentences: Combine every matched sentence response when
-                true (the legacy low-level behavior). Chat callers set this
-                false so one user turn receives one response selected using
-                the complete turn's dialogue acts.
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
-            For multi-sentence input, returns first matched statement with combined response.
+            For multi-sentence input, returns the candidate selected for the complete turn.
         """
         with self.count_lock:
             self.query_count += 1
 
-        attributed_user_id = ""
-        if user_id:
-            attributed_user_id = sessions_mod.normalize_user_id(user_id)
-            if session_id and session_id != attributed_user_id:
-                raise ValueError("session_id and user_id must identify the same context")
-            session_id = attributed_user_id
+        attributed_user_id = sessions_mod.normalize_user_id(user_id) if user_id else ""
 
         processed_text = text
         if self.config["expand_contractions"]:
@@ -1839,12 +1350,12 @@ class Engram:
         that = ""
         topic = ""
         active_topic = ""
-        if session_id:
-            session = sessions_mod.get_session(self, session_id, create_if_missing=True)
+        if context_id:
+            session = sessions_mod.get_session(self, context_id, create_if_missing=True)
             if session:
                 with self.session_lock:
-                    that = session["previous_response"]
-                    topic = session["predicates"].get("topic", "")
+                    that = session.get("previous_response", "")
+                    topic = session.get("predicates", {}).get("topic", "")
                     active_topic = session.get("active_topic", "")
 
         # Input cleanup: correct typos toward the store's vocabulary before
@@ -1856,8 +1367,6 @@ class Engram:
                 vocabulary = set(self.keywords)
 
         responses: list[str] = []
-        first_stmt = {}
-        first_captured: list[str] = []
         candidates: list[dict] = []
         turn_dialogue_acts: list[str] = []
         turn_entities: list[dict] = []
@@ -1961,9 +1470,9 @@ class Engram:
                     existing = self.get_statement(existing_id)
                     if existing and existing["text"]:
                         if normalize(existing["text"]) == normalize(fact["original"]):
-                            reply = random.choice(KNOWN_FACT_RESPONSES)
+                            reply = random_choice(KNOWN_FACT_RESPONSES)
                         else:
-                            reply = random.choice(CONFLICTING_FACT_RESPONSES)
+                            reply = random_choice(CONFLICTING_FACT_RESPONSES)
                         known_response = reply.replace("{existing}", existing["text"])
 
                 # Find the statement carrying this (pattern, topic, that).
@@ -1974,7 +1483,7 @@ class Engram:
                     for stmt in self.statements:
                         carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
                         triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
-                        if triple_match and (not selected or stmt["priority"] > selected["priority"]):
+                        if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
                             selected = stmt
                     if selected:
                         # Pattern selection is a query and a hit in one step
@@ -1990,11 +1499,11 @@ class Engram:
                         # contradicted known fact surfaces the stored belief.
                         catchall_render = ()
                         if learned and matched_pattern == "*":
-                            final_response = random.choice(LEARNED_ACKNOWLEDGMENTS)
+                            final_response = random_choice(LEARNED_ACKNOWLEDGMENTS)
                         elif known_response and matched_pattern == "*":
                             final_response = known_response
                         else:
-                            final_response = self._process_statement_template(
+                            final_response = self.process_statement_template(
                                 selected,
                                 captured,
                                 sentence,
@@ -2019,9 +1528,6 @@ class Engram:
                             }
                         )
 
-                        if not first_stmt:
-                            first_stmt = selected
-                            first_captured = captured
                         that = final_response
 
         if not responses:
@@ -2049,142 +1555,133 @@ class Engram:
             result = ()
             return result
 
-        # Low-level pattern callers retain AIML-style multi-sentence
-        # composition. Conversational callers select one response from the
-        # final matched sentence, avoiding unrelated fragments in one reply.
-        if combine_sentences:
-            combined_response = " ".join(responses)
-            returned_stmt = first_stmt
-            returned_captured = first_captured
-            selected_candidate = candidates[-1]
-        else:
-            selected_candidate = select_turn_candidate(candidates)
-            combined_response = selected_candidate["response"]
-            returned_stmt = selected_candidate["statement"]
-            returned_captured = selected_candidate["captured"]
+        selected_candidate = select_turn_candidate(candidates)
+        combined_response = selected_candidate["response"]
+        returned_stmt = selected_candidate["statement"]
+        returned_captured = selected_candidate["captured"]
 
-            # A successful learned-fact recall is direct evidence of the new
-            # topic, even when the query used an inverse alias such as
-            # "What is good?" -> Sushi.
-            if returned_stmt.get("pattern_aliases"):
-                recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
-                if recalled_topic:
-                    active_topic = recalled_topic
-                    selected_candidate["topic"] = recalled_topic
-                    selected_candidate["topic_grounded"] = True
+        # A successful learned-fact recall is direct evidence of the new
+        # topic, even when the query used an inverse alias such as
+        # "What is good?" -> Sushi.
+        if returned_stmt.get("pattern_aliases"):
+            recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
+            if recalled_topic:
+                active_topic = recalled_topic
+                selected_candidate["topic"] = recalled_topic
+                selected_candidate["topic_grounded"] = True
 
-            recent_responses = session["response_history"][:REPETITION_HISTORY_SIZE] if session else []
-            allow_similarity = selected_candidate["dialogue_act"] != DIALOGUE_TOPIC_SHIFT
-            expected_fact_recall = bool(
-                returned_stmt
-                and returned_stmt.get("pattern_aliases")
-                and selected_candidate["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION}
-            )
-            expected_name_recall = bool(
-                returned_stmt
-                and returned_stmt["pattern"] in {"DO YOU REMEMBER MY NAME", "WHAT IS MY NAME"}
-                and selected_candidate["dialogue_act"] == DIALOGUE_QUESTION
-            )
-            redirect_repeated_input = bool(
-                session
-                and not _reports_repetition(text)
-                and _input_repeats(text, session["input_history"][:REPETITION_HISTORY_SIZE])
-                and selected_candidate["dialogue_act"]
-                not in {
-                    DIALOGUE_ACKNOWLEDGMENT,
-                    DIALOGUE_CLOSING,
-                    DIALOGUE_FACT,
-                    DIALOGUE_GRATITUDE,
-                    DIALOGUE_GREETING,
-                    DIALOGUE_SELF_INTRODUCTION,
-                }
-                and not (expected_fact_recall or expected_name_recall)
-            )
+        recent_responses = session.get("response_history", [])[:REPETITION_HISTORY_SIZE] if session else []
+        allow_similarity = selected_candidate["dialogue_act"] != DIALOGUE_TOPIC_SHIFT
+        expected_fact_recall = bool(
+            returned_stmt
+            and returned_stmt.get("pattern_aliases")
+            and selected_candidate["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION}
+        )
+        expected_name_recall = bool(
+            returned_stmt
+            and returned_stmt["pattern"] in {"DO YOU REMEMBER MY NAME", "WHAT IS MY NAME"}
+            and selected_candidate["dialogue_act"] == DIALOGUE_QUESTION
+        )
+        redirect_repeated_input = bool(
+            session
+            and not reports_repetition(text)
+            and input_repeats(text, session.get("input_history", [])[:REPETITION_HISTORY_SIZE])
+            and selected_candidate["dialogue_act"]
+            not in {
+                DIALOGUE_ACKNOWLEDGMENT,
+                DIALOGUE_CLOSING,
+                DIALOGUE_FACT,
+                DIALOGUE_GRATITUDE,
+                DIALOGUE_GREETING,
+                DIALOGUE_SELF_INTRODUCTION,
+            }
+            and not (expected_fact_recall or expected_name_recall)
+        )
 
-            # Broad prompts should not override stronger dialogue evidence or
-            # argue with explicit feedback that the conversation is looping.
-            if session and returned_stmt and _reports_repetition(text) and _pattern_has_wildcard(returned_stmt["pattern"]):
-                combined_response = REPETITION_ESCAPE_RESPONSE
-            elif (
-                session
-                and returned_stmt
-                and (
-                    (is_pure_wildcard(returned_stmt["pattern"]) and bool(returned_stmt["template"]))
-                    or pattern_is_broad(returned_stmt["pattern"])
-                    or (
-                        selected_candidate["dialogue_act"] in {DIALOGUE_CLOSING, DIALOGUE_TOPIC_SHIFT}
-                        and _pattern_has_wildcard(returned_stmt["pattern"])
-                    )
+        # Broad prompts should not override stronger dialogue evidence or
+        # argue with explicit feedback that the conversation is looping.
+        if session and returned_stmt and reports_repetition(text) and pattern_has_wildcard(returned_stmt["pattern"]):
+            combined_response = REPETITION_ESCAPE_RESPONSE
+        elif (
+            session
+            and returned_stmt
+            and (
+                (is_pure_wildcard(returned_stmt["pattern"]) and bool(returned_stmt["template"]))
+                or pattern_is_broad(returned_stmt["pattern"])
+                or (
+                    selected_candidate["dialogue_act"] in {DIALOGUE_CLOSING, DIALOGUE_TOPIC_SHIFT}
+                    and pattern_has_wildcard(returned_stmt["pattern"])
                 )
-            ):
-                # Prefer a response grounded in the active per-user topic over
-                # a generic therapist-style prompt.  Learned/known fact
-                # acknowledgments remain authoritative.
-                can_ground_fallback = selected_candidate["topic_grounded"] or selected_candidate["dialogue_act"] in {
-                    DIALOGUE_CLOSING,
-                    DIALOGUE_TOPIC_SHIFT,
-                }
-                if can_ground_fallback and not selected_candidate["learned"] and not selected_candidate["known_response"]:
-                    fact_text = ""
-                    if active_topic:
-                        fact_id = self.pattern_to_statement.get(active_topic.upper(), "")
-                        topic_fact = self.get_statement(fact_id)
-                        fact_text = topic_fact.get("text", "") if topic_fact else ""
-                    options = contextual_fallback_options(
-                        selected_candidate["dialogue_act"],
-                        topic=selected_candidate["topic"] or active_topic,
-                        fact_text=fact_text,
-                        had_gratitude=DIALOGUE_GRATITUDE in turn_dialogue_acts,
-                    )
-                    for option in options:
-                        if not _response_repeats(option, recent_responses, allow_similarity=allow_similarity):
-                            combined_response = option
-                            break
-
-                catchall_render = selected_candidate["catchall_render"]
-                if _response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity) and catchall_render:
-                    selected, captured, sentence, thatstars, topicstars = catchall_render
-                    for _ in range(8):
-                        candidate = self._process_statement_template(
-                            selected,
-                            captured,
-                            sentence,
-                            session,
-                            thatstars=thatstars,
-                            topicstars=topicstars,
-                        )
-                        if not _response_repeats(candidate, recent_responses, allow_similarity=allow_similarity):
-                            combined_response = candidate
-                            break
-                    else:
-                        combined_response = REPETITION_ESCAPE_RESPONSE
-
-            if redirect_repeated_input:
-                for option in repeated_input_response_options():
-                    if not _response_repeats(option, recent_responses):
+            )
+        ):
+            # Prefer a response grounded in the active per-user topic over
+            # a generic therapist-style prompt. Learned/known fact
+            # acknowledgments remain authoritative.
+            can_ground_fallback = selected_candidate["topic_grounded"] or selected_candidate["dialogue_act"] in {
+                DIALOGUE_CLOSING,
+                DIALOGUE_TOPIC_SHIFT,
+            }
+            if can_ground_fallback and not selected_candidate["learned"] and not selected_candidate["known_response"]:
+                fact_text = ""
+                if active_topic:
+                    fact_id = self.pattern_to_statement.get(active_topic.upper(), "")
+                    topic_fact = self.get_statement(fact_id)
+                    fact_text = topic_fact.get("text", "") if topic_fact else ""
+                options = contextual_fallback_options(
+                    selected_candidate["dialogue_act"],
+                    topic=selected_candidate["topic"] or active_topic,
+                    fact_text=fact_text,
+                    had_gratitude=DIALOGUE_GRATITUDE in turn_dialogue_acts,
+                )
+                for option in options:
+                    if not response_repeats(option, recent_responses, allow_similarity=allow_similarity):
                         combined_response = option
+                        break
+
+            catchall_render = selected_candidate["catchall_render"]
+            if response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity) and catchall_render:
+                selected, captured, sentence, thatstars, topicstars = catchall_render
+                for _ in range(8):
+                    candidate = self.process_statement_template(
+                        selected,
+                        captured,
+                        sentence,
+                        session,
+                        thatstars=thatstars,
+                        topicstars=topicstars,
+                    )
+                    if not response_repeats(candidate, recent_responses, allow_similarity=allow_similarity):
+                        combined_response = candidate
                         break
                 else:
                     combined_response = REPETITION_ESCAPE_RESPONSE
 
-            # Repetition control applies to every conversational response,
-            # including exact authored patterns. Repeated factual recalls are
-            # useful and remain exempt.
-            if (
-                session
-                and _response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity)
-                and not (expected_fact_recall or expected_name_recall)
-            ):
-                if selected_candidate["learned"]:
-                    alternatives = LEARNED_ACKNOWLEDGMENTS
-                elif selected_candidate["known_response"]:
-                    alternatives = ()
-                else:
-                    alternatives = repetition_response_options(selected_candidate["dialogue_act"], active_topic)
-                for alternative in alternatives:
-                    if not _response_repeats(alternative, recent_responses, allow_similarity=allow_similarity):
-                        combined_response = alternative
-                        break
+        if redirect_repeated_input:
+            for option in repeated_input_response_options():
+                if not response_repeats(option, recent_responses):
+                    combined_response = option
+                    break
+            else:
+                combined_response = REPETITION_ESCAPE_RESPONSE
+
+        # Repetition control applies to every conversational response,
+        # including exact authored patterns. Repeated factual recalls are
+        # useful and remain exempt.
+        if (
+            session
+            and response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity)
+            and not (expected_fact_recall or expected_name_recall)
+        ):
+            if selected_candidate["learned"]:
+                alternatives = LEARNED_ACKNOWLEDGMENTS
+            elif selected_candidate["known_response"]:
+                alternatives = ()
+            else:
+                alternatives = repetition_response_options(selected_candidate["dialogue_act"], active_topic)
+            for alternative in alternatives:
+                if not response_repeats(alternative, recent_responses, allow_similarity=allow_similarity):
+                    combined_response = alternative
+                    break
 
         # Output cleanup: repair casing (sentence starts, the pronoun I) that
         # lowercase wildcard captures splice into authored text.
@@ -2205,7 +1702,7 @@ class Engram:
         match_tuple = (returned_stmt, returned_captured, combined_response)
         return match_tuple
 
-    def _process_statement_template(
+    def process_statement_template(
         self,
         stmt: dict,
         captured: list[str],
@@ -2270,7 +1767,7 @@ class Engram:
                     redirect_stmt: dict = {}
                     for s in self.statements:
                         triple_match = s["pattern"] == matched_pattern and s["topic"] == matched_topic and s["that"] == matched_that
-                        if triple_match and (not redirect_stmt or s["priority"] > redirect_stmt["priority"]):
+                        if triple_match and (not redirect_stmt or s["priority"] > redirect_stmt.get("priority", 0)):
                             redirect_stmt = s
                     if redirect_stmt:
                         new_context = template_context(
@@ -2294,7 +1791,7 @@ class Engram:
                             learn_fn=context["learn_fn"],
                             graph_fn=self.graph_read_fn,
                         )
-                        template_to_process = redirect_stmt["template"] or redirect_stmt["text"]
+                        template_to_process = redirect_stmt.get("template", {}) or redirect_stmt.get("text", "")
                         redirect_response = self.template_processor.process(template_to_process, new_context)
                         return redirect_response
             result = ""
@@ -2304,7 +1801,7 @@ class Engram:
 
         def learn_fn(learn_data: dict) -> None:
             pattern = learn_data.get("pattern", "")
-            template = learn_data["template"]
+            template = learn_data.get("template", {})
             if pattern:
                 text = ""
                 if isinstance(template, dict) and "text" in template:
@@ -2322,7 +1819,7 @@ class Engram:
 
         context["learn_fn"] = learn_fn
 
-        template_to_process = stmt["template"] or stmt["text"]
+        template_to_process = stmt.get("template", {}) or stmt.get("text", "")
         response = self.template_processor.process(template_to_process, context)
 
         # Synchronize public predicates and remove template-local scratch keys.
@@ -2344,8 +1841,7 @@ class Engram:
             keywords: Query keywords that led to a hit.
             statement_id: Optional id of the statement that answered the query.
                 When given, that statement's own hit statistics are updated too,
-                which is what the hit-rate-aware eviction policies (LRU / LFU /
-                HIT_RATE) and min_hit_rate protection read.
+                which is what least-recently-used eviction reads.
         """
         with self.count_lock:
             self.hit_count += 1
@@ -2407,11 +1903,11 @@ class Engram:
             # fact's content ("Is the sky blue?" needs [sky, blue], not just
             # [sky]). store() safely re-enters statement_lock here.
             self.store(
-                text=fact["original"],
+                text=fact.get("original", ""),
                 pattern=subject_pattern,
                 pattern_aliases=aliases,
                 tier=tier,
-                keyword_source=fact["original"],
+                keyword_source=fact.get("original", ""),
                 introduced_by_user_id=introduced_by_user_id,
                 source_label=source_label,
             )
@@ -2422,7 +1918,7 @@ class Engram:
     def add_fact(
         self,
         text: str,
-        source_label: str = "",
+        source_label: object = "",
         tier: Tier = Tier.DYNAMIC,
     ) -> str:
         """Add shared knowledge without assigning it to a conversational user.
@@ -2489,8 +1985,8 @@ class Engram:
     def retire_statement(self, statement_id: str) -> bool:
         """Remove a statement from the store by id.
 
-        Unlike capacity eviction, this is a deliberate removal of a specific entry --
-        a caller retiring a cached response it has decided is no longer valid.
+        Unlike capacity eviction, this is a deliberate removal of a specific
+        conversational statement.
         evict_statement_at cleans the keyword index, the pattern matcher, and the
         pattern map alongside the statement itself. Returns False when no
         statement carries the id.
@@ -2527,120 +2023,65 @@ class Engram:
         count = len(statements)
         return count
 
-    def sync_corpus(self, pairs: list, tier: Tier = Tier.STATIC, prune: bool = False) -> dict:
-        """Upsert pattern/template pairs into the store (seed refresh).
+    def load_static_data(self, pairs: list[dict]) -> int:
+        """Load the provided structured STATIC corpus into a fresh Engram.
 
-        A store is seeded once at creation; without this, later improvements
-        to the seed corpus never reach an existing store and its templates go
-        stale. For each pair, an existing statement of the given tier with the
-        same (pattern, that, topic) has its text and template replaced in
-        place -- id and hit statistics are preserved -- while pairs with no
-        existing statement are stored new. Statements of other tiers are never
-        touched, so learned DYNAMIC content survives a refresh.
-
-        With prune, statements of the tier that no pair accounts for are
-        retired, making the store's tier mirror the corpus: entries deleted
-        from the seed stop lingering. Prune only with the complete corpus --
-        syncing a partial pair list with prune would retire everything the
-        list omits.
-
-        Args:
-            pairs: List of pair dicts (pattern, response/text, template, that,
-                topic), the shape of data/seed.json's "pairs".
-            tier: Tier to sync into (default STATIC, the seeded tier).
-            prune: Retire statements of the tier absent from pairs.
-
-        Returns:
-            Dict with "added", "updated", "unchanged", and "pruned" counts.
+        Static data is startup input, not recovered state. Loading fails after
+        any statement, session, accepted response, or mutation receipt exists,
+        so this operation cannot synchronize a running process or carry dynamic
+        memory into a new one.
         """
-        added = 0
-        updated = 0
-        unchanged = 0
+        if not isinstance(pairs, list):
+            raise ValueError("static data must be a list of objects")
 
+        normalized_pairs = []
         for pair in pairs:
+            if not isinstance(pair, dict):
+                raise ValueError("each static data entry must be an object")
+            text = pair.get("response", "")
             pattern = pair.get("pattern", "")
-            text = pair.get("response") or pair.get("text") or ""
-            template = pair.get("template", {}) or {}
             that = pair.get("that", "")
             topic = pair.get("topic", "")
+            template = pair.get("template", {})
+            if not isinstance(text, str):
+                raise ValueError("static responses must be strings")
+            if not all(isinstance(value, str) for value in (pattern, that, topic)):
+                raise ValueError("static pattern, that, and topic values must be strings")
+            if not isinstance(template, dict):
+                raise ValueError("static templates must be objects")
+            if not text.strip() and not template:
+                raise ValueError("each static data entry requires a response or template")
+            normalized_pairs.append(
+                {
+                    "text": text,
+                    "pattern": pattern,
+                    "that": that,
+                    "topic": topic,
+                    "template": dict(template),
+                }
+            )
 
-            existing: dict = {}
-            with self.mutation_lock, self.statement_lock:
-                for stmt in self.statements:
-                    if stmt["tier"] != tier:
-                        continue
-                    if pattern:
-                        if stmt["pattern"] == pattern and stmt["that"] == that and stmt["topic"] == topic:
-                            existing = stmt
-                            break
-                    elif not stmt["pattern"] and stmt["text"] == text:
-                        # Plain statements have no pattern key; same text = same entry
-                        existing = stmt
-                        break
-
-                if existing:
-                    if existing["text"] == text and existing["template"] == template:
-                        unchanged += 1
-                    else:
-                        existing["text"] = text
-                        existing["template"] = template
-                        self._replace_statement_index_projection(existing)
-                        updated += 1
-
-            if not existing:
+        with self.mutation_lock, self.statement_lock, self.session_lock:
+            artifacts = self.response_repository.snapshot().get("artifacts", {})
+            has_process_state = (
+                bool(self.statements)
+                or bool(self.sessions)
+                or bool(artifacts)
+                or self.mutation_receipts.next_sequence != 1
+                or self.query_count != 0
+                or self.hit_count != 0
+                or self.eviction_count != 0
+            )
+            if has_process_state:
+                raise ValueError("static data can only be loaded into a fresh Engram")
+            for pair in normalized_pairs:
                 self.store(
-                    text,
-                    tier=tier,
-                    pattern=pattern,
-                    that=that,
-                    topic=topic,
-                    template=template,
+                    pair.get("text", ""),
+                    tier=Tier.STATIC,
+                    pattern=pair.get("pattern", ""),
+                    that=pair.get("that", ""),
+                    topic=pair.get("topic", ""),
+                    template=pair.get("template", {}),
                 )
-                added += 1
-
-        pruned = 0
-        if prune:
-            desired_triples = set()
-            desired_texts = set()
-            for pair in pairs:
-                pattern = pair.get("pattern", "")
-                if pattern:
-                    desired_triples.add((pattern, pair.get("that", ""), pair.get("topic", "")))
-                else:
-                    desired_texts.add(pair.get("response") or pair.get("text") or "")
-            with self.mutation_lock, self.statement_lock:
-                stale_ids = []
-                for stmt in self.statements:
-                    if stmt["tier"] != tier:
-                        continue
-                    if stmt["pattern"]:
-                        if (stmt["pattern"], stmt["that"], stmt["topic"]) not in desired_triples:
-                            stale_ids.append(stmt["id"])
-                    elif stmt["text"] not in desired_texts:
-                        stale_ids.append(stmt["id"])
-                for stmt_id in stale_ids:
-                    if self.retire_statement(stmt_id):
-                        pruned += 1
-
-        result = {"added": added, "updated": updated, "unchanged": unchanged, "pruned": pruned}
+        result = len(normalized_pairs)
         return result
-
-
-def fork_engram(parent: Engram, static_corpus=(), config=()) -> Engram:
-    """Create an ENGRAM with copied dynamic statements and fresh runtime state."""
-    instance = Engram(config=config or parent.config)
-    if static_corpus:
-        instance.load_corpus(static_corpus, tier=Tier.STATIC)
-    with parent.statement_lock:
-        for statement in parent.statements:
-            if statement["tier"] == Tier.DYNAMIC:
-                instance.store(
-                    statement["text"],
-                    tier=Tier.DYNAMIC,
-                    pattern=statement["pattern"],
-                    that=statement["that"],
-                    topic=statement["topic"],
-                    template=statement["template"],
-                )
-    result = instance
-    return result

@@ -1,9 +1,9 @@
 """Tests for the calibrated scoring algorithm."""
 
-import math
 from datetime import UTC, datetime, timedelta
+from math import log as math_log
 
-import pytest
+from pytest import approx as pytest_approx
 
 from engram.constants import SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry, statement
@@ -31,7 +31,7 @@ def test_keyword_idf_unindexed_keyword_gets_maximum_weight() -> None:
     keyword_index = {
         "known": keyword_entry(keyword="known", statement_ids=["s1", "s2"]),
     }
-    assert keyword_idf("unknown", keyword_index, 100) == pytest.approx(math.log(1 + 100))
+    assert keyword_idf("unknown", keyword_index, 100) == pytest_approx(math_log(1 + 100))
     assert keyword_idf("unknown", keyword_index, 100) > keyword_idf("known", keyword_index, 100)
 
 
@@ -75,7 +75,7 @@ def test_keyword_match_weights_no_synonym_map_no_synonym_credit() -> None:
 
 def test_calculate_overlap_full_overlap_is_one() -> None:
     match = {"alpha": 1.0, "beta": 1.0}
-    assert calculate_overlap(match, {}, 1) == pytest.approx(1.0)
+    assert calculate_overlap(match, {}, 1) == pytest_approx(1.0)
 
 
 def test_calculate_overlap_no_overlap_is_zero() -> None:
@@ -87,7 +87,7 @@ def test_calculate_overlap_uniform_idf_reduces_to_fraction() -> None:
     # With no index, every keyword has the same IDF, so overlap is the
     # plain matched fraction.
     match = {"alpha": 1.0, "beta": 0.0}
-    assert calculate_overlap(match, {}, 1) == pytest.approx(0.5)
+    assert calculate_overlap(match, {}, 1) == pytest_approx(0.5)
 
 
 def test_calculate_overlap_rare_match_outscores_common_match() -> None:
@@ -103,7 +103,7 @@ def test_calculate_overlap_rare_match_outscores_common_match() -> None:
 def test_calculate_overlap_synonym_weight_scales_contribution() -> None:
     exact = calculate_overlap({"car": 1.0}, {}, 1)
     via_synonym = calculate_overlap({"car": SYNONYM_OVERLAP_WEIGHT}, {}, 1)
-    assert via_synonym == pytest.approx(exact * SYNONYM_OVERLAP_WEIGHT)
+    assert via_synonym == pytest_approx(exact * SYNONYM_OVERLAP_WEIGHT)
 
 
 def test_calculate_overlap_empty_query() -> None:
@@ -115,26 +115,26 @@ def test_calculate_overlap_empty_query() -> None:
 
 def test_calculate_recency_fresh_statement_is_one() -> None:
     stmt = statement("fresh")
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(1.0, abs=0.01)
+    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(1.0, abs=0.01)
 
 
 def test_calculate_recency_one_half_life_is_half() -> None:
     stmt = statement("aging")
     stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=3600)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(0.5, abs=0.01)
+    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(0.5, abs=0.01)
 
 
 def test_calculate_recency_two_half_lives_is_quarter() -> None:
     stmt = statement("old")
     stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(0.25, abs=0.01)
+    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(0.25, abs=0.01)
 
 
 def test_calculate_recency_hit_refreshes_recency() -> None:
     stmt = statement("revived")
     stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
     stmt["last_hit"] = datetime.now(UTC)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest.approx(1.0, abs=0.01)
+    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(1.0, abs=0.01)
 
 
 def test_calculate_recency_stable_under_store_changes() -> None:
@@ -144,7 +144,7 @@ def test_calculate_recency_stable_under_store_changes() -> None:
     stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=1800)
     first = calculate_recency(stmt, half_life_seconds=3600.0)
     second = calculate_recency(stmt, half_life_seconds=3600.0)
-    assert first == pytest.approx(second, abs=0.01)
+    assert first == pytest_approx(second, abs=0.01)
 
 
 """Tests for average hit rate calculation."""
@@ -164,7 +164,7 @@ def test_calculate_average_hit_rate_multiple_keywords() -> None:
         "france": keyword_entry(keyword="france", query_count=100, hit_count=80),
     }
     result = calculate_average_hit_rate(["paris", "france"], keyword_index)
-    assert result == pytest.approx(0.85)  # (0.9 + 0.8) / 2
+    assert result == pytest_approx(0.85)  # (0.9 + 0.8) / 2
 
 
 def test_calculate_average_hit_rate_without_observations_is_bounded_and_consistent() -> None:
@@ -178,7 +178,7 @@ def test_calculate_average_hit_rate_without_observations_is_bounded_and_consiste
 """Tests for calibrated statement scoring."""
 
 
-def _score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), total=1):
+def score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), total=1):
     result = score_statement(
         statement=stmt,
         query_keywords=query_keywords,
@@ -199,33 +199,33 @@ def test_score_statement_perfect_fresh_match_bounds() -> None:
         "population": keyword_entry(keyword="population", statement_ids=[stmt["id"]], query_count=50, hit_count=45),
         "france": keyword_entry(keyword="france", statement_ids=[stmt["id"]], query_count=150, hit_count=140),
     }
-    score = _score_statement_score(stmt, ["population", "france"], keyword_index, total=3)
+    score = score_statement_score(stmt, ["population", "france"], keyword_index, total=3)
     # Full overlap, fresh recency, high hit rates: close to 1.0, never above.
     assert 0.9 < score <= 1.0
 
 
 def test_score_statement_score_is_calibrated_to_unit_interval() -> None:
     stmt = statement("Test statement", keywords=["test", "statement"])
-    score = _score_statement_score(stmt, ["test"])
+    score = score_statement_score(stmt, ["test"])
     assert 0.0 < score <= 1.0
 
 
 def test_score_statement_zero_overlap() -> None:
     stmt = statement("Hello world", keywords=["hello", "world"])
-    assert _score_statement_score(stmt, ["goodbye"]) == 0.0
+    assert score_statement_score(stmt, ["goodbye"]) == 0.0
 
 
 def test_score_statement_partial_match_scores_below_full_match() -> None:
     stmt = statement("Test statement", keywords=["test", "statement"])
-    partial = _score_statement_score(stmt, ["test", "missing"])
-    full = _score_statement_score(stmt, ["test", "statement"])
+    partial = score_statement_score(stmt, ["test", "missing"])
+    full = score_statement_score(stmt, ["test", "statement"])
     assert 0.0 < partial < full <= 1.0
 
 
 def test_score_statement_synonym_only_match_scores_positive() -> None:
     stmt = statement("The automobile is fast", keywords=["automobile", "fast"])
-    without = _score_statement_score(stmt, ["car"])
-    with_synonyms = _score_statement_score(stmt, ["car"], synonyms={"car": ("automobile", "auto")})
+    without = score_statement_score(stmt, ["car"])
+    with_synonyms = score_statement_score(stmt, ["car"], synonyms={"car": ("automobile", "auto")})
     assert without == 0.0
     assert 0.0 < with_synonyms < 1.0
 
@@ -234,19 +234,19 @@ def test_score_statement_older_statement_scores_lower() -> None:
     fresh = statement("fresh entry", keywords=["shared", "topic"])
     stale = statement("stale entry", keywords=["shared", "topic"])
     stale["created_at"] = datetime.now(UTC) - timedelta(days=30)
-    assert _score_statement_score(fresh, ["shared", "topic"]) > _score_statement_score(stale, ["shared", "topic"])
+    assert score_statement_score(fresh, ["shared", "topic"]) > score_statement_score(stale, ["shared", "topic"])
 
 
 def test_score_statement_priority_added_to_matching_statement() -> None:
     plain = statement("plain answer", keywords=["alpha"])
     boosted = statement("boosted answer", keywords=["alpha"], priority=1)
-    assert _score_statement_score(boosted, ["alpha"]) == pytest.approx(_score_statement_score(plain, ["alpha"]) + 1)
-    assert _score_statement_score(boosted, ["alpha"]) > 1.0
+    assert score_statement_score(boosted, ["alpha"]) == pytest_approx(score_statement_score(plain, ["alpha"]) + 1)
+    assert score_statement_score(boosted, ["alpha"]) > 1.0
 
 
 def test_score_statement_priority_ignored_without_overlap() -> None:
     boosted = statement("boosted answer", keywords=["alpha"], priority=5)
-    assert _score_statement_score(boosted, ["unrelated"]) == 0.0
+    assert score_statement_score(boosted, ["unrelated"]) == 0.0
 
 
 def test_score_statement_custom_weights_still_calibrated() -> None:

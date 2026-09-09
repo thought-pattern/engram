@@ -1,45 +1,36 @@
 """Section 4 resolver, executor, accounting, and orchestration conformance."""
 
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from json import dumps as json_dumps
 
-import pytest
+from pytest import approx as pytest_approx, mark as pytest_mark, raises as pytest_raises
+from sentence_transformers import SentenceTransformer
 
-from engram import persistence, service as service_module
-from engram.artifacts import (
-    CachedResponseArtifact,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
-)
+from engram import service as service_module
+from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.constants import EMPTY_MAPPING, Tier
+from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, FusionPolicyReason, permissive_candidate_authority
 from engram.graph import (
     PROPOSITION_PROJECTION_FIELDS,
     MemGraphConnection,
-    PropositionProjection,
     PropositionProjectionQuery,
     proposition_projection,
     proposition_projection_from_graph_row,
     proposition_projection_to_dict,
 )
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
-from engram.repository import ArtifactRepository
+from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.resolution import (
-    Candidate,
     CandidateSource,
     CostClass,
     EvidenceKind,
     EvidencePackageTruncationReason,
-    EvidenceReference,
-    QueryFrame,
     QueryFrameBuilder,
     ResolutionOutcome,
-    ResolverResult,
     ResolverState,
     accounting_observation,
     budget_consumption,
@@ -66,11 +57,8 @@ from engram.resolution import (
 )
 from engram.resolvers import (
     ExactResolver,
-    LexicalResolver,
-    PatternResolver,
     ResolutionAccountingFinalizer,
     ResolutionOrchestrator,
-    ResolverBudget,
     ResolverExecutor,
     ResolverRegistry,
     StructuredGraphResolver,
@@ -89,12 +77,23 @@ from engram.resolvers import (
     resolver_reservation_to_json,
     resolver_reservation_with_changes,
 )
+from engram.responses import AcceptedResponseService
 from engram.service import EngramCore
 
-from .support_fixtures import PROPOSITION_REFERENCE_A, REFERENCE_IDS
+from .support_fixtures import PROPOSITION_REFERENCE_A, PROPOSITION_REFERENCE_B, REFERENCE_IDS
+
+DEFAULT_CANDIDATE_FEATURES = {"sparse_score": 1.0}
 
 NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 START_NS = 1_000_000_000
+
+
+class ReadyEmbeddingModel(SentenceTransformer):
+    def __init__(self) -> None:
+        pass
+
+    def __bool__(self) -> bool:
+        return True
 
 
 def artifact(
@@ -108,7 +107,7 @@ def artifact(
     source_label: str = "tapestry:released",
     support_references: tuple[dict, ...] = (),
     metadata=(),
-) -> CachedResponseArtifact:
+) -> dict:
     scope = scope_key(namespace=namespace)
     selected_metadata = metadata if isinstance(metadata, dict) else {"approved": True}
     result = cached_response_artifact(
@@ -125,8 +124,6 @@ def artifact(
         valid_from_available=False,
         valid_until="",
         valid_until_available=False,
-        knowledge_epoch=0,
-        knowledge_epoch_available=False,
         superseded_by="",
         provenance=artifact_provenance(source_label, "regulator-a", "2026-08-12T16:00:00Z"),
         statistics=artifact_statistics(),
@@ -135,21 +132,27 @@ def artifact(
     return result
 
 
-def engine_with_artifacts(*artifacts: CachedResponseArtifact) -> Engram:
+def engine_with_artifacts(*artifacts: dict) -> Engram:
     engine = Engram()
     engine.response_repository = ArtifactRepository(artifacts)
-    persistence.synchronize_response_statement_projections(engine, ())
     return engine
+
+
+def accounting_finalizer(engine: Engram, max_requests: int = 1_000) -> ResolutionAccountingFinalizer:
+    coordinator = AtomicMutationCoordinator(engine.response_repository, engine.mutation_receipts)
+    response_service = AcceptedResponseService(coordinator, tier_admission_policy(engine.config.get("capacity", 1)))
+    result = ResolutionAccountingFinalizer(engine, response_service, max_requests=max_requests)
+    return result
 
 
 def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
     """Mark an injected graph capability ready for resolver-planning tests."""
     client = type("ReadyGraphCapability", (), {"available": True})()
-    engine._graph_client = client
+    engine.internal_graph_client = client
     engine.config["graph"]["enabled"] = True
     if vector:
         engine.config["graph"]["vector_enabled"] = True
-        engine._graph_embedding_model = object()
+        engine.graph_embedding_model = ReadyEmbeddingModel()
 
 
 def frame(
@@ -161,7 +164,12 @@ def frame(
     required_source_label: str = "",
     budget: object = EMPTY_MAPPING,
 ):
-    selected_budget = budget if budget is not EMPTY_MAPPING else capture_resolution_budget(lambda: START_NS)
+    if budget is EMPTY_MAPPING:
+        selected_budget = capture_resolution_budget(lambda: START_NS)
+    elif isinstance(budget, dict):
+        selected_budget = budget
+    else:
+        raise ValueError("test budget must be a dictionary")
     result = QueryFrameBuilder(engine, lambda: START_NS, lambda: NOW).build(
         request,
         scope_key(namespace=namespace),
@@ -173,7 +181,7 @@ def frame(
     return result
 
 
-def resolver_budget(query_frame) -> ResolverBudget:
+def resolver_budget(query_frame) -> dict:
     budget = query_frame["budget"]
     result = build_resolver_budget(
         max_candidates=budget["max_candidates"],
@@ -191,11 +199,11 @@ def resolver_budget(query_frame) -> ResolverBudget:
 def candidate(
     statement_id: str = "stmt-candidate",
     *,
-    source: CandidateSource = CandidateSource.LEXICAL,
+    source: CandidateSource = CandidateSource.SPARSE,
     response: str = "Candidate response",
-    evidence: tuple[EvidenceReference, ...] = (),
-    features: Mapping[str, float] = {"score": 1.0},
-) -> Candidate:
+    evidence: tuple[dict, ...] = (),
+    features: dict[str, float] = DEFAULT_CANDIDATE_FEATURES,
+) -> dict:
     result = resolution_candidate(
         candidate_id=f"candidate:{source.value}:{statement_id}",
         statement_id=statement_id,
@@ -213,7 +221,7 @@ class FakeResolver:
     def __init__(
         self,
         name: str,
-        result: ResolverResult,
+        result: dict,
         *,
         available: bool = True,
         cost_class: CostClass = CostClass.CHEAP,
@@ -222,23 +230,30 @@ class FakeResolver:
     ) -> None:
         self.name = name
         self.cost_class = cost_class
-        self._result = result
-        self._available = available
-        self._error = error
-        self._availability_error = availability_error
+        self.internal_result = result
+        self.internal_available = available
+        self.internal_error = error
+        self.internal_availability_error = availability_error
         self.calls = 0
 
-    def available(self, frame: QueryFrame) -> bool:
-        if self._availability_error:
+    def available(self, frame: dict) -> bool:
+        if self.internal_availability_error:
             raise RuntimeError("injected availability failure")
-        result = self._available
+        result = self.internal_available
         return result
 
-    def resolve(self, frame: QueryFrame, budget: ResolverBudget) -> ResolverResult:
+    def resolve(
+        self,
+        frame: dict,
+        budget: dict,
+        cooperative_check=(),
+    ) -> dict:
+        if cooperative_check:
+            cooperative_check()
         self.calls += 1
-        if self._error:
+        if self.internal_error:
             raise RuntimeError("injected resolver failure")
-        result = self._result
+        result = self.internal_result
         return result
 
 
@@ -295,74 +310,7 @@ def test_exact_adapter_abstains_for_wrong_scope_and_ineligible_lifecycle() -> No
     assert wrong_scope["candidates"] == ()
 
 
-def test_pattern_discovery_is_pure_and_never_uses_graph_fallback(monkeypatch) -> None:
-    engine = Engram()
-    statement_id = engine.store("Hello {star1}", pattern="HELLO *")
-    before = (
-        engine.query_count,
-        engine.get_statement(statement_id)["query_count"],
-        engine.get_statement(statement_id)["hit_count"],
-    )
-    monkeypatch.setattr(engine, "graph_lookup", lambda _text: (_ for _ in ()).throw(AssertionError("graph fallback")))
-    query_frame = frame(engine, "Hello Ada", namespace="")
-
-    result = PatternResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
-    miss = engine.pattern_candidates("No pattern can match this", limit=3)
-
-    assert result["candidates"][0]["statement_id"] == statement_id
-    assert result["candidates"][0]["diagnostics"]["captures"] == ("Ada",)
-    assert result["candidates"][0]["features"]["values"]["pattern_specificity"] == 1.0
-    assert miss == []
-    assert before == (
-        engine.query_count,
-        engine.get_statement(statement_id)["query_count"],
-        engine.get_statement(statement_id)["hit_count"],
-    )
-
-
-def test_lexical_discovery_exposes_existing_components_without_accounting() -> None:
-    engine = Engram()
-    statement_id = engine.store(
-        "The automobile is fast",
-        introduced_by_user_id="standalone-conversation-label",
-    )
-    before_statement = dict(engine.get_statement(statement_id))
-    before_keywords = {name: (value["query_count"], value["hit_count"]) for name, value in engine.keywords.items()}
-    query_frame = frame(engine, "car", namespace="")
-
-    result = LexicalResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
-
-    features = result["candidates"][0]["features"]
-    assert result["candidates"][0]["statement_id"] == statement_id
-    assert "introduced_by_user_id" not in result["candidates"][0]["provenance"]
-    assert features["values"]["lexical_score"] > 0.0
-    assert features["values"]["synonym_match_ratio"] > 0.0
-    assert {"lexical_overlap", "recency", "keyword_hit_rate", "priority"}.issubset(features["values"])
-    assert features["unavailable"] == ("lemma_match_ratio", "stem_match_ratio")
-    assert engine.query_count == 0
-    assert engine.get_statement(statement_id)["query_count"] == before_statement["query_count"]
-    assert {name: (value["query_count"], value["hit_count"]) for name, value in engine.keywords.items()} == before_keywords
-
-
-def test_legacy_query_wrappers_retain_accounting_behavior() -> None:
-    engine = Engram()
-    lexical_id = engine.store("alpha beta")
-    pattern_id = engine.store("Pattern response", pattern="PING")
-
-    assert engine.query_candidates("alpha", limit=1)["matches"]
-    assert engine.get_statement(lexical_id)["query_count"] == 0
-    legacy_query = engine.query("alpha", limit=1)
-    assert legacy_query["matches"]
-    assert set(legacy_query) == {"matches", "keywords", "resolved_query"}
-    assert engine.get_statement(lexical_id)["query_count"] == 1
-    assert engine.pattern_candidates("ping")
-    assert engine.get_statement(pattern_id)["query_count"] == 0
-    assert engine.pattern_query("ping")[2] == "Pattern response"
-    assert engine.get_statement(pattern_id)["query_count"] == 1
-    assert engine.get_statement(pattern_id)["hit_count"] == 1
-
-
-def _structured_proposition_projection(proposition_id: str = "proposition-1") -> PropositionProjection:
+def structured_proposition_projection(proposition_id: str = "proposition-1") -> dict:
     row = {
         "proposition_id": proposition_id,
         "subject_entity_id": "entity:ada",
@@ -395,15 +343,15 @@ def _structured_proposition_projection(proposition_id: str = "proposition-1") ->
     return result
 
 
-def _changed_proposition_projection(projection: PropositionProjection, **changes) -> PropositionProjection:
+def changed_proposition_projection(projection: dict, **changes) -> dict:
     values = dict(projection)
     values.update(changes)
     result = proposition_projection(**values)
     return result
 
 
-def _current_proposition_projection(discovered: PropositionProjection, **changes) -> PropositionProjection:
-    result = _changed_proposition_projection(
+def internal_current_proposition_projection(discovered: dict, **changes) -> dict:
+    result = changed_proposition_projection(
         discovered,
         projection_id=PropositionProjectionQuery.BY_ID_V1,
         structured_match=0.0,
@@ -417,9 +365,9 @@ def _current_proposition_projection(discovered: PropositionProjection, **changes
     return result
 
 
-def _semantic_proposition_projection(proposition_id: str = "proposition-1", similarity: float = 0.9) -> PropositionProjection:
-    result = _changed_proposition_projection(
-        _structured_proposition_projection(proposition_id),
+def semantic_proposition_projection(proposition_id: str = "proposition-1", similarity: float = 0.9) -> dict:
+    result = changed_proposition_projection(
+        structured_proposition_projection(proposition_id),
         projection_id=PropositionProjectionQuery.VECTOR_V1,
         structured_match=0.0,
         structured_match_available=False,
@@ -431,7 +379,7 @@ def _semantic_proposition_projection(proposition_id: str = "proposition-1", simi
     return result
 
 
-def _proposition_projection_graph_row(projection: PropositionProjection) -> dict[str, object]:
+def proposition_projection_graph_row(projection: dict) -> dict[str, object]:
     encoded = proposition_projection_to_dict(projection)
     result = {field: encoded[field] for field in PROPOSITION_PROJECTION_FIELDS}
     return result
@@ -440,22 +388,22 @@ def _proposition_projection_graph_row(projection: PropositionProjection) -> dict
 def test_proposition_resolvers_reject_falsey_invalid_eligibility_evaluator() -> None:
     engine = Engram()
 
-    with pytest.raises(InvalidRequestError, match="structured graph eligibility_evaluator"):
+    with pytest_raises(InvalidRequestError, match="structured graph eligibility_evaluator"):
         StructuredGraphResolver(engine, lambda: START_NS, False)
-    with pytest.raises(InvalidRequestError, match="support semantic eligibility_evaluator"):
+    with pytest_raises(InvalidRequestError, match="support semantic eligibility_evaluator"):
         SupportSemanticResolver(engine, lambda: START_NS, False)
 
 
 def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection()
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection()
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -478,25 +426,27 @@ def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(
 
 def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(monkeypatch) -> None:
     engine = Engram()
-    eligible = _structured_proposition_projection("proposition-eligible")
-    inactive = _changed_proposition_projection(
-        _structured_proposition_projection("proposition-inactive"),
+    eligible = structured_proposition_projection("proposition-eligible")
+    inactive = changed_proposition_projection(
+        structured_proposition_projection("proposition-inactive"),
         invalidated_at="2026-08-01T00:00:00Z",
         invalidated_at_available=True,
     )
-    changed = _structured_proposition_projection("proposition-changed")
+    changed = structured_proposition_projection("proposition-changed")
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [eligible, inactive, changed][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [eligible, inactive, changed][
+            :row_limit
+        ],
     )
 
     def current(proposition_id):
         if proposition_id == eligible["proposition_id"]:
-            result = (_current_proposition_projection(eligible),)
+            result = (internal_current_proposition_projection(eligible),)
             return result
         if proposition_id == changed["proposition_id"]:
-            result = (_current_proposition_projection(changed, object_entity_id="entity:changed"),)
+            result = (internal_current_proposition_projection(changed, object_entity_id="entity:changed"),)
             return result
         raise AssertionError("initially ineligible Proposition must not be revalidated")
 
@@ -518,15 +468,15 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(m
 
 def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection()
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection()
+    current = internal_current_proposition_projection(discovered)
     before = (engine.query_count, engine.hit_count, tuple(engine.statements))
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget_with_changes(
         resolver_budget(query_frame),
@@ -543,14 +493,14 @@ def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkey
 
 def test_executor_defensively_bounds_full_proposition_evidence_in_current_schema(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection()
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection()
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
     raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
@@ -570,12 +520,11 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     engine.config["graph"]["enabled"] = True
     engine.config["graph"]["vector_enabled"] = True
     engine.config["graph"]["vector_weight"] = 1.0
-    engine.statements[engine.statement_index[accepted["statement_id"]]]["priority"] = 3
-    projections = [_semantic_proposition_projection("unlinked", 1.0)]
+    projections = [semantic_proposition_projection("unlinked", 1.0)]
     monkeypatch.setattr(
         engine,
         "graph_vector_propositions",
-        lambda _text, *, limit=0: [
+        lambda internal_text, *, limit=0: [
             {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 0.9},
             {"proposition_id": "unlinked", "similarity": 1.0},
         ][:limit],
@@ -583,9 +532,9 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: projections[:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: projections[:limit],
     )
-    by_id = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in projections}
+    by_id = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in projections}
     monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (by_id[proposition_id],))
     query_frame = frame(engine)
 
@@ -597,11 +546,39 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     assert tuple(reference["evidence_id"] for reference in result["candidates"][0]["evidence"]) == (
         REFERENCE_IDS.get("proposition_a", ""),
     )
-    assert result["candidates"][0]["features"]["values"]["semantic_score"] == pytest.approx(0.9)
-    assert result["candidates"][0]["features"]["values"]["priority"] == pytest.approx(3.0)
-    assert result["candidates"][0]["features"]["values"]["legacy_retrieval_score"] == pytest.approx(3.9)
+    assert result["candidates"][0]["features"]["values"]["semantic_score"] == pytest_approx(0.9)
+    assert result["candidates"][0]["features"]["values"]["priority"] == pytest_approx(0.0)
+    assert result["candidates"][0]["features"]["values"]["retrieval_score"] == pytest_approx(0.9)
     assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("unlinked",)
     assert result["consumption"]["vector_results"] == 3
+
+
+def test_support_semantic_scan_limit_counts_only_relevant_edges() -> None:
+    unrelated = artifact(
+        "unrelated",
+        namespace="tenant-b",
+        support_references=(PROPOSITION_REFERENCE_A,),
+    )
+    target = artifact(
+        "target",
+        namespace="tenant-a",
+        support_references=(PROPOSITION_REFERENCE_B, PROPOSITION_REFERENCE_A),
+    )
+    engine = engine_with_artifacts(unrelated, target)
+    engine.config.get("graph", {})["vector_support_scan_limit"] = 1
+    engine.config.get("graph", {})["vector_weight"] = 1.0
+    target_scope = scope_key(namespace="tenant-a")
+
+    matches = engine.vector_supported_match_components_from_scores(
+        {PROPOSITION_REFERENCE_A.get("id", ""): 0.9},
+        source_working_bytes=0,
+        limit=1,
+        artifact_filter=lambda value: value.get("scope", {}) == target_scope,
+        max_working_memory_bytes=1_000_000,
+    )
+
+    assert len(matches) == 1
+    assert matches[0].get("artifact", {}).get("statement_id", "") == "target"
 
 
 def test_support_semantic_emits_unlinked_full_proposition_without_response_candidate(monkeypatch) -> None:
@@ -609,14 +586,14 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
     engine.config["graph"]["enabled"] = True
     engine.config["graph"]["vector_enabled"] = True
     engine.config["graph"]["vector_weight"] = 1.0
-    discovered = _semantic_proposition_projection("proposition-unlinked", 0.73)
-    current = _current_proposition_projection(discovered)
+    discovered = semantic_proposition_projection("proposition-unlinked", 0.73)
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -625,7 +602,7 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
     assert result["candidates"] == ()
     assert result["accounting"] == ()
     assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-unlinked",)
-    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.73)
+    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest_approx(0.73)
     assert result["proposition_evidence"][0]["features"]["unavailable"] == (
         "source_agreement",
         "structured_match",
@@ -637,8 +614,8 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
 
 
 def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> None:
-    discovered = _semantic_proposition_projection("proposition-vertical", 0.67)
-    current = _current_proposition_projection(discovered)
+    discovered = semantic_proposition_projection("proposition-vertical", 0.67)
+    current = internal_current_proposition_projection(discovered)
     client = MemGraphConnection()
     calls = []
 
@@ -648,14 +625,14 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
             result = [{"proposition_id": discovered["proposition_id"], "similarity": discovered["semantic_similarity"]}]
             return result
         if "query_embedding" in parameters:
-            result = [_proposition_projection_graph_row(discovered)]
+            result = [proposition_projection_graph_row(discovered)]
             return result
-        result = [_proposition_projection_graph_row(current)]
+        result = [proposition_projection_graph_row(current)]
         return result
 
-    client._execute_read_query = execute
+    client.execute = execute
     engine = Engram()
-    engine._graph_client = client
+    engine.internal_graph_client = client
     engine.config["graph"].update(
         {
             "enabled": True,
@@ -666,13 +643,13 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
             "vector_weight": 1.0,
         }
     )
-    monkeypatch.setattr(engine, "_encode_graph_query", lambda _text: [0.0, 1.0])
+    monkeypatch.setattr(engine, "encode_graph_query", lambda internal_text: [0.0, 1.0])
     query_frame = frame(engine, "Ada", namespace="")
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
     assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-vertical",)
-    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.67)
+    assert result["proposition_evidence"][0]["features"]["values"]["semantic_similarity"] == pytest_approx(0.67)
     assert len(calls) == 3
     assert calls[0][1] == {
         "index_name": "proposition_premise_embeddings",
@@ -700,7 +677,7 @@ def test_support_semantic_proposition_discovery_fails_soft_and_cooperates_with_l
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda *_args, **_kwargs: [],
+        lambda *internal_args, **internal_kwargs: [],
     )
 
     unavailable = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, lease)
@@ -713,7 +690,7 @@ def test_support_semantic_proposition_discovery_fails_soft_and_cooperates_with_l
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("deadline")),
+        lambda *internal_args, **internal_kwargs: (_ for _ in ()).throw(TimeoutError("deadline")),
     )
     failed = ResolverExecutor(lambda: START_NS).execute(
         query_frame,
@@ -746,16 +723,16 @@ def test_executor_isolates_a_malformed_resolver_result() -> None:
 def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_bounds(monkeypatch) -> None:
     engine = Engram()
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_proposition_projection("proposition-bounded", 0.8)
-    current = _current_proposition_projection(discovered)
+    discovered = semantic_proposition_projection("proposition-bounded", 0.8)
+    current = internal_current_proposition_projection(discovered)
     current_calls = 0
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
 
-    def current_projection(_proposition_id):
+    def current_projection(internal_proposition_id):
         nonlocal current_calls
         current_calls += 1
         result = (current,)
@@ -792,14 +769,14 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_proposition_projection("proposition-after-candidate", 0.8)
-    current = _current_proposition_projection(discovered)
+    discovered = semantic_proposition_projection("proposition-after-candidate", 0.8)
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(
         engine,
         "Ada",
@@ -810,10 +787,10 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
         ),
     )
     first_candidate = candidate()
-    lexical = FakeResolver(
-        "lexical",
+    sparse = FakeResolver(
+        "sparse",
         resolver_result(
-            "lexical",
+            "sparse",
             ResolverState.COMPLETED,
             candidates=(first_candidate,),
             accounting=(accounting_observation(first_candidate["statement_id"]),),
@@ -823,12 +800,14 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
 
     report = ResolverExecutor(lambda: START_NS).execute(
         query_frame,
-        ResolverRegistry((lexical, semantic)).plan(query_frame),
+        ResolverRegistry((sparse, semantic)).plan(query_frame),
     )
 
     assert len(report["results"][0]["candidates"]) == 1
     assert report["reservations"][1]["lease"]["max_candidates"] == 0
-    assert tuple(record["proposition_id"] for record in report["results"][1]["proposition_evidence"]) == ("proposition-after-candidate",)
+    assert tuple(record["proposition_id"] for record in report["results"][1]["proposition_evidence"]) == (
+        "proposition-after-candidate",
+    )
     assert report["results"][1]["accounting"] == ()
 
 
@@ -836,21 +815,21 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    structured = _structured_proposition_projection("proposition-shared")
-    semantic = _semantic_proposition_projection("proposition-shared", 0.76)
-    current = _current_proposition_projection(structured)
+    structured = structured_proposition_projection("proposition-shared")
+    semantic = semantic_proposition_projection("proposition-shared", 0.76)
+    current = internal_current_proposition_projection(structured)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [structured][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [structured][:row_limit],
     )
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [semantic][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [semantic][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry(
         (
@@ -866,7 +845,7 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
     assert records[0]["proposition_id"] == "proposition-shared"
     assert records[0]["source_contributions"] == ("structured_graph", "support_semantic")
     assert records[0]["features"]["values"]["structured_match"] == 1.0
-    assert records[0]["features"]["values"]["semantic_similarity"] == pytest.approx(0.76)
+    assert records[0]["features"]["values"]["semantic_similarity"] == pytest_approx(0.76)
     assert records[0]["features"]["values"]["source_agreement"] == 1.0
     assert all(result["candidates"] == () for result in report["results"])
     assert all(result["accounting"] == () for result in report["results"])
@@ -874,14 +853,14 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
     raw_record = report["results"][0]["proposition_evidence"][0]
     untrusted_record = proposition_evidence_record_with_changes(
         raw_record,
-        {"source_resolver": "lexical", "source_contributions": ("lexical",)},
+        {"source_resolver": "untrusted", "source_contributions": ("untrusted",)},
     )
     untrusted_report = execution_report_with_changes(
         report,
         {
             "results": (
                 resolver_result(
-                    "lexical",
+                    "untrusted",
                     ResolverState.COMPLETED,
                     proposition_evidence=(untrusted_record,),
                 ),
@@ -893,7 +872,7 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
     orchestrated, finalization = ResolutionOrchestrator(
         registry,
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     ).resolve(query_frame, "request-cross-producer-package")
 
     assert orchestrated["outcome"] == ResolutionOutcome.EVIDENCE
@@ -910,19 +889,19 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
 def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_proposition_projection("proposition-orchestrated")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection("proposition-orchestrated")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-only")
@@ -959,7 +938,7 @@ def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(m
             "truncated",
         }
     )
-    diagnostic_payload = json.dumps(resolution_result_to_dict(result)["frame_diagnostics"], sort_keys=True)
+    diagnostic_payload = json_dumps(resolution_result_to_dict(result)["frame_diagnostics"], sort_keys=True)
     assert discovered["proposition_id"] not in diagnostic_payload
     assert discovered["subject_entity_id"] not in diagnostic_payload
     assert discovered["object_entity_id"] not in diagnostic_payload
@@ -972,20 +951,20 @@ def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkey
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_proposition_projection("proposition-below-floor", 0.59)
-    current = _current_proposition_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
+    discovered = semantic_proposition_projection("proposition-below-floor", 0.59)
+    current = internal_current_proposition_projection(discovered)
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((SupportSemanticResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-excluded")
@@ -1018,30 +997,29 @@ def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_ex
     enable_graph_resolvers(engine, vector=True)
     statement_id = engine.store("Candidate response")
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
-    discovered = _semantic_proposition_projection("proposition-below-floor-with-candidate", 0.59)
-    current = _current_proposition_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda _text, *, limit=0: [])
+    discovered = semantic_proposition_projection("proposition-below-floor-with-candidate", 0.59)
+    current = internal_current_proposition_projection(discovered)
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda _text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
-    lexical_candidate = candidate(statement_id)
-    lexical = FakeResolver(
-        "lexical",
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    sparse_candidate = candidate(statement_id)
+    sparse = FakeResolver(
+        "sparse",
         resolver_result(
-            "lexical",
+            "sparse",
             ResolverState.COMPLETED,
-            candidates=(lexical_candidate,),
-            accounting=(accounting_observation(statement_id),),
+            candidates=(sparse_candidate,),
         ),
     )
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((lexical, SupportSemanticResolver(engine, lambda: START_NS))),
+        ResolverRegistry((sparse, SupportSemanticResolver(engine, lambda: START_NS))),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
         CandidateFusionEngine(authority=permissive_candidate_authority),
     )
 
@@ -1052,26 +1030,26 @@ def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_ex
     assert result["evidence_package_available"] is True
     assert result["evidence_package"]["records"] == ()
     assert "proposition_evidence_excluded" in result["reason_codes"]
-    assert finalization["candidate_statement_ids"] == (statement_id,)
+    assert finalization["candidate_statement_ids"] == ()
     assert finalization["success_applied"] is False
 
 
 def test_orchestrator_canonically_truncates_proposition_package_to_ten_records(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = tuple(_structured_proposition_projection(f"proposition-{index:02d}") for index in range(12))
-    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
+    discovered = tuple(structured_proposition_projection(f"proposition-{index:02d}") for index in range(12))
+    current = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-count-limit")
@@ -1093,12 +1071,12 @@ def test_orchestrator_canonically_truncates_proposition_package_to_ten_records(m
 def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = tuple(_structured_proposition_projection(f"proposition-output-{index:02d}") for index in range(4))
-    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
+    discovered = tuple(structured_proposition_projection(f"proposition-output-{index:02d}") for index in range(4))
+    current = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     selected_budget = capture_resolution_budget(
@@ -1109,7 +1087,7 @@ def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkey
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-output-limit")
@@ -1128,16 +1106,16 @@ def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkey
 def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    probe_projection = _structured_proposition_projection("proposition-byte-00")
+    probe_projection = structured_proposition_projection("proposition-byte-00")
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [probe_projection][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [probe_projection][:row_limit],
     )
     monkeypatch.setattr(
         engine,
         "current_proposition_projection",
-        lambda _proposition_id: (_current_proposition_projection(probe_projection),),
+        lambda internal_proposition_id: (internal_current_proposition_projection(probe_projection),),
     )
     probe_frame = frame(engine, "Ada", namespace="")
     probe_result = StructuredGraphResolver(engine, lambda: START_NS).resolve(
@@ -1147,12 +1125,12 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     probe_record = probe_result["proposition_evidence"][0]
     single_package_bytes = len(evidence_package_to_json(build_evidence_package((probe_record,))).encode("utf-8"))
 
-    discovered = tuple(_structured_proposition_projection(f"proposition-byte-{index:02d}") for index in range(2))
-    current = {projection["proposition_id"]: _current_proposition_projection(projection) for projection in discovered}
+    discovered = tuple(structured_proposition_projection(f"proposition-byte-{index:02d}") for index in range(2))
+    current = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in discovered}
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
     selected_budget = capture_resolution_budget(
@@ -1163,7 +1141,7 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-evidence-byte-limit")
@@ -1180,14 +1158,14 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
 def test_orchestrator_omits_diagnostics_without_losing_proposition_package(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_proposition_projection("proposition-no-diagnostics")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection("proposition-no-diagnostics")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_diagnostic_bytes=0,
@@ -1196,7 +1174,7 @@ def test_orchestrator_omits_diagnostics_without_losing_proposition_package(monke
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-diagnostic-limit")
@@ -1213,14 +1191,14 @@ def test_orchestrator_omits_diagnostics_without_losing_proposition_package(monke
 def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exhausted(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine)
-    discovered = _structured_proposition_projection("proposition-memory-bound")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection("proposition-memory-bound")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     base_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),))
     executor = ResolverExecutor(lambda: START_NS)
@@ -1243,7 +1221,7 @@ def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exh
     orchestrator = ResolutionOrchestrator(
         registry,
         executor,
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
         fusion,
     )
 
@@ -1261,14 +1239,14 @@ def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exh
 
 def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leaking_records(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection("proposition-conflict")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection("proposition-conflict")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -1297,7 +1275,7 @@ def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leakin
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((structured, semantic)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-conflict")
@@ -1310,17 +1288,17 @@ def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leakin
     assert finalization["candidate_statement_ids"] == ()
 
 
-@pytest.mark.parametrize("mismatch", ("scope", "evaluation_time"))
+@pytest_mark.parametrize("mismatch", ("scope", "evaluation_time"))
 def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch, mismatch: str) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection(f"proposition-{mismatch}-mismatch")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection(f"proposition-{mismatch}-mismatch")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -1354,7 +1332,7 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, f"request-{mismatch}-mismatch")
@@ -1369,14 +1347,14 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
 
 def test_orchestrator_ignores_proposition_from_untrusted_producer(monkeypatch) -> None:
     engine = Engram()
-    discovered = _structured_proposition_projection("proposition-untrusted-producer")
-    current = _current_proposition_projection(discovered)
+    discovered = structured_proposition_projection("proposition-untrusted-producer")
+    current = internal_current_proposition_projection(discovered)
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda _text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda _proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -1385,16 +1363,16 @@ def test_orchestrator_ignores_proposition_from_untrusted_producer(monkeypatch) -
     trusted_record = resolver_output["proposition_evidence"][0]
     untrusted_record = proposition_evidence_record_with_changes(
         trusted_record,
-        {"source_resolver": "lexical", "source_contributions": ("lexical",)},
+        {"source_resolver": "untrusted", "source_contributions": ("untrusted",)},
     )
     resolver = FakeResolver(
-        "lexical",
-        resolver_result("lexical", ResolverState.COMPLETED, proposition_evidence=(untrusted_record,)),
+        "untrusted",
+        resolver_result("untrusted", ResolverState.COMPLETED, proposition_evidence=(untrusted_record,)),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-untrusted-proposition-producer")
@@ -1418,7 +1396,7 @@ def test_orchestrator_fails_soft_when_proposition_producer_dependency_fails() ->
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((failed,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-dependency-failure")
@@ -1441,7 +1419,7 @@ def test_orchestrator_keeps_package_unavailable_when_producer_has_no_strict_reco
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, finalization = orchestrator.resolve(query_frame, "request-empty-proposition-producer")
@@ -1463,7 +1441,7 @@ def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
         ),
     )
     exact = FakeResolver("exact", resolver_result("exact", ResolverState.COMPLETED), available=True, cost_class=CostClass.EXACT)
-    unavailable = FakeResolver("pattern", resolver_result("pattern", ResolverState.COMPLETED), available=False)
+    unavailable = FakeResolver("sparse", resolver_result("sparse", ResolverState.COMPLETED), available=False)
     expensive = FakeResolver(
         "support_semantic",
         resolver_result("support_semantic", ResolverState.COMPLETED),
@@ -1473,10 +1451,10 @@ def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
 
     plan = registry.plan(query_frame, ("exact", "support_semantic"))
 
-    assert [resolver_contract(entry["resolver"])[0] for entry in plan["entries"]] == ["exact", "pattern", "support_semantic"]
+    assert [resolver_contract(entry["resolver"])[0] for entry in plan["entries"]] == ["exact", "sparse", "support_semantic"]
     assert [entry["reason_code"] for entry in plan["entries"]] == ["", "not_configured", "cost_class_disabled"]
     assert resolution_plan_to_dict(plan) == resolution_plan_to_dict(registry.plan(query_frame, ("exact", "support_semantic")))
-    with pytest.raises(InvalidRequestError, match="duplicates"):
+    with pytest_raises(InvalidRequestError, match="duplicates"):
         registry.plan(query_frame, ("exact", "exact"))
 
 
@@ -1502,9 +1480,11 @@ def test_executor_propagates_cancellation_without_publishing_partial_results() -
     query_frame = frame(engine, namespace="")
 
     class CancellableResolver(FakeResolver):
-        def resolve_with_cancellation(self, current_frame, current_budget, cooperative_check=()) -> ResolverResult:
+        def resolve(self, frame, budget, cooperative_check=()) -> dict:
+            del frame, budget
             cooperative_check()
-            result = self.resolve(current_frame, current_budget)
+            self.calls += 1
+            result = self.internal_result
             return result
 
     resolver = CancellableResolver("structured_graph", resolver_result("structured_graph", ResolverState.COMPLETED))
@@ -1512,7 +1492,7 @@ def test_executor_propagates_cancellation_without_publishing_partial_results() -
     def cancel() -> None:
         raise ResolutionCancelledError("transport cancelled")
 
-    with pytest.raises(ResolutionCancelledError, match="transport cancelled"):
+    with pytest_raises(ResolutionCancelledError, match="transport cancelled"):
         ResolverExecutor(lambda: START_NS).execute(
             query_frame,
             ResolverRegistry((resolver,)).plan(query_frame),
@@ -1526,7 +1506,7 @@ def test_orchestrator_cancellation_after_execution_prevents_accounting_publicati
     engine = Engram()
     query_frame = frame(engine, namespace="")
     resolver = FakeResolver("structured_graph", resolver_result("structured_graph", ResolverState.COMPLETED))
-    finalizer = ResolutionAccountingFinalizer(engine)
+    finalizer = accounting_finalizer(engine)
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
@@ -1540,7 +1520,7 @@ def test_orchestrator_cancellation_after_execution_prevents_accounting_publicati
         if checks == 4:
             raise ResolutionCancelledError("cancel after resolver execution")
 
-    with pytest.raises(ResolutionCancelledError, match="after resolver execution"):
+    with pytest_raises(ResolutionCancelledError, match="after resolver execution"):
         orchestrator.resolve(
             query_frame,
             "cancel-after-execution",
@@ -1548,7 +1528,7 @@ def test_orchestrator_cancellation_after_execution_prevents_accounting_publicati
         )
 
     assert resolver.calls == 1
-    assert finalizer._requests == {}
+    assert finalizer.internal_requests == {}
     assert engine.query_count == 0
 
 
@@ -1556,13 +1536,13 @@ def test_resolver_lease_and_reservation_codecs_are_deterministic() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     lease = resolver_budget(query_frame)
-    reservation = resolver_reservation("lexical", 2, lease, budget_consumption(resolvers=1, candidates=1))
+    reservation = resolver_reservation("sparse", 2, lease, budget_consumption(resolvers=1, candidates=1))
 
     assert resolver_budget_from_json(resolver_budget_to_json(lease)) == lease
     assert resolver_reservation_from_json(resolver_reservation_to_json(reservation)) == reservation
-    with pytest.raises(InvalidRequestError, match="unsupported resolver budget"):
+    with pytest_raises(InvalidRequestError, match="unsupported resolver budget"):
         resolver_budget_with_changes(lease, {"schema_version": 3})
-    with pytest.raises(InvalidRequestError, match="unsupported resolver reservation"):
+    with pytest_raises(InvalidRequestError, match="unsupported resolver reservation"):
         resolver_reservation_with_changes(reservation, {"schema_version": 2})
 
 
@@ -1677,20 +1657,6 @@ def test_executor_preserves_unavailable_consumption_measurements() -> None:
     assert result["consumption"]["measurement_available"] is False
 
 
-def test_concrete_lexical_resolver_abstains_before_exceeding_memory_estimate() -> None:
-    engine = Engram()
-    engine.store("alpha beta gamma")
-    query_frame = frame(engine, "alpha beta", namespace="")
-    lease = resolver_budget_with_changes(resolver_budget(query_frame), {"max_working_memory_bytes": 100})
-
-    result = LexicalResolver(engine, lambda: START_NS).resolve(query_frame, lease)
-
-    assert result["state"] == ResolverState.EXHAUSTED
-    assert result["reason_code"] == "working_memory_bytes_budget"
-    assert result["candidates"] == ()
-    assert result["consumption"]["exhausted_dimensions"] == ("working_memory_bytes",)
-
-
 def test_executor_reports_resolver_count_exhaustion() -> None:
     engine = Engram()
     selected_frame = frame(engine, namespace="")
@@ -1727,14 +1693,15 @@ def test_executor_reports_elapsed_time_without_changing_a_completed_result() -> 
 
 
 def test_accounting_deduplicates_candidates_and_applies_success_once() -> None:
-    engine = Engram()
-    statement_id = engine.store("alpha beta")
-    observation = accounting_observation(statement_id, ("alpha",))
+    accepted = artifact(response="Candidate response")
+    engine = engine_with_artifacts(accepted)
+    statement_id = accepted.get("statement_id", "")
+    observation = accounting_observation(statement_id)
     results = (
-        resolver_result("lexical", ResolverState.COMPLETED, accounting=(observation,)),
-        resolver_result("pattern", ResolverState.COMPLETED, accounting=(observation,)),
+        resolver_result("exact", ResolverState.COMPLETED, accounting=(observation,)),
+        resolver_result("sparse", ResolverState.COMPLETED, accounting=(observation,)),
     )
-    finalizer = ResolutionAccountingFinalizer(engine)
+    finalizer = accounting_finalizer(engine)
 
     first = finalizer.finalize("request-1", results, statement_id)
     replay = finalizer.finalize("request-1", results, statement_id)
@@ -1742,17 +1709,17 @@ def test_accounting_deduplicates_candidates_and_applies_success_once() -> None:
     assert first["candidate_statement_ids"] == (statement_id,)
     assert first["success_applied"] is True
     assert replay["idempotent"] is True
-    assert engine.query_count == 1
-    assert engine.hit_count == 1
-    assert engine.get_statement(statement_id)["query_count"] == 1
-    assert engine.get_statement(statement_id)["hit_count"] == 1
-    assert engine.keywords["alpha"]["query_count"] == 1
-    assert engine.keywords["alpha"]["hit_count"] == 1
+    current = engine.response_repository.get_artifact(statement_id)
+    assert current.get("statistics", {}).get("query_count") == 1
+    assert current.get("statistics", {}).get("hit_count") == 1
+    assert engine.query_count == 0
+    assert engine.hit_count == 0
+    assert engine.get_statement(statement_id) == {}
 
 
 def test_accounting_retry_signature_ignores_elapsed_time_and_retention_is_bounded() -> None:
     engine = Engram()
-    finalizer = ResolutionAccountingFinalizer(engine, max_requests=1)
+    finalizer = accounting_finalizer(engine, max_requests=1)
     first = (resolver_result("empty", ResolverState.COMPLETED, consumption=budget_consumption(elapsed_ns=1, resolvers=1)),)
     replay = (resolver_result("empty", ResolverState.COMPLETED, consumption=budget_consumption(elapsed_ns=2, resolvers=1)),)
 
@@ -1761,25 +1728,26 @@ def test_accounting_retry_signature_ignores_elapsed_time_and_retention_is_bounde
     finalizer.finalize("request-two", first)
 
     assert repeated["idempotent"] is True
-    assert tuple(finalizer._requests) == ("request-two",)
+    assert tuple(finalizer.internal_requests) == ("request-two",)
 
 
 def test_accounting_rejects_invalid_acceptance_before_any_mutation() -> None:
-    engine = Engram()
-    statement_id = engine.store("alpha beta")
+    accepted = artifact()
+    engine = engine_with_artifacts(accepted)
+    statement_id = accepted.get("statement_id", "")
     results = (
         resolver_result(
-            "lexical",
+            "exact",
             ResolverState.COMPLETED,
-            accounting=(accounting_observation(statement_id, ("alpha",)),),
+            accounting=(accounting_observation(statement_id),),
         ),
     )
 
-    with pytest.raises(InvalidRequestError, match="not an observed candidate"):
-        ResolutionAccountingFinalizer(engine).finalize("request-invalid", results, "not-observed")
+    with pytest_raises(InvalidRequestError, match="not an observed candidate"):
+        accounting_finalizer(engine).finalize("request-invalid", results, "not-observed")
 
     assert engine.query_count == 0
-    assert engine.get_statement(statement_id)["query_count"] == 0
+    assert engine.response_repository.get_artifact(statement_id).get("statistics", {}).get("query_count") == 0
 
 
 def test_core_orchestration_exact_answer_is_deterministic_and_retry_safe() -> None:
@@ -1799,13 +1767,12 @@ def test_core_orchestration_exact_answer_is_deterministic_and_retry_safe() -> No
     updated = core.engram.response_repository.get_artifact(accepted["statement_id"])
     assert updated["statistics"]["query_count"] == 1
     assert updated["statistics"]["hit_count"] == 1
-    assert core.engram.get_statement(accepted["statement_id"])["query_count"] == 1
-    assert core.engram.get_statement(accepted["statement_id"])["hit_count"] == 1
+    assert core.engram.get_statement(accepted["statement_id"]) == {}
     first["reason_codes"] = ("caller_mutation",)
     first["budget"]["candidates"] = 999
     isolated_replay = core.resolve_request("Explain Engram", "request-exact", namespace="tenant-a", accept_exact=True)
     assert isolated_replay == replay
-    with pytest.raises(ConflictError, match="different input"):
+    with pytest_raises(ConflictError, match="different input"):
         core.resolve_request("Different request", "request-exact", namespace="tenant-a", accept_exact=True)
 
 
@@ -1818,8 +1785,8 @@ def test_core_result_cache_eviction_discards_matching_transient_accounting(monke
     replay = core.resolve_request("first miss", "request-first", configured_resolvers=("exact",))
 
     assert replay["outcome"] == ResolutionOutcome.MISS
-    assert tuple(core._resolution_requests) == ("request-first",)
-    assert tuple(core._resolution_accounting._requests) == ("request-first",)
+    assert tuple(core.resolution_requests) == ("request-first",)
+    assert tuple(core.resolution_accounting.internal_requests) == ()
 
 
 def test_output_budget_downgrade_does_not_record_accepted_success() -> None:
@@ -1844,44 +1811,42 @@ def test_output_budget_downgrade_does_not_record_accepted_success() -> None:
     assert updated["statistics"]["hit_count"] == 0
 
 
-def test_exact_accounting_receipt_replays_after_restart_without_double_credit() -> None:
+def test_exact_accounting_receipt_is_scoped_to_one_process() -> None:
     accepted = artifact()
     first_core = EngramCore(engine_with_artifacts(accepted))
     first_core.resolve_request("Explain Engram", "request-restart", namespace="tenant-a", accept_exact=True)
-    restored = persistence.load_engram_json(persistence.save_json(first_core.engram))
-    restored_core = EngramCore(restored)
+    restarted_core = EngramCore(engine_with_artifacts(accepted))
 
-    replay = restored_core.resolve_request(
+    replay = restarted_core.resolve_request(
         "Explain Engram",
         "request-restart",
         namespace="tenant-a",
         accept_exact=True,
     )
 
-    updated = restored_core.engram.response_repository.get_artifact(accepted["statement_id"])
+    updated = restarted_core.engram.response_repository.get_artifact(accepted["statement_id"])
     assert replay["outcome"] == ResolutionOutcome.ANSWER
     assert updated["statistics"]["query_count"] == 1
     assert updated["statistics"]["hit_count"] == 1
-    assert restored_core.engram.query_count == 1
-    assert restored_core.engram.hit_count == 1
+    assert restarted_core.engram.query_count == 0
+    assert restarted_core.engram.hit_count == 0
 
 
 def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
-    lexical_candidate = candidate()
-    lexical = FakeResolver(
-        "lexical",
+    sparse_candidate = candidate()
+    sparse = FakeResolver(
+        "sparse",
         resolver_result(
-            "lexical",
+            "sparse",
             ResolverState.COMPLETED,
-            candidates=(lexical_candidate,),
-            accounting=(accounting_observation(lexical_candidate["statement_id"]),),
+            candidates=(sparse_candidate,),
         ),
     )
-    evidence_accounting = ResolutionAccountingFinalizer(engine)
+    evidence_accounting = accounting_finalizer(engine)
     evidence_orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((lexical,)),
+        ResolverRegistry((sparse,)),
         ResolverExecutor(lambda: START_NS),
         evidence_accounting,
         CandidateFusionEngine(authority=permissive_candidate_authority),
@@ -1891,14 +1856,14 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
     miss_orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
     miss_result, _ = miss_orchestrator.resolve(query_frame, "request-miss")
 
     assert evidence_result["outcome"] == ResolutionOutcome.EVIDENCE
     assert evidence_result["selected_candidate_available"] is False
     assert tuple(candidate["statement_id"] for candidate in evidence_result["response_candidates"]) == (
-        lexical_candidate["statement_id"],
+        sparse_candidate["statement_id"],
     )
     assert evidence_result["response_candidates"][0]["features"]["values"]["lexical"] == 1.0
     assert miss_result["outcome"] == ResolutionOutcome.MISS
@@ -1907,13 +1872,18 @@ def test_orchestration_returns_evidence_for_non_exact_and_miss_for_no_output() -
 
 
 def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit_acceptance() -> None:
-    engine = Engram()
-    statement_id = engine.store("Candidate response")
-    reference = evidence_reference("proposition-fused", "semantic", EvidenceKind.SUPPORT, scope_key())
-    lexical_candidate = candidate(
+    accepted = artifact(
+        response="Candidate response",
+        namespace="",
+        support_references=(PROPOSITION_REFERENCE_A,),
+    )
+    engine = engine_with_artifacts(accepted)
+    statement_id = accepted.get("statement_id", "")
+    reference = evidence_reference(PROPOSITION_REFERENCE_A.get("id", ""), "semantic", EvidenceKind.SUPPORT, scope_key())
+    sparse_candidate = candidate(
         statement_id,
-        source=CandidateSource.LEXICAL,
-        features={"lexical_score": 0.95},
+        source=CandidateSource.SPARSE,
+        features={"sparse_score": 0.95},
     )
     semantic_candidate = candidate(
         statement_id,
@@ -1923,12 +1893,12 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     )
     observation = accounting_observation(statement_id, ("candidate",))
     failed = FakeResolver("failed", resolver_result("failed", ResolverState.COMPLETED), error=True)
-    lexical = FakeResolver(
-        "lexical",
+    sparse = FakeResolver(
+        "sparse",
         resolver_result(
-            "lexical",
+            "sparse",
             ResolverState.COMPLETED,
-            candidates=(lexical_candidate,),
+            candidates=(sparse_candidate,),
             accounting=(observation,),
         ),
     )
@@ -1942,9 +1912,9 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
         ),
     )
     orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((failed, lexical, semantic)),
+        ResolverRegistry((failed, sparse, semantic)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
     query_frame = frame(engine, namespace="")
 
@@ -1952,7 +1922,8 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     replay_result, replay = orchestrator.resolve(query_frame, "request-fused", accept_exact=True)
 
     assert result["outcome"] == ResolutionOutcome.ANSWER
-    assert replay_result["selected_candidate"] == result["selected_candidate"]
+    assert replay_result["outcome"] == ResolutionOutcome.ANSWER
+    assert replay_result["selected_candidate"].get("statement_id", "") == statement_id
     assert [value["state"] for value in result["resolver_results"]] == [
         ResolverState.FAILED,
         ResolverState.COMPLETED,
@@ -1962,22 +1933,23 @@ def test_fused_non_exact_answer_is_fail_soft_and_accounted_once_without_implicit
     assert first["accepted_statement_id"] == ""
     assert first["success_applied"] is False
     assert replay["idempotent"] is True
-    assert engine.get_statement(statement_id)["query_count"] == 1
-    assert engine.get_statement(statement_id)["hit_count"] == 0
+    current = engine.response_repository.get_artifact(statement_id)
+    assert current.get("statistics", {}).get("query_count") == 1
+    assert current.get("statistics", {}).get("hit_count") == 0
+    assert engine.get_statement(statement_id) == {}
 
 
 def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
-    value = candidate(features={"lexical_score": 0.9})
+    value = candidate(features={"sparse_score": 0.9})
     raw = resolver_result(
-        "lexical",
+        "sparse",
         ResolverState.COMPLETED,
         candidates=(value,),
-        accounting=(accounting_observation(value["statement_id"]),),
     )
     executor = ResolverExecutor(lambda: START_NS)
-    probe_resolver = FakeResolver("lexical", raw)
+    probe_resolver = FakeResolver("sparse", raw)
     probe_execution = executor.execute(query_frame, ResolverRegistry((probe_resolver,)).plan(query_frame))
     fusion = CandidateFusionEngine(authority=permissive_candidate_authority)
     fusion_required = fusion.decide(query_frame, (value,))["working_memory_bytes"]
@@ -1987,9 +1959,9 @@ def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption()
         {"budget": resolution_budget_with_changes(query_frame["budget"], {"max_working_memory_bytes": total_limit})},
     )
     orchestrator = ResolutionOrchestrator(
-        ResolverRegistry((FakeResolver("lexical", raw),)),
+        ResolverRegistry((FakeResolver("sparse", raw),)),
         executor,
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
         fusion,
     )
 
@@ -2013,7 +1985,7 @@ def test_complete_result_serialization_obeys_and_reports_output_budget() -> None
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((empty,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-envelope")
@@ -2037,13 +2009,12 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
             "large",
             ResolverState.COMPLETED,
             candidates=(large_candidate,),
-            accounting=(accounting_observation(large_candidate["statement_id"]),),
         ),
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((resolver,)),
         ResolverExecutor(lambda: START_NS),
-        ResolutionAccountingFinalizer(engine),
+        accounting_finalizer(engine),
         CandidateFusionEngine(authority=permissive_candidate_authority),
     )
 

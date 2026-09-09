@@ -25,8 +25,6 @@ learn_user_facts: true # Learn shared facts with per-user attribution
 srai_depth_limit: 100
 
 # --- Eviction ---
-eviction_policy: fifo # fifo | lru | lfu | hit_rate
-min_hit_rate: 0.0 # Protect statements above this hit rate
 
 # --- Matching / NLP ---
 use_stemming: true # Porter-stemmed fallback matching

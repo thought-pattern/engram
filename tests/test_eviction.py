@@ -1,14 +1,7 @@
-"""Integration tests for eviction driven through the public engine API.
-
-The unit tests in test_core.py set statement statistics by hand to exercise the
-policy selectors in isolation. These tests drive the same behavior end to end --
-store, query, record_hit, pattern_query -- so a policy that only works when
-statistics are injected manually cannot pass. This is the seam where the
-statement-stat wiring, min_hit_rate protection, and matcher cleanup meet.
-"""
+"""Integration tests for process-memory LRU eviction."""
 
 from engram.config import engram_config
-from engram.constants import EvictionPolicy, Tier
+from engram.constants import Tier
 from engram.core import Engram
 from engram.metrics import get_dynamic_count
 
@@ -26,48 +19,8 @@ def test_capacity_enforcement_capacity_respected_without_manual_stats() -> None:
     assert engram.eviction_count == 3
 
 
-def test_capacity_enforcement_min_hit_rate_does_not_protect_unqueried() -> None:
-    """A statement with no query history has no evidence and stays evictable.
-
-    The default hit rate for an unqueried statement is 0.5; if that were
-    compared against the threshold, any min_hit_rate below 0.5 would
-    protect every untouched statement and disable eviction entirely.
-    """
-    config = engram_config(capacity=2, min_hit_rate=0.3)
-    engram = Engram(config=config)
-
-    for i in range(5):
-        engram.store(f"statement number {i}")
-
-    assert get_dynamic_count(engram) == 2
-    assert engram.eviction_count == 3
-
-
-def test_capacity_enforcement_all_protected_admits_over_capacity() -> None:
-    """When every DYNAMIC statement is protected, the new statement is admitted.
-
-    Protection wins over capacity: the store must not drop the incoming
-    statement silently, and must not loop forever trying to evict.
-    """
-    config = engram_config(capacity=1, min_hit_rate=0.3)
-    engram = Engram(config=config)
-
-    id1 = engram.store("alpha statement")
-    result = engram.query("alpha")
-    engram.record_hit(result["keywords"], statement_id=id1)  # rate 1.0 -> protected
-
-    id2 = engram.store("beta statement")
-
-    assert engram.get_statement(id1)
-    assert engram.get_statement(id2)
-    assert get_dynamic_count(engram) == 2
-
-
-"""Policies must diverge from FIFO when usage differs, via public calls only."""
-
-
-def test_policy_differentiation_lru_prefers_recently_hit() -> None:
-    config = engram_config(capacity=2, eviction_policy=EvictionPolicy.LRU)
+def test_lru_prefers_recently_hit_statement() -> None:
+    config = engram_config(capacity=2)
     engram = Engram(config=config)
 
     id1 = engram.store("alpha statement one")
@@ -77,46 +30,7 @@ def test_policy_differentiation_lru_prefers_recently_hit() -> None:
     result = engram.query("alpha")
     engram.record_hit(result["keywords"], statement_id=id1)
 
-    # LRU evicts the never-hit second statement, even though it is newer;
-    # FIFO would have evicted the first.
-    engram.store("gamma statement three")
-
-    assert engram.get_statement(id1)
-    assert not engram.get_statement(id2)
-
-
-def test_policy_differentiation_lfu_prefers_frequently_hit() -> None:
-    config = engram_config(capacity=2, eviction_policy=EvictionPolicy.LFU)
-    engram = Engram(config=config)
-
-    id1 = engram.store("alpha statement one")
-    id2 = engram.store("beta statement two")
-
-    result = engram.query("alpha")
-    engram.record_hit(result["keywords"], statement_id=id1)
-    result = engram.query("alpha")
-    engram.record_hit(result["keywords"], statement_id=id1)
-
-    engram.store("gamma statement three")
-
-    assert engram.get_statement(id1)
-    assert not engram.get_statement(id2)
-
-
-def test_policy_differentiation_hit_rate_evicts_low_performer() -> None:
-    config = engram_config(capacity=2, eviction_policy=EvictionPolicy.HIT_RATE)
-    engram = Engram(config=config)
-
-    id1 = engram.store("alpha statement one")
-    id2 = engram.store("beta statement two")
-
-    # First statement: queried and confirmed (rate 1.0)
-    result = engram.query("alpha")
-    engram.record_hit(result["keywords"], statement_id=id1)
-    # Second statement: queried but never confirmed (rate 0.0)
-    engram.query("beta")
-
-    # HIT_RATE evicts the low performer; FIFO would have evicted the first.
+    # LRU evicts the never-hit second statement even though it is newer.
     engram.store("gamma statement three")
 
     assert engram.get_statement(id1)

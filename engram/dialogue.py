@@ -7,45 +7,45 @@ references, whether a conversationally extracted fact is durable enough to
 cache, and which sentence should represent a multi-sentence turn.
 """
 
-import re
+from re import IGNORECASE as IGNORECASE, findall as re_findall, finditer as re_finditer, search as re_search, sub as re_sub
 
 from engram.constants import (
     DIALOGUE_ACKNOWLEDGMENT,
-    DIALOGUE_ACKNOWLEDGMENT_RE as _ACKNOWLEDGMENT_RE,
-    DIALOGUE_BROAD_PATTERNS as _BROAD_DIALOGUE_PATTERNS,
+    DIALOGUE_ACKNOWLEDGMENT_RE,
+    DIALOGUE_BROAD_PATTERNS,
     DIALOGUE_CLOSING,
-    DIALOGUE_CLOSING_RE as _CLOSING_RE,
+    DIALOGUE_CLOSING_RE,
     DIALOGUE_COMMAND,
-    DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS as _DISCOURSE_FACT_SUBJECT_LEADS,
-    DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE as _DISCOURSE_TOPIC_PREFIX_RE,
+    DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS,
+    DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE,
     DIALOGUE_EMOTION,
-    DIALOGUE_EMOTION_RE as _EMOTION_RE,
-    DIALOGUE_ENTITY_LABEL_PRIORITY as _ENTITY_LABEL_PRIORITY,
-    DIALOGUE_ENTITY_LEADS as _ENTITY_LEADS,
+    DIALOGUE_EMOTION_RE,
+    DIALOGUE_ENTITY_LABEL_PRIORITY,
+    DIALOGUE_ENTITY_LEADS,
     DIALOGUE_FACT,
     DIALOGUE_GRATITUDE,
-    DIALOGUE_GRATITUDE_RE as _GRATITUDE_RE,
+    DIALOGUE_GRATITUDE_RE,
     DIALOGUE_GREETING,
-    DIALOGUE_GREETING_RE as _GREETING_RE,
-    DIALOGUE_HEDGE_RE as _HEDGE_RE,
-    DIALOGUE_INVALID_TOPIC_WORDS as _INVALID_TOPIC_WORDS,
-    DIALOGUE_META_FACT_WORDS as _META_FACT_WORDS,
+    DIALOGUE_GREETING_RE,
+    DIALOGUE_HEDGE_RE,
+    DIALOGUE_INVALID_TOPIC_WORDS,
+    DIALOGUE_META_FACT_WORDS,
     DIALOGUE_OPINION,
-    DIALOGUE_OPINION_RE as _OPINION_RE,
-    DIALOGUE_PERSONAL_FACT_OBJECT_WORDS as _PERSONAL_FACT_OBJECT_WORDS,
-    DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS as _QUALIFIED_FACT_SUBJECT_LEADS,
+    DIALOGUE_OPINION_RE,
+    DIALOGUE_PERSONAL_FACT_OBJECT_WORDS,
+    DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS,
     DIALOGUE_QUESTION,
-    DIALOGUE_QUESTION_TOPIC_RES as _QUESTION_TOPIC_RES,
-    DIALOGUE_REFERRING_RE as _REFERRING_RE,
+    DIALOGUE_QUESTION_TOPIC_RES,
+    DIALOGUE_REFERRING_RE,
     DIALOGUE_SELF_INTRODUCTION,
-    DIALOGUE_SELF_INTRODUCTION_RE as _SELF_INTRODUCTION_RE,
+    DIALOGUE_SELF_INTRODUCTION_RE,
     DIALOGUE_STATEMENT,
-    DIALOGUE_TOPIC_LEADING_MODIFIERS as _TOPIC_LEADING_MODIFIERS,
+    DIALOGUE_TOPIC_LEADING_MODIFIERS,
     DIALOGUE_TOPIC_SHIFT,
-    DIALOGUE_TOPIC_SHIFT_RE as _TOPIC_SHIFT_RE,
-    DIALOGUE_TOPIC_TRAILERS as _TOPIC_TRAILERS,
-    DIALOGUE_TRANSIENT_RE as _TRANSIENT_RE,
-    DIALOGUE_VAGUE_FACT_SUBJECTS as _VAGUE_FACT_SUBJECTS,
+    DIALOGUE_TOPIC_SHIFT_RE,
+    DIALOGUE_TOPIC_TRAILERS,
+    DIALOGUE_TRANSIENT_RE,
+    DIALOGUE_VAGUE_FACT_SUBJECTS,
     KIND_COMMAND,
     KIND_QUESTION,
 )
@@ -55,15 +55,15 @@ from engram.nlp import input_kind
 def classify_dialogue_act(text: str, fact=()) -> str:
     """Classify one sentence into a stable, caller-visible dialogue act."""
     stripped = text.strip()
-    if _CLOSING_RE.search(stripped):
+    if DIALOGUE_CLOSING_RE.search(stripped):
         return DIALOGUE_CLOSING
-    if _TOPIC_SHIFT_RE.search(stripped):
+    if DIALOGUE_TOPIC_SHIFT_RE.search(stripped):
         return DIALOGUE_TOPIC_SHIFT
-    if _GRATITUDE_RE.search(stripped):
+    if DIALOGUE_GRATITUDE_RE.search(stripped):
         return DIALOGUE_GRATITUDE
-    if _GREETING_RE.search(stripped):
+    if DIALOGUE_GREETING_RE.search(stripped):
         return DIALOGUE_GREETING
-    if _SELF_INTRODUCTION_RE.search(stripped):
+    if DIALOGUE_SELF_INTRODUCTION_RE.search(stripped):
         return DIALOGUE_SELF_INTRODUCTION
 
     kind = input_kind(stripped)
@@ -73,21 +73,21 @@ def classify_dialogue_act(text: str, fact=()) -> str:
         return DIALOGUE_COMMAND
     if fact:
         return DIALOGUE_FACT
-    if _EMOTION_RE.search(stripped):
+    if DIALOGUE_EMOTION_RE.search(stripped):
         return DIALOGUE_EMOTION
-    if _ACKNOWLEDGMENT_RE.match(stripped):
+    if DIALOGUE_ACKNOWLEDGMENT_RE.match(stripped):
         return DIALOGUE_ACKNOWLEDGMENT
-    if _OPINION_RE.search(stripped):
+    if DIALOGUE_OPINION_RE.search(stripped):
         return DIALOGUE_OPINION
     return DIALOGUE_STATEMENT
 
 
-def _clean_topic(value: str) -> str:
+def clean_topic(value: str) -> str:
     value = value.strip(" \t\r\n.,!?;:'\"")
     words = value.split()
     while words:
-        leading_word = re.sub(r"(^[^\w'-]+|[^\w'-]+$)", "", words[0]).lower()
-        if leading_word and leading_word not in _TOPIC_LEADING_MODIFIERS and leading_word not in {"a", "an", "the"}:
+        leading_word = re_sub(r"(^[^\w'-]+|[^\w'-]+$)", "", words[0]).lower()
+        if leading_word and leading_word not in DIALOGUE_TOPIC_LEADING_MODIFIERS and leading_word not in {"a", "an", "the"}:
             break
         words.pop(0)
     lowered = [word.lower() for word in words]
@@ -95,14 +95,14 @@ def _clean_topic(value: str) -> str:
         words = words[:-3]
     elif len(lowered) >= 2 and lowered[-2:] in (["for", "now"], ["in", "general"]):
         words = words[:-2]
-    while words and words[-1].lower() in _TOPIC_TRAILERS:
+    while words and words[-1].lower() in DIALOGUE_TOPIC_TRAILERS:
         words.pop()
     if not words or len(words) > 8:
         result = ""
         return result
     topic = " ".join(words).strip(" \t\r\n.,!?;:'\"")
-    topic_words = {word.lower() for word in re.findall(r"[\w'-]+", topic)}
-    if not topic_words or topic_words & _INVALID_TOPIC_WORDS:
+    topic_words = {word.lower() for word in re_findall(r"[\w'-]+", topic)}
+    if not topic_words or topic_words & DIALOGUE_INVALID_TOPIC_WORDS:
         result = ""
         return result
     return topic
@@ -110,21 +110,21 @@ def _clean_topic(value: str) -> str:
 
 def explicit_topic(text: str) -> str:
     """Return a topic explicitly named by a topic-change/about construction."""
-    match = _TOPIC_SHIFT_RE.search(text.strip())
+    match = DIALOGUE_TOPIC_SHIFT_RE.search(text.strip())
     if not match:
-        about_match = re.search(r"\b(?:know|tell me|learn|think)\s+about\s+(.+)$", text, re.IGNORECASE)
+        about_match = re_search(r"\b(?:know|tell me|learn|think)\s+about\s+(.+)$", text, IGNORECASE)
         if about_match:
-            result = _clean_topic(about_match.group(1))
+            result = clean_topic(about_match.group(1))
             return result
-        for question_re in _QUESTION_TOPIC_RES:
+        for question_re in DIALOGUE_QUESTION_TOPIC_RES:
             question_match = question_re.match(text)
             if question_match:
-                result = _clean_topic(question_match.group(1))
+                result = clean_topic(question_match.group(1))
                 return result
         result = ""
         return result
     value = next((group for group in match.groups() if group), "")
-    result = _clean_topic(value)
+    result = clean_topic(value)
     return result
 
 
@@ -142,12 +142,12 @@ def infer_active_topic(
     # newly extracted noun phrase.  This keeps a discourse frame such as
     # "If gardens ..." or "a patient observer of gardens ..." from replacing
     # the durable topic with ``If`` or the larger descriptive subject.
-    if previous_topic and _topic_is_named(text, previous_topic):
+    if previous_topic and topic_is_named(text, previous_topic):
         return previous_topic
-    if fact and fact.get("subject") and not _DISCOURSE_TOPIC_PREFIX_RE.match(text):
-        subject = _clean_topic(str(fact["subject"]))
-        subject_words = {word.lower() for word in re.findall(r"[\w'-]+", subject)}
-        if subject and not subject_words & _INVALID_TOPIC_WORDS:
+    if fact and fact.get("subject") and not DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text):
+        subject = clean_topic(str(fact["subject"]))
+        subject_words = {word.lower() for word in re_findall(r"[\w'-]+", subject)}
+        if subject and not subject_words & DIALOGUE_INVALID_TOPIC_WORDS:
             return subject
     for entity in reversed(entities or []):
         if entity.get("label") in {
@@ -160,10 +160,10 @@ def infer_active_topic(
             "SUBJECT",
             "TOPIC",
         }:
-            candidate = _clean_topic(str(entity.get("text", "")))
+            candidate = clean_topic(str(entity.get("text", "")))
             if candidate:
                 return candidate
-    if previous_topic and _REFERRING_RE.search(text):
+    if previous_topic and DIALOGUE_REFERRING_RE.search(text):
         return previous_topic
     result = ""
     return result
@@ -179,29 +179,30 @@ def extract_dialogue_entities(text: str, fact=(), topic: str = "") -> list[dict]
     """
     entities: list[dict] = []
 
-    def add(value: str, label: str) -> None:
-        value = _clean_topic(value)
+    def add(value: str, label: str) -> bool:
+        value = clean_topic(value)
         if not value:
-            return
+            return False
         for existing in entities:
             if existing["text"].casefold() != value.casefold():
                 continue
-            if _ENTITY_LABEL_PRIORITY.get(label, 0) > _ENTITY_LABEL_PRIORITY.get(existing["label"], 0):
+            if DIALOGUE_ENTITY_LABEL_PRIORITY.get(label, 0) > DIALOGUE_ENTITY_LABEL_PRIORITY.get(existing["label"], 0):
                 existing["label"] = label
                 existing["text"] = value
-            return
+            return False
         entities.append({"text": value, "label": label})
+        return True
 
     if fact and fact.get("subject"):
         add(str(fact["subject"]), "SUBJECT")
     if topic:
         add(topic, "TOPIC")
-    discourse_prefix = _DISCOURSE_TOPIC_PREFIX_RE.match(text)
-    for match in re.finditer(r"\b[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*\b", text):
+    discourse_prefix = DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text)
+    for match in re_finditer(r"\b[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*\b", text):
         if discourse_prefix and match.start() < discourse_prefix.end():
             continue
         parts = match.group(0).split()
-        while parts and parts[0].casefold() in _ENTITY_LEADS:
+        while parts and parts[0].casefold() in DIALOGUE_ENTITY_LEADS:
             parts.pop(0)
         if not parts:
             continue
@@ -221,36 +222,36 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
         result = {"admitted": False, "reason": "missing_fact"}
         return result
     subject = str(fact.get("subject", "")).strip()
-    obj = str(fact.get("obj", fact.get("object", ""))).strip()
+    obj = str(fact.get("obj", "")).strip()
     if not subject or not obj:
         result = {"admitted": False, "reason": "missing_fields"}
         return result
-    if _DISCOURSE_TOPIC_PREFIX_RE.match(text):
+    if DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text):
         result = {"admitted": False, "reason": "discourse_subject"}
         return result
-    if _HEDGE_RE.search(text):
+    if DIALOGUE_HEDGE_RE.search(text):
         result = {"admitted": False, "reason": "hedged"}
         return result
-    if _TRANSIENT_RE.search(text):
+    if DIALOGUE_TRANSIENT_RE.search(text):
         result = {"admitted": False, "reason": "transient"}
         return result
 
-    subject_tokens = [word.lower() for word in re.findall(r"[\w'-]+", subject)]
+    subject_tokens = [word.lower() for word in re_findall(r"[\w'-]+", subject)]
     subject_words = set(subject_tokens)
-    object_words = {word.lower() for word in re.findall(r"[\w'-]+", obj)}
-    if subject_tokens[0] in _DISCOURSE_FACT_SUBJECT_LEADS:
+    object_words = {word.lower() for word in re_findall(r"[\w'-]+", obj)}
+    if subject_tokens[0] in DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS:
         result = {"admitted": False, "reason": "discourse_subject"}
         return result
-    if subject_tokens[0] in _QUALIFIED_FACT_SUBJECT_LEADS:
+    if subject_tokens[0] in DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS:
         result = {"admitted": False, "reason": "qualified_subject"}
         return result
-    if subject_words & _META_FACT_WORDS:
+    if subject_words & DIALOGUE_META_FACT_WORDS:
         result = {"admitted": False, "reason": "meta_subject"}
         return result
-    if subject_words & _VAGUE_FACT_SUBJECTS:
+    if subject_words & DIALOGUE_VAGUE_FACT_SUBJECTS:
         result = {"admitted": False, "reason": "vague_subject"}
         return result
-    if object_words & _PERSONAL_FACT_OBJECT_WORDS:
+    if object_words & DIALOGUE_PERSONAL_FACT_OBJECT_WORDS:
         result = {"admitted": False, "reason": "personal_object"}
         return result
     if object_words & {"temporary", "unknown", "unsure"}:
@@ -260,25 +261,19 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
     return result
 
 
-def conversational_fact_is_admissible(fact: dict, text: str) -> bool:
-    """Compatibility Boolean for the reasoned admission decision."""
-    result = conversational_fact_admission(fact, text)["admitted"]
-    return result
-
-
 def topic_is_referenced(text: str, topic: str) -> bool:
     """Return whether a turn explicitly or pronominally continues a topic."""
     if not topic:
         result = False
         return result
-    result = _topic_is_named(text, topic) or bool(_REFERRING_RE.search(text))
+    result = topic_is_named(text, topic) or bool(DIALOGUE_REFERRING_RE.search(text))
     return result
 
 
-def _topic_is_named(text: str, topic: str) -> bool:
+def topic_is_named(text: str, topic: str) -> bool:
     """Return whether *topic* occurs as a complete token sequence in *text*."""
-    text_words = re.findall(r"[\w'-]+", text.casefold())
-    topic_words = re.findall(r"[\w'-]+", topic.casefold())
+    text_words = re_findall(r"[\w'-]+", text.casefold())
+    topic_words = re_findall(r"[\w'-]+", topic.casefold())
     if not topic_words or len(topic_words) > len(text_words):
         result = False
         return result
@@ -306,33 +301,32 @@ def topic_from_statement_pattern(pattern: str, statement_text: str = "") -> str:
 
     Learned patterns are normalized to uppercase, so the pattern alone cannot
     distinguish an acronym such as ``ENIAC`` from an ordinary name such as
-    ``Alice``.  Prefer the matching surface span from the original statement
-    and retain title-casing only as a compatibility fallback.
+    ``Alice``. The original statement is therefore required.
     """
     if not pattern or "*" in pattern or "_" in pattern or "{" in pattern:
         result = ""
         return result
 
-    pattern_words = [word.casefold() for word in re.findall(r"[\w'-]+", pattern)]
+    pattern_words = [word.casefold() for word in re_findall(r"[\w'-]+", pattern)]
     if not pattern_words:
         result = ""
         return result
-    statement_words = list(re.finditer(r"[\w'-]+", statement_text))
+    statement_words = list(re_finditer(r"[\w'-]+", statement_text))
     for start in range(len(statement_words) - len(pattern_words) + 1):
         matches = statement_words[start : start + len(pattern_words)]
         if [match.group(0).casefold() for match in matches] != pattern_words:
             continue
         surface = statement_text[matches[0].start() : matches[-1].end()]
-        topic = _clean_topic(surface)
+        topic = clean_topic(surface)
         if topic:
             return topic
-    result = _clean_topic(pattern.title())
+    result = ""
     return result
 
 
 def pattern_is_broad(pattern: str) -> bool:
     """Return whether a pattern expresses little conversational intent."""
-    result = pattern.upper().strip() in _BROAD_DIALOGUE_PATTERNS
+    result = pattern.upper().strip() in DIALOGUE_BROAD_PATTERNS
     return result
 
 
