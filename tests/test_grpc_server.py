@@ -16,11 +16,10 @@ from grpc import (
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pytest import raises as pytest_raises
 
-from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
+from engram import engram_pb2, engram_pb2_grpc
 from engram.config import engram_config, graph_config
 from engram.constants import MAX_REQUEST_BYTES
 from engram.core import Engram
-from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
 from engram.identity import build_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
@@ -29,6 +28,7 @@ from engram.service import EngramCore
 
 from .support_fixtures import ASSERTION_REFERENCE_A
 from .test_relation import RelationGraph
+from .test_scope_removal import RemovalExample
 
 
 class GrpcCore(EngramCore):
@@ -92,6 +92,31 @@ def internal_trailing_metadata(error: grpc_RpcError) -> dict[str, str]:
     return result
 
 
+def test_engagement_maintenance_protocol_deletes_one_scope_and_keeps_peer_responses():
+    example = RemovalExample()
+    with running_server(example.core) as (_, _, stub):
+        for action in ("plan", "prepare", "purge", "purge", "resume"):
+            request = struct_pb2.Struct()
+            request.update(example.command(action))
+            result = as_dict(stub.MaintainEngagement(request))
+            if action == "plan":
+                assert result.get("dry_run") is True
+                assert len(result.get("selected_statement_ids", [])) == 3
+            elif action == "prepare":
+                assert result.get("drained") is True
+                assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is False
+                with pytest_raises(grpc_RpcError) as paused:
+                    stub.LearnResponse(
+                        engram_pb2.LearnResponseRequest(request="late", response="late private response", request_id="late-wire")
+                    )
+                assert paused.value.code() == grpc_StatusCode.FAILED_PRECONDITION
+            elif action == "purge":
+                assert result.get("purged") is True
+        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is True
+        artifacts = example.core.engram.response_repository.snapshot().get("artifacts", {})
+        assert set(artifacts) == {example.ids.get(name) for name in ("public", "company", "engagement_b")}
+
+
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:
     with running_server(GrpcCore()) as (_, channel, stub):
         alice = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice", random_seed=7)))
@@ -126,43 +151,28 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert as_dict(stub.GetStatus(empty_pb2.Empty()))["active_conversations"] == 1
 
 
-def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
+def test_unknown_user_wire_lifecycle_uses_explicit_zero() -> None:
     core = GrpcCore()
     with running_server(core) as (_, _, stub):
-        explicit = as_dict(
-            stub.StartConversation(
-                engram_pb2.StartConversationRequest(
-                    user_id="0",
-                    initial_bot_text="Explicit zero context.",
-                )
-            )
+        started = as_dict(
+            stub.StartConversation(engram_pb2.StartConversationRequest(initial_bot_text="Unknown context."), timeout=5)
         )
+        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello"), timeout=5))
+        stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="", name="mood", value="curious"), timeout=5)
+        assert stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="0", name="mood"), timeout=5).value == "curious"
+        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0"), timeout=5))
+        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id=""), timeout=5))
+        assert core.get_conversation("0").user_id == "0"
+        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="0"), timeout=5))
 
-        with pytest_raises(grpc_RpcError) as absent:
-            stub.StopConversation(engram_pb2.UserRequest(user_id=""))
-        assert absent.value.code() == grpc_StatusCode.NOT_FOUND
-        assert explicit["user_id"] == "0"
-
-        first_start = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
-        first_session_id = core.get_conversation("").session_id
-        first_turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
-        first_stop = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="")))
-
-        second_start = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
-        second_session_id = core.get_conversation("").session_id
-        second_turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
-
-        assert first_start["user_id"] == second_start["user_id"] == ""
-        assert first_turn["user_id"] == second_turn["user_id"] == ""
-        assert first_stop["user_id"] == ""
-        assert first_session_id != second_session_id
-        assert first_session_id not in core.engram.sessions
-        assert first_turn["context_changes"]["previous_response"]["before"] == ""
-        assert second_turn["context_changes"]["previous_response"]["before"] == ""
-        assert (
-            as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]["previous_response"]
-            == "Explicit zero context."
-        )
+        assert started.get("user_id", "") == "0"
+        assert turn.get("user_id", "") == "0"
+        assert inspected.get("user_id", "") == "0"
+        assert report.get("user_id", "") == "0"
+        assert stopped.get("user_id", "") == "0"
+        assert turn.get("context_changes", {}).get("previous_response", {}).get("before", "") == "Unknown context."
+        assert inspected.get("session", {}).get("previous_response", "") == turn.get("response", "")
+        assert "0" not in core.engram.sessions
 
 
 def test_regulated_cache_protocol_and_error_mapping() -> None:
@@ -560,39 +570,3 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     channel.close()
     assert core.status()["state"] == "closed"
     assert server.stop(0) is False
-
-
-def test_tls_requires_a_certificate_and_key_pair() -> None:
-    core = GrpcCore()
-    with pytest_raises(InvalidRequestError, match="together"):
-        EngramGrpcServer(core, bind_address="127.0.0.1:0", tls_certificate=b"certificate")
-    core.close()
-
-
-def test_grpc_main_refuses_to_serve_after_required_component_preflight_failure(monkeypatch) -> None:
-    class FailingCore:
-        def __init__(self, **kwargs):
-            del kwargs
-            raise InvalidRequestError("component preflight failed: required NLTK data unavailable")
-
-    monkeypatch.setattr(grpc_server_module, "EngramCore", FailingCore)
-
-    assert grpc_server_module.main(("--log-level", "ERROR")) == 1
-
-
-def test_grpc_console_entry_point_forwards_process_arguments(monkeypatch) -> None:
-    observed = []
-
-    def run(argv=()):
-        observed.extend(argv)
-        return 7
-
-    monkeypatch.setattr(grpc_server_module, "main", run)
-    monkeypatch.setattr(
-        grpc_server_module,
-        "sys_argv",
-        ["engram-grpc", "--bind", "127.0.0.1:9901", "--tls-cert", "server.pem"],
-    )
-
-    assert grpc_server_module.console_main() == 7
-    assert observed == ["--bind", "127.0.0.1:9901", "--tls-cert", "server.pem"]

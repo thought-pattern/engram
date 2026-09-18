@@ -2,8 +2,8 @@
 // Memgraph 3.9 Cypher DDL
 //
 // Schema owner: engram
-// Representation contract: tapestry-ke-representation-v1
-// Engram support contract: tapestry-engram-support-v1
+// Representation contract: tapestry-ke-representation
+// Engram support contract: tapestry-engram-support
 //
 // Apply only to an empty standalone Engram Memgraph with:
 //   python3 scripts/setup_schema.py --apply

@@ -11,7 +11,7 @@ from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.constants import CONVERSATION_REPORT_VERSION, DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.feedback import canonical_utc
 from engram.text import normalize
 
@@ -151,17 +151,12 @@ class ConversationRuntime:
         self,
         engram,
         user_id: str = "0",
-        anonymous_session_id: str = "",
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
         clock=(),
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
-        if not isinstance(anonymous_session_id, str):
-            raise ValueError("anonymous_session_id must be a string")
-        if anonymous_session_id and user_id != "":
-            raise ValueError("anonymous_session_id requires an empty user_id")
         if not isinstance(initial_bot_text, str):
             raise ValueError("initial_bot_text must be a string")
         try:
@@ -178,8 +173,8 @@ class ConversationRuntime:
             raise ValueError("clock must be callable")
 
         self.engram = engram
-        self.user_id = user_id if user_id == "" else normalized_user_id
-        self.session_id = anonymous_session_id or normalized_user_id
+        self.user_id = normalized_user_id
+        self.session_id = normalized_user_id
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
@@ -188,10 +183,21 @@ class ConversationRuntime:
         self.turns: list[dict] = []
         self.lock = threading_RLock()
 
-        sessions.get_session(engram, self.session_id, create_if_missing=True)
-        if initial_bot_text:
-            sessions.update_session_context(engram, self.session_id, initial_bot_text)
-        self.metrics_baseline = metrics.get_metrics(engram)
+        with engram.session_lock:
+            prior_session = engram.sessions.get(self.session_id, {})
+            if self.user_id == DEFAULT_USER_ID:
+                sessions.delete_session(engram, self.session_id)
+            try:
+                sessions.get_session(engram, self.session_id, create_if_missing=True)
+                if initial_bot_text:
+                    sessions.update_session_context(engram, self.session_id, initial_bot_text)
+                self.metrics_baseline = metrics.get_metrics(engram)
+            except BaseException:
+                if self.user_id == DEFAULT_USER_ID:
+                    sessions.delete_session(engram, self.session_id)
+                    if prior_session:
+                        engram.sessions[self.session_id] = prior_session
+                raise
 
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""

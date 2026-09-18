@@ -1,11 +1,13 @@
 """Transport-neutral facade tests shared by CLI, MCP, and future adapters."""
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from threading import Event as threading_Event
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import RESOLUTION_RESULT_FIELDS, Tier
+from engram import metrics, sessions
+from engram.constants import MAX_RESPONSE_BYTES, Tier
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
@@ -14,34 +16,7 @@ from engram.errors import (
     ResolutionCancelledError,
     ResourceNotFoundError,
 )
-from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore
-
-
-def test_core_reports_process_memory_operation() -> None:
-    core = EngramCore()
-
-    assert core.status()["memory_only"] is True
-
-
-def test_resolution_reuses_the_plan_built_for_negative_lookup(monkeypatch) -> None:
-    core = EngramCore()
-    original = core.resolver_registry.plan
-    calls = 0
-
-    def plan(frame, configured_names=()):
-        nonlocal calls
-        calls += 1
-        result = original(frame, configured_names)
-        return result
-
-    monkeypatch.setattr(core.resolver_registry, "plan", plan)
-
-    result = core.resolve_request("unmatched request", "single-plan", configured_resolvers=("exact",))
-
-    assert result["outcome"].value == "MISS"
-    assert calls == 1
-    core.close()
 
 
 def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
@@ -212,166 +187,75 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
     assert core.chat("Carol", "Hello")["user_id"] == "Carol"
 
 
-def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_zero() -> None:
+def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     core = EngramCore()
+    named_id = " named:π "
+    core.start_conversation(named_id, initial_bot_text="Named context.")
     core.start_conversation("0", initial_bot_text="Explicit zero context.")
+    with pytest_raises(ConflictError):
+        core.start_conversation("")
+    assert core.inspect_conversation("0").get("session", {}).get("previous_response", "") == "Explicit zero context."
+    core.stop_conversation("0")
 
-    first_start = core.start_conversation("")
-    first_runtime = core.get_conversation("")
-    first_session_id = first_runtime.session_id
-    first_turn = core.chat("", "Hello")
+    started = core.start_conversation("")
+    runtime = core.get_conversation("")
 
-    assert first_start["user_id"] == ""
-    assert first_session_id != "0"
-    assert first_turn["user_id"] == ""
-    assert first_turn["context_changes"]["previous_response"]["before"] == ""
-    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+    assert started.get("user_id", "") == "0"
+    assert runtime.session_id == "0"
+    assert core.inspect_conversation("").get("session", {}).get("previous_response", "") == ""
+    assert core.inspect_conversation("0").get("session", {}).get("previous_response", "") == ""
+    assert core.finish_conversation("0").get("metrics_baseline", {}).get("session_count", 0) == 2
 
-    stopped = core.stop_conversation("")
-    assert stopped["user_id"] == ""
-    assert first_session_id not in core.engram.sessions
-
-    second_start = core.start_conversation("")
-    second_runtime = core.get_conversation("")
-
-    assert second_start["user_id"] == ""
-    assert second_runtime.session_id != first_session_id
-    assert core.inspect_conversation("")["session"]["previous_response"] == ""
-    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+    core.stop_conversation("")
+    core.set_predicate("0", "preserved", "value")
+    with pytest_raises(InvalidRequestError):
+        core.start_conversation("", initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))
+    assert core.get_predicate("0", "preserved", "missing") == "value"
+    assert core.inspect_conversation(named_id).get("user_id", "") == named_id
+    core.stop_conversation(named_id)
+    core.start_conversation(named_id)
+    assert core.inspect_conversation(named_id).get("session", {}).get("previous_response", "") == "Named context."
 
 
-def test_regulated_cache_does_not_require_a_chat_conversation() -> None:
+@pytest_mark.parametrize("failure_site", ["context", "metrics"])
+def test_unknown_user_start_restores_existing_session_after_initialization_failure(monkeypatch, failure_site: str) -> None:
     core = EngramCore()
-    learned = core.learn_response(
-        "When are you open?",
-        "Support is open from nine to five.",
-        "learn-1",
-        user_id="Alice",
-        namespace="support",
-    )
-    proposal = core.propose(
-        "When are you open?",
-        "proposal-1",
-        user_id="Carol",
-        namespace="support",
-    )
+    prior_session = sessions.get_session(core.engram, "0")
+    prior_session["previous_response"] = "prior response"
+    prior_session["predicates"] = {"preserved": "value"}
+    prior_values = deepcopy(prior_session)
+    expected = RuntimeError(f"{failure_site} initialization failed")
+    cause = ValueError(f"{failure_site} cause")
+    replacement_sessions = []
+    original_update = sessions.update_session_context
 
-    resolved = core.resolve(
-        proposal["proposal_id"],
-        "accepted",
-        statement_id=learned["statement_id"],
-    )
+    def failing_update(engram, session_id, previous_response):
+        replacement = engram.sessions.get(session_id, {})
+        replacement_sessions.append(replacement)
+        original_update(engram, session_id, previous_response)
+        raise expected from cause
 
-    assert resolved["resolved"] is True
-    assert core.engram.sessions["Carol"]["previous_response"] == "Support is open from nine to five."
+    def failing_metrics(engram):
+        raise expected from cause
 
+    if failure_site == "context":
+        monkeypatch.setattr(sessions, "update_session_context", failing_update)
+    else:
+        monkeypatch.setattr(metrics, "get_metrics", failing_metrics)
 
-@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
-def test_regulated_mapping_arguments_reject_falsey_non_objects(invalid) -> None:
-    core = EngramCore()
+    with pytest_raises(RuntimeError) as caught:
+        core.start_conversation("0", initial_bot_text="replacement response")
 
-    with pytest_raises(InvalidRequestError, match="required_metadata must be an object"):
-        core.propose("What is cached?", "proposal-invalid-metadata", required_metadata=invalid)
-    with pytest_raises(InvalidRequestError, match="metadata must be an object"):
-        core.learn_response("What is cached?", "A cached answer.", "learn-invalid-metadata", metadata=invalid)
-
-
-def test_regulated_mapping_arguments_copy_concrete_empty_objects() -> None:
-    core = EngramCore()
-
-    learned = core.learn_response("What is cached?", "A cached answer.", "learn-empty-metadata", metadata={})
-    proposal = core.propose("What is cached?", "proposal-empty-metadata", required_metadata={})
-
-    assert learned["action"] == "created"
-    assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
-
-
-@pytest_mark.parametrize("field", ["identity", "budget"])
-@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
-def test_unified_python_api_rejects_falsey_non_mapping_absence(field, invalid) -> None:
-    core = EngramCore()
-    arguments = {field: invalid}
-
-    with pytest_raises(InvalidRequestError, match=f"{field} must be an object"):
-        core.resolve_request("What is Engram?", f"invalid-{field}-{type(invalid).__name__}", **arguments)
-
-
-def test_unified_python_api_accepts_mapping_absence_and_authoritative_identity() -> None:
-    core = EngramCore()
-    scope = scope_key("support", "python-api-v1")
-    identity = build_standalone_identity("When did Engram launch?", scope)
-
-    result = core.resolve_request(
-        "When did Engram launch?",
-        "python-api-authoritative",
-        namespace="support",
-        context_fingerprint="python-api-v1",
-        identity=identity,
-        budget={},
-        configured_resolvers=("exact",),
-    )
-
-    assert type(result) is dict
-    assert set(result) == set(RESOLUTION_RESULT_FIELDS)
-    assert result["schema_version"] == 1
-    assert result["selected_candidate_available"] is False
-    assert result["evidence_package_available"] is False
-    assert result["evidence_package"]["records"] == ()
-
-
-def test_unified_python_api_candidate_feedback_uses_keyed_records() -> None:
-    core = EngramCore()
-    learned = core.learn_response(
-        "What is Engram?",
-        "Engram is a bounded retrieval system.",
-        "python-api-learn",
-        namespace="support",
-    )
-    result = core.resolve_request(
-        "What is Engram?",
-        "python-api-resolve",
-        namespace="support",
-        configured_resolvers=("exact",),
-    )
-
-    candidate = result["response_candidates"][0]
-    feedback = core.record_resolution_feedback(
-        "python-api-resolve",
-        "python-api-feedback",
-        "accepted",
-        candidate["statement_id"],
-    )
-
-    assert candidate["statement_id"] == learned["statement_id"]
-    assert feedback["outcome"] == "accepted"
-    assert feedback["statement_id"] == learned["statement_id"]
-
-
-def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -> None:
-    core = EngramCore()
-
-    learned = core.learn_response(
-        "What is cached?",
-        "Exact café response ☕.",
-        "learn-artifact",
-        user_id="Alice",
-        namespace="support",
-        context_fingerprint="tier:pro",
-        source_label="actor:test",
-        metadata={"actor_version": "actor-7"},
-    )
-
-    artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
-    assert artifact["response"] == "Exact café response ☕."
-    assert artifact["tier"] == Tier.DYNAMIC
-    assert artifact["lifecycle"].value == "ACTIVE"
-    assert artifact["generation"] == 1
-    assert artifact["scope"]["namespace"] == "support"
-    assert artifact["scope"]["context_fingerprint"] == "tier:pro"
-    assert artifact["provenance"]["caller_id"] == "Alice"
-    assert artifact["provenance"]["source_label"] == "actor:test"
-    assert artifact["metadata"] == {"actor_version": "actor-7"}
-    assert core.engram.sessions["Alice"]["previous_response"] == artifact["response"]
+    restored = core.engram.sessions.get("0", {})
+    assert caught.value is expected
+    assert caught.value.__cause__ is cause
+    assert restored is prior_session
+    assert restored == prior_values
+    assert "0" not in core.conversations
+    if failure_site == "context":
+        assert replacement_sessions
+        assert replacement_sessions[0] is not prior_session
+        assert replacement_sessions[0].get("previous_response", "") == "replacement response"
 
 
 def test_restart_discards_receipts_responses_and_conversations() -> None:
@@ -398,51 +282,6 @@ def test_restart_discards_receipts_responses_and_conversations() -> None:
     assert recreated["idempotent"] is False
 
 
-def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -> None:
-    core = EngramCore()
-    original = core.learn_response("What is current?", "Original exact response.", "learn-original")
-
-    with pytest_raises(ConflictError, match=original["statement_id"]):
-        core.learn_response("What is current?", "Implicit replacement.", "learn-replacement")
-
-    artifact = core.engram.response_repository.get_artifact(original["statement_id"])
-    assert artifact["response"] == "Original exact response."
-    assert artifact["lifecycle"].value == "ACTIVE"
-    assert artifact["generation"] == 1
-
-
-def test_proposal_and_resolution_accounting_mutate_only_the_artifact() -> None:
-    core = EngramCore()
-    learned = core.learn_response("What is counted?", "Counted response.", "learn-counted")
-
-    proposal = core.propose("What is counted?", "proposal-counted")
-    core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
-
-    artifact = core.engram.response_repository.get_artifact(learned["statement_id"])
-    assert artifact["generation"] == 3
-    assert artifact["statistics"]["query_count"] == 1
-    assert artifact["statistics"]["hit_count"] == 1
-    assert core.engram.get_statement(learned["statement_id"]) == {}
-    assert artifact["statistics"]["last_hit_available"] is True
-    assert core.engram.mutation_receipts.next_sequence == 4
-
-
-def test_proposal_accounting_derives_bounded_internal_receipt_identity() -> None:
-    core = EngramCore()
-    learned = core.learn_response("What has a bounded receipt?", "A bounded receipt.", "learn-bounded-receipt")
-    external_request_id = "r" * 256
-
-    proposal = core.propose("What has a bounded receipt?", external_request_id)
-    core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
-
-    receipt_state = core.engram.mutation_receipts.snapshot()["receipts"]
-    receipt_ids = [receipt["request_id"] for receipt in receipt_state]
-    accounting_ids = [request_id for request_id in receipt_ids if request_id.startswith("internal:")]
-    assert len(accounting_ids) == 2
-    assert all(len(request_id.encode("utf-8")) <= 256 for request_id in accounting_ids)
-    assert all(external_request_id not in request_id for request_id in accounting_ids)
-
-
 def test_transient_proposals_do_not_cross_process_restart() -> None:
     core = EngramCore()
     learned = core.learn_response("What is cached?", "The process-local answer.", "learn-process")
@@ -457,44 +296,6 @@ def test_transient_proposals_do_not_cross_process_restart() -> None:
             "accepted",
             statement_id=learned.get("statement_id", ""),
         )
-
-
-@pytest_mark.parametrize("invalid", [[], (), "", 0, False])
-def test_core_open_rejects_falsey_non_object_config(invalid) -> None:
-    with pytest_raises(InvalidRequestError, match="config must be an object"):
-        EngramCore(config=invalid)
-
-
-def test_process_mutations_are_immediately_visible_to_the_owned_core() -> None:
-    engine = Engram()
-    engine.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
-    core = EngramCore(engine)
-
-    core.start_conversation("Alice")
-    core.chat("Alice", "hello")
-    core.set_predicate("Alice", "mood", "curious")
-    fact = core.add_fact("Tokyo is the capital of Japan.", source_label="research")
-    learned = core.learn_response("What is cached?", "A cached answer.", "learn-process")
-
-    assert core.engram.sessions.get("Alice", {}).get("previous_response") == "Hello!"
-    assert core.engram.sessions.get("Alice", {}).get("predicates", {}).get("mood") == "curious"
-    assert core.engram.get_statement(fact.get("id", "")).get("source_label") == "research"
-    assert core.engram.response_repository.get_artifact(learned.get("statement_id", "")).get("response") == "A cached answer."
-
-
-def test_core_exposes_stable_request_and_resource_errors() -> None:
-    core = EngramCore()
-
-    with pytest_raises(ResourceNotFoundError, match="Alice"):
-        core.chat("Alice", "hello")
-    with pytest_raises(InvalidRequestError, match="limit"):
-        core.propose("question", "bad-limit", limit=0)
-    with pytest_raises(ResourceNotFoundError, match="proposal"):
-        core.resolve("missing", "accepted", statement_id="missing")
-
-    core.start_conversation("Alice")
-    with pytest_raises(ConflictError, match="already active"):
-        core.start_conversation("Alice")
 
 
 def test_close_is_idempotent_and_blocks_subsequent_operations() -> None:

@@ -164,6 +164,14 @@ class RetireResponseRequest(Message):
         request_id: str = ...,
     ) -> None: ...
 
+class RetireResponsesRequest(Message):
+    entries: RepeatedCompositeFieldContainer[RetireResponseRequest]
+
+    def __init__(
+        self,
+        entries: object = ...,
+    ) -> None: ...
+
 class ResolveEvidenceRequest(Message):
     request: str
     request_id: str

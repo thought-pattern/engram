@@ -73,7 +73,7 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "inputs": {
-            "rule_corpus": "engram/data/rewrite-rules-v1.json",
+            "rule_corpus": "engram/data/rewrite-rules.json",
             "regression_corpus": cases_path.as_posix(),
             "rules": len(rules),
             "regression_cases": len(internal_cases(cases_path)),

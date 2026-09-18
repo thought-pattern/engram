@@ -101,44 +101,44 @@ def internal_contract(name: str, input_schema: str, result_schema: str, errors: 
 
 
 UTILITY_PLUGIN_CONTRACTS = {
-    "arithmetic_v1": internal_contract(
-        "arithmetic_v1",
+    "arithmetic": internal_contract(
+        "arithmetic",
         "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
         "canonical decimal text",
         ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
     ),
-    "boolean_v1": internal_contract(
-        "boolean_v1",
+    "boolean": internal_contract(
+        "boolean",
         "boolean followed by true|false, not, and, xor, or, and parentheses",
         "lowercase true or false",
         ("boolean_syntax", "operation_limit"),
     ),
-    "set_v1": internal_contract(
-        "set_v1",
+    "set": internal_contract(
+        "set",
         "set union|intersection|difference|symmetric difference {items} and {items}",
         "unique items sorted by Unicode code point in braces",
         ("set_syntax", "collection_limit", "collection_item_invalid"),
     ),
-    "date_time_v1": internal_contract(
-        "date_time_v1",
+    "date_time": internal_contract(
+        "date_time",
         "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
         "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
         ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
     ),
-    "unit_conversion_v1": internal_contract(
-        "unit_conversion_v1",
+    "unit_conversion": internal_contract(
+        "unit_conversion",
         "convert <decimal> <allow-listed unit> to <same-dimension unit>",
         "canonical decimal and canonical target unit",
         ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
     ),
-    "version_v1": internal_contract(
-        "version_v1",
+    "version": internal_contract(
+        "version",
         "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
         "left version, one of < = >, and right version; build metadata does not affect precedence",
         ("version_syntax", "version_limit"),
     ),
-    "identifier_v1": internal_contract(
-        "identifier_v1",
+    "identifier": internal_contract(
+        "identifier",
         "validate uuid|slug <bounded ASCII identifier>",
         "valid/invalid label and canonical identifier when valid",
         ("identifier_syntax", "identifier_limit"),
@@ -640,22 +640,22 @@ def evaluate_identifier(text: str) -> tuple[str, str, int]:
 
 
 UTILITY_PREFIXES = {
-    "arithmetic_v1": ("calculate", "arithmetic"),
-    "boolean_v1": ("boolean",),
-    "set_v1": ("set ",),
-    "date_time_v1": ("date ", "days between ", "convert time "),
-    "unit_conversion_v1": ("convert ",),
-    "version_v1": ("compare version ",),
-    "identifier_v1": ("validate uuid ", "validate slug "),
+    "arithmetic": ("calculate", "arithmetic"),
+    "boolean": ("boolean",),
+    "set": ("set ",),
+    "date_time": ("date ", "days between ", "convert time "),
+    "unit_conversion": ("convert ",),
+    "version": ("compare version ",),
+    "identifier": ("validate uuid ", "validate slug "),
 }
 UTILITY_EVALUATORS = {
-    "arithmetic_v1": evaluate_arithmetic,
-    "boolean_v1": evaluate_boolean,
-    "set_v1": evaluate_set,
-    "date_time_v1": evaluate_date_time,
-    "unit_conversion_v1": evaluate_unit_conversion,
-    "version_v1": evaluate_version,
-    "identifier_v1": evaluate_identifier,
+    "arithmetic": evaluate_arithmetic,
+    "boolean": evaluate_boolean,
+    "set": evaluate_set,
+    "date_time": evaluate_date_time,
+    "unit_conversion": evaluate_unit_conversion,
+    "version": evaluate_version,
+    "identifier": evaluate_identifier,
 }
 
 
@@ -735,8 +735,8 @@ class UtilityRegistry:
             return result
         matches = tuple(name for name in self.plugin_names if internal_accepts(name, request))
         # Prefix overlap is intentionally resolved by the more specific grammar.
-        if "date_time_v1" in matches and "unit_conversion_v1" in matches:
-            matches = tuple(name for name in matches if name != "unit_conversion_v1")
+        if "date_time" in matches and "unit_conversion" in matches:
+            matches = tuple(name for name in matches if name != "unit_conversion")
         if not matches:
             result = evaluation("miss")
             return result
@@ -760,7 +760,7 @@ class UtilityRegistry:
             }
             for name in UTILITY_PLUGIN_NAMES
         }
-        plugins["date_time_v1"]["timezone_database_version"] = UTILITY_TZDATA_VERSION
+        plugins.get("date_time", {})["timezone_database_version"] = UTILITY_TZDATA_VERSION
         result = {
             "enabled": self.enabled,
             "ready": self.available(),

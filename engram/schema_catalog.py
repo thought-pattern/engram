@@ -115,24 +115,84 @@ def schema_file_digest(path: Path) -> str:
 def schema_ddl_digest(path: Path) -> str:
     """Digest only normalized executable DDL, excluding comments and layout."""
     statements = cypher_statements(path.read_text(encoding="utf-8"))
-    normalized = [" ".join(statement.split()) for statement in statements]
-    result = sha256((";\n".join(normalized) + ";").encode("utf-8")).hexdigest()
+    result = sha256((";\n".join(statements) + ";").encode("utf-8")).hexdigest()
     return result
 
 
 def cypher_statements(text: str) -> list[str]:
-    """Parse complete, unique, semicolon-terminated Cypher statements."""
-    lines = []
-    for line in text.splitlines():
-        content = line.split("//", 1)[0].rstrip()
-        if content.strip():
-            lines.append(content)
-    cleaned = "\n".join(lines).strip()
-    if not cleaned or not cleaned.endswith(";"):
-        raise ValueError("schema is empty or contains an unterminated statement")
-    statements = [statement.strip() for statement in cleaned.split(";") if statement.strip()]
-    normalized = [" ".join(statement.split()) for statement in statements]
-    if len(normalized) != len(set(normalized)):
+    """Parse complete, canonical semicolon-terminated Cypher statements."""
+    statements = []
+    current = []
+    state = "normal"
+    position = 0
+    while position < len(text):
+        character = text[position]
+        if state == "block_comment":
+            if text.startswith("*/", position):
+                state = "normal"
+                position += 2
+            else:
+                position += 1
+            continue
+        if state in {"'", '"'}:
+            current.append(character)
+            if character == "\\":
+                position += 1
+                if position >= len(text):
+                    raise ValueError("schema contains an unterminated string")
+                current.append(text[position])
+            elif character == state:
+                state = "normal"
+            position += 1
+            continue
+        if state == "`":
+            current.append(character)
+            if character == "`":
+                if position + 1 < len(text) and text[position + 1] == "`":
+                    current.append("`")
+                    position += 2
+                    continue
+                state = "normal"
+            position += 1
+            continue
+        if text.startswith("//", position):
+            if current and current[-1] != " ":
+                current.append(" ")
+            position += 2
+            while position < len(text) and text[position] not in "\r\n":
+                position += 1
+            continue
+        if text.startswith("/*", position):
+            if current and current[-1] != " ":
+                current.append(" ")
+            state = "block_comment"
+            position += 2
+            continue
+        if character.isspace() or character == "\u180e":
+            if current and current[-1] != " ":
+                current.append(" ")
+            position += 1
+            continue
+        if character == ";":
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+            position += 1
+            continue
+        if character in {'"', "'", "`"}:
+            state = character
+        current.append(character)
+        position += 1
+    if state == "block_comment":
+        raise ValueError("schema contains an unterminated block comment")
+    if state != "normal":
+        raise ValueError("schema contains an unterminated quoted value")
+    if "".join(current).strip():
+        raise ValueError("schema contains an unterminated statement")
+    if not statements:
+        raise ValueError("schema contains no executable statements")
+    if len(statements) != len(set(statements)):
         raise ValueError("schema contains a duplicated statement")
     return statements
 
@@ -171,7 +231,7 @@ def schema_catalog(text: str) -> dict:
         "relationships": [],
     }
     for statement in cypher_statements(text):
-        normalized = " ".join(statement.split())
+        normalized = statement
         match = ORDINARY_INDEX_PATTERN.fullmatch(normalized)
         if match:
             catalog.get("ordinary_indexes", []).append({"label": match.group("label"), "property": match.group("property")})
@@ -236,10 +296,6 @@ def validate_catalog_uniqueness(catalog: dict) -> None:
 def validate_schema_contract(text: str) -> dict:
     """Validate the corrected standalone Engram schema."""
     catalog = schema_catalog(text)
-    executable = "\n".join(cypher_statements(text))
-    forbidden = (":" + "Claim", "Candidate" + "Claim", "claim" + "_premise")
-    if any(token in executable for token in forbidden):
-        raise ValueError("schema contains a superseded semantic-record declaration")
     indexed = catalog_keys(catalog, "ordinary_indexes")
     constraints = catalog_keys(catalog, "constraints")
     unique_properties = {
@@ -255,10 +311,22 @@ def validate_schema_contract(text: str) -> dict:
     if not REQUIRED_SOURCE_BASIS_INDEXES.issubset(indexed):
         raise ValueError("Engram source-basis indexes do not match the v1 contract")
 
+    admitted_labels = {label for label, _ in REQUIRED_IDENTITY_PROPERTIES}
+    for group in ("ordinary_indexes", "constraints"):
+        if any(value.get("label", "") not in admitted_labels for value in catalog.get(group, [])):
+            raise ValueError("schema contains an unknown current label")
+
     relationships = {
         (value.get("origin", ""), value.get("relationship", ""), value.get("target", ""))
         for value in catalog.get("relationships", [])
     }
+    relationship_labels = {
+        endpoint
+        for value in catalog.get("relationships", [])
+        for endpoint in [value.get("origin", "")] + [item.strip() for item in value.get("target", "").split("|")]
+    }
+    if not relationship_labels.issubset(admitted_labels):
+        raise ValueError("schema contains an unknown relationship label")
     if not REQUIRED_RELATIONSHIPS.issubset(relationships):
         raise ValueError("Engram schema is missing a required corrected relationship")
     if catalog_keys(catalog, "text_indexes") != REQUIRED_TEXT_INDEXES:

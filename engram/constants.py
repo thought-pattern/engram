@@ -12,6 +12,8 @@ from enum import Enum, StrEnum
 from hashlib import sha256 as hashlib_sha256
 from pathlib import Path
 from re import IGNORECASE as IGNORECASE, compile as re_compile, escape as re_escape
+from string import Formatter
+from tomllib import loads as toml_loads
 
 # =============================================================================
 # Package metadata
@@ -27,6 +29,14 @@ EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
 PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1_000
+MAX_RETIREMENT_BATCH_ENTRIES = 10
+RETIREMENT_ERROR_MESSAGES = {
+    "not_found": "accepted response artifact not found",
+    "conflict": "retirement conflicts with existing state",
+    "invalid_request": "retirement request is invalid",
+    "lifecycle_unavailable": "retirement is unavailable in the current lifecycle",
+}
+RETIREMENT_FIELD_BYTE_LIMITS = {"statement_id": 256, "reason": 512, "request_id": 256}
 REGULATOR_OUTCOMES = set(
     {
         "accepted",
@@ -54,21 +64,45 @@ DIALOGUE_STATEMENT = "statement"
 DIALOGUE_TOPIC_SHIFT = "topic_shift"
 EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
 VOWELS = set("aeiou")
-FRAME_OVERRIDES = {
-    "precedes": "{s} precedes {o}",
-    "dissolved_date": "{s} was dissolved in {o}",
-    "date_of_birth": "{s} was born on {o}",
-    "date_of_death": "{s} died on {o}",
-    "born_in": "{s} was born in {o}",
-    "inception": "{s} was founded in {o}",
-    "publication_date": "{s} was published on {o}",
-    "point_in_time": "{s} occurred on {o}",
-    "capital_of": "{s} is the capital of {o}",
-    "has_capital": "{s}'s capital is {o}",
-    "present_in_work": "{s} appears in {o}",
-    "award_received": "{s} received {o}",
-    "contains_location": "{s} contains {o}",
-}
+FRAME_OVERRIDES_PATH = Path(__file__).with_name("data") / "fact-phrasing.toml"
+MAX_FRAME_RESOURCE_BYTES = 65536
+MAX_FRAME_OVERRIDES = 256
+MAX_FRAME_TEMPLATE_CHARS = 1024
+
+
+def read_frame_overrides(path: Path) -> dict:
+    """Validate the packaged presentation contract before publishing native frames."""
+    with path.open("rb") as source:
+        payload = source.read(MAX_FRAME_RESOURCE_BYTES + 1)
+    if len(payload) > MAX_FRAME_RESOURCE_BYTES:
+        raise ValueError("Fact-phrasing resource exceeds its byte limit")
+    data = toml_loads(payload.decode("utf-8"))
+    if set(data) != {"frames"}:
+        raise ValueError("Fact-phrasing resource must contain only frames")
+    frames = data.get("frames", {})
+    if not isinstance(frames, dict) or not 1 <= len(frames) <= MAX_FRAME_OVERRIDES:
+        raise ValueError("Fact-phrasing frames must be a nonempty bounded mapping")
+    for key, template in frames.items():
+        if not isinstance(key, str) or not key.strip() or len(key) > MAX_FRAME_TEMPLATE_CHARS:
+            raise ValueError("Fact-phrasing frame key must be a bounded nonempty string")
+        if not isinstance(template, str) or not template.strip() or len(template) > MAX_FRAME_TEMPLATE_CHARS:
+            raise ValueError("Fact-phrasing template must be a bounded nonempty string")
+        fields = []
+        bare_parts = []
+        for literal, field, spec, conversion in Formatter().parse(template):
+            bare_parts.append(literal.replace("{", "{{").replace("}", "}}"))
+            if field is not None:
+                if field not in ("s", "o") or spec or conversion is not None:
+                    raise ValueError("Fact-phrasing template permits only bare subject/object placeholders")
+                fields.append(field)
+                bare_parts.append("{" + field + "}")
+        if fields != ["s", "o"] or "".join(bare_parts) != template:
+            raise ValueError("Fact-phrasing template requires one subject then one object")
+    validated = dict(frames)
+    return validated
+
+
+FRAME_OVERRIDES = read_frame_overrides(FRAME_OVERRIDES_PATH)
 GRAPH_ENTITY_FACTS_QUERY = (
     "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
     "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
@@ -673,16 +707,16 @@ SPARSE_DOCUMENT_SCHEMA_VERSION = 1
 SPARSE_TOKENIZER_VERSION = 1
 UTILITY_RESOLVER_NAME = "utility"
 UTILITY_RESOLVER_COST_CLASS = CostClass.CHEAP
-UTILITY_CONTRACT_VERSION = "utility-plugin-v1"
-UTILITY_RESOLVER_VERSION = "utility-resolver-v1"
+UTILITY_CONTRACT_VERSION = "utility-plugin"
+UTILITY_RESOLVER_VERSION = "utility-resolver"
 UTILITY_PLUGIN_NAMES = (
-    "arithmetic_v1",
-    "boolean_v1",
-    "set_v1",
-    "date_time_v1",
-    "unit_conversion_v1",
-    "version_v1",
-    "identifier_v1",
+    "arithmetic",
+    "boolean",
+    "set",
+    "date_time",
+    "unit_conversion",
+    "version",
+    "identifier",
 )
 UTILITY_MAX_INPUT_BYTES = 4_096
 UTILITY_MAX_OUTPUT_BYTES = 2_048
@@ -829,7 +863,7 @@ FUSION_DECISION_FIELDS = set(
         "working_memory_bytes",
     }
 )
-FUSION_POLICY_VERSION = "fusion-v1.0.0"
+FUSION_POLICY_VERSION = "fusion"
 FUSION_FORMULA_VERSION = 1
 FUSION_ANSWER_THRESHOLD = 0.78
 FUSION_EVIDENCE_THRESHOLD = 0.35
@@ -859,7 +893,7 @@ FEEDBACK_POLICY_FIELDS = set(
         "max_relationship_records",
     }
 )
-FEEDBACK_POLICY_VERSION = "feedback-history-v1.0.0"
+FEEDBACK_POLICY_VERSION = "feedback-history"
 FEEDBACK_MINIMUM_VERDICT_SAMPLES = 5
 FEEDBACK_PRIOR_ACCEPT = 1.0
 FEEDBACK_PRIOR_REJECT = 3.0
@@ -969,7 +1003,7 @@ EMPTY_NEGATIVE_CREATED_AT = "1970-01-01T00:00:00Z"
 EMPTY_NEGATIVE_EXPIRES_AT = "1970-01-01T00:00:01Z"
 DEFAULT_NEGATIVE_MAX_RECORDS = 1_000
 DEFAULT_NEGATIVE_TTL_SECONDS = 300
-FEEDBACK_CONTRACT_VERSION = "feedback-v1.0.0"
+FEEDBACK_CONTRACT_VERSION = "feedback"
 FEEDBACK_CONTRACT_FINGERPRINT = hashlib_sha256(FEEDBACK_CONTRACT_VERSION.encode("utf-8")).hexdigest()
 MAX_REFERENCE_ID_BYTES = 256
 MAX_FEEDBACK_REASON_BYTES = 512
@@ -1013,12 +1047,12 @@ RESOLVER_BUDGET_FIELDS = set(
 )
 RESOLVER_RESERVATION_SCHEMA_VERSION = 1
 RESOLVER_RESERVATION_FIELDS = set({"schema_version", "resolver", "order", "lease", "consumption"})
-PROPOSITION_DISCLOSURE_POLICY_VERSION = "proposition-disclosure-v1"
-PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION = "proposition-evidence-usefulness-v1"
-CANONICAL_COMPLETENESS_FLOOR_V1 = 1.0
-STRUCTURED_MATCH_FLOOR_V1 = 1.0
-SEMANTIC_SIMILARITY_FLOOR_V1 = 0.60
-SOURCE_AGREEMENT_FLOOR_V1 = 1.0
+PROPOSITION_DISCLOSURE_POLICY_VERSION = "proposition-disclosure"
+PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION = "proposition-evidence-usefulness"
+CANONICAL_COMPLETENESS_FLOOR = 1.0
+STRUCTURED_MATCH_FLOOR = 1.0
+SEMANTIC_SIMILARITY_FLOOR = 0.60
+SOURCE_AGREEMENT_FLOOR = 1.0
 MAX_VISIBILITY_GRANTS = 4_096
 RECONNECT_COOLDOWN_SECONDS = 60
 CONNECTION_LOST_MARKERS = (
@@ -1320,6 +1354,7 @@ RECEIPT_TOMBSTONE_FIELDS = set(
         "request_id",
         "operation",
         "payload_signature",
+        "scope_bindings",
     }
 )
 MUTATION_RECEIPT_FIELDS = set(
@@ -1590,6 +1625,8 @@ class CoreState(StrEnum):
     """Lifecycle state of the single owned application core."""
 
     RUNNING = "running"
+    QUIESCING = "quiescing"
+    MAINTENANCE = "maintenance"
     CLOSING = "closing"
     CLOSED = "closed"
 
@@ -1605,11 +1642,11 @@ class SessionOverflow(Enum):
 class PropositionProjectionQuery(StrEnum):
     """Allow-listed fixed query identifiers for full Proposition projection."""
 
-    STRUCTURED_ENTITY_V1 = "structured_entity_proposition_projection_v1"
-    STRUCTURED_KEYWORD_V1 = "structured_keyword_proposition_projection_v1"
-    RELATION_ONE_HOP_V1 = "relation_one_hop_proposition_projection_v1"
-    VECTOR_V1 = "vector_proposition_projection_v1"
-    BY_ID_V1 = "proposition_projection_by_id_v1"
+    STRUCTURED_ENTITY = "structured_entity_proposition_projection"
+    STRUCTURED_KEYWORD = "structured_keyword_proposition_projection"
+    RELATION_ONE_HOP = "relation_one_hop_proposition_projection"
+    VECTOR = "vector_proposition_projection"
+    BY_ID = "proposition_projection_by_id"
 
 
 class CanonicalResolutionStatus(StrEnum):
@@ -1623,7 +1660,7 @@ class CanonicalResolutionStatus(StrEnum):
 class RelationPlanTemplate(StrEnum):
     """Allow-listed internal Section 8 query-plan templates."""
 
-    ONE_HOP_PROPOSITION_V1 = "one_hop_proposition_v1"
+    ONE_HOP_PROPOSITION = "one_hop_proposition"
 
 
 class GraphCompositionOperator(StrEnum):

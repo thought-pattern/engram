@@ -12,7 +12,7 @@ accepted-response candidate. Configuration enables each optional capability sepa
 Retrieval rewrites transform the resolver request representation. Identity, scope,
 temporal inputs, source requirements, accepted text, and AIML behavior remain
 unchanged. Rules come from the packaged
-`rewrite-rules-v1.json` corpus and use escaped exact, prefix, suffix, or token-sequence
+`rewrite-rules.json` corpus and use escaped exact, prefix, suffix, or token-sequence
 matches with one bounded inherited `{subject}` value.
 
 Rules are deterministic and ordered by priority and identity. Depth, expansion,
@@ -49,7 +49,7 @@ comparison within configured record and scan limits. The embeddings are
 request-local working values. Artifact, checksum, model, or dimension failure
 affects only semantic retrieval.
 
-The optional `transparent_logistic_v1` reranker scores only the already fused bounded
+The optional `transparent_logistic` reranker scores only the already fused bounded
 shortlist with fixed visible coefficients. Failure preserves
 the baseline order. Native semantic retrieval is qualified; the reranker remains
 unpromoted and disabled. The two flags can be rolled back separately.
@@ -69,5 +69,6 @@ Disable `utility.enabled` or remove one configured plugin to roll back.
 
 `core.status()["components"]` reports enablement and readiness for sparse,
 semantic, reranker, and utility components through fixed identifiers.
-Relevant coverage is in `tests/test_rewrite.py`, `tests/test_sparse.py`,
-`tests/test_semantic.py`, `tests/test_reranking.py`, and `tests/test_utilities.py`.
+Resolver dispatch is exercised through the retained core and adapter lifecycle
+harnesses; the former resolver-only test modules are no longer part of the
+Engram test inventory.

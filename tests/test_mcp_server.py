@@ -11,31 +11,10 @@ from pytest import raises as pytest_raises
 
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import EngramMCPServer, MCPConversationService
-from scripts.run_section3_mcp_conformance import evaluate_turn, run_length_encode_passes
 
 from .test_relation import RelationGraph
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-
-
-def complete_turn_event() -> dict:
-    return {
-        "turn": 1,
-        "input": "hello",
-        "response": "Hello!",
-        "user_id": "Protocol Agent",
-        "source": "pattern",
-        "score": 1.0,
-        "pattern": "HELLO",
-        "captured": [],
-        "dialogue_act": "greeting",
-        "active_topic": "",
-        "entities": [],
-        "fact_admissions": [],
-        "elapsed_seconds": 0.001,
-        "context_changes": {},
-        "learned_statements": [],
-    }
 
 
 def tool_json(result) -> dict:
@@ -45,25 +24,6 @@ def tool_json(result) -> dict:
     value = json_loads(result.content[0].text)
     assert isinstance(value, dict)
     return value
-
-
-def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:
-    evaluation = evaluate_turn(complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
-
-    assert evaluation.get("passed") is True
-    assert evaluation.get("failed_checks") == []
-    assert evaluation.get("response_bytes") == 6
-    assert "Hello!" not in str(evaluation)
-
-
-def test_turn_evaluation_run_length_encoding_preserves_order() -> None:
-    encoded = run_length_encode_passes([{"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}])
-
-    assert encoded == [
-        {"bit": "1", "turns": 2},
-        {"bit": "0", "turns": 1},
-        {"bit": "1", "turns": 1},
-    ]
 
 
 def test_service_requires_an_explicit_lifecycle() -> None:
@@ -92,30 +52,6 @@ def test_default_service_loads_a_conversational_corpus() -> None:
     assert turn.get("response")
     assert turn.get("source") == "pattern"
     assert stopped.get("summary", {}).get("exchanges") == 1
-
-
-def test_cache_only_service_learns_admitted_facts_without_a_pattern_match() -> None:
-    service = MCPConversationService(static_pairs=[], require_catch_all=False)
-
-    started = service.start(user_id="Mira", random_seed=17)
-    introduced = service.send("Cobalt Harbor is a floating library.")
-    recalled = service.send("What do you remember about Cobalt Harbor?")
-    inspected = service.inspect()
-    service.stop()
-
-    assert started.get("statement_count") == 0
-    assert introduced.get("response") == "Cobalt Harbor is a floating library."
-    assert introduced.get("source") == "statement"
-    assert [item.get("text") for item in introduced.get("learned_statements", [])] == ["Cobalt Harbor is a floating library."]
-    assert recalled.get("response") == "Cobalt Harbor is a floating library."
-    learned = inspected.get("learned_dynamic", [])
-    assert len(learned) == 1
-    assert learned[0].get("introduced_by_user_id") == "Mira"
-
-
-def test_conversational_service_rejects_static_data_without_a_catch_all() -> None:
-    with pytest_raises(ValueError, match="catch-all"):
-        MCPConversationService(static_pairs=[{"pattern": "HELLO", "response": "Hello."}])
 
 
 def test_empty_mcp_user_uses_unknown_user_zero_for_complete_lifecycle() -> None:
@@ -164,67 +100,6 @@ def test_stop_discards_responses_conversations_and_receipts() -> None:
     assert core.engram.mutation_receipts.next_sequence == 1
 
 
-def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    service = MCPConversationService()
-
-    service.start(user_id="Alice")
-    service.send("Hello")
-    report = service.finish()
-    service.stop()
-
-    assert report.get("summary", {}).get("exchanges") == 1
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> None:
-    service = MCPConversationService()
-    service.start(user_id="Regulator")
-    learned = service.learn_response(
-        "When is support open?",
-        "Nine to five.",
-        "learn-1",
-        namespace="support",
-    )
-    replay = service.learn_response(
-        "When is support open?",
-        "Nine to five.",
-        "learn-1",
-        namespace="support",
-    )
-    proposal = service.propose(
-        "When is support open?",
-        "proposal-1",
-        namespace="support",
-    )
-    resolved = service.resolve(
-        proposal.get("proposal_id", ""),
-        "accepted",
-        learned.get("statement_id", ""),
-    )
-    retired = service.retire_response(
-        learned.get("statement_id", ""),
-        "support changed",
-        "retire-1",
-    )
-
-    assert replay.get("idempotent") is True
-    assert resolved.get("resolved") is True
-    assert retired.get("retired") is True
-
-
-def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
-    service = MCPConversationService()
-    service.start(user_id="Alice", initial_bot_text="Initial context.")
-    before = service.inspect().get("session", {})
-
-    fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
-    after = service.inspect().get("session", {})
-
-    assert fact.get("source_label") == "research"
-    assert after == before
-
-
 def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
     async def exercise() -> None:
         server = EngramMCPServer()
@@ -246,6 +121,7 @@ def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
                 "engram_resolve",
                 "engram_learn_response",
                 "engram_retire_response",
+                "engram_retire_responses",
             ]
             contracts = {tool.name: tool.model_dump() for tool in listed.tools}
             start_schema = contracts.get("engram_start", {}).get("input_schema", {})

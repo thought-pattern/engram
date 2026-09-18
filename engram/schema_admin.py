@@ -11,9 +11,9 @@ from engram.schema_catalog import (
     validate_schema_contract,
 )
 
-REPRESENTATION_CONTRACT = "tapestry-ke-representation-v1"
-PROOF_SCRATCH_CONTRACT = "tapestry-proof-scratch-v1"
-ENGRAM_SUPPORT_CONTRACT = "tapestry-engram-support-v1"
+REPRESENTATION_CONTRACT = "tapestry-ke-representation"
+PROOF_SCRATCH_CONTRACT = "tapestry-proof-scratch"
+ENGRAM_SUPPORT_CONTRACT = "tapestry-engram-support"
 STANDALONE_COMPONENT = "engram"
 STANDALONE_GRAPH_STATE = "engram_graph"
 TAPESTRY_COMPONENT = "tapestry"
@@ -72,6 +72,7 @@ def read_metadata(connection) -> dict:
         "MATCH (g:GraphState) RETURN g.name AS graph_state_name, "
         "g.deployment_owner AS graph_deployment_owner, "
         "g.installation_state AS installation_state, "
+        "coalesce(g.maintenance_state, '') AS maintenance_state, "
         "g.graph_revision AS graph_revision"
     )
     if len(schema_rows) != 1 or len(graph_rows) != 1:
@@ -126,6 +127,8 @@ def compare_metadata(expected: dict, actual: dict) -> dict:
     revision = actual.get("graph_revision", {})
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
         mismatched["graph_revision"] = {"expected": "non-negative integer", "actual": revision}
+    if actual.get("maintenance_state", "") != "":
+        mismatched["maintenance_state"] = {"expected": "", "actual": actual.get("maintenance_state", "")}
     result = {"valid": not mismatched, "mismatched": mismatched}
     return result
 

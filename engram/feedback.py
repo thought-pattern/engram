@@ -184,7 +184,7 @@ def feedback_payload_signature(observations) -> str:
     retry identity.
     """
 
-    digest = hashlib_sha256(b"engram-feedback-observations-v1\0")
+    digest = hashlib_sha256(b"engram-feedback-observations\0")
     seen_observations: set[str] = set()
     total_bytes = 0
     for observation in observations:

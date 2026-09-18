@@ -1,0 +1,16 @@
+# Shared presentation data for Engram recall and Tapestry Research hypotheses.
+# Each frame has exactly one subject and one object placeholder, in that order.
+[frames]
+precedes = "{s} precedes {o}"
+dissolved_date = "{s} was dissolved in {o}"
+date_of_birth = "{s} was born on {o}"
+date_of_death = "{s} died on {o}"
+born_in = "{s} was born in {o}"
+inception = "{s} was founded in {o}"
+publication_date = "{s} was published on {o}"
+point_in_time = "{s} occurred on {o}"
+capital_of = "{s} is the capital of {o}"
+has_capital = "{s}'s capital is {o}"
+present_in_work = "{s} appears in {o}"
+award_received = "{s} received {o}"
+contains_location = "{s} contains {o}"

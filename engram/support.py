@@ -4,8 +4,8 @@ Engram validates structure for safe storage and transport. It does not
 interpret epistemic state; Tapestry performs current-state validation.
 """
 
-SUPPORT_CONTRACT = "tapestry-engram-support-v1"
-REPRESENTATION_CONTRACT = "tapestry-ke-representation-v1"
+SUPPORT_CONTRACT = "tapestry-engram-support"
+REPRESENTATION_CONTRACT = "tapestry-ke-representation"
 SUPPORT_REFERENCE_FIELDS = {
     "schema_version",
     "record_kind",
@@ -108,3 +108,22 @@ def validate_support_references(value) -> tuple:
     if len(keys) != len(set(keys)):
         raise ValueError("support_references contain duplicate durable records")
     return references
+
+
+def validate_statement_scope_bindings(value) -> tuple:
+    """Keep removal ownership after accepted artifacts or full receipts expire."""
+    if not isinstance(value, tuple):
+        raise ValueError("statement scope bindings must be a tuple")
+    bindings = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"statement_id", "visibility_scope"}:
+            raise ValueError("statement scope binding fields are malformed")
+        identifier = support_text(item.get("statement_id"), "scope binding statement_id")
+        scope = validate_support_visibility(item.get("visibility_scope"))
+        key = (identifier, scope.get("kind"), *(scope.get(field) or "" for field in ("company_id", "customer_id", "engagement_id")))
+        if key in seen:
+            raise ValueError("statement scope bindings contain a duplicate")
+        seen.add(key)
+        bindings.append({"statement_id": identifier, "visibility_scope": scope})
+    return tuple(bindings)

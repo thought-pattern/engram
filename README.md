@@ -42,6 +42,11 @@ state. Restart begins with no dynamic accepted responses, learned conversational
 statements or facts, sessions, proposals, mutation receipts, reports, turn
 diagnostics, or counters inherited from the previous process.
 
+Engram-owned runtime contract, utility, projection, and resource names identify
+one current implementation without version suffixes. Callers and packaged
+resources use those same names; previous suffixed names are not compatibility
+aliases. Actual external model, protocol, and package versions are unchanged.
+
 ## Integration guides
 
 - [Python API](documentation/python-api.md) — unified resolution inputs,
@@ -60,13 +65,15 @@ diagnostics, or counters inherited from the previous process.
   one-hop, and composed Proposition retrieval.
 - [Local resolvers](documentation/local-resolvers.md) — symbolic rewrites,
   sparse and semantic retrieval, reranking, and deterministic utilities.
+- [Candidate fusion](documentation/fusion/contracts.md) — normalized features,
+  eligibility, ambiguity decisions, and bounded native outcome reports.
 
 ## Contributor documentation
 
 - [Python code style](documentation/code-style.md) — the Engram import
   convention and the Google Python Style Guide baseline used elsewhere.
-- [Query identity contracts](documentation/identity/contracts-v1.md) — the
-  versioned scope, identity, normalization, retrieval-key, representation, and
+- [Query identity contracts](documentation/identity/contracts.md) — the
+  scope, identity, normalization, retrieval-key, representation, and
   authoritative-input foundation used by exact retrieval work.
 
 ## Setup
@@ -271,13 +278,15 @@ callers use `Engram` methods and module-level functions
 
 ### EngramCore (`from engram.service import EngramCore`)
 
-`open_engram_core(config=...)` creates an empty shared application runtime. Its
+`EngramCore(config=...)` creates an empty shared application runtime. Its
 primary operations are:
 
 - `start_conversation`, `chat`, `inspect_conversation`,
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
-- `propose`, `resolve`, `learn_response`, `supersede_response`, and `retire_response`;
+- `propose`, `resolve`, `learn_response`, `supersede_response`, `retire_response`, and `retire_responses`;
+- `maintain_engagement` for an explicitly owned, drained administrative pause,
+  physical response removal and resumption;
 - `status` for transport-neutral readiness information; and
 - `close` for lifecycle ownership.
 
@@ -286,14 +295,24 @@ outcome="rejected_stale")` records the verdict and excludes that observed
 generation without mutating the response artifact. The caller that established
 global staleness then uses `retire_response` as the separate, auditable
 lifecycle operation. Contextual rejection never retires a response.
+`retire_responses` processes bounded ordered groups through that same scalar
+owner, retaining per-entry failures and replay receipts. It is also exposed as
+gRPC `RetireResponses` and MCP `engram_retire_responses`; see the
+[shared contract](documentation/python-api.md#ordered-retirement).
+
+Engagement removal instead deletes matching artifacts, affected mutation receipts
+and feedback together, with rollback on publication failure. Selection includes
+explicit response scope, opaque support dependencies, superseded predecessors,
+and scope bindings retained after capacity eviction and receipt pruning. Peer
+artifacts and their statistics and replay state are preserved. The administrative
+RPC contract is documented in [gRPC integration](documentation/grpc-integration.md).
 
 One core retains multiple isolated user conversations and shared knowledge.
-Non-empty conversation identifiers retain their user context. An empty
-conversation identifier remains empty at the service boundary, receives a
-unique non-attributed ephemeral session at each start, never aliases explicit
-user `"0"`, and is deleted on stop. That behavior serves gRPC's anonymous
-conversation contract; MCP canonicalizes an omitted or empty label to the
-unknown user `"0"` before starting its single conversation. Restarting Engram
+Named conversation identifiers retain their exact spelling and user context.
+Omitted or empty labels use the reserved unknown user `"0"` across the core,
+gRPC and MCP. Unknown conversations start with fresh session context and delete
+that session on stop; failed initialization restores the prior session. There
+is no generated anonymous identity or separate empty-user namespace. Restarting Engram
 loads only the STATIC data provided for that new process; without provided
 STATIC data, it starts empty.
 See the [Python API contract](documentation/python-api.md) for unified resolution,
@@ -366,6 +385,8 @@ print(result["source"], result["response"])
 
 The LLM result is not admitted as accepted knowledge. Accepted responses enter
 only through `EngramCore.learn_response` and exist only as response artifacts.
+Multiline accepted responses retain their exact tab and line-separator bytes in
+both the idempotency signature and authoritative artifact.
 
 A catch-all (pure-wildcard) question match is held as a fallback while retrieval and the
 LLM speak first, and returns it only when neither does.
@@ -423,19 +444,21 @@ MCP owns one active conversation. An omitted or empty `user_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
 and report the same canonical identifier.
 
-The eleven tools cover conversation lifecycle (`engram_start`, `engram_send`,
+The twelve tools cover conversation lifecycle (`engram_start`, `engram_send`,
 `engram_inspect`, `engram_finish`, `engram_stop`), shared facts
 (`engram_add_fact`), unified resolution (`engram_query`), and regulated-cache use (`engram_propose`,
-`engram_resolve`, `engram_learn_response`, `engram_retire_response`). See
+`engram_resolve`, `engram_learn_response`, `engram_retire_response`,
+`engram_retire_responses`). See
 [MCP integration](documentation/mcp-integration.md) for host configuration,
 tool schemas, process-memory ownership, and retry behavior.
 
 ### gRPC Service Interface
 
 The gRPC server exposes the same shared core, isolated user conversations, and
-regulated-cache workflow. An empty `user_id` across Start, Chat, Inspect,
-Finish, and Stop addresses the currently active anonymous conversation; each
-new empty-identifier Start receives fresh session context:
+regulated-cache workflow. An omitted or empty `user_id` across Start, Chat,
+Inspect, Finish, and Stop means exactly `"0"`. Starting unknown user "0" creates
+fresh context; stopping removes both its conversation and session. Finish only
+reports, and named-user context remains reusable:
 
 ```bash
 engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
@@ -513,7 +536,8 @@ produce confirmation or contradiction responses. With spaCy,
 Copulas retain their surface form, prepositions become relations, and action
 verbs use their lemma. NER supplies `subject_type` and `obj_type` when available.
 `learn_user_facts` controls conversational learning; `use_spacy_facts` selects
-the relational extractor. Run `python eval/compare_facts.py` to compare both.
+the relational extractor. Both extractor APIs return their actual fact records;
+the standalone fixed-sentence comparison script has been removed.
 
 ### Optional spaCy matching/retrieval enhancements
 
@@ -547,6 +571,11 @@ semantic triples; Tapestry domain entity types normalize to Engram's coarse
 `ENTITY` answer type. The shared core captures the evaluation time and schedules
 configured graph resolution before local exact-answer short-circuiting.
 
+[Friendly fact phrasing](documentation/python-api.md#friendly-fact-phrasing)
+uses one packaged idiomatic frame inventory shared as data with Tapestry.
+Literal labels cannot add format fields; the existing grammar and unavailable
+model fallback remain independent of Tapestry's Research parser policy.
+
 For a standalone Engram-managed Memgraph, apply only Engram's independently
 installable corrected recall schema:
 
@@ -573,6 +602,13 @@ Engram-required catalog definition while allowing the Tapestry superset. Crossed
 owners, mixed metadata, partial catalogs, unavailable reads, and invalid
 vector shapes fail closed. Static `--check` needs no configuration, Tapestry
 checkout, service, or database.
+
+Static schema admission derives allowed labels from Engram's current identity
+contracts and retains its exact text/vector definitions. The statement parser
+preserves quoted strings, backtick identifiers, escapes and literal whitespace;
+only external comments and layout are normalized. Catalog parsing and deployment
+digesting use that same statement sequence, and invalid input rejects before
+installation accesses the graph. Existing schema catalogs and digests are unchanged.
 
 Engram's graph-facing queries, decoders, and accepted-response support values
 use the current Proposition/Assertion contracts. Managed startup requires the

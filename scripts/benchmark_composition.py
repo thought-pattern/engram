@@ -86,7 +86,7 @@ def internal_current(item):
     values = dict(item["projection"])
     values.update(
         {
-            "projection_id": PropositionProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -100,9 +100,10 @@ def internal_current(item):
 
 
 def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
-    raw = case.get("branches", [])
-    if raw is None:
-        raw = [case.get("predicates", {})]
+    if "branches" in case:
+        raw = case.get("branches", [])
+    else:
+        raw = [case.get("predicates", [])]
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []

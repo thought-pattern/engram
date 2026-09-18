@@ -234,7 +234,7 @@ def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
 
 def load_default_rewrite_corpus() -> tuple[dict, ...]:
     """Eagerly load the package-owned, independently authored version-1 corpus."""
-    resource = files("engram").joinpath("data/rewrite-rules-v1.json")
+    resource = files("engram").joinpath("data/rewrite-rules.json")
     result = load_rewrite_corpus_text(resource.read_text(encoding="utf-8"))
     return result
 

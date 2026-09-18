@@ -731,7 +731,7 @@ class EngramCandidateAuthority:
             "supplied_trust",
             "supplied_trust_version",
         }
-        if set(provenance) != required or provenance.get("producer") != "relation_one_hop_v1":
+        if set(provenance) != required or provenance.get("producer") != "relation_one_hop":
             result = candidate_eligibility(
                 False,
                 False,
@@ -759,7 +759,7 @@ class EngramCandidateAuthority:
             if not isinstance(current_values, tuple) or len(current_values) != 1:
                 raise InvalidRequestError("current relation Proposition is unavailable")
             current = validate_proposition_projection(current_values[0])
-            if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+            if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
                 raise InvalidRequestError("current relation Proposition was not read by ID")
             identity = (
                 current["subject_entity_id"],
@@ -848,7 +848,7 @@ class EngramCandidateAuthority:
             "aggregate_value",
             "aggregate_value_available",
         }
-        if set(provenance) != required or provenance.get("producer") != "graph_composition_v1":
+        if set(provenance) != required or provenance.get("producer") != "graph_composition":
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
@@ -892,7 +892,7 @@ class EngramCandidateAuthority:
                 if not isinstance(current_values, tuple) or len(current_values) != 1:
                     raise InvalidRequestError("composition Proposition is unavailable")
                 current = validate_proposition_projection(current_values[0])
-                if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+                if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
                     raise InvalidRequestError("composition Proposition was not read by ID")
                 identity_value = identity_chain[index]
                 trust_value = trust_chain[index]
@@ -953,13 +953,13 @@ class EngramCandidateAuthority:
     def evaluate(self, candidate: dict, frame: dict) -> dict:
         if (
             candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "relation_one_hop_v1"
+            and candidate.get("provenance", {}).get("producer") == "relation_one_hop"
         ):
             result = self.relation_candidate(candidate, frame)
             return result
         if (
             candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "graph_composition_v1"
+            and candidate.get("provenance", {}).get("producer") == "graph_composition"
         ):
             result = self.composition_candidate(candidate, frame)
             return result

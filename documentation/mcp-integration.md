@@ -422,6 +422,16 @@ authorize retirement.
 Only dynamic, patternless entries can be retired through this tool. The result
 is retry-safe by `request_id`; conflicting request reuse is an error.
 
+### `engram_retire_responses`
+
+Accepts `entries`, an ordered list of one through ten native retirement mappings,
+using the same explicit staleness authority as `engram_retire_response`. Whole
+input validation precedes mutation; expected per-entry failures do not prevent
+later entries. Each success retains the scalar receipt and request-ID replay
+semantics. See the shared [ordered-retirement contract](python-api.md#ordered-retirement)
+for fields, byte bounds, outcomes, and failure behavior. The tool requires an
+active conversation and delegates to the same core operation as gRPC and Python.
+
 ### Process state
 
 Proposals and idempotency records are process-local, retained for five minutes,

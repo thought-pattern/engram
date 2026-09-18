@@ -223,8 +223,8 @@ def semantic_config(
 
 def reranker_config(
     enabled: bool = False,
-    implementation: str = "transparent_logistic_v1",
-    model_version: str = "transparent-logistic-v1",
+    implementation: str = "transparent_logistic",
+    model_version: str = "transparent-logistic",
     shortlist_size: int = 8,
     max_input_bytes: int = 65_536,
     max_model_time_ms: int = 25,
@@ -232,8 +232,8 @@ def reranker_config(
     """Build the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
         raise ValueError("reranker enabled must be a boolean")
-    if implementation != "transparent_logistic_v1":
-        raise ValueError("reranker implementation must be transparent_logistic_v1")
+    if implementation != "transparent_logistic":
+        raise ValueError("reranker implementation must be transparent_logistic")
     if not isinstance(model_version, str) or not model_version.strip():
         raise ValueError("reranker model_version must be a non-empty string")
     for name, value, maximum in (
@@ -255,7 +255,7 @@ def reranker_config(
 
 
 def rollout_config(
-    policy_version: str = "rollout-v1",
+    policy_version: str = "rollout",
     default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
     namespaces: dict = EMPTY_CONFIG,
 ) -> dict:

@@ -8,7 +8,7 @@
     "resource_rejection_rate_min": 1.0
   },
   "plugins": {
-    "arithmetic_v1": {
+    "arithmetic": {
       "conformance": [
         {"input": "calculate 7 * (8 - 3)", "status": "resolved", "response": "35"},
         {"input": "arithmetic 1 / 8", "status": "resolved", "response": "0.125"},
@@ -24,7 +24,7 @@
       "resource_input": "calculate 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1",
       "resource_error": "operation_limit"
     },
-    "boolean_v1": {
+    "boolean": {
       "conformance": [
         {"input": "boolean true and not false", "status": "resolved", "response": "true"},
         {"input": "boolean false or true xor true", "status": "resolved", "response": "false"},
@@ -40,7 +40,7 @@
       "resource_input": "boolean not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not not true",
       "resource_error": "operation_limit"
     },
-    "set_v1": {
+    "set": {
       "conformance": [
         {"input": "set union {z,a} and {m,a}", "status": "resolved", "response": "{a, m, z}"},
         {"input": "set intersection {a,b,c} with {b,c,d}", "status": "resolved", "response": "{b, c}"},
@@ -56,7 +56,7 @@
       "resource_input": "set union {i00,i01,i02,i03,i04,i05,i06,i07,i08,i09,i10,i11,i12,i13,i14,i15,i16,i17,i18,i19,i20,i21,i22,i23,i24,i25,i26,i27,i28,i29,i30,i31,i32,i33,i34,i35,i36,i37,i38,i39,i40,i41,i42,i43,i44,i45,i46,i47,i48,i49,i50,i51,i52,i53,i54,i55,i56,i57,i58,i59,i60,i61,i62,i63,i64} and {x}",
       "resource_error": "collection_limit"
     },
-    "date_time_v1": {
+    "date_time": {
       "conformance": [
         {"input": "date 2024-02-28 plus 1 day", "status": "resolved", "response": "2024-02-29"},
         {"input": "days between 2026-08-01 and 2026-08-22", "status": "resolved", "response": "21"},
@@ -72,7 +72,7 @@
       "resource_input": "date 2026-01-01 plus 999999 days",
       "resource_error": "date_time_domain"
     },
-    "unit_conversion_v1": {
+    "unit_conversion": {
       "conformance": [
         {"input": "convert 1000 m to km", "status": "resolved", "response": "1 km"},
         {"input": "convert 32 F to C", "status": "resolved", "response": "0 C"},
@@ -88,7 +88,7 @@
       "resource_input": "convert 999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 m to km",
       "resource_error": "numeric_limit"
     },
-    "version_v1": {
+    "version": {
       "conformance": [
         {"input": "compare version 1.0.0 and 2.0.0", "status": "resolved", "response": "1.0.0 < 2.0.0"},
         {"input": "compare version 1.0.0-alpha and 1.0.0", "status": "resolved", "response": "1.0.0-alpha < 1.0.0"},
@@ -104,7 +104,7 @@
       "resource_input": "compare version 111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111.0.0 and 1.0.0",
       "resource_error": "version_limit"
     },
-    "identifier_v1": {
+    "identifier": {
       "conformance": [
         {"input": "validate uuid 550e8400-e29b-41d4-a716-446655440000", "status": "resolved", "response": "valid uuid: 550e8400-e29b-41d4-a716-446655440000"},
         {"input": "validate uuid not-a-uuid", "status": "resolved", "response": "invalid uuid"},

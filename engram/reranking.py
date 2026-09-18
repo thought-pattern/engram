@@ -8,7 +8,7 @@ from engram.config import reranker_config
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 
 RERANKER_CONTRACT_VERSION = 1
-RERANKER_IMPLEMENTATION = "transparent_logistic_v1"
+RERANKER_IMPLEMENTATION = "transparent_logistic"
 RERANKER_FEATURES = (
     "base_score",
     "exact",

@@ -140,6 +140,7 @@ def response_collision_owner_ids(
     owners = {
         statement_id
         for statement_id, current in artifacts.items()
+        if current.get("lifecycle", LifecycleState.ACTIVE) == LifecycleState.ACTIVE
         if any(
             any(binding.get("key") == target_key for target_key in target_keys)
             for binding in retrieval_representation_bindings(current["retrieval"], current["scope"])

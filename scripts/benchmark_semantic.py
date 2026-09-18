@@ -322,8 +322,8 @@ def main() -> int:
         },
         "sparse_baseline": {"metrics": sparse_metrics},
         "reranker": {
-            "implementation": "transparent_logistic_v1",
-            "model_version": "transparent-logistic-v1",
+            "implementation": "transparent_logistic",
+            "model_version": "transparent-logistic",
             "metrics": reranker_metrics,
             "p50_overhead_ms": percentile(reranker_latencies, 0.50),
             "p95_overhead_ms": percentile(reranker_latencies, 0.95),

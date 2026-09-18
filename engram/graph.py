@@ -377,10 +377,10 @@ def proposition_projection(
         raise InvalidRequestError("Proposition projection vector_index_id is invalid")
     if not normalized_vector_available and normalized_vector_id:
         raise InvalidRequestError("Proposition projection vector_index_id must be empty when unavailable")
-    if projection_id == PropositionProjectionQuery.VECTOR_V1:
+    if projection_id == PropositionProjectionQuery.VECTOR:
         if normalized_structured_available or not normalized_semantic_available or not normalized_vector_available:
             raise InvalidRequestError("vector Proposition projection measurements or index provenance are inconsistent")
-    elif projection_id == PropositionProjectionQuery.BY_ID_V1:
+    elif projection_id == PropositionProjectionQuery.BY_ID:
         if normalized_structured_available or normalized_semantic_available or normalized_vector_available:
             raise InvalidRequestError("by-ID Proposition projection measurements or index provenance are inconsistent")
     elif not normalized_structured_available or normalized_semantic_available or normalized_vector_available:
@@ -535,7 +535,7 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
         raise InvalidRequestError("relation one-hop row has invalid fields")
     projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
     result: dict = {
-        "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP_V1),
+        "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP),
         "object_label": projection_text(
             value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
@@ -571,7 +571,7 @@ def validate_relation_proposition_projection(value: object) -> dict:
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
-    if result.get("projection", {})["projection_id"] != PropositionProjectionQuery.RELATION_ONE_HOP_V1:
+    if result.get("projection", {}).get("projection_id") != PropositionProjectionQuery.RELATION_ONE_HOP:
         raise InvalidRequestError("relation result requires a relation one-hop projection")
     return result
 
@@ -856,9 +856,9 @@ class MemGraphConnection:
         term = projection_text(
             value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False
         )
-        if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY_V1:
+        if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY:
             query = STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY
-        elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD_V1:
+        elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD:
             query = STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY
         else:
             raise InvalidRequestError("structured Proposition projection query identifier is unsupported")
@@ -955,14 +955,14 @@ class MemGraphConnection:
                 "evaluation_time": selected_evaluation_time,
             },
         )
-        result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR_V1, index_name, row_limit)
+        result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR, index_name, row_limit)
         return result
 
     def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
         """Re-read one Proposition through the fixed canonical projection for publication revalidation."""
         identifier = projection_identifier(proposition_id, "Proposition projection revalidation proposition_id")
         rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
-        result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
+        result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID, "", 1)
         return result
 
 

@@ -93,6 +93,18 @@ class EngramServiceStub:
             response_deserializer=protobuf_struct.Struct.FromString,
             **{"_registered_method": True},
         )
+        self.RetireResponses = channel.unary_unary(
+            "/engram.EngramService/RetireResponses",
+            request_serializer=engram_protocol.RetireResponsesRequest.SerializeToString,
+            response_deserializer=protobuf_struct.Struct.FromString,
+            **{"_registered_method": True},
+        )
+        self.MaintainEngagement = channel.unary_unary(
+            "/engram.EngramService/MaintainEngagement",
+            request_serializer=protobuf_struct.Struct.SerializeToString,
+            response_deserializer=protobuf_struct.Struct.FromString,
+            **{"_registered_method": True},
+        )
         self.GetStatus = channel.unary_unary(
             "/engram.EngramService/GetStatus",
             request_serializer=protobuf_empty.Empty.SerializeToString,
@@ -179,6 +191,18 @@ class EngramServiceServicer:
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def RetireResponses(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc_StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def MaintainEngagement(self, request, context):
+        """Trusted administrative barrier; no user/session label authorizes removal."""
+        context.set_code(grpc_StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
     def GetStatus(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc_StatusCode.UNIMPLEMENTED)
@@ -246,6 +270,16 @@ def add_EngramServiceServicer_to_server(servicer, server):
         "RetireResponse": grpc_unary_unary_rpc_method_handler(
             servicer.RetireResponse,
             request_deserializer=engram_protocol.RetireResponseRequest.FromString,
+            response_serializer=protobuf_struct.Struct.SerializeToString,
+        ),
+        "RetireResponses": grpc_unary_unary_rpc_method_handler(
+            servicer.RetireResponses,
+            request_deserializer=engram_protocol.RetireResponsesRequest.FromString,
+            response_serializer=protobuf_struct.Struct.SerializeToString,
+        ),
+        "MaintainEngagement": grpc_unary_unary_rpc_method_handler(
+            servicer.MaintainEngagement,
+            request_deserializer=protobuf_struct.Struct.FromString,
             response_serializer=protobuf_struct.Struct.SerializeToString,
         ),
         "GetStatus": grpc_unary_unary_rpc_method_handler(

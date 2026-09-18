@@ -1,4 +1,4 @@
-# Query identity and retrieval contracts, version 1
+# Query identity and retrieval contracts
 
 ## Status and boundary
 
@@ -138,9 +138,10 @@ Version 1 performs these ordered operations:
 7. remove terminal sentence periods and non-semantic quote apostrophes; and
 8. collapse whitespace.
 
-The function is deterministic and idempotent. Its golden fixture is
-[normalization-v1.json](../../tests/fixtures/identity/normalization-v1.json). Key-changing behavior requires a
-new normalization version and fixtures.
+The function is deterministic and idempotent. Key-changing behavior requires a
+new normalization version. The former fixed-string fixture was removed with
+its standalone identity suite; native normalized keys and validation errors
+remain observable at the identity boundary.
 
 ## Standalone extraction
 
@@ -168,4 +169,6 @@ evaluate graph existence, visibility, trust, and temporal state.
 
 ## Verification
 
-`python -m pytest -q tests/test_identity.py` verifies the contract.
+The retained Engram adapter and core lifecycle harnesses exercise identity
+construction at their public boundaries. The standalone identity suite was
+removed; runtime validators still reject invalid fields, bounds and versions.

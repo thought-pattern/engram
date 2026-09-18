@@ -87,7 +87,6 @@ Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,
 and latency without retaining request text, entity labels, or graph identifiers.
 
-Focused behavior is covered by `tests/test_contextual.py`, `tests/test_temporal.py`,
-`tests/test_composition.py`, `tests/test_claim_projection.py`, and
-`tests/test_claim_eligibility.py`; the last two filenames are retained test-suite
-names, while their executable contracts are Proposition-centered.
+Graph-backed behavior is exercised through the retained loopback gRPC and MCP
+harnesses (`tests/test_grpc_server.py` and `tests/test_mcp_server.py`), which
+use the existing graph transport fixture and public adapter paths.

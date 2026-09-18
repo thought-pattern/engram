@@ -73,8 +73,8 @@ semantic:
 # Disable this independently to roll back.
 reranker:
   enabled: false
-  implementation: transparent_logistic_v1
-  model_version: transparent-logistic-v1
+  implementation: transparent_logistic
+  model_version: transparent-logistic
   shortlist_size: 8
   max_input_bytes: 65536
   max_model_time_ms: 25
@@ -83,7 +83,7 @@ reranker:
 # The default preserves normal regulated answers. Exact namespace overrides may
 # use: disabled, shadow, evidence_only, regulated_direct_answer, or rollback.
 rollout:
-  policy_version: rollout-v1
+  policy_version: rollout
   default_mode: regulated_direct_answer
   namespaces: {}
 
@@ -94,13 +94,13 @@ rollout:
 utility:
   enabled: false
   plugins:
-    - arithmetic_v1
-    - boolean_v1
-    - set_v1
-    - date_time_v1
-    - unit_conversion_v1
-    - version_v1
-    - identifier_v1
+    - arithmetic
+    - boolean
+    - set
+    - date_time
+    - unit_conversion
+    - version
+    - identifier
 
 # --- Output processing ---
 polish_responses: true # Repair casing in pattern-path responses

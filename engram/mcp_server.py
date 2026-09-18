@@ -207,6 +207,13 @@ class MCPConversationService:
             result = core.retire_response(statement_id, reason, request_id)
             return result
 
+    def retire_responses(self, entries: list[dict]) -> dict:
+        """Retire an ordered bounded group through the shared core owner."""
+        with self.lock:
+            core, _ = self.require_active()
+            result = core.retire_responses(entries)
+            return result
+
     def require_active(self) -> tuple[EngramCore, str]:
         if not isinstance(self.core, EngramCore) or self.active_user_id == "":
             raise LifecycleError("no active conversation; call engram_start first")
@@ -239,6 +246,7 @@ class EngramMCPServer(MCPServer):
         self.tool()(self.engram_resolve)
         self.tool()(self.engram_learn_response)
         self.tool()(self.engram_retire_response)
+        self.tool()(self.engram_retire_responses)
 
     def engram_start(
         self,
@@ -378,6 +386,11 @@ class EngramMCPServer(MCPServer):
             reason=reason,
             request_id=request_id,
         )
+        return result
+
+    def engram_retire_responses(self, entries: list[dict]) -> dict:
+        """Retire an ordered bounded group of globally stale responses."""
+        result = self.conversation_service.retire_responses(entries)
         return result
 
 

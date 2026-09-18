@@ -24,31 +24,31 @@ from scripts.benchmark_metadata import benchmark_source_state
 DEFAULT_CORPUS = Path("eval/section14-utilities-v1.json")
 DEFAULT_OUTPUT_DIRECTORY = Path("eval/results/utilities")
 THREAT_INPUTS = {
-    "arithmetic_v1": "calculate __import__('os').system('echo bad')",
-    "boolean_v1": "boolean __import__",
-    "set_v1": "set union {safe} and {bad item}",
-    "date_time_v1": "date __import__('os')",
-    "unit_conversion_v1": "convert __import__ to m",
-    "version_v1": "compare version __import__('os') and 1.0.0",
-    "identifier_v1": "validate slug __import__('os')",
+    "arithmetic": "calculate __import__('os').system('echo bad')",
+    "boolean": "boolean __import__",
+    "set": "set union {safe} and {bad item}",
+    "date_time": "date __import__('os')",
+    "unit_conversion": "convert __import__ to m",
+    "version": "compare version __import__('os') and 1.0.0",
+    "identifier": "validate slug __import__('os')",
 }
 THREAT_EXPECTATIONS = {
-    "arithmetic_v1": {"status": "rejected", "error_code": "arithmetic_syntax", "response": ""},
-    "boolean_v1": {"status": "rejected", "error_code": "boolean_syntax", "response": ""},
-    "set_v1": {"status": "rejected", "error_code": "collection_item_invalid", "response": ""},
-    "date_time_v1": {"status": "rejected", "error_code": "date_time_syntax", "response": ""},
-    "unit_conversion_v1": {"status": "rejected", "error_code": "unit_syntax", "response": ""},
-    "version_v1": {"status": "rejected", "error_code": "version_syntax", "response": ""},
-    "identifier_v1": {"status": "resolved", "error_code": "", "response": "invalid slug"},
+    "arithmetic": {"status": "rejected", "error_code": "arithmetic_syntax", "response": ""},
+    "boolean": {"status": "rejected", "error_code": "boolean_syntax", "response": ""},
+    "set": {"status": "rejected", "error_code": "collection_item_invalid", "response": ""},
+    "date_time": {"status": "rejected", "error_code": "date_time_syntax", "response": ""},
+    "unit_conversion": {"status": "rejected", "error_code": "unit_syntax", "response": ""},
+    "version": {"status": "rejected", "error_code": "version_syntax", "response": ""},
+    "identifier": {"status": "resolved", "error_code": "", "response": "invalid slug"},
 }
 FUZZ_PREFIXES = {
-    "arithmetic_v1": "calculate ",
-    "boolean_v1": "boolean ",
-    "set_v1": "set ",
-    "date_time_v1": "date ",
-    "unit_conversion_v1": "convert ",
-    "version_v1": "compare version ",
-    "identifier_v1": "validate slug ",
+    "arithmetic": "calculate ",
+    "boolean": "boolean ",
+    "set": "set ",
+    "date_time": "date ",
+    "unit_conversion": "convert ",
+    "version": "compare version ",
+    "identifier": "validate slug ",
 }
 
 
@@ -95,31 +95,31 @@ def check_case(plugin_name: str, case: dict) -> tuple[bool, dict]:
 
 
 def property_checks(plugin_name: str) -> dict:
-    if plugin_name == "arithmetic_v1":
+    if plugin_name == "arithmetic":
         first = evaluate_named_utility("calculate 319 + 71", plugin_name)["response"]
         second = evaluate_named_utility("calculate 71 + 319", plugin_name)["response"]
         result = {"commutative_addition": first == second == "390"}
         return result
-    if plugin_name == "boolean_v1":
+    if plugin_name == "boolean":
         value = evaluate_named_utility("boolean not not true", plugin_name)["response"]
         result = {"double_negation": value == "true"}
         return result
-    if plugin_name == "set_v1":
+    if plugin_name == "set":
         first = evaluate_named_utility("set union {cat,sushi} and {dog,cat}", plugin_name)["response"]
         second = evaluate_named_utility("set union {dog,cat} and {cat,sushi}", plugin_name)["response"]
         result = {"commutative_union": first == second == "{cat, dog, sushi}"}
         return result
-    if plugin_name == "date_time_v1":
+    if plugin_name == "date_time":
         forward = evaluate_named_utility("date 2026-08-22 plus 10 days", plugin_name)["response"]
         backward = evaluate_named_utility(f"date {forward} minus 10 days", plugin_name)["response"]
         result = {"date_addition_round_trip": backward == "2026-08-22"}
         return result
-    if plugin_name == "unit_conversion_v1":
+    if plugin_name == "unit_conversion":
         forward = evaluate_named_utility("convert 123.5 km to mi", plugin_name)["response"].split()[0]
         backward = evaluate_named_utility(f"convert {forward} mi to km", plugin_name)["response"].split()[0]
         result = {"unit_round_trip": abs(Decimal(backward) - Decimal("123.5")) < Decimal("0.000000000001")}
         return result
-    if plugin_name == "version_v1":
+    if plugin_name == "version":
         first = evaluate_named_utility("compare version 1.2.3 and 2.0.0", plugin_name)["response"]
         second = evaluate_named_utility("compare version 2.0.0 and 1.2.3", plugin_name)["response"]
         result = {"comparison_antisymmetry": first.endswith("< 2.0.0") and second.endswith("> 1.2.3")}

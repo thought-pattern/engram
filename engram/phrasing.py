@@ -22,8 +22,9 @@ calls spaCy, so those phrase even if the model is unavailable; everything
 else degrades to a bare active verb rather than crashing -- ENGRAM's recall
 is best-effort.
 
-This is presentation only. ENGRAM keeps its own copy of the frame logic;
-it does not depend on Tapestry.
+This is presentation only. ENGRAM owns the packaged idiomatic frame data that
+Tapestry also reads, while each process owns its parser policy. ENGRAM does not
+depend on Tapestry. Dynamic labels are literal text, never extra format fields.
 """
 
 from engram.constants import FRAME_OVERRIDES, VOWELS
@@ -44,8 +45,9 @@ def frame_for_label(label: str) -> str:
     """
     nlp = get_nlp(disable=("parser", "ner"))
     normalized = label.lower().strip()
+    literal_label = label.replace("{", "{{").replace("}", "}}")
     if not nlp:
-        result = "{s} " + label + " {o}"
+        result = "{s} " + literal_label + " {o}"
         return result
 
     doc = nlp(normalized)
@@ -54,26 +56,26 @@ def frame_for_label(label: str) -> str:
     verb_form = head.morph.get("VerbForm", [])
 
     if normalized.endswith(" by"):
-        result = "{s} was " + label + " {o}"
+        result = "{s} was " + literal_label + " {o}"
         return result
 
     if verb_form == ["Fin"]:
-        result = "{s} " + label + " {o}"
+        result = "{s} " + literal_label + " {o}"
         return result
 
     if verb_form == ["Part"]:
         # A participle behind a preposition is stative (`located in`); a
         # bare participle is a past-tense active verb (`created`).
         if ends_prep:
-            result = "{s} is " + label + " {o}"
+            result = "{s} is " + literal_label + " {o}"
             return result
-        result = "{s} " + label + " {o}"
+        result = "{s} " + literal_label + " {o}"
         return result
 
     if verb_form == ["Inf"]:
         # spaCy reads a bare standalone noun (`genre`) as a base-form verb;
         # in this vocabulary those are noun roles.
-        result = "{s}'s " + label + " is {o}"
+        result = "{s}'s " + literal_label + " is {o}"
         return result
 
     if head.pos_ in ("NOUN", "PROPN", "ADJ"):
@@ -81,12 +83,12 @@ def frame_for_label(label: str) -> str:
             article = ""
             if head.pos_ in ("NOUN", "PROPN"):
                 article = "an " if normalized[:1] in VOWELS else "a "
-            result = "{s} is " + article + label + " {o}"
+            result = "{s} is " + article + literal_label + " {o}"
             return result
-        result = "{s}'s " + label + " is {o}"
+        result = "{s}'s " + literal_label + " is {o}"
         return result
 
-    result = "{s} " + label + " {o}"
+    result = "{s} " + literal_label + " {o}"
     return result
 
 

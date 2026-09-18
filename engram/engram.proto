@@ -23,6 +23,9 @@ service EngramService {
   rpc Resolve(ResolveRequest) returns (google.protobuf.Struct);
   rpc LearnResponse(LearnResponseRequest) returns (google.protobuf.Struct);
   rpc RetireResponse(RetireResponseRequest) returns (google.protobuf.Struct);
+  rpc RetireResponses(RetireResponsesRequest) returns (google.protobuf.Struct);
+  // Trusted administrative barrier; no user/session label authorizes removal.
+  rpc MaintainEngagement(google.protobuf.Struct) returns (google.protobuf.Struct);
 
   rpc GetStatus(google.protobuf.Empty) returns (google.protobuf.Struct);
 }
@@ -110,6 +113,10 @@ message RetireResponseRequest {
   string statement_id = 1;
   string reason = 2;
   string request_id = 3;
+}
+
+message RetireResponsesRequest {
+  repeated RetireResponseRequest entries = 1;
 }
 
 message ResolveEvidenceRequest {

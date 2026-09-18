@@ -60,7 +60,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["*.proto", "*.pyi", "data/*.json"]
+engram = ["*.proto", "*.pyi", "data/*.json", "data/*.toml"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}
@@ -123,4 +123,4 @@ ignore_names = ["exc_type", "exc_value", "traceback"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v"
+addopts = "-v -p no:jaxtyping"

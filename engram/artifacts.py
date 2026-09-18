@@ -55,7 +55,7 @@ from engram.identity import (
     validate_retrieval_representation,
     validate_scope_key,
 )
-from engram.support import validate_support_references
+from engram.support import validate_support_references, validate_support_visibility
 
 
 def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
@@ -190,6 +190,11 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
 def freeze_metadata(value: object) -> dict:
     if not isinstance(value, dict):
         raise InvalidRequestError("artifact metadata must be an object")
+    if "visibility_scope" in value:
+        try:
+            validate_support_visibility(value.get("visibility_scope"))
+        except ValueError as error:
+            raise InvalidRequestError(str(error)) from error
     frozen = freeze_json_value(value, "artifact metadata", 0, [0])
     if not isinstance(frozen, dict):
         raise InvalidRequestError("artifact metadata must be an object")

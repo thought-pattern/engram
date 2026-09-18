@@ -1,8 +1,8 @@
-# Candidate fusion and ambiguity contract v1
+# Candidate fusion and ambiguity contract
 
 **Status:** Current implemented and qualified contract
 **Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolvers.py`
-**Current policy:** `fusion-v1.0.0`, formula version 1
+**Current policy:** `fusion`, formula version 1
 
 ## Scope and selection boundary
 
@@ -38,7 +38,10 @@ from measured zero.
 | `agreement` | Distinct resolver agreement on one statement | deduplication |
 | `margin` | Leading score minus runner-up score | two score-eligible candidates |
 
-The executable definitions, including range and absence text, are the closed `FEATURE_DEFINITIONS` mapping. Tests assert exact coverage of the 12-member `FusionFeature` vocabulary.
+The executable definitions, including range and absence text, are the closed
+`FUSION_FEATURE_DEFINITION_SPECS` mapping. `feature_definitions()` validates
+these definitions and exposes the current `FusionFeature` vocabulary; exact
+field and numeric-bound validation remain in the fusion owner.
 
 ## Resolver-specific normalization
 
@@ -116,5 +119,6 @@ codes come from the closed vocabulary; response text and diagnostics remain data
 
 ## Verification
 
-`tests/test_fusion.py` verifies feature normalization, scoring, eligibility,
-ambiguity, authoritative revalidation, budgets, and stable reasons.
+Candidate resolution and response behavior are exercised through the retained
+core and adapter lifecycle harnesses. The standalone fusion suite was removed;
+native reports retain the selected outcome, eligibility and rejection reasons.

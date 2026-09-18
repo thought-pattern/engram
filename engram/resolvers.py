@@ -1341,7 +1341,7 @@ class StructuredGraphResolver:
                     scope=frame.get("scope", {}),
                     lifecycle=LifecycleState.ACTIVE,
                     provenance={
-                        "producer": "graph_composition_v1",
+                        "producer": "graph_composition",
                         "operator": plan["operator"].value,
                         "root_entity_id": plan["root_entity_id"],
                         "root_label": plan["root_label"],
@@ -1603,7 +1603,7 @@ class StructuredGraphResolver:
                         scope=frame.get("scope", {}),
                         lifecycle=LifecycleState.ACTIVE,
                         provenance={
-                            "producer": "relation_one_hop_v1",
+                            "producer": "relation_one_hop",
                             "subject_entity_id": plan["subject_entity_id"],
                             "subject_label": subject["primary_label"],
                             "predicate_id": plan["predicate_id"],

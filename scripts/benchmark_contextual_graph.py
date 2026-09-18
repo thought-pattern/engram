@@ -181,7 +181,7 @@ class BenchmarkGraph:
         values = dict(result["projection"])
         values.update(
             {
-                "projection_id": PropositionProjectionQuery.BY_ID_V1,
+                "projection_id": PropositionProjectionQuery.BY_ID,
                 "structured_match": 0.0,
                 "structured_match_available": False,
                 "semantic_similarity": 0.0,

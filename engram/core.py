@@ -1143,13 +1143,13 @@ class Engram:
         entities = extract_entities(text)
         if entities:
             requests.extend(
-                (PropositionProjectionQuery.STRUCTURED_ENTITY_V1, str(entity["text"]))
+                (PropositionProjectionQuery.STRUCTURED_ENTITY, str(entity.get("text", "")))
                 for entity in entities[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
         else:
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             requests.extend(
-                (PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
+                (PropositionProjectionQuery.STRUCTURED_KEYWORD, keyword)
                 for keyword in keywords[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
         retained: dict[str, dict] = {}

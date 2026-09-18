@@ -362,7 +362,7 @@ def one_hop_query_plan(
     expected_object_type: object,
     *,
     max_rows: object = MAX_RELATION_PLAN_ROWS,
-    template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
+    template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION,
     schema_version: object = RELATION_CONTRACT_SCHEMA_VERSION,
 ) -> dict:
     """Compile only the fixed one-hop template; Cypher and procedures are not inputs."""
@@ -370,7 +370,7 @@ def one_hop_query_plan(
     relation = validate_canonical_resolution(predicate)
     if entity["status"] != CanonicalResolutionStatus.SELECTED or relation["status"] != CanonicalResolutionStatus.SELECTED:
         raise InvalidRequestError("one-hop query plan requires selected entity and Predicate identities")
-    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION_V1:
+    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION:
         raise InvalidRequestError("one-hop query plan template is unsupported")
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("one-hop query plan expected object type is unsupported")
@@ -384,7 +384,7 @@ def one_hop_query_plan(
         raise InvalidRequestError(f"one-hop query plan max_rows must be from 1 through {MAX_RELATION_PLAN_ROWS}")
     result: dict = {
         "schema_version": RELATION_CONTRACT_SCHEMA_VERSION,
-        "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
+        "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION,
         "subject_entity_id": entity["canonical_id"],
         "predicate_id": relation["canonical_id"],
         "expected_object_type": expected_object_type,
