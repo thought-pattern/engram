@@ -2,8 +2,7 @@
   "schema_version": 1,
   "corpus_version": "section13-semantic-v1",
   "frozen_at": "2026-08-22T00:00:00Z",
-  "evaluation_role": "repository-visible engineering holdout; not a Section 16 release partition",
-  "section16_release_eligible": false,
+  "evaluation_role": "repository-visible semantic capability holdout",
   "documents": [
     {"statement_id": "sushi", "canonical": "Where can I find a good sushi restaurant?", "aliases": ["recommend a place for sushi", "best Japanese rolls nearby"], "response": "Sushi response prose is not an embedding input."},
     {"statement_id": "cats", "canonical": "Why do cats purr when they are content?", "aliases": ["feline purring explanation", "happy kitten rumbling sound"], "response": "Cat response prose is not an embedding input."},

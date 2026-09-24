@@ -39,7 +39,7 @@ Engram runs exclusively on Python 3.12 and later. Never use `__future__` imports
 Do not import `typing` or `typing_extensions`. Use native Python types such as
 `dict`, `list`, `tuple`, `set`, and `object` directly. Duck typing is acceptable;
 omit an annotation when expressing it would require a typing-only construct. Do
-not add casts, typing helpers, or compatibility imports to satisfy a static type
+not add casts, typing helpers, or typing-only imports to satisfy a static type
 checker.
 
 Keep imports at module scope, immediately after the module docstring. Group them in this order, with one blank line between groups:
@@ -48,8 +48,8 @@ Keep imports at module scope, immediately after the module docstring. Group them
 2. Third-party imports.
 3. Engram imports.
 
-Generated protobuf and gRPC modules under `engram/v1/` and `engram/v2/` are
-compiler output. Regenerate them from the corresponding `engram.proto`.
+Generated protobuf and gRPC modules at `engram/engram_pb2*` are compiler output.
+Regenerate them from `engram/engram.proto`.
 
 ## Constants
 
@@ -102,12 +102,12 @@ Normalize omitted external inputs at the adapter boundary.
 
 Validate the concrete type before copying or normalizing a supplied value. A falsey
 value of the wrong type is malformed input: for example, a mapping field accepts
-`{}` and rejects `[]`, `()`, `""`, `0`, and `False`. Legacy persistence loaders may
-translate a documented historical `null`; current public calls remain strict.
+`{}` and rejects `[]`, `()`, `""`, `0`, `False`, and `None`. Load boundaries use
+the same strict current shape as public calls.
 
 Procedures may retain `-> None` to describe a side-effect-only function.
-Compiler-generated files under `engram/v1/` and `engram/v2/` remain byte-for-byte
-reproducible from their `engram.proto` sources.
+Compiler-generated files at `engram/engram_pb2*` remain byte-for-byte
+reproducible from `engram/engram.proto`.
 
 ## Type annotations
 
@@ -126,8 +126,8 @@ return payloads. When changing an existing dataclass contract, replace it with a
 validated dictionary representation.
 
 Use ordinary `dict` annotations and document meaningful fields through focused
-docstrings and behavior tests. Validate external API input, persistence decoding,
-configuration, graph records, and compatibility or resource-bound invariants.
+docstrings and behavior tests. Validate external API input, configuration,
+graph records, current contracts, and resource-bound invariants.
 Runtime behavior remains authoritative.
 
 Use `set` by default and `frozenset` when hashability is required. An uppercase
@@ -162,5 +162,4 @@ black -l 132 -t py311 .
 isort --check-only .
 ruff check --line-length 132 .
 pytest
-pytest tests/test_source_contracts.py
 ```

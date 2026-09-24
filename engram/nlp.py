@@ -28,7 +28,7 @@ from engram.text import is_known_word
 
 
 @lru_cache(maxsize=1)
-def _ensure_nltk_data() -> None:
+def ensure_nltk_data() -> None:
     """Ensure required NLTK data is present, fetching into the local data dir."""
     required = [
         ("tokenizers/punkt", "punkt"),
@@ -59,26 +59,26 @@ def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dic
 
 def fact_subject_upper(fact: dict) -> str:
     """Subject in uppercase for pattern matching."""
-    subject_upper = fact["subject"].upper()
+    subject_upper = fact.get("subject", "").upper()
     return subject_upper
 
 
 def fact_query_patterns(fact: dict) -> list[str]:
     """Generate patterns that should retrieve this fact."""
     subj = fact_subject_upper(fact)
-    obj = fact["obj"].upper()
+    obj = fact.get("obj", "").upper()
     patterns = [subj]  # Direct query: "CATS"
 
-    if fact["predicate"] in ("are", "were"):
+    if fact.get("predicate", "") in ("are", "were"):
         patterns.append(f"WHAT ARE {subj}")
         patterns.append(f"WHAT ARE THE {subj}")
-        patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
+        patterns.append(f"WHAT {fact.get('predicate', "").upper()} {subj}")
     else:
         patterns.append(f"WHAT IS {subj}")
         patterns.append(f"WHAT IS THE {subj}")
         patterns.append(f"WHAT IS A {subj}")
         patterns.append(f"WHO IS {subj}")
-        patterns.append(f"WHAT {fact['predicate'].upper()} {subj}")
+        patterns.append(f"WHAT {fact.get('predicate', "").upper()} {subj}")
 
     patterns.append(f"TELL ME ABOUT {subj}")
     patterns.append(f"TELL ME ABOUT THE {subj}")
@@ -140,19 +140,19 @@ def input_kind(text: str) -> str:
     """
     if is_question(text):
         return KIND_QUESTION
-    if _is_command(text):
+    if internal_is_command(text):
         return KIND_COMMAND
     return KIND_STATEMENT
 
 
-def _is_command(text: str) -> bool:
+def internal_is_command(text: str) -> bool:
     """Check if text is a command."""
     first_word = text.split()[0].lower() if text.split() else ""
     is_command = first_word in COMMAND_WORDS
     return is_command
 
 
-def _clean_subject(tokens: list[str]) -> str:
+def clean_subject(tokens: list[str]) -> str:
     """Clean subject tokens for use as pattern."""
     if not tokens:
         result = ""
@@ -165,7 +165,7 @@ def _clean_subject(tokens: list[str]) -> str:
     return cleaned
 
 
-def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], original: str) -> dict:
+def extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], original: str) -> dict:
     """Extract fact from a copula sentence (X is/are Y).
 
     The span before the copula must look like a plain noun phrase; anything
@@ -199,7 +199,7 @@ def _extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origi
 
     obj_tokens = tokens[copula_idx + 1 :]
 
-    subject = _clean_subject(subject_tokens)
+    subject = clean_subject(subject_tokens)
     obj = " ".join(obj_tokens).rstrip(".")
 
     if not subject or not obj:
@@ -242,7 +242,7 @@ def extract_fact(text: str) -> dict:
     Returns:
         ExtractedFact if a fact was extracted, otherwise an empty dict.
     """
-    _ensure_nltk_data()
+    ensure_nltk_data()
 
     text = text.strip()
     if not text:
@@ -253,7 +253,7 @@ def extract_fact(text: str) -> dict:
         result = {}
         return result
 
-    if _is_command(text):
+    if internal_is_command(text):
         result = {}
         return result
 
@@ -264,7 +264,7 @@ def extract_fact(text: str) -> dict:
         result = {}
         return result
 
-    fact = _extract_copula_fact(tokens, tagged, text)
+    fact = extract_copula_fact(tokens, tagged, text)
     return fact
 
 
@@ -293,7 +293,7 @@ def extract_entities(text: str) -> list[dict]:
     Returns:
         List of ExtractedEntity objects.
     """
-    _ensure_nltk_data()
+    ensure_nltk_data()
 
     if not text or not text.strip():
         result = []
@@ -349,8 +349,8 @@ def extract_entities_by_type(text: str) -> dict[str, list[str]]:
     for entity in entities:
         if entity["label"] not in by_type:
             by_type[entity["label"]] = []
-        if entity["text"] not in by_type[entity["label"]]:
-            by_type[entity["label"]].append(entity["text"])
+        if entity["text"] not in by_type.get(entity["label"], []):
+            by_type.get(entity["label"], []).append(entity["text"])
 
     return by_type
 

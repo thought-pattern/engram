@@ -35,18 +35,3 @@ class ResolutionCancelledError(EngramCoreError):
 
 class RewriteLimitError(EngramCoreError):
     """A retrieval rewrite bound stopped processing before a fixed point."""
-
-
-class PersistenceError(EngramCoreError):
-    """A store checkpoint failed after an optional in-memory mutation.
-
-    ``state_changed`` tells an adapter whether the requested mutation was
-    already committed to the live single-instance core before persistence
-    failed. A later successful ``flush()`` can recover durability.
-    """
-
-    def __init__(self, operation: str, cause: Exception, *, state_changed: bool) -> None:
-        self.operation = operation
-        self.cause = cause
-        self.state_changed = state_changed
-        super().__init__(f"{operation} failed: {cause}")

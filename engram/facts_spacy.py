@@ -23,7 +23,7 @@ from engram.nlp import extracted_fact
 from engram.spacy_setup import get_nlp
 
 
-def _clean_span(tokens) -> str:
+def clean_span(tokens) -> str:
     """Join tokens in document order, dropping a single leading article."""
     ordered = sorted(tokens, key=lambda t: t.i)
     words = [t.text for t in ordered]
@@ -33,13 +33,13 @@ def _clean_span(tokens) -> str:
     return span
 
 
-def _phrase(token) -> str:
+def internal_phrase(token) -> str:
     """Full subtree text for a token (captures 'capital of France', etc.)."""
-    phrase = _clean_span(list(token.subtree))
+    phrase = clean_span(list(token.subtree))
     return phrase
 
 
-def _first_child(token, deps) -> object:
+def first_child(token, deps) -> object:
     """Return the first child of token whose dependency is in deps, else ()."""
     for child in token.children:
         if child.dep_ in deps:
@@ -48,14 +48,14 @@ def _first_child(token, deps) -> object:
     return result
 
 
-def _prep_link(verb) -> tuple[str, object]:
+def prep_link(verb) -> tuple[str, object]:
     """Return (preposition_text, pobj_token) for a verb's first prep child.
 
     Returns ("", ()) when there is no prepositional object.
     """
     for child in verb.children:
         if child.dep_ == "prep":
-            pobj = _first_child(child, {"pobj"})
+            pobj = first_child(child, {"pobj"})
             if pobj:
                 link = (child.text, pobj)
                 return link
@@ -63,7 +63,7 @@ def _prep_link(verb) -> tuple[str, object]:
     return empty_link
 
 
-def _extract_from_sentence(sent) -> dict:
+def extract_from_sentence(sent) -> dict:
     """Extract a single triple from one parsed sentence, or {} if none."""
     first = sent[0].text.lower()
     if first in QUESTION_WORDS or first in COMMAND_WORDS:
@@ -80,12 +80,12 @@ def _extract_from_sentence(sent) -> dict:
         result = {}
         return result
 
-    subject_token = _first_child(root, SUBJECT_DEPS)
+    subject_token = first_child(root, SUBJECT_DEPS)
     if not isinstance(subject_token, Token):
         result = {}
         return result
 
-    subject = _phrase(subject_token)
+    subject = internal_phrase(subject_token)
     if not subject or subject.lower() in PRONOUNS:
         result = {}
         return result
@@ -93,27 +93,27 @@ def _extract_from_sentence(sent) -> dict:
     is_copula = root.pos_ == "AUX" or root.lemma_ == "be"
 
     if is_copula:
-        obj_token = _first_child(root, OBJECT_DEPS)
+        obj_token = first_child(root, OBJECT_DEPS)
         if isinstance(obj_token, Token):
             predicate = root.text  # keep surface "is"/"are"/"was"/"were"
         else:
-            prep_text, obj_token = _prep_link(root)
+            prep_text, obj_token = prep_link(root)
             if not isinstance(obj_token, Token):
                 result = {}
                 return result
             predicate = prep_text  # "Paris is in France" -> (Paris, in, France)
     else:
-        obj_token = _first_child(root, OBJECT_DEPS)
+        obj_token = first_child(root, OBJECT_DEPS)
         if isinstance(obj_token, Token):
             predicate = root.lemma_  # normalized relation: develop, have, chase
         else:
-            prep_text, obj_token = _prep_link(root)
+            prep_text, obj_token = prep_link(root)
             if not isinstance(obj_token, Token):
                 result = {}
                 return result
             predicate = f"{root.lemma_} {prep_text}"  # "belong to"
 
-    obj = _phrase(obj_token)
+    obj = internal_phrase(obj_token)
     if not obj or obj.lower() in PRONOUNS:
         result = {}
         return result
@@ -150,7 +150,7 @@ def extract_facts(text: str) -> list:
     doc = nlp(text)
     facts = []
     for sent in doc.sents:
-        fact = _extract_from_sentence(sent)
+        fact = extract_from_sentence(sent)
         if fact:
             facts.append(fact)
     return facts

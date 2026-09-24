@@ -10,10 +10,10 @@ Run ``python -m engram.nltk_data`` once after installation to pre-fetch
 everything into the local directory.
 """
 
-import os
 from functools import lru_cache
+from os import makedirs as os_makedirs
 
-import nltk
+from nltk import data as nltk_data, download as nltk_download
 
 from engram.constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
 
@@ -28,14 +28,14 @@ def configure_path() -> str:
     Returns:
         The local data directory path.
     """
-    os.makedirs(NLTK_DATA_DIR, exist_ok=True)
-    if NLTK_DATA_DIR not in nltk.data.path:
-        nltk.data.path.insert(0, NLTK_DATA_DIR)
+    os_makedirs(NLTK_DATA_DIR, exist_ok=True)
+    if NLTK_DATA_DIR not in nltk_data.path:
+        nltk_data.path.insert(0, NLTK_DATA_DIR)
     return NLTK_DATA_DIR
 
 
 @lru_cache(maxsize=64)
-def _is_available(find_path: str) -> bool:
+def is_available(find_path: str) -> bool:
     """Return True if a resource resolves on NLTK's path.
 
     Checks both the bare path (extracted installs, the default location) and the
@@ -43,7 +43,7 @@ def _is_available(find_path: str) -> bool:
     """
     for candidate in (find_path, find_path + ".zip"):
         try:
-            nltk.data.find(candidate)
+            nltk_data.find(candidate)
             result = True
             return result
         except LookupError:
@@ -64,17 +64,17 @@ def ensure_resource(find_path: str, download_name: str, *, download: bool = Fals
         True if the resource is available after the call, False otherwise.
     """
     configure_path()
-    if _is_available(find_path):
+    if is_available(find_path):
         result = True
         return result
     if not download:
         result = False
         return result
-    nltk.download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
-    cache_clear = getattr(_is_available, "cache_clear", ())
+    nltk_download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
+    cache_clear = getattr(is_available, "cache_clear", ())
     if callable(cache_clear):
         cache_clear()
-    available = _is_available(find_path)
+    available = is_available(find_path)
     return available
 
 
@@ -91,7 +91,7 @@ def ensure_nltk_data(download: bool = True) -> list:
     configure_path()
     missing = []
     for find_path, download_name in REQUIRED_PACKAGES:
-        if _is_available(find_path):
+        if is_available(find_path):
             continue
         if download and ensure_resource(find_path, download_name, download=True):
             continue

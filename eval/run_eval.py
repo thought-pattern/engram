@@ -1,11 +1,12 @@
 """Evaluation harness: cycle prompts through engram and report coverage gaps.
 
-Runs a corpus of natural-language prompts against a freshly seeded engram
+Runs a corpus of natural-language prompts against a fresh Engram loaded from
+the bundled STATIC data,
 instance, classifies how each prompt is answered, and prints the gaps so that
 content and engine improvements can be driven from real signal.
 
-The harness is side-effect free on the user's data: it builds state in memory
-from data/seed.json and never saves to engram.json.
+The harness is side-effect free: it loads process memory from data/seed.json
+and writes no Engram state.
 
 Classification (pattern path):
     specific  - matched a real, intentional pattern (the desired outcome)
@@ -21,14 +22,14 @@ Usage:
     python eval/run_eval.py --json path/to/report.json
 """
 
-import argparse
-import json
-import os
-import sys
+from argparse import ArgumentParser as argparse_ArgumentParser
+from json import dump as json_dump, load as json_load
+from os import path as os_path
+from sys import exit as sys_exit, path as sys_path
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = os_path.dirname(os_path.dirname(os_path.abspath(__file__)))
+if REPO_ROOT not in sys_path:
+    sys_path.insert(0, REPO_ROOT)
 
 from engram.config import engram_config
 from engram.constants import Tier
@@ -38,12 +39,12 @@ CATCHALL = "*"
 WEAK_SCORE = 0.5  # calibrated keyword top-score at or below this is a weak retrieval
 
 
-def build_seeded_engram() -> Engram:
-    """Build an engram instance populated from the bundled seed file."""
+def load_static_engram() -> Engram:
+    """Load a fresh Engram from the bundled STATIC data."""
     engram = Engram(config=engram_config())
     seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
-        seed_data = json.load(f)
+        seed_data = json_load(f)
     for pair in seed_data.get("pairs", []):
         engram.store(
             pair.get("response", ""),
@@ -58,7 +59,7 @@ def load_corpus() -> list:
     """Load evaluation prompts from the corpus file."""
     corpus_path = "eval/corpus.json"
     with open(corpus_path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json_load(f)
     result = data.get("prompts", [])
     return result
 
@@ -66,10 +67,10 @@ def load_corpus() -> list:
 def classify(engram, prompt: dict) -> dict:
     """Run one prompt through both query paths and classify the outcome."""
     text = prompt.get("text", "")
-    result = engram.pattern_query(text)
-    if result:
-        stmt = result[0]
-        response = result[2]
+    pattern_result = engram.pattern_query(text)
+    if pattern_result:
+        stmt = pattern_result[0]
+        response = pattern_result[2]
         pattern = stmt["pattern"] if stmt else ""
     else:
         pattern = ""
@@ -112,11 +113,11 @@ def pct(part: int, total: int) -> str:
 
 def main() -> int:
     """Run the evaluation corpus and print a coverage report."""
-    parser = argparse.ArgumentParser(description="Engram evaluation harness")
+    parser = argparse_ArgumentParser(description="Engram evaluation harness")
     parser.add_argument("--json", default="", help="Write a JSON report to this path")
     args = parser.parse_args()
 
-    engram = build_seeded_engram()
+    engram = load_static_engram()
     prompts = load_corpus()
     results = [classify(engram, p) for p in prompts]
 
@@ -151,7 +152,7 @@ def main() -> int:
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"results": results}, f, indent=2)
+            json_dump({"results": results}, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
     result = 0
@@ -159,4 +160,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys_exit(main())

@@ -1,9 +1,9 @@
 """Behavioral temporal-query contract and parser tests for EGR-901 and EGR-902."""
 
-import json
 from datetime import UTC, datetime
+from json import loads as json_loads
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.constants import TemporalAxis, TemporalQueryOperator
 from engram.contextual import (
@@ -20,13 +20,13 @@ from engram.temporal import parse_temporal_query, temporal_query, temporal_query
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
 
 
-def _frame(request: str):
+def internal_frame(request: str):
     engine = Engram()
     result = QueryFrameBuilder(engine, lambda: 1, lambda: NOW).build(request, diagnostic_seed=request)
     return result
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("input_text", "operator", "start", "end"),
     [
         ("Who owns Atlas currently?", TemporalQueryOperator.CURRENT, "", ""),
@@ -92,9 +92,9 @@ def test_temporal_contract_round_trips_and_rejects_inconsistent_bounds() -> None
     value = parse_temporal_query("between 2023-04-01 and 2023-04-30")
 
     assert temporal_query_from_dict(temporal_query_to_dict(value)) == value
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         temporal_query(operator=TemporalQueryOperator.BEFORE, source_text="before 2024", confidence=1.0)
-    with pytest.raises(InvalidRequestError):
+    with pytest_raises(InvalidRequestError):
         temporal_query(
             operator=TemporalQueryOperator.BETWEEN,
             source_text="between 2025 and 2024",
@@ -107,17 +107,17 @@ def test_temporal_contract_round_trips_and_rejects_inconsistent_bounds() -> None
 
 
 def test_query_frame_keeps_temporal_interpretation_out_of_lexical_terms_and_round_trips() -> None:
-    frame = _frame("Who owned Atlas in 2024?")
+    frame = internal_frame("Who owned Atlas in 2024?")
 
     assert frame["temporal_query"]["operator"] == TemporalQueryOperator.IN_YEAR
     assert "2024" not in frame["identity"]["lexical_terms"]
     assert query_frame_from_json(query_frame_to_json(frame)) == frame
-    serialized = json.loads(query_frame_to_json(frame))
+    serialized = json_loads(query_frame_to_json(frame))
     assert serialized["temporal_query"]["operator"] == "in_year"
 
 
 def test_compact_frame_round_trip_preserves_temporal_query() -> None:
-    frame = enrich_query_frame(_frame("Who owned Atlas in 2024?"), current_turn=1)
+    frame = enrich_query_frame(internal_frame("Who owned Atlas in 2024?"), current_turn=1)
     compact = compact_query_frame_from_frame(frame, source_turn=1)
 
     assert compact_query_frame_from_dict(compact_query_frame_to_dict(compact)) == compact
@@ -125,9 +125,9 @@ def test_compact_frame_round_trip_preserves_temporal_query() -> None:
 
 
 def test_temporal_follow_up_replaces_prior_time_and_inherits_subject_relation() -> None:
-    first = enrich_query_frame(_frame("Who owned Atlas in 2025?"), current_turn=1)
+    first = enrich_query_frame(internal_frame("Who owned Atlas in 2025?"), current_turn=1)
     compact = compact_query_frame_from_frame(first, source_turn=1)
-    second = enrich_query_frame(_frame("2024?"), previous=compact, current_turn=2)
+    second = enrich_query_frame(internal_frame("2024?"), previous=compact, current_turn=2)
 
     assert second["identity"]["entities"] == first["identity"]["entities"]
     assert second["identity"]["relation"] == first["identity"]["relation"]
@@ -137,9 +137,9 @@ def test_temporal_follow_up_replaces_prior_time_and_inherits_subject_relation() 
 
 
 def test_elliptical_follow_up_inherits_prior_temporal_query() -> None:
-    first = enrich_query_frame(_frame("Who owned Atlas in 2024?"), current_turn=1)
+    first = enrich_query_frame(internal_frame("Who owned Atlas in 2024?"), current_turn=1)
     compact = compact_query_frame_from_frame(first, source_turn=1)
-    second = enrich_query_frame(_frame("And who managed it?"), previous=compact, current_turn=2)
+    second = enrich_query_frame(internal_frame("And who managed it?"), previous=compact, current_turn=2)
 
     assert second["temporal_query"] == first["temporal_query"]
     assert "temporal_query" in {value["field_name"] for value in second["inheritance"]}

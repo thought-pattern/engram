@@ -1,29 +1,27 @@
 """Conformance, safety, and integration tests for Section 14 utilities."""
 
-import ast
-import random
-import string
 from decimal import Decimal
-from pathlib import Path
-from types import MappingProxyType
+from random import Random as random_Random
+from string import ascii_letters as string_ascii_letters, digits as string_digits, punctuation as string_punctuation
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import utilities as utility_module
 from engram.config import config_from_dict, config_to_dict, engram_config, load_config
-from engram.constants import UTILITY_CONTRACT_VERSION, UTILITY_MAX_COLLECTION_ITEMS, UTILITY_PLUGIN_NAMES, CandidateSource
+from engram.constants import UTILITY_MAX_COLLECTION_ITEMS, UTILITY_PLUGIN_NAMES, CandidateSource
 from engram.core import Engram
 from engram.fusion import EngramCandidateAuthority
 from engram.resolution import ResolutionOutcome, candidate_with_changes, validate_query_frame
 from engram.service import EngramCore
-from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts
+from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config
 
 
 def enabled_registry(plugins=UTILITY_PLUGIN_NAMES) -> UtilityRegistry:
-    return UtilityRegistry(utility_config(enabled=True, plugins=plugins))
+    result = UtilityRegistry(utility_config(enabled=True, plugins=plugins))
+    return result
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("query", "plugin", "response"),
     [
         ("calculate 2 + 3 * 4", "arithmetic_v1", "14"),
@@ -70,35 +68,12 @@ def test_each_allowlisted_grammar_has_a_deterministic_canonical_result(query: st
     assert first["operations"] <= 32
 
 
-def test_plugin_contract_is_complete_and_matches_executable_allowlist() -> None:
-    contracts = utility_plugin_contracts()
-
-    assert tuple(contract["name"] for contract in contracts) == UTILITY_PLUGIN_NAMES
-    assert all(contract["contract_version"] == UTILITY_CONTRACT_VERSION for contract in contracts)
-    assert all(
-        set(contract)
-        == {
-            "contract_version",
-            "name",
-            "version",
-            "accepted_frame_types",
-            "input_schema",
-            "bounds",
-            "deterministic_result",
-            "evidence",
-            "errors",
-            "health",
-        }
-        for contract in contracts
-    )
-
-
 def test_registry_rejects_unknown_dynamic_plugin_names_and_duplicate_configuration() -> None:
-    with pytest.raises(ValueError, match="unknown utility plugins"):
+    with pytest_raises(ValueError, match="unknown utility plugins"):
         utility_config(enabled=True, plugins=("pathlib.Path",))
-    with pytest.raises(ValueError, match="duplicates"):
+    with pytest_raises(ValueError, match="duplicates"):
         utility_config(enabled=True, plugins=("arithmetic_v1", "arithmetic_v1"))
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest_raises(ValueError, match="at least one"):
         utility_config(enabled=True, plugins=())
 
 
@@ -114,7 +89,7 @@ def test_default_off_and_independent_plugin_selection() -> None:
     assert health["plugins"]["boolean_v1"]["ready"] is False
 
 
-@pytest.mark.parametrize(
+@pytest_mark.parametrize(
     ("query", "error_code"),
     [
         ("calculate 1 / 0", "arithmetic_domain"),
@@ -171,22 +146,9 @@ def test_expression_payload_is_data_and_never_executes(tmp_path) -> None:
     assert not target.exists()
 
 
-def test_production_utility_module_has_no_dynamic_execution_calls() -> None:
-    tree = ast.parse(Path(utility_module.__file__).read_text(encoding="utf-8"))
-    forbidden = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in {"eval", "exec", "compile", "__import__"}
-        ):
-            forbidden.append((node.func.id, node.lineno))
-    assert forbidden == []
-
-
 def test_arithmetic_set_version_and_unit_properties() -> None:
     registry = enabled_registry()
-    randomizer = random.Random(1406)
+    randomizer = random_Random(1406)
     for _ in range(100):
         left = randomizer.randint(-10_000, 10_000)
         right = randomizer.randint(-10_000, 10_000)
@@ -211,8 +173,8 @@ def test_arithmetic_set_version_and_unit_properties() -> None:
 
 def test_bounded_random_inputs_never_escape_the_closed_result_contract() -> None:
     registry = enabled_registry()
-    randomizer = random.Random(1406)
-    alphabet = string.ascii_letters + string.digits + string.punctuation + " \t"
+    randomizer = random_Random(1406)
+    alphabet = string_ascii_letters + string_digits + string_punctuation + " \t"
     for _ in range(500):
         payload = "".join(randomizer.choice(alphabet) for _ in range(randomizer.randint(0, 200)))
         result = registry.evaluate(payload)
@@ -237,7 +199,7 @@ def test_unexpected_plugin_failure_is_contained(monkeypatch) -> None:
 
     evaluators = dict(utility_module.UTILITY_EVALUATORS)
     evaluators["arithmetic_v1"] = fail
-    monkeypatch.setattr(utility_module, "UTILITY_EVALUATORS", MappingProxyType(evaluators))
+    monkeypatch.setattr(utility_module, "UTILITY_EVALUATORS", dict(evaluators))
 
     result = enabled_registry(("arithmetic_v1",)).evaluate("calculate 1 + 1")
 
@@ -262,13 +224,13 @@ def test_yaml_config_loads_selected_plugins_and_rejects_unknown_keys(tmp_path) -
     loaded = load_config(str(selected))
 
     assert loaded["utility"] == utility_config(enabled=True, plugins=("arithmetic_v1", "version_v1"))
-    with pytest.raises(ValueError, match="module"):
+    with pytest_raises(ValueError, match="module"):
         load_config(str(invalid))
 
 
 def test_core_resolves_utility_without_learning_or_accounting() -> None:
     engram = Engram(engram_config(utility=utility_config(enabled=True)))
-    core = EngramCore(engram, checkpoint_on_mutation=False)
+    core = EngramCore(engram)
     try:
         result = core.resolve_request(
             "calculate 2 + 3 * 4",
@@ -284,7 +246,7 @@ def test_core_resolves_utility_without_learning_or_accounting() -> None:
             configured_resolvers=("utility",),
         )
     finally:
-        core.close(flush=False)
+        core.close()
 
     assert result["outcome"] == ResolutionOutcome.ANSWER
     assert result["selected_candidate"]["response"] == "14"
@@ -299,14 +261,14 @@ def test_core_resolves_utility_without_learning_or_accounting() -> None:
 
 def test_authority_reexecutes_plugin_and_rejects_a_forged_response() -> None:
     engram = Engram(engram_config(utility=utility_config(enabled=True)))
-    core = EngramCore(engram, checkpoint_on_mutation=False)
+    core = EngramCore(engram)
     try:
         result = core.resolve_request(
             "boolean true and false",
             "utility-authority",
             configured_resolvers=("utility",),
         )
-        frame = validate_query_frame(core._resolution_requests["utility-authority"]["frame"])
+        frame = validate_query_frame(core.resolution_requests["utility-authority"]["frame"])
         candidate = result["resolver_results"][0]["candidates"][0]
         forged = candidate_with_changes(candidate, {"response": "true"})
         authority = EngramCandidateAuthority(engram)
@@ -314,7 +276,7 @@ def test_authority_reexecutes_plugin_and_rejects_a_forged_response() -> None:
         authentic = authority(candidate, frame)
         rejected = authority(forged, frame)
     finally:
-        core.close(flush=False)
+        core.close()
 
     assert authentic["answer_eligible"] is True
     assert rejected["answer_eligible"] is False

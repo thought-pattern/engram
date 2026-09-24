@@ -1,6 +1,6 @@
 """Conversation soak rig: drive a scripted multi-turn chat through the pipeline.
 
-Builds a seeded engram in memory (it never touches engram.json), then runs each
+Loads a fresh Engram from the bundled STATIC data in process memory, then runs each
 turn of a conversation script through pipeline.respond with one persistent
 session -- the same path the interactive CLI uses -- and checks every exchange
 for mechanical defects:
@@ -24,15 +24,15 @@ Usage:
     python eval/run_conversation.py --quiet                # summary only
 """
 
-import argparse
-import json
-import os
-import sys
-import time
+from argparse import ArgumentParser as argparse_ArgumentParser
+from json import dump as json_dump, load as json_load
+from os import path as os_path
+from sys import exit as sys_exit, path as sys_path, stderr as sys_stderr
+from time import perf_counter as time_perf_counter
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = os_path.dirname(os_path.dirname(os_path.abspath(__file__)))
+if REPO_ROOT not in sys_path:
+    sys_path.insert(0, REPO_ROOT)
 
 from engram import metrics, pipeline, sessions
 from engram.config import engram_config
@@ -44,12 +44,12 @@ LOOP_LENGTH = 3  # identical consecutive responses that count as a loop
 LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
 
-def build_seeded_engram() -> Engram:
-    """Build an engram instance populated from the bundled seed file."""
+def load_static_engram() -> Engram:
+    """Load a fresh Engram from the bundled STATIC data."""
     engram = Engram(config=engram_config(learn_user_facts=True))
     seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
-        seed_data = json.load(f)
+        seed_data = json_load(f)
     for pair in seed_data.get("pairs", []):
         engram.store(
             pair.get("response", ""),
@@ -64,7 +64,7 @@ def load_turns(path: str) -> list:
     """Load conversation turns from a script file."""
     script_path = path or "eval/conversation.json"
     with open(script_path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json_load(f)
     turns = data.get("turns", [])
     return turns
 
@@ -100,26 +100,26 @@ def check_response(response: str, source: str) -> tuple[list, list]:
 
 def run_conversation(turns: list, verbose: bool) -> dict:
     """Run the scripted conversation and collect the per-turn report."""
-    engram = build_seeded_engram()
-    sessions.create_session(engram, session_id=SESSION_ID)
+    engram = load_static_engram()
+    sessions.start_session(engram, session_id=SESSION_ID)
     baseline = metrics.get_metrics(engram)
 
     records: list[dict] = []
     recent_responses: list[str] = []
 
     for number, text in enumerate(turns, 1):
-        started = time.perf_counter()
+        started = time_perf_counter()
         defects: list[str] = []
         warnings: list[str] = []
         result = {"response": "", "source": "error", "score": 0.0, "pattern": ""}
         try:
-            result = pipeline.respond(engram, text, session_id=SESSION_ID)
+            result = pipeline.respond(engram, text, context_id=SESSION_ID)
         except Exception as err:
             defects.append(f"exception: {type(err).__name__}: {err}")
-        elapsed = time.perf_counter() - started
+        elapsed = time_perf_counter() - started
 
-        response = result["response"]
-        checked_defects, checked_warnings = check_response(response, result["source"])
+        response = result.get("response", "")
+        checked_defects, checked_warnings = check_response(response, result.get("source", ""))
         defects.extend(checked_defects)
         warnings.extend(checked_warnings)
 
@@ -131,9 +131,9 @@ def run_conversation(turns: list, verbose: bool) -> dict:
             "turn": number,
             "input": text,
             "response": response,
-            "source": result["source"],
-            "score": round(result["score"], 3),
-            "pattern": result["pattern"],
+            "source": result.get("source", ""),
+            "score": round(result.get("score", 0.0), 3),
+            "pattern": result.get("pattern", ""),
             "seconds": round(elapsed, 3),
             "defects": defects,
             "warnings": warnings,
@@ -142,7 +142,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
 
         if verbose:
             print(f"{number:>3} You: {text}")
-            print(f"    Bot: [{result['source']} {result['score']:.2f}] {response}")
+            print(f"    Bot: [{result.get('source', "")} {result.get('score', 0.0):.2f}] {response}")
             for defect in defects:
                 print(f"    [DEFECT] {defect}")
             for warning in warnings:
@@ -174,7 +174,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
 
 def main() -> int:
     """Run the conversation soak and print a report."""
-    parser = argparse.ArgumentParser(description="Engram conversation soak rig")
+    parser = argparse_ArgumentParser(description="Engram conversation soak rig")
     parser.add_argument("--script", default="", help="Conversation script (default: eval/conversation.json)")
     parser.add_argument("--json", default="", help="Write the full JSON report to this path")
     parser.add_argument("--quiet", action="store_true", help="Suppress the per-turn transcript")
@@ -182,7 +182,7 @@ def main() -> int:
 
     turns = load_turns(args.script)
     if not turns:
-        print("No turns found in the conversation script", file=sys.stderr)
+        print("No turns found in the conversation script", file=sys_stderr)
         result = 1
         return result
 
@@ -218,7 +218,7 @@ def main() -> int:
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
+            json_dump(report, f, indent=2)
         print(f"Wrote JSON report: {args.json}")
 
     result = 1 if defect_turns or report["hygiene_defects"] else 0
@@ -226,4 +226,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys_exit(main())

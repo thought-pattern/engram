@@ -3,7 +3,7 @@
 from scripts.benchmark_metadata import SOURCE_FILES, SOURCE_GLOBS, governed_source_sha256
 
 
-def _source_tree(root) -> None:
+def source_tree(root) -> None:
     for root_name, patterns in SOURCE_GLOBS:
         directory = root / root_name
         directory.mkdir(parents=True, exist_ok=True)
@@ -17,7 +17,7 @@ def _source_tree(root) -> None:
 
 
 def test_governed_digest_includes_evaluation_manifests_and_operational_configuration(tmp_path) -> None:
-    _source_tree(tmp_path)
+    source_tree(tmp_path)
     original = governed_source_sha256(tmp_path)
 
     (tmp_path / "eval" / "governed.json").write_text('{"changed": true}\n', encoding="utf-8")
@@ -30,7 +30,7 @@ def test_governed_digest_includes_evaluation_manifests_and_operational_configura
 
 
 def test_governed_digest_includes_packaged_runtime_corpora(tmp_path) -> None:
-    _source_tree(tmp_path)
+    source_tree(tmp_path)
     corpus = tmp_path / "engram" / "data" / "rewrite.json"
     corpus.parent.mkdir(parents=True)
     corpus.write_text('{"version": 1}\n', encoding="utf-8")

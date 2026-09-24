@@ -1,5 +1,7 @@
 """Tests for text substitution maps."""
 
+from engram.config import engram_config
+from engram.core import Engram
 from engram.substitutions import (
     apply_gender,
     apply_person,
@@ -10,8 +12,6 @@ from engram.substitutions import (
     split_sentences,
     substitution_maps,
 )
-
-"""Tests for apply_substitutions function."""
 
 
 def test_apply_substitutions_basic_substitution():
@@ -317,7 +317,6 @@ def test_substitution_maps_custom_maps_override():
 
 def test_contraction_integration_contractions_expanded_in_pattern_query():
     """Test contractions are expanded before pattern matching."""
-    from engram.core import Engram
 
     engram = Engram()
     engram.store("I know you do not like pizza", pattern="I KNOW YOU DO NOT LIKE *")
@@ -330,8 +329,6 @@ def test_contraction_integration_contractions_expanded_in_pattern_query():
 
 def test_contraction_integration_contractions_disabled():
     """Test contractions expansion can be disabled."""
-    from engram.config import engram_config
-    from engram.core import Engram
 
     config = engram_config(expand_contractions=False)
     engram = Engram(config=config)

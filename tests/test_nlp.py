@@ -1,12 +1,13 @@
 """Tests for NLP fact extraction."""
 
-import pytest
+from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import nlp
 from engram.config import engram_config
-from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns
-
-"""Tests for FactExtractor."""
+from engram.constants import LEARNED_ACKNOWLEDGMENTS
+from engram.core import Engram
+from engram.models import Tier
+from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns, input_kind, is_question
 
 
 def test_fact_extractor_extract_simple_is():
@@ -94,8 +95,6 @@ def test_fact_extractor_query_patterns_are():
 
 def test_fact_learning_integration_learn_and_retrieve_fact():
     """Test that learned facts can be retrieved."""
-    from engram.core import Engram
-    from engram.models import Tier
 
     engram = Engram(config=engram_config(learn_user_facts=True))
     # Add catch-all pattern for learning to work
@@ -106,7 +105,6 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
     # Should acknowledge learning (via catch-all with learning)
     assert result1
     stmt, captured, response = result1
-    from engram.constants import LEARNED_ACKNOWLEDGMENTS
 
     assert response in LEARNED_ACKNOWLEDGMENTS  # Acknowledgment
 
@@ -119,8 +117,6 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
 
 def test_fact_learning_integration_learn_and_retrieve_with_article():
     """Test facts with articles."""
-    from engram.core import Engram
-    from engram.models import Tier
 
     engram = Engram(config=engram_config(learn_user_facts=True))
     # Add catch-all pattern for learning to work
@@ -138,8 +134,6 @@ def test_fact_learning_integration_learn_and_retrieve_with_article():
 
 def test_fact_learning_integration_no_overwrite_existing():
     """Test that existing patterns are not overwritten."""
-    from engram.core import Engram
-    from engram.models import Tier
 
     engram = Engram()
     # Add catch-all pattern
@@ -196,25 +190,21 @@ def test_fact_extraction_guardrails_accept_single_noun_like_ing_subject():
 
 
 def test_question_detection_trailing_question_mark():
-    from engram.nlp import is_question
 
     assert is_question("This works?")
 
 
 def test_question_detection_question_word_lead():
-    from engram.nlp import is_question
 
     assert is_question("what do you think about python")
 
 
 def test_question_detection_inverted_copula():
-    from engram.nlp import is_question
 
     assert is_question("Is it working")
 
 
 def test_question_detection_statement_is_not_question():
-    from engram.nlp import is_question
 
     assert not is_question("The sky is blue")
 
@@ -223,19 +213,16 @@ def test_question_detection_statement_is_not_question():
 
 
 def test_input_kind_question():
-    from engram.nlp import input_kind
 
     assert input_kind("Where is my hat?") == "question"
 
 
 def test_input_kind_command():
-    from engram.nlp import input_kind
 
     assert input_kind("tell me a story") == "command"
 
 
 def test_input_kind_statement():
-    from engram.nlp import input_kind
 
     assert input_kind("I lost my hat yesterday") == "statement"
 
@@ -273,7 +260,6 @@ def test_fact_extraction_soak_regressions_legitimate_facts_still_learn():
 
 
 def test_typo_question_detection_typo_question_words_detected():
-    from engram.nlp import is_question
 
     assert is_question("waht is the ocean")
     assert is_question("whta is gravity")
@@ -281,7 +267,6 @@ def test_typo_question_detection_typo_question_words_detected():
 
 
 def test_typo_question_detection_real_words_near_question_words_unaffected():
-    from engram.nlp import is_question
 
     # "hat" and "cow" are one edit from question words but are real words.
     assert not is_question("hat is my favorite word")
@@ -297,13 +282,13 @@ def test_typo_question_detection_real_word_subjects_still_learn():
     assert extract_fact("The cow is a farm animal")["subject"] == "cow"
 
 
-@pytest.mark.parametrize("extractor", (extract_fact, extract_entities))
+@pytest_mark.parametrize("extractor", (extract_fact, extract_entities))
 def test_nlp_extraction_does_not_hide_dependency_failures(monkeypatch, extractor):
-    def fail_tokenization(_text):
+    def fail_tokenization(internal_text):
         raise RuntimeError("injected tokenizer failure")
 
-    monkeypatch.setattr(nlp, "_ensure_nltk_data", lambda: None)
+    monkeypatch.setattr(nlp, "ensure_nltk_data", lambda: False)
     monkeypatch.setattr(nlp, "word_tokenize", fail_tokenization)
 
-    with pytest.raises(RuntimeError, match="injected tokenizer failure"):
+    with pytest_raises(RuntimeError, match="injected tokenizer failure"):
         extractor("Paris is in France")

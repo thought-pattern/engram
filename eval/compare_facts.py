@@ -9,12 +9,12 @@ Usage:
     python eval/compare_facts.py
 """
 
-import sys
 from pathlib import Path
+from sys import exit as sys_exit, path as sys_path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT) not in sys_path:
+    sys_path.insert(0, str(REPO_ROOT))
 
 from engram.facts_spacy import extract_facts
 from engram.nlp import extract_fact
@@ -35,9 +35,9 @@ CORPUS = [
 ]
 
 
-def _triple(fact: dict) -> str:
+def internal_triple(fact: dict) -> str:
     """Render a fact dict as a compact triple string."""
-    result = f"({fact['subject']}, {fact['predicate']}, {fact['obj']})"
+    result = f"({fact.get('subject', "")}, {fact.get('predicate', "")}, {fact.get('obj', "")})"
     return result
 
 
@@ -54,8 +54,8 @@ def main() -> int:
         copula_hits += 1 if copula else 0
         spacy_hits += len(spacy_facts)
 
-        copula_str = _triple(copula) if copula else "-"
-        spacy_str = "; ".join(_triple(f) for f in spacy_facts) if spacy_facts else "-"
+        copula_str = internal_triple(copula) if copula else "-"
+        spacy_str = "; ".join(internal_triple(f) for f in spacy_facts) if spacy_facts else "-"
         print(f"\n{sentence}")
         print(f"  copula: {copula_str}")
         print(f"  spaCy : {spacy_str}")
@@ -69,4 +69,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys_exit(main())

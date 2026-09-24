@@ -1,16 +1,16 @@
 """Tests for spaCy dependency-parse fact extraction."""
 
-import pytest
+from pytest import mark as pytest_mark
 
 from engram.config import engram_config
 from engram.facts_spacy import extract_facts
 from engram.spacy_setup import get_nlp
 
 # These tests need the en_core_web_sm model. Skip cleanly if it is absent.
-requires_model = pytest.mark.skipif(not get_nlp(), reason="spaCy model en_core_web_sm not installed")
+requires_model = pytest_mark.skipif(not get_nlp(), reason="spaCy model en_core_web_sm not installed")
 
 
-def _first(text: str) -> dict:
+def internal_first(text: str) -> dict:
     """Return the first extracted fact, or {} if none."""
     facts = extract_facts(text)
     result = facts[0] if facts else {}
@@ -23,7 +23,7 @@ def _first(text: str) -> dict:
 @requires_model
 def test_copula_extraction_is_fact():
     """'X is Y' yields (X, is, Y)."""
-    fact = _first("Paris is the capital of France.")
+    fact = internal_first("Paris is the capital of France.")
     assert fact["subject"] == "Paris"
     assert fact["predicate"] == "is"
     assert fact["obj"] == "capital of France"
@@ -32,7 +32,7 @@ def test_copula_extraction_is_fact():
 @requires_model
 def test_copula_extraction_are_fact():
     """Plural copula yields the 'are' predicate."""
-    fact = _first("Cats are mammals.")
+    fact = internal_first("Cats are mammals.")
     assert fact["subject"] == "Cats"
     assert fact["predicate"] == "are"
     assert fact["obj"] == "mammals"
@@ -41,7 +41,7 @@ def test_copula_extraction_are_fact():
 @requires_model
 def test_copula_extraction_copula_with_preposition():
     """'X is in Y' yields the prepositional triple (X, in, Y)."""
-    fact = _first("Paris is in France.")
+    fact = internal_first("Paris is in France.")
     assert fact["subject"] == "Paris"
     assert fact["predicate"] == "in"
     assert fact["obj"] == "France"
@@ -53,7 +53,7 @@ def test_copula_extraction_copula_with_preposition():
 @requires_model
 def test_action_verb_extraction_transitive_verb():
     """SVO with a transitive verb uses the verb lemma as predicate."""
-    fact = _first("Einstein developed the theory of relativity.")
+    fact = internal_first("Einstein developed the theory of relativity.")
     assert fact["subject"] == "Einstein"
     assert fact["predicate"] == "develop"
     assert "theory of relativity" in fact["obj"]
@@ -62,7 +62,7 @@ def test_action_verb_extraction_transitive_verb():
 @requires_model
 def test_action_verb_extraction_have_verb():
     """'has' is extracted as the lemma 'have'."""
-    fact = _first("The Eiffel Tower has 1665 steps.")
+    fact = internal_first("The Eiffel Tower has 1665 steps.")
     assert "Eiffel Tower" in fact["subject"]
     assert fact["predicate"] == "have"
     assert "steps" in fact["obj"]
@@ -71,7 +71,7 @@ def test_action_verb_extraction_have_verb():
 @requires_model
 def test_action_verb_extraction_verb_with_preposition():
     """An intransitive verb plus preposition yields 'lemma prep'."""
-    fact = _first("The book belongs to Mary.")
+    fact = internal_first("The book belongs to Mary.")
     assert fact["subject"] == "book"
     assert fact["predicate"] == "belong to"
     assert fact["obj"] == "Mary"
@@ -82,27 +82,27 @@ def test_action_verb_extraction_verb_with_preposition():
 
 @requires_model
 def test_entity_types_gpe_subject():
-    fact = _first("Paris is the capital of France.")
+    fact = internal_first("Paris is the capital of France.")
     assert fact["subject_type"] == "GPE"
 
 
 @requires_model
 def test_entity_types_org_entities():
-    fact = _first("Microsoft acquired GitHub.")
+    fact = internal_first("Microsoft acquired GitHub.")
     assert fact["subject_type"] == "ORG"
     assert fact["obj_type"] == "ORG"
 
 
 @requires_model
 def test_entity_types_person_object():
-    fact = _first("The book belongs to Mary.")
+    fact = internal_first("The book belongs to Mary.")
     assert fact["obj_type"] == "PERSON"
 
 
 @requires_model
 def test_entity_types_unrecognized_entity_is_empty():
     # The small model does not tag every proper noun; type degrades to "".
-    fact = _first("Cats are mammals.")
+    fact = internal_first("Cats are mammals.")
     assert fact["subject_type"] == ""
 
 

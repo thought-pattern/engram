@@ -1,11 +1,12 @@
 # Engram
 
-A keyword-indexed statement store with hit-rate tracking, designed as a fast-path retrieval layer for conversational systems.
+An in-process conversational retrieval and regulated-response component with
+optional graph-backed evidence resolution.
 
 ## Overview
 
-ENGRAM sits between user queries and expensive computation (LLM inference,
-database queries, API calls), serving qualified cached knowledge first.
+ENGRAM supplies deterministic conversation behavior and an in-process accepted-
+response artifact collection for regulated information recall.
 
 Key features:
 
@@ -13,49 +14,51 @@ Key features:
 - **Optional sparse retrieval** - Fielded BM25 with phrase and technical-identifier signals
 - **Optional semantic retrieval and reranking** - Offline local request embeddings and a bounded transparent shortlist scorer
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
-- **Two-tier storage** - STATIC (protected) and DYNAMIC (evictable) statements
+- **Two-tier statements** - STATIC (provided at startup) and DYNAMIC (process-local and evictable)
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
-- **Persistence** - JSON-based save/load with full state preservation
-- **Multiple interfaces** - Python API, human CLI, persistent MCP tools, and a single-instance gRPC service
+- **Process memory** - Accepted responses, conversations, and receipts have one in-memory owner
+- **Multiple interfaces** - Python API, MCP tools, and a single-instance gRPC service
 
 ## Architecture
 
 ```text
-CLI ---------\
+Python API --\
               \
-MCPServer -----> EngramCore ---> Engram, pipeline, sessions, persistence
+MCP stdio -----> EngramCore ---> Engram, pipeline, sessions
               /
-gRPC ---------/
+gRPC --------/
 ```
 
 `EngramCore` in `engram/service.py` is the transport-neutral application
 facade. It owns the shared `Engram` instance, per-user conversation runtimes,
-persistence lifecycle, and regulated-cache proposal state. The CLI, MCP, and
-gRPC servers translate their interface inputs into calls on that core. The lower-level
-`Engram`, `pipeline`, `sessions`, and `persistence` Python APIs remain available.
+the sole accepted-response artifact collection, and regulated-cache proposal
+state. Python callers and the MCP and gRPC adapters invoke that core. The lower-level
+`Engram`, `pipeline`, and `sessions` Python APIs remain available.
+
+A new process loads its current provided STATIC data once, before serving, with
+`Engram.load_static_data`. Static data is startup input, not recovered Engram
+state. Restart begins with no dynamic accepted responses, learned conversational
+statements or facts, sessions, proposals, mutation receipts, reports, turn
+diagnostics, or counters inherited from the previous process.
 
 ## Integration guides
 
 - [Python API](documentation/python-api.md) — unified resolution inputs,
   results, feedback, cancellation, rollout, and telemetry.
 - [MCP integration](documentation/mcp-integration.md) — installation,
-  process ownership, all tool contracts, persistence, host configuration, and
+  process ownership, all tool contracts, host configuration, and
   the implemented two-phase regulated-cache interface.
 - [gRPC integration](documentation/grpc-integration.md) — protobuf contract,
-  launch configuration, RPCs, health, errors, durability, TLS, and shutdown.
+  launch configuration, RPCs, health, errors, TLS, and shutdown.
 
 ## System documentation
 
-- [Accepted responses](documentation/artifacts/contracts-v1.md) — authority,
-  lifecycle, eligibility, mutation coordination, persistence, and compatibility.
-- [Resolution results](documentation/evidence/resolution-result-v1.md) — unified
-  result, Proposition evidence, budgets, truncation, and adapter mapping.
+- Accepted responses — one authoritative in-process artifact collection with
+  lifecycle, eligibility, and mutation coordination.
 - [Graph retrieval](documentation/graph-retrieval.md) — contextual, temporal,
   one-hop, and composed Proposition retrieval.
 - [Local resolvers](documentation/local-resolvers.md) — symbolic rewrites,
   sparse and semantic retrieval, reranking, and deterministic utilities.
-- [Deployment and rollback](documentation/operations/deployment-and-rollback-v1.md)
-  — readiness, authorization, operation, incidents, and rollback.
 
 ## Contributor documentation
 
@@ -90,15 +93,16 @@ missing. The setup command above provisions serving data.
 ## Quick Start
 
 ```python
-from engram.constants import Tier
 from engram.core import Engram
 
-# Create an instance
+# Create an instance and load the static data provided for this startup.
 engram = Engram()
-
-# Store statements
-engram.store("Paris is the capital of France", tier=Tier.STATIC)
-engram.store("France has a population of 67 million", tier=Tier.STATIC)
+engram.load_static_data(
+    [
+        {"response": "Paris is the capital of France"},
+        {"response": "France has a population of 67 million"},
+    ]
+)
 
 # Query - returns a dict with "matches" (a list of (statement, score)) and "keywords"
 result = engram.query("What is the capital of France?")
@@ -106,7 +110,7 @@ stmt, score = result["matches"][0]
 print(stmt["text"])  # "Paris is the capital of France"
 
 # Record successful retrieval. Passing the statement id credits the statement
-# itself, which feeds the hit-rate-aware eviction policies.
+# itself, which feeds least-recently-used eviction.
 engram.record_hit(result["keywords"], statement_id=stmt["id"])
 ```
 
@@ -155,15 +159,15 @@ Sessions enable context expansion for follow-up queries:
 from engram import sessions
 
 # Create a session
-session_id = sessions.create_session(engram)
+session_id = sessions.start_session(engram)
 
 # First query
-result = engram.query("What is the capital of France?", session_id=session_id)
+result = engram.query("What is the capital of France?", context_id=session_id)
 stmt, score = result["matches"][0]
 sessions.update_session_context(engram, session_id, stmt["text"])
 
 # Follow-up query - context expands "its" to include France/Paris
-result = engram.query("What is its population?", session_id=session_id)
+result = engram.query("What is its population?", context_id=session_id)
 ```
 
 Expansion only fires when the query carries a referring pronoun ("its",
@@ -174,7 +178,7 @@ undiluted.
 
 ```python
 from engram.config import engram_config, reranker_config, semantic_config, sparse_config
-from engram.constants import EvictionPolicy, SessionOverflow
+from engram.constants import SessionOverflow
 from engram.core import Engram
 from engram.utilities import utility_config
 
@@ -187,8 +191,6 @@ config = engram_config(
     weight_hit_rate=0.2,         # Scoring weight: hit rate
     recency_half_life_seconds=604800.0,  # Recency decay half-life (7 days)
     session_overflow=SessionOverflow.LRU,  # LRU eviction when at limit
-    eviction_policy=EvictionPolicy.FIFO,   # FIFO | LRU | LFU | HIT_RATE
-    min_hit_rate=0.0,            # Protect proven statements above this hit rate
     retrieval_rewrites_enabled=False,  # Opt-in retrieval-only symbolic reductions
     sparse=sparse_config(enabled=False),  # Opt-in local fielded BM25
     semantic=semantic_config(enabled=False),  # Requires an explicitly provisioned artifact when enabled
@@ -209,30 +211,6 @@ Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic
 utilities are optional and disabled by default. Their configuration, artifact
 provisioning, readiness, and result behavior are documented in the
 [local resolver guide](documentation/local-resolvers.md).
-
-## Persistence
-
-```python
-from engram import persistence
-
-# Save to file
-persistence.save(engram, "engram_state.json")
-
-# Load from file
-engram = persistence.load_engram("engram_state.json")
-
-# Or use JSON strings
-json_str = persistence.save_json(engram)
-engram = persistence.load_engram_json(json_str)
-```
-
-The saved state includes statements (including `introduced_by_user_id` and
-`source_label` provenance), the keyword index with its statistics, user
-contexts, bot properties, substitution maps, and non-secret configuration
-(weights, eviction policy, feature flags). Graph passwords are runtime-only and
-stay in runtime configuration. Loading restores the stored configuration unless a
-`config` override is passed to the loader. Files written by older versions
-(which stored only `capacity`) still load, with defaults for the rest.
 
 ## Scoring Algorithm
 
@@ -264,31 +242,22 @@ the recommended direct-answer threshold is 0.7.
 
 ## Eviction and Hit Tracking
 
-DYNAMIC statements are evicted when `capacity` is reached, ordered by the
-configured `eviction_policy`:
+DYNAMIC statements are evicted when `capacity` is reached. Eviction is
+least-recently-used: `last_hit` is the activity time when present, otherwise
+`created_at` is used. STATIC statements do not consume dynamic capacity.
 
-- `FIFO` - oldest statement first (default)
-- `LRU` - least recently hit first; unhit statements precede hit statements
-- `LFU` - lowest hit count first
-- `HIT_RATE` - lowest hits/queries ratio first
-
-The statistics behind LRU, LFU, and HIT_RATE accumulate through normal use:
+The activity and hit statistics used by retrieval and LRU eviction accumulate
+through normal use:
 
 - `query()` counts each returned match as a candidacy on that statement
 - `record_hit(keywords, statement_id=...)` credits the statement that answered
 - a `pattern_query()` selection records a candidacy and a hit in one step
 
-`min_hit_rate` protects proven performers: a DYNAMIC statement with query
-history and a hit rate at or above the threshold is skipped by eviction.
-Statements with zero query history are always evictable. If every DYNAMIC
-statement is protected, a new statement is admitted over capacity.
-
 Hit statistics can be aged so old evidence loses standing:
-`metrics.decay_statistics(engram, factor=0.5)` (or `engram decay` from the
-CLI) multiplies every hit/query count by the factor. Rates are preserved while
-confidence decays; an entry that stops re-earning its statistics eventually
-returns to zero query history and loses `min_hit_rate` protection. Run it
-periodically, like `expire_sessions`.
+`metrics.decay_statistics(engram, factor=0.5)` multiplies every hit/query count
+by the factor. Rates are preserved while historical volume decays. Run it
+periodically alongside `expire_sessions` when the embedding application wants
+older observations to carry less weight.
 
 STATIC statements are excluded from capacity and eviction. Eviction or retirement
 removes a pattern when its final statement owner is removed.
@@ -296,27 +265,36 @@ removes a pattern when its final statement owner is removed.
 ## API Reference
 
 The data model is plain dicts. Interfaces normally use `EngramCore`; embedded
-callers can continue using `Engram` methods and module-level functions
-(`engram.sessions`, `engram.persistence`, `engram.metrics`) directly.
+callers use `Engram` methods and module-level functions
+(`engram.sessions`, `engram.metrics`) directly.
 
 ### EngramCore (`from engram.service import EngramCore`)
 
-`EngramCore.open(config=..., store_path=..., seed_path=...)` loads or creates a
-shared application runtime. Its primary operations are:
+`open_engram_core(config=...)` creates an empty shared application runtime. Its
+primary operations are:
 
 - `start_conversation`, `chat`, `inspect_conversation`,
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
-- `propose`, `resolve`, `learn_response`, and `retire_response`;
-- `status` for transport-neutral readiness and durability information; and
-- `flush` and `close` for persistence and lifecycle ownership.
+- `propose`, `resolve`, `learn_response`, `supersede_response`, and `retire_response`;
+- `status` for transport-neutral readiness information; and
+- `close` for lifecycle ownership.
+
+The regulated-cache lifecycle is explicit: `resolve(...,
+outcome="rejected_stale")` records the verdict and excludes that observed
+generation without mutating the response artifact. The caller that established
+global staleness then uses `retire_response` as the separate, auditable
+lifecycle operation. Contextual rejection never retires a response.
 
 One core retains multiple isolated user conversations and shared knowledge.
 Non-empty conversation identifiers retain their user context. An empty
 conversation identifier remains empty at the service boundary, receives a
 unique non-attributed ephemeral session at each start, never aliases explicit
-user `"0"`, and is deleted and checkpointed on stop. Configured stores
-checkpoint successful mutations and flush again on `close()`.
+user `"0"`, and is deleted on stop. That behavior serves gRPC's anonymous
+conversation contract; MCP canonicalizes an omitted or empty label to the
+unknown user `"0"` before starting its single conversation. Restarting Engram
+loads only the STATIC data provided for that new process; without provided
+STATIC data, it starts empty.
 See the [Python API contract](documentation/python-api.md) for unified resolution,
 feedback, lifecycle, and error behavior.
 
@@ -324,66 +302,54 @@ feedback, lifecycle, and error behavior.
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, pattern, pattern_aliases, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases and provenance; `keyword_source` can index it under different text    |
-| `query(text, session_id, limit, user_id)`                         | Keyword retrieval; `user_id` selects an isolated caller-owned context                                                  |
-| `pattern_query(text, session_id, user_id, combine_sentences)`     | AIML-style match in a user context; returns `(statement, captured, response)` or `()`                                |
+| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance |
+| `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
+| `pattern_query(text, context_id, user_id)`                        | AIML-style match with separate turn context and learned-fact attribution; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
-| `learn_from_response(query, response, introduced_by_user_id, source_label)` | Cache a response with optional provenance; re-learning the same question replaces it in place                       |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
-| `learn_fact(fact, introduced_by_user_id, source_label)`          | Learn an extracted fact with optional provenance                                                                     |
-| `add_fact(text, source_label, tier)`                              | Add one globally shared, unattributed fact and preserve user context                                                  |
+| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance                                                                     |
+| `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve user context                                                  |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
-| `fork(...)`                                                      | Create a child instance sharing the knowledge base                                                                   |
+| `load_static_data(pairs)`                                       | Load one provided structured STATIC corpus into a fresh Engram                                                       |
 
 ### Sessions (`from engram import sessions`)
 
 | Function                                                        | Description                      |
 | --------------------------------------------------------------- | -------------------------------- |
-| `create_session(engram, session_id, metadata)`                  | Create a session, returns its id |
+| `start_session(engram, session_id, metadata)`                   | Start a session, returns its id  |
 | `get_session(engram, session_id, create_if_missing)`            | Retrieve a session dict          |
 | `update_session_context(engram, session_id, previous_response)` | Update session context           |
 | `delete_session(engram, session_id)`                            | Remove a session                 |
 | `expire_sessions(engram, inactive_threshold)`                   | Remove inactive sessions         |
 | `list_sessions(engram, active_since)`                           | List sessions                    |
 
-### Persistence (`from engram import persistence`)
-
-| Function                     | Description                  |
-| ---------------------------- | ---------------------------- |
-| `save(engram, path)`         | Save state to JSON file      |
-| `load_engram(path)`          | Load state from JSON file    |
-| `save_json(engram)`          | Serialize to JSON string     |
-| `load_engram_json(json_str)` | Deserialize from JSON string |
-
 ### Pipeline (`from engram import pipeline`)
 
-`pipeline.chat(engram, text, user_id, llm_fn, high_confidence, context_limit, learn)`
+`pipeline.chat(engram, text, user_id, llm_fn, high_confidence, context_limit)`
 is the user-aware entry point. It defaults to user `"0"` and returns the
 normalized `user_id` in its result. The lower-level
-`pipeline.respond(engram, text, session_id, llm_fn, high_confidence, context_limit, learn, user_id)`
+`pipeline.respond(engram, text, context_id, llm_fn, high_confidence, context_limit, user_id)`
 packages the tiered strategy: scripted pattern match first, then a
-high-confidence cached answer, then the caller's LLM with retrieved context
-(whose response is learned for next time). Returns a dict with `response`,
-`source` (`pattern` / `cache` / `llm` / `none`), `score`, `matches`, and
+high-confidence conversational statement, then the caller's LLM with retrieved
+context. Generated responses are recorded only in the conversation session and
+are never copied into matcher statements. Returns a dict with `response`,
+`source` (`pattern` / `statement` / `llm` / `none`), `score`, `matches`, and
 `keywords`. User-aware results also expose the selected `dialogue_act`,
 `active_topic`, recent canonical `entities`, and `fact_admissions`. Each fact
 admission records whether an inferred conversational fact was stored and, when
 it was rejected, a stable reason such as `hedged`, `transient`, or
 `meta_subject`.
 
-For multi-sentence input, `pipeline.chat` produces one conversational reply
+For multi-sentence input, both `pipeline.chat` and `pattern_query` produce one conversational reply
 while still processing every sentence for learning and context. It normally
 uses the final substantive sentence while preserving an earlier question,
 command, fact, self-introduction, or topic change before a trailing courtesy.
-Direct `pattern_query` calls retain the legacy AIML
-behavior of combining every matched sentence response; pass
-`combine_sentences=False` to request the conversational behavior explicitly.
 Topic state is evidence-driven: explicit shifts and recalled facts promote a
 topic, unrelated substantive turns replace or clear stale topics, and topic
 labels discard conversational filler such as "for a while". Repeated responses
 are checked across all conversational routes, including exact and broad
-patterns, while direct lower-level pattern queries retain their legacy output.
+patterns.
 
 ```python
 from engram import pipeline
@@ -393,12 +359,12 @@ def my_llm(text, context_statements):
     return call_llm(prompt)
 
 result = pipeline.respond(engram, "What are the support hours?",
-                          session_id=session_id, llm_fn=my_llm)
+                          context_id=session_id, llm_fn=my_llm)
 print(result["source"], result["response"])
 ```
 
-The first ask goes to the LLM and is cached; the same question later answers
-directly from the cache (`source == "cache"`).
+The LLM result is not admitted as accepted knowledge. Accepted responses enter
+only through `EngramCore.learn_response` and exist only as response artifacts.
 
 A catch-all (pure-wildcard) question match is held as a fallback while retrieval and the
 LLM speak first, and returns it only when neither does.
@@ -422,120 +388,7 @@ LLM speak first, and returns it only when neither does.
 `metrics.decay_statistics(engram, factor=0.5)` ages every hit/query count by
 the factor (see Eviction and Hit Tracking above).
 
-## Command Line Interface
-
-ENGRAM includes a CLI for managing stores from the terminal, at `scripts/cli.py`:
-
-```bash
-python scripts/cli.py --help
-```
-
-The examples below write `engram` as shorthand for `python scripts/cli.py` (set a
-shell alias if you like: `alias engram='python scripts/cli.py'`).
-
-### Initialize a Store
-
-```bash
-engram init
-engram -s mystore.json init
-```
-
-`init` seeds the new store from the bundled corpus (`data/seed.json`), as does
-the automatic initialization that runs when the store file is missing.
-
-### Keep a Store in Sync with the Seed
-
-A store is seeded once at creation; when `data/seed.json` improves afterward,
-existing stores keep their old templates. `sync-seed` upserts the current seed
-into the store: stale STATIC entries are updated in place (ids and hit
-statistics preserved), new entries are added, and learned DYNAMIC content is
-preserved.
-
-```bash
-engram sync-seed
-engram sync-seed --file custom_seed.json
-engram sync-seed --prune   # also retire STATIC entries removed from the seed
-```
-
-The default sync is an upsert, so entries deleted from the seed remain in the
-store. With `--prune`, the STATIC tier mirrors the seed exactly -- only
-use it when syncing the complete corpus, since anything the file omits is
-retired.
-
-### Store Statements
-
-```bash
-engram store "Paris is the capital of France" --static
-engram store "Dynamic statement that can be evicted"
-```
-
-### Load from File
-
-```bash
-# Load statements from a JSON file of patterns/templates
-engram load corpus.json --static
-```
-
-### Query
-
-```bash
-engram query "What is the capital of France?"
-engram query "population" --limit 10
-engram query "follow up question" --session user123
-engram query "successful query" --hit  # Record as hit
-```
-
-### Session Management
-
-```bash
-engram session create --id user123
-engram session list
-engram session get user123
-engram session update user123 "Previous response text"
-engram session delete user123
-engram session expire --hours 24
-```
-
-### Metrics and Analysis
-
-```bash
-engram metrics
-engram keywords --low-hit --min-queries 10
-engram keywords --zero-hit
-engram decay --factor 0.5   # Age hit statistics (run periodically)
-```
-
-### Export
-
-```bash
-engram export --static-only -o static_corpus.txt
-engram export --dynamic-only
-```
-
-### Interactive Mode
-
-```bash
-engram interactive --user-id Robin --initial-bot-text "." \
-    --transcript conversation-recovery.json
-```
-
-Interactive mode is a chat loop routed through the tiered pipeline: pattern
-matching first, with unanswered questions consulting keyword
-retrieval before falling back. `--user-id` is an arbitrary caller-owned label
-and defaults to a generated session for the human CLI. `--transcript` updates a
-JSON recovery transcript after each turn. Type a message to get a response, or
-use a slash command:
-
-- `/debug` - Toggle debug output
-- `/inspect` - Show the active context, learned facts, provenance, and metrics
-- `/metrics` - Show metrics
-- `/finish [path]` - Write JSON and Markdown conversation reports
-- `/topic <name>` - Set the conversation topic
-- `/set <name> <value>` - Set a session predicate
-- `/get <name>` - Show a session predicate
-- `/save` - Save to disk
-- `/help` - List commands
-- `/quit` - Exit (also `/exit`, `/q`)
+## Service interfaces
 
 ### MCP Agent Interface
 
@@ -547,12 +400,16 @@ python -m engram.mcp_server
 engram-mcp
 ```
 
+MCP owns one active conversation. An omitted or empty `user_id` starts that
+conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
+and report the same canonical identifier.
+
 The ten tools cover conversation lifecycle (`engram_start`, `engram_send`,
 `engram_inspect`, `engram_finish`, `engram_stop`), shared facts
 (`engram_add_fact`), and regulated-cache use (`engram_propose`,
 `engram_resolve`, `engram_learn_response`, `engram_retire_response`). See
 [MCP integration](documentation/mcp-integration.md) for host configuration,
-tool schemas, persistence, and recovery.
+tool schemas, process-memory ownership, and retry behavior.
 
 ### gRPC Service Interface
 
@@ -562,14 +419,15 @@ Finish, and Stop addresses the currently active anonymous conversation; each
 new empty-identifier Start receives fresh session context:
 
 ```bash
-engram-grpc --bind 127.0.0.1:50051 --store-path state/engram.json
+engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
 # Or from a checkout:
 python -m engram.grpc_server --bind 127.0.0.1:50051
 ```
 
-Version 1 supplies conversation and cache RPCs; version 2 supplies unified
-evidence resolution alongside v1. See [gRPC integration](documentation/grpc-integration.md)
-for RPCs, client examples, health, TLS, retries, persistence, and shutdown.
+One unversioned `engram` protobuf package supplies conversation, cache, and
+unified evidence-resolution services from the same library contract. See
+[gRPC integration](documentation/grpc-integration.md) for RPCs, client examples,
+health, TLS, cancellation, process-memory behavior, and shutdown.
 
 ## NLP Features
 
@@ -655,8 +513,12 @@ fail to find a more specific match.
 ## Knowledge Graph schema administration
 
 ENGRAM can recall canonical facts from an optional MemGraph store. Runtime
-access is read-only, and graph readiness is reported separately from local
-service readiness.
+graph operations are reads and do not issue writes. Graph readiness is reported
+separately from local service readiness. During resolution, a graph connection,
+query, or optional vector-index failure contributes no graph result. If no local
+resolver supplies a result, Engram returns the same `MISS` it returns after a
+successful graph query with no rows; component diagnostics may still report the
+graph failure.
 
 For a standalone Engram-managed Memgraph, apply only Engram's independently
 installable corrected recall schema:
@@ -671,7 +533,7 @@ python scripts/reset_schema.py --apply
 ```
 
 For a Tapestry-managed Memgraph, never run Engram's installer or reset command.
-Tapestry owns that deployment's DDL. Verify it through Engram's read-only gate:
+Tapestry owns that deployment's DDL. Verify it through Engram's catalog verifier:
 
 ```bash
 python scripts/verify_schema.py --deployment tapestry_managed
@@ -679,17 +541,17 @@ python scripts/verify_schema.py --deployment tapestry_managed
 
 Standalone mode requires Engram ownership and an exact catalog.
 `tapestry_managed` requires Tapestry ownership, state `accepted`, matching
-representation/support/scratch contracts, one matching store epoch, and every
+representation/support/scratch contracts, and every
 Engram-required catalog definition while allowing the Tapestry superset. Crossed
-owners, mixed metadata, partial catalogs, unavailable reads, and incompatible
+owners, mixed metadata, partial catalogs, unavailable reads, and invalid
 vector shapes fail closed. Static `--check` needs no configuration, Tapestry
 checkout, service, or database.
 
 Engram's graph-facing queries, decoders, and accepted-response support values
-use the corrected Proposition/Assertion contracts. The repository-wide Tapestry
-cutover is still in progress, so the managed Engram service remains stopped
-until the standing Tapestry graph reaches its administrative `accepted` state.
-Local Engram operation without graph recall is unaffected.
+use the current Proposition/Assertion contracts. Managed startup requires the
+configured Tapestry graph to be in its administrative `accepted` state and
+fails closed otherwise. Local Engram operation without graph recall is
+unaffected.
 
 Configure the connection in `config.yml`:
 
@@ -717,8 +579,9 @@ graph:
   vector_weight: 0.75
 ```
 
-Use a read-only database account and supply credentials through runtime
-configuration. The [graph retrieval guide](documentation/graph-retrieval.md)
+Supply the configured database account through runtime configuration. It may be
+the same write-capable account used by Tapestry; Engram's managed runtime simply
+does not issue graph writes. The [graph retrieval guide](documentation/graph-retrieval.md)
 defines canonical identity, relation paths, temporal/conflict handling, vector
 support, availability, and timing behavior.
 

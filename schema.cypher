@@ -10,8 +10,7 @@
 //
 // A Tapestry-managed Memgraph receives only the root Tapestry installer.
 // Engram verifies that catalog in tapestry_managed mode and never applies this
-// file to it. This schema contains no retired-representation or compatibility
-// declarations.
+// file to it.
 
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT EXISTS (n.component);
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT n.component IS UNIQUE;
@@ -43,11 +42,9 @@ CREATE CONSTRAINT ON (n:SemanticBinding) ASSERT EXISTS (n.id);
 CREATE CONSTRAINT ON (n:SemanticBinding) ASSERT n.id IS UNIQUE;
 
 CREATE INDEX ON :SchemaRevision(component);
-CREATE INDEX ON :SchemaRevision(store_epoch);
 CREATE INDEX ON :SchemaRevision(representation_contract);
 CREATE INDEX ON :SchemaRevision(engram_support_contract);
 CREATE INDEX ON :GraphState(name);
-CREATE INDEX ON :GraphState(store_epoch);
 CREATE INDEX ON :GraphState(installation_state);
 CREATE INDEX ON :GraphState(graph_revision);
 
@@ -171,10 +168,10 @@ WITH CONFIG {
 // internal JSON is prohibited. Missing scalar properties hydrate to native
 // empty mappings/lists at the application boundary.
 //
-// SchemaRevision: component, deployment_owner, store_epoch,
+// SchemaRevision: component, deployment_owner,
 // representation_contract, engram_support_contract, schema_digest,
 // installed_at.
-// GraphState: name, deployment_owner, store_epoch, graph_revision,
+// GraphState: name, deployment_owner, graph_revision,
 // installation_state.
 //
 // Source: id, schema_version, source_kind, identity_namespace, authority_key,

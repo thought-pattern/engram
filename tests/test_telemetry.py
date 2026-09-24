@@ -1,13 +1,8 @@
 """Bounded Section 15 operational telemetry tests."""
 
-import json
+from json import dumps as json_dumps
 
-import pytest
-
-from engram import service as service_module
 from engram.constants import ResolutionOutcome, ResolverState
-from engram.core import Engram
-from engram.errors import InvalidRequestError, PersistenceError
 from engram.resolution import budget_consumption, empty_candidate, resolution_result, resolver_result
 from engram.service import EngramCore
 from engram.telemetry import operational_telemetry, record_resolution, telemetry_snapshot
@@ -66,7 +61,7 @@ def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resour
     assert telemetry["resolvers"]["exact"]["selected_contributions"] == 1
     assert telemetry["regulator_outcomes"]["rejected_context"] == 1
 
-    encoded = json.dumps(telemetry, sort_keys=True)
+    encoded = json_dumps(telemetry, sort_keys=True)
     for sensitive in (request, namespace, "Sarah", learned["statement_id"], "private feedback detail"):
         assert sensitive not in encoded
 
@@ -108,51 +103,4 @@ def test_unknown_resolver_and_exhaustion_values_collapse_into_fixed_other_bucket
     assert snapshot["resolvers"]["other"]["invocations"] == 1
     assert snapshot["resolvers"]["other"]["states"]["exhausted"] == 1
     assert snapshot["resolution"]["budget_exhaustion"]["other"] == 1
-    assert "private-user-derived" not in json.dumps(snapshot, sort_keys=True)
-
-
-def test_rebuild_telemetry_records_success_failure_and_dry_run() -> None:
-    engine = Engram()
-
-    engine.rebuild_indexes(apply=False)
-    engine.rebuild_indexes(apply=True)
-    engine.rebuild_sparse_index()
-    with pytest.raises(InvalidRequestError, match="semantic index is unavailable"):
-        engine.rebuild_semantic_index()
-    telemetry = engine.operational_telemetry_snapshot()
-
-    assert telemetry["rebuilds"]["primary"]["attempts"] == 2
-    assert telemetry["rebuilds"]["primary"]["dry_runs"] == 1
-    assert telemetry["rebuilds"]["primary"]["successes"] == 1
-    assert telemetry["rebuilds"]["sparse"]["successes"] == 1
-    assert telemetry["rebuilds"]["semantic"]["failures"] == 1
-    assert all(metrics["latency"]["observations"] == metrics["attempts"] for metrics in telemetry["rebuilds"].values())
-
-
-def test_durability_telemetry_and_status_redact_checkpoint_error_content(tmp_path, monkeypatch) -> None:
-    secret = "private path and credential detail"
-    store = tmp_path / "engram.json"
-    core = EngramCore(Engram(), store_path=store, checkpoint_on_mutation=False)
-    core.add_fact("Pending telemetry state.")
-    real_save = service_module.persistence.save
-
-    def fail_save(_engram, _path) -> None:
-        raise OSError(secret)
-
-    monkeypatch.setattr(service_module.persistence, "save", fail_save)
-    with pytest.raises(PersistenceError):
-        core.flush()
-    degraded = core.status()
-
-    assert degraded["last_persistence_error"] == "OSError"
-    assert secret not in json.dumps(degraded, sort_keys=True)
-    assert degraded["telemetry"]["durability"]["checkpoint_attempts"] == 1
-    assert degraded["telemetry"]["durability"]["checkpoint_failures"] == 1
-    assert degraded["telemetry"]["durability"]["current_state"] == "degraded"
-
-    monkeypatch.setattr(service_module.persistence, "save", real_save)
-    assert core.flush() is True
-    recovered = core.status()["telemetry"]["durability"]
-    assert recovered["checkpoint_attempts"] == 2
-    assert recovered["checkpoint_successes"] == 1
-    assert recovered["current_state"] == "healthy"
+    assert "private-user-derived" not in json_dumps(snapshot, sort_keys=True)

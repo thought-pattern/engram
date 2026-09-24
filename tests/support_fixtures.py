@@ -1,5 +1,14 @@
 """Exact corrected support-reference fixtures for Engram tests."""
 
+from engram.artifacts import (
+    LifecycleState,
+    artifact_provenance,
+    artifact_statistics,
+    cached_response_artifact,
+)
+from engram.constants import Tier
+from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+
 GLOBAL_VISIBILITY = {
     "kind": "global",
     "company_id": {},
@@ -16,7 +25,6 @@ ASSERTION_REFERENCE_A = {
     "representation_contract": "tapestry-ke-representation-v1",
     "visibility_scope": GLOBAL_VISIBILITY,
     "dependency_state_digest": "dep_" + "a" * 64,
-    "store_epoch": "test-store-epoch",
 }
 
 ASSERTION_REFERENCE_B = {
@@ -65,3 +73,38 @@ REFERENCE_IDS = {
     "proposition_b": PROPOSITION_REFERENCE_B.get("id", ""),
     "proposition_c": PROPOSITION_REFERENCE_C.get("id", ""),
 }
+
+
+def accepted_artifact(**overrides) -> dict:
+    """Build one current accepted-response artifact for cross-module tests."""
+    selected_scope = overrides.pop(
+        "scope",
+        scope_key(namespace="tenant-a", context_fingerprint="account:pro"),
+    )
+    request = overrides.pop("request", "Who acquired GitHub?")
+    values = {
+        "statement_id": "stmt-response-1",
+        "generation": 1,
+        "response": "Microsoft acquired GitHub in 2018.",
+        "query_identity": build_standalone_identity(request, selected_scope),
+        "retrieval": build_retrieval_representation(request, ("GitHub acquirer",)),
+        "tier": Tier.STATIC,
+        "lifecycle": LifecycleState.ACTIVE,
+        "scope": selected_scope,
+        "support_references": (ASSERTION_REFERENCE_A,),
+        "valid_from": "",
+        "valid_from_available": False,
+        "valid_until": "",
+        "valid_until_available": False,
+        "superseded_by": "",
+        "provenance": artifact_provenance(
+            source_label="tapestry:released",
+            caller_id="regulator-a",
+            accepted_at="2026-08-12T16:00:00Z",
+        ),
+        "statistics": artifact_statistics(),
+        "metadata": {},
+    }
+    values.update(overrides)
+    result = cached_response_artifact(**values)
+    return result

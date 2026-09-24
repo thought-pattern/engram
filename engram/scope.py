@@ -38,9 +38,10 @@ def validate_visibility_scope(value) -> dict:
 def visibility_parameters(value) -> dict:
     """Project a validated scope into primitive Memgraph query parameters."""
     scope = validate_visibility_scope(value)
-    return {
+    result = {
         "visibility_kind": scope.get("kind", "global"),
         "company_id": scope.get("company_id", "") if scope.get("company_id", {}) != {} else "",
         "customer_id": scope.get("customer_id", "") if scope.get("customer_id", {}) != {} else "",
         "engagement_id": scope.get("engagement_id", "") if scope.get("engagement_id", {}) != {} else "",
     }
+    return result

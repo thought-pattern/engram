@@ -1,9 +1,9 @@
 """Dialogue interpretation and conversational-state regressions."""
 
-import json
+from json import loads as json_loads
 from pathlib import Path
 
-from engram import persistence, pipeline
+from engram import pipeline
 from engram.core import Engram
 from engram.dialogue import (
     DIALOGUE_ACKNOWLEDGMENT,
@@ -16,7 +16,6 @@ from engram.dialogue import (
     classify_dialogue_act,
     contextual_fallback_options,
     conversational_fact_admission,
-    conversational_fact_is_admissible,
     explicit_topic,
     extract_dialogue_entities,
     infer_active_topic,
@@ -31,10 +30,10 @@ from engram.nlp import extract_fact
 SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
 
 
-def _seeded_engram() -> Engram:
+def seeded_engram() -> Engram:
     engram = Engram()
-    seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
-    engram.sync_corpus(seed["pairs"])
+    seed = json_loads(SEED_PATH.read_text(encoding="utf-8"))
+    engram.load_static_data(seed.get("pairs", []))
     return engram
 
 
@@ -200,14 +199,14 @@ def test_topic_and_entity_interpretation_recalled_topic_uses_the_original_subjec
         assert topic_from_statement_pattern(pattern, statement_text) == expected_topic
 
 
-def test_topic_and_entity_interpretation_recalled_topic_retains_compatibility_fallback() -> None:
-    assert topic_from_statement_pattern("EARLY COMPUTING") == "Early Computing"
+def test_topic_and_entity_interpretation_recalled_topic_requires_original_text() -> None:
+    assert topic_from_statement_pattern("EARLY COMPUTING") == ""
 
 
 def test_conversational_fact_admission_allows_plain_durable_assertion() -> None:
     fact = extract_fact("Sushi is good.")
 
-    assert conversational_fact_is_admissible(fact, "Sushi is good.")
+    assert conversational_fact_admission(fact, "Sushi is good.").get("admitted", False)
 
 
 def test_conversational_fact_admission_rejects_hedged_transient_and_meta_assertions() -> None:
@@ -221,7 +220,7 @@ def test_conversational_fact_admission_rejects_hedged_transient_and_meta_asserti
     for text in examples:
         fact = extract_fact(text)
         assert fact
-        assert not conversational_fact_is_admissible(fact, text)
+        assert not conversational_fact_admission(fact, text).get("admitted", False)
 
 
 def test_conversational_fact_admission_admission_explains_rejection_reason() -> None:
@@ -243,7 +242,7 @@ def test_conversational_fact_admission_admission_explains_rejection_reason() -> 
 
 
 def test_conversation_integration_topic_shift_uses_the_normalized_topic() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "Let us talk about cities for a while.", user_id="Robin")
 
@@ -253,7 +252,7 @@ def test_conversation_integration_topic_shift_uses_the_normalized_topic() -> Non
 
 
 def test_conversation_integration_return_to_is_an_explicit_topic_shift() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Robin")
     pipeline.chat(engram, "Dune is a science fiction novel.", user_id="Robin")
 
@@ -265,7 +264,7 @@ def test_conversation_integration_return_to_is_an_explicit_topic_shift() -> None
 
 
 def test_conversation_integration_discourse_frames_do_not_displace_an_established_topic() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     result = pipeline.chat(engram, "What first comes to mind when you consider gardens?", user_id="Robin")
     assert result["active_topic"] == "gardens"
     examples = (
@@ -287,7 +286,7 @@ def test_conversation_integration_discourse_frames_do_not_displace_an_establishe
 
 
 def test_conversation_integration_closing_act_overrides_broad_that_is_pattern() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "Thank you. That is enough for today.", user_id="Robin")
 
@@ -296,7 +295,7 @@ def test_conversation_integration_closing_act_overrides_broad_that_is_pattern() 
 
 
 def test_conversation_integration_closing_survives_a_trailing_farewell_statement() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(
         engram,
@@ -309,7 +308,7 @@ def test_conversation_integration_closing_survives_a_trailing_farewell_statement
 
 
 def test_conversation_integration_a_request_after_goodbye_reopens_the_turn() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "Goodbye. What is your name?", user_id="Robin")
 
@@ -318,7 +317,7 @@ def test_conversation_integration_a_request_after_goodbye_reopens_the_turn() -> 
 
 
 def test_conversation_integration_trailing_gratitude_does_not_hide_an_earlier_question() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "What should I call you? Thank you.", user_id="Robin")
 
@@ -327,8 +326,8 @@ def test_conversation_integration_trailing_gratitude_does_not_hide_an_earlier_qu
     assert result["response"] == "You can call me ENGRAM."
 
 
-def test_conversation_integration_topic_and_entities_are_per_user_and_persistent() -> None:
-    engram = _seeded_engram()
+def test_conversation_integration_topic_and_entities_are_per_user_in_process() -> None:
+    engram = seeded_engram()
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Alice")
     pipeline.chat(engram, "Hello.", user_id="Carol")
 
@@ -336,13 +335,12 @@ def test_conversation_integration_topic_and_entities_are_per_user_and_persistent
     assert any(entity["text"] == "Kyoto" for entity in engram.sessions["Alice"]["entities"])
     assert engram.sessions["Carol"]["active_topic"] == ""
 
-    loaded = persistence.load_engram_from_dict(persistence.to_dict(engram))
-    assert loaded.sessions["Alice"]["active_topic"] == "Kyoto"
-    assert any(entity["text"] == "Kyoto" for entity in loaded.sessions["Alice"]["entities"])
+    assert engram.sessions["Alice"]["active_topic"] == "Kyoto"
+    assert any(entity["text"] == "Kyoto" for entity in engram.sessions["Alice"]["entities"])
 
 
 def test_conversation_integration_contextual_fallback_uses_active_topic_and_known_fact() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Cherry blossoms are ephemeral.", user_id="Robin")
 
     result = pipeline.chat(engram, "Their brevity makes them memorable.", user_id="Robin")
@@ -353,7 +351,7 @@ def test_conversation_integration_contextual_fallback_uses_active_topic_and_know
 
 
 def test_conversation_integration_unrelated_question_replaces_stale_topic() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Saturn is less dense than water.", user_id="Robin")
 
     result = pipeline.chat(engram, "How large is the universe?", user_id="Robin")
@@ -363,7 +361,7 @@ def test_conversation_integration_unrelated_question_replaces_stale_topic() -> N
 
 
 def test_conversation_integration_unresolved_unrelated_question_clears_topic() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Writing is a form of thinking.", user_id="Robin")
 
     result = pipeline.chat(engram, "What would you create if you could make one small tool?", user_id="Robin")
@@ -373,7 +371,7 @@ def test_conversation_integration_unresolved_unrelated_question_clears_topic() -
 
 
 def test_conversation_integration_fact_recall_promotes_its_subject_to_active_topic() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Sushi is good.", user_id="Robin")
     pipeline.chat(engram, "Writing is a form of thinking.", user_id="Robin")
 
@@ -384,7 +382,7 @@ def test_conversation_integration_fact_recall_promotes_its_subject_to_active_top
 
 
 def test_conversation_integration_fact_recall_preserves_acronym_topic_casing() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "ENIAC is an early electronic computer.", user_id="Robin")
 
     result = pipeline.chat(engram, "What is ENIAC?", user_id="Robin")
@@ -394,7 +392,7 @@ def test_conversation_integration_fact_recall_preserves_acronym_topic_casing() -
 
 
 def test_conversation_integration_natural_memory_question_uses_fact_recall() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Alice is an architect.", user_id="Robin")
     pipeline.chat(engram, "Carol is a biologist.", user_id="Robin")
 
@@ -405,7 +403,7 @@ def test_conversation_integration_natural_memory_question_uses_fact_recall() -> 
 
 
 def test_conversation_integration_broad_that_is_pattern_yields_to_grounded_dialogue() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Robin")
 
     result = pipeline.chat(engram, "That is the detail I wanted you to retain.", user_id="Robin")
@@ -415,7 +413,7 @@ def test_conversation_integration_broad_that_is_pattern_yields_to_grounded_dialo
 
 
 def test_conversation_integration_exact_pattern_repetition_uses_an_alternative() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     first = pipeline.chat(engram, "Exactly.", user_id="Robin")
     second = pipeline.chat(engram, "Exactly.", user_id="Robin")
 
@@ -424,7 +422,7 @@ def test_conversation_integration_exact_pattern_repetition_uses_an_alternative()
 
 
 def test_conversation_integration_repetition_control_reaches_beyond_three_responses() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     first = pipeline.chat(engram, "Exactly.", user_id="Robin")
     for text in ("Hello.", "Thank you.", "What should I call you?", "How are you?"):
         pipeline.chat(engram, text, user_id="Robin")
@@ -436,7 +434,7 @@ def test_conversation_integration_repetition_control_reaches_beyond_three_respon
 
 
 def test_conversation_integration_repeated_ordinary_input_gets_a_topic_neutral_continuation() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     text = "I like quiet libraries."
     pipeline.chat(engram, text, user_id="Robin")
 
@@ -447,7 +445,7 @@ def test_conversation_integration_repeated_ordinary_input_gets_a_topic_neutral_c
 
 
 def test_conversation_integration_different_topic_shifts_are_not_treated_as_repetition() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     first = pipeline.chat(engram, "Let's talk about oceans.", user_id="Robin")
     second = pipeline.chat(engram, "Let's talk about moons.", user_id="Robin")
 
@@ -456,7 +454,7 @@ def test_conversation_integration_different_topic_shifts_are_not_treated_as_repe
 
 
 def test_conversation_integration_repeated_name_recall_remains_repeatable() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
     pipeline.chat(engram, "My name is Mira.", user_id="Robin")
     first = pipeline.chat(engram, "What is my name?", user_id="Robin")
     second = pipeline.chat(engram, "What is my name?", user_id="Robin")
@@ -466,7 +464,7 @@ def test_conversation_integration_repeated_name_recall_remains_repeatable() -> N
 
 
 def test_conversation_integration_meta_thought_is_not_learned_and_reason_is_visible() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "The thought is that taste can become a map of memory.", user_id="Robin")
 
@@ -482,7 +480,7 @@ def test_conversation_integration_meta_thought_is_not_learned_and_reason_is_visi
 
 
 def test_conversation_integration_transient_chat_assertion_is_not_learned() -> None:
-    engram = _seeded_engram()
+    engram = seeded_engram()
 
     result = pipeline.chat(engram, "Lunch is good today.", user_id="Robin")
 
@@ -497,7 +495,7 @@ def test_conversation_integration_discourse_and_qualified_assertions_are_not_lea
     }
 
     for text, expected_reason in cases.items():
-        engram = _seeded_engram()
+        engram = seeded_engram()
         result = pipeline.chat(engram, text, user_id="Robin")
 
         assert not [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]

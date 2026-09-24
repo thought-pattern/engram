@@ -18,10 +18,10 @@ portable across queries:
   statement; priority applies only when the statement matched (overlap > 0).
 """
 
-import math
 from datetime import UTC, datetime
+from math import log as math_log
 
-from engram.constants import SYNONYM_OVERLAP_WEIGHT
+from engram.constants import EARLIEST_UTC, SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry_hit_rate
 
 
@@ -42,13 +42,13 @@ def keyword_idf(keyword: str, keyword_index: dict[str, dict], total_statements: 
     Returns:
         IDF weight, always positive.
     """
-    entry = keyword_index.get(keyword)
+    entry = keyword_index.get(keyword, {})
     df = len(entry["statement_ids"]) if entry else 0
     if df < 1:
         df = 1
     if total_statements < 1:
         total_statements = 1
-    idf = math.log(1.0 + total_statements / df)
+    idf = math_log(1.0 + total_statements / df)
     return idf
 
 
@@ -135,7 +135,7 @@ def calculate_recency(statement: dict, half_life_seconds: float, current_time=()
     Returns:
         Recency score from 0.0 to 1.0.
     """
-    last_active = statement["last_hit"] or statement["created_at"]
+    last_active = statement.get("last_hit", "") or statement.get("created_at", EARLIEST_UTC)
     observed_at = current_time if isinstance(current_time, datetime) else datetime.now(UTC)
     age_seconds = (observed_at - last_active).total_seconds()
     if age_seconds <= 0:
@@ -165,7 +165,7 @@ def calculate_average_hit_rate(
 
     hit_rates: list[float] = []
     for kw in matched_keywords:
-        entry = keyword_index.get(kw)
+        entry = keyword_index.get(kw, {})
         if entry:
             hit_rates.append(keyword_entry_hit_rate(entry))
         else:
@@ -239,7 +239,7 @@ def score_statement_components(
     current_time=(),
 ) -> dict[str, float]:
     """Return the aggregate lexical score and its existing scoring inputs."""
-    match = keyword_match_weights(query_keywords, statement["keywords"], synonyms)
+    match = keyword_match_weights(query_keywords, statement.get("keywords", []), synonyms)
     overlap = calculate_overlap(match, keyword_index, total_statements)
     exact_matches = sum(1 for weight in match.values() if weight == 1.0)
     synonym_matches = sum(1 for weight in match.values() if 0.0 < weight < 1.0)
@@ -250,7 +250,7 @@ def score_statement_components(
             "overlap": 0.0,
             "recency": 0.0,
             "keyword_hit_rate": 0.0,
-            "priority": float(statement["priority"]),
+            "priority": float(statement.get("priority", 0)),
             "exact_match_ratio": exact_matches / denominator,
             "synonym_match_ratio": synonym_matches / denominator,
         }
@@ -261,11 +261,11 @@ def score_statement_components(
     total_weight = weight_base + weight_recency + weight_hit_rate
     relevance = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate) / total_weight
     result = {
-        "score": relevance + statement["priority"],
+        "score": relevance + statement.get("priority", 0),
         "overlap": overlap,
         "recency": recency,
         "keyword_hit_rate": hit_rate,
-        "priority": float(statement["priority"]),
+        "priority": float(statement.get("priority", 0)),
         "exact_match_ratio": exact_matches / denominator,
         "synonym_match_ratio": synonym_matches / denominator,
     }

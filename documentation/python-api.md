@@ -1,20 +1,32 @@
 # Engram Python API v1
 
-**Status:** Stable transport-neutral mapping contract
+**Status:** Current transport-neutral mapping contract
 **Owner:** Engram project
 **Result schema:** `ResolutionResult` schema version 1
 
 ## Boundary
 
-`EngramCore.resolve_request` is the stable Python entry point for unified
+`EngramCore.resolve_request` is the Python entry point for unified
 resolution. It accepts concrete Python values and returns one validated
 dictionary. Callers use keyed access and may use the explicit codecs in
 `engram.resolution` when a JSON-compatible or serialized value is required.
 
-The existing lower-level `Engram` query, pattern, graph, conversation, and
-regulated-cache operations continue unchanged. CLI, MCP, and the current gRPC
-v1 service remain separate adapters
-with their existing contracts.
+Lower-level `Engram` statement, pattern, graph, and conversation operations are
+current first-party interfaces. MCP and the unversioned gRPC services are
+separate `EngramCore` adapters.
+
+## Process lifetime and static startup data
+
+Each new process loads only the STATIC data provided for that startup. Structured
+pattern, response, and template entries are loaded once into a fresh `Engram`
+with `load_static_data` before it is passed to `EngramCore`. The operation rejects
+an Engram that already contains statements, sessions, accepted responses, or
+mutation receipts; it is not a refresh or synchronization interface.
+
+Restart requires the owner to provide the current static data again. Dynamic
+accepted responses, learned conversational statements and facts, sessions,
+proposals, mutation receipts, reports, turn diagnostics, and their process
+counters are not copied or recovered.
 
 ## Resolve inputs
 
@@ -42,9 +54,7 @@ cooperative structured, semantic, and composition boundaries. It remains transie
 and outside the `request_id` signature. Cancellation discards partial resolution and
 permits retry with the same request ID. An executing external driver call continues
 until the driver returns. Graph I/O isolation keeps unrelated local requests and
-status available during that call. The
-[deployment runbook](operations/deployment-and-rollback-v1.md) defines graph
-disablement and supervisor-stop handling.
+status available during that call.
 
 `resolve_request` also applies the process configuration's exact namespace rollout
 selection. The policy version and selected mode participate in retry identity.
@@ -57,8 +67,10 @@ and fixed per-mode counts aggregated across namespaces.
 
 ## Result access
 
-The exact fields and outcome invariants remain frozen by the
-[unified resolution result contract](evidence/resolution-result-v1.md). Typical keyed access is:
+`ResolutionResult` is a validated dictionary with one `ANSWER`, `EVIDENCE`, or
+`MISS` outcome, bounded candidates, resolver results, diagnostics, budget
+accounting, and an optional bounded Proposition evidence package. Typical keyed
+access is:
 
 ```python
 result = core.resolve_request(
@@ -66,7 +78,7 @@ result = core.resolve_request(
     "resolution-42",
     user_id="sarah",
     namespace="support",
-    configured_resolvers=("exact", "pattern", "lexical"),
+    configured_resolvers=("exact", "sparse", "support_semantic"),
 )
 
 outcome = result["outcome"]
@@ -83,27 +95,32 @@ inside `evidence_package`; fusion authorizes an Engram answer.
 The compact previous query frame supplies session context; the repository owns
 accepted knowledge. It
 is defined with canonical relation resolution in the
-[graph retrieval contracts](graph-retrieval.md). Supplying
-`user_id` preserves the version-1 result dictionary.
+[graph retrieval contracts](graph-retrieval.md). `user_id` selects the bounded
+conversation context used to enrich the frame.
 
-## Feedback and compatibility
+## Feedback and accounting
 
 `record_resolution_feedback` consumes one candidate from the keyed result and
 one typed external Regulator outcome. `inspect_feedback_learning` returns a
-bounded dictionary snapshot. Existing proposal `resolve` remains the regulated
+bounded dictionary snapshot. Proposal `resolve` remains the regulated
 proposal-verdict operation; it is distinct from unified `resolve_request`.
 
-Version 1 retains every lower-level Python call. A future incompatible Python
-shape requires a new API version and documented migration period.
+Accepted-response candidacy and success statistics mutate only the authoritative
+artifact collection. The conversational statement matcher has separate accounting.
+
+`learn_response` admits one new artifact without implicit replacement.
+`supersede_response` atomically retires the current generation and admits its
+explicit replacement, while `retire_response` removes an artifact established as
+globally stale. Generated conversational or pipeline responses are not admitted by
+any implicit learning hook.
 
 ## Operational telemetry
 
 `EngramCore.operational_telemetry()` returns the fixed-cardinality schema-version 1
 process aggregate. `core.status()["telemetry"]` returns the same information alongside
 readiness. It includes outcomes, fixed resolver contributions and states, observed
-latency buckets, budget/resource consumption, rebuilds, durability, and fixed
-Regulator outcomes through fixed aggregate keys. Operational use and incident handling
-are documented in the [deployment runbook](operations/deployment-and-rollback-v1.md).
+latency buckets, budget/resource consumption, and fixed Regulator
+outcomes through fixed aggregate keys.
 
 ## Verification
 
@@ -115,5 +132,5 @@ are documented in the [deployment runbook](operations/deployment-and-rollback-v1
 - `tests/test_resolvers.py` covers response candidates, full Proposition packages,
   accounting, bounded execution, cancellation, and fail-soft dependency behavior.
 - `tests/test_service.py` proves transient cancellation and identical request-ID retry.
-- Existing CLI, MCP, gRPC, conversation, and regulated-cache suites protect the
-  unchanged compatibility surfaces.
+- MCP, gRPC, conversation, and regulated-cache suites verify the current
+  first-party interfaces.

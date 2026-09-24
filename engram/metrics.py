@@ -75,13 +75,8 @@ def get_metrics(engram) -> dict:
 def decay_statistics(engram, factor: float = 0.5) -> int:
     """Age keyword and statement hit statistics by a multiplicative factor.
 
-    Hit statistics are otherwise immortal: an entry that earned a strong hit
-    rate long ago keeps it forever after it stops being used, and min_hit_rate
-    would protect it indefinitely. Calling this periodically (like
-    expire_sessions) ages the evidence -- counts shrink proportionally, so
-    rates are preserved while confidence decays, and an entry that stops
-    re-earning its statistics eventually returns to zero query history and
-    becomes evictable again.
+    Calling this periodically ages aggregate evidence counts. LRU eviction uses
+    timestamps and is therefore independent of this statistical maintenance.
 
     Args:
         engram: Engram instance.

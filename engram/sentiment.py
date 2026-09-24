@@ -24,7 +24,7 @@ from engram.nltk_data import ensure_resource
 
 
 @lru_cache(maxsize=1)
-def _get_analyzer():
+def get_analyzer():
     """Build and cache the VADER analyzer, or return falsy if unavailable."""
     if not ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
         result = ()
@@ -46,7 +46,7 @@ def sentiment_scores(text: str) -> dict:
     if not text or not text.strip():
         neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
-    analyzer = _get_analyzer()
+    analyzer = get_analyzer()
     if not analyzer:
         neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores

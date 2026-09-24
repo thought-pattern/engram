@@ -1,9 +1,9 @@
 """Tests for VADER sentiment analysis and its template integration."""
 
 from engram.constants import NEGATIVE, NEUTRAL, POSITIVE
+from engram.core import Engram
 from engram.sentiment import sentiment_label, sentiment_scores
-
-"""Tests for sentiment_label."""
+from engram.template import process_template, template_context
 
 
 def test_sentiment_label_positive():
@@ -58,21 +58,18 @@ def test_sentiment_scores_empty_neutral_scores():
 
 def test_sentiment_template_transform_transform_positive():
     """{sentiment:...} resolves to a label string."""
-    from engram.template import process_template, template_context
 
     assert process_template("{sentiment:i love it}", template_context()) == POSITIVE
 
 
 def test_sentiment_template_transform_transform_negative():
     """{sentiment:...} labels negative content."""
-    from engram.template import process_template, template_context
 
     assert process_template("{sentiment:this is horrible}", template_context()) == NEGATIVE
 
 
 def test_sentiment_template_transform_transform_resolves_star_first():
     """{sentiment:{star1}} analyzes the captured wildcard."""
-    from engram.template import process_template, template_context
 
     ctx = template_context(stars=["delighted"])
     assert process_template("{sentiment:{star1}}", ctx) == POSITIVE
@@ -83,7 +80,6 @@ def test_sentiment_template_transform_transform_resolves_star_first():
 
 def test_sentiment_integration_negative_emotion_gets_sympathy():
     """A negative 'I am X' routes to a sympathetic response."""
-    from engram.core import Engram
 
     engram = Engram()
     engram.store(
@@ -119,7 +115,6 @@ def test_sentiment_integration_negative_emotion_gets_sympathy():
 
 def test_sentiment_integration_positive_emotion_gets_cheer():
     """A positive 'I am X' routes to a cheerful response."""
-    from engram.core import Engram
 
     engram = Engram()
     engram.store(

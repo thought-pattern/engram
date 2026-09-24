@@ -1,9 +1,8 @@
 """Tests for template processing."""
 
-from engram.constants import VERSION
-from engram.template import TemplateProcessor, get_input, get_map, get_response, get_star, process_template, template_context
+from datetime import datetime
 
-"""Tests for TemplateContext."""
+from engram.template import TemplateProcessor, get_input, get_map, get_response, get_star, process_template, template_context
 
 
 def test_template_context_get_star():
@@ -192,7 +191,7 @@ def test_template_processor_condition_condition_exists():
     ctx = template_context(predicates={"name": "Alice"})
     template = {
         "condition": {
-            "var": "name",
+            "name": "name",
             "exists": {"text": "Hello, {get:name}!"},
             "missing": {"text": "What's your name?"},
         }
@@ -210,11 +209,11 @@ def test_template_processor_condition_condition_by_value():
     ctx = template_context(predicates={"mood": "happy"})
     template = {
         "condition": {
-            "var": "mood",
-            "cases": [
-                {"value": "happy", "template": "Great!"},
-                {"value": "sad", "template": "Sorry to hear."},
-                {"default": "I see."},
+            "name": "mood",
+            "branches": [
+                {"value": "happy", "then": "Great!"},
+                {"value": "sad", "then": "Sorry to hear."},
+                {"then": "I see."},
             ],
         }
     }
@@ -227,13 +226,26 @@ def test_template_processor_condition_condition_by_value():
     assert processor.process(template, ctx3) == "I see."
 
 
+def test_template_processor_rejects_noncurrent_condition_fields():
+    """Only name/branches/then defines the pre-GA condition contract."""
+    processor = TemplateProcessor()
+    context = template_context(predicates={"mood": "happy"})
+    noncurrent = {
+        "condition": {
+            "var": "mood",
+            "cases": [{"value": "happy", "template": "Great!"}],
+        }
+    }
+    assert processor.process(noncurrent, context) == ""
+
+
 def test_template_processor_condition_condition_by_pattern():
     """Test condition by regex pattern."""
     processor = TemplateProcessor()
     ctx = template_context(predicates={"age": "25"})
     template = {
         "condition": {
-            "var": "age",
+            "name": "age",
             "pattern": r"^\d+$",
             "match": {"text": "You are {get:age}."},
             "nomatch": {"text": "Invalid age."},
@@ -251,8 +263,8 @@ def test_template_processor_condition_condition_loop_counts_down():
     ctx = template_context(predicates={"count": "3"})
     template = {
         "condition": {
-            "var": "count",
-            "cases": [
+            "name": "count",
+            "branches": [
                 {"value": "3", "then": {"sequence": [{"set": {"name": "count", "value": "2"}}, {"text": "3"}], "loop": True}},
                 {"value": "2", "then": {"sequence": [{"set": {"name": "count", "value": "1"}}, {"text": "2"}], "loop": True}},
                 {"value": "1", "then": {"text": "liftoff"}},
@@ -269,8 +281,8 @@ def test_template_processor_condition_condition_loop_never_changing_terminates()
     ctx = template_context(predicates={"stuck": "yes"})
     template = {
         "condition": {
-            "var": "stuck",
-            "cases": [
+            "name": "stuck",
+            "branches": [
                 {"value": "yes", "then": {"text": "again", "loop": True}},
             ],
         }
@@ -641,7 +653,7 @@ def test_template_integration_spec_example_what_is_my_name():
     ctx1 = template_context(predicates={"username": "Alice"})
     template = {
         "condition": {
-            "var": "username",
+            "name": "username",
             "exists": {"text": "Your name is {get:username}."},
             "missing": {"text": "I don't know your name yet."},
         }
@@ -662,13 +674,13 @@ def test_template_integration_nested_template():
             {"set": {"name": "greeted", "value": "true"}},
             {
                 "condition": {
-                    "var": "mood",
-                    "cases": [
+                    "name": "mood",
+                    "branches": [
                         {
                             "value": "happy",
-                            "template": {"text": "Hello, {star1}! You seem happy!"},
+                            "then": {"text": "Hello, {star1}! You seem happy!"},
                         },
-                        {"default": "Hello, {star1}."},
+                        {"then": "Hello, {star1}."},
                     ],
                 }
             },
@@ -706,14 +718,6 @@ def test_system_variables_program_default():
     assert result == "ENGRAM"
 
 
-def test_system_variables_version_default():
-    """Test {version} falls back to the package version when bot version not set."""
-    processor = TemplateProcessor()
-    ctx = template_context(bot={})
-    result = processor.process("{version}", ctx)
-    assert result == VERSION
-
-
 def test_system_variables_id_variable():
     """Test {id} returns session ID."""
     processor = TemplateProcessor()
@@ -728,7 +732,6 @@ def test_system_variables_date_formatted():
     ctx = template_context()
     # Use a format that's easy to verify
     result = processor.process("{date:%Y}", ctx)
-    from datetime import datetime
 
     assert result == datetime.now().strftime("%Y")
 
@@ -738,7 +741,6 @@ def test_system_variables_date_formatted_complex():
     processor = TemplateProcessor()
     ctx = template_context()
     result = processor.process("{date:%Y-%m-%d}", ctx)
-    from datetime import datetime
 
     assert result == datetime.now().strftime("%Y-%m-%d")
 

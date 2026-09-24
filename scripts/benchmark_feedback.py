@@ -1,27 +1,25 @@
 """Reproducible offline Section 6 feedback and negative-resolution benchmark."""
 
-import argparse
-import json
-import platform
-import statistics
-import sys
-import time
-import tracemalloc
+from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
+from json import dumps as json_dumps
 from pathlib import Path
+from platform import platform as platform_platform, python_version as platform_python_version
+from statistics import median as statistics_median
+from sys import path as sys_path
+from time import perf_counter_ns as time_perf_counter_ns
+from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY))
+if str(REPOSITORY) not in sys_path:
+    sys_path.insert(0, str(REPOSITORY))
 
 from engram.core import Engram
 from engram.feedback import (
-    FeedbackObservation,
     FeedbackObservationKind,
     FeedbackOutcome,
     FeedbackReferenceKind,
     FeedbackStore,
-    NegativeResolutionKey,
     NegativeResolutionStore,
     canonical_fingerprint,
     constraint_fingerprint,
@@ -41,12 +39,12 @@ NOW_TEXT = "2026-08-16T12:00:00Z"
 POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
 
 
-def _latency(values: list[float]) -> dict[str, float]:
+def internal_latency(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
     p95_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95 + 0.999999) - 1))
     p99_index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.99 + 0.999999) - 1))
     result = {
-        "p50_ms": round(statistics.median(ordered), 4),
+        "p50_ms": round(statistics_median(ordered), 4),
         "p95_ms": round(ordered[p95_index], 4),
         "p99_ms": round(ordered[p99_index], 4),
         "max_ms": round(ordered[-1], 4),
@@ -54,14 +52,14 @@ def _latency(values: list[float]) -> dict[str, float]:
     return result
 
 
-def _time(call) -> tuple[object, float]:
-    started = time.perf_counter_ns()
+def internal_time(call) -> tuple[object, float]:
+    started = time_perf_counter_ns()
     value = call()
-    result = value, (time.perf_counter_ns() - started) / 1_000_000
+    result = value, (time_perf_counter_ns() - started) / 1_000_000
     return result
 
 
-def _observation(index: int, *, statement_id: str = "statement-benchmark") -> FeedbackObservation:
+def observation(index: int, *, statement_id: str = "statement-benchmark") -> dict:
     scope = scope_key(namespace="section6-benchmark")
     result = feedback_observation(
         reference_kind=FeedbackReferenceKind.RESOLUTION_REQUEST,
@@ -80,20 +78,18 @@ def _observation(index: int, *, statement_id: str = "statement-benchmark") -> Fe
     return result
 
 
-def _apply(store: FeedbackStore, request_id: str, value: FeedbackObservation) -> None:
+def internal_apply(store: FeedbackStore, request_id: str, value: dict) -> None:
     candidate = store.prepare(request_id, (value,))
     if not candidate["replayed"]:
         store.replace_from_snapshot(candidate["after"])
 
 
-def _negative_key(index: int) -> NegativeResolutionKey:
+def internal_negative_key(index: int) -> dict:
     scope = scope_key(namespace="section6-benchmark")
     result = negative_resolution_key(
         query_identity=build_standalone_identity(f"negative benchmark request {index}", scope),
         scope=scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
-        knowledge_epoch=1,
-        knowledge_epoch_available=True,
         normalization_version=1,
         resolver_plan_fingerprint=canonical_fingerprint("exact-only"),
         capability_readiness_fingerprint=canonical_fingerprint("ready"),
@@ -102,11 +98,11 @@ def _negative_key(index: int) -> NegativeResolutionKey:
     return result
 
 
-def _populated_store(record_count: int, prefix: str) -> FeedbackStore:
+def populated_store(record_count: int, prefix: str) -> FeedbackStore:
     store = FeedbackStore()
     for start in range(0, record_count, 1_000):
         stop = min(record_count, start + 1_000)
-        observations = tuple(_observation(index, statement_id=f"{prefix}-statement-{index}") for index in range(start, stop))
+        observations = tuple(observation(index, statement_id=f"{prefix}-statement-{index}") for index in range(start, stop))
         candidate = store.prepare(f"{prefix}-batch-{start // 1_000}", observations)
         store.replace_from_snapshot(candidate["after"])
     return store
@@ -116,12 +112,12 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     store = FeedbackStore()
     ingestion = []
     for index in range(samples):
-        _, elapsed = _time(lambda index=index: _apply(store, f"feedback-{index}", _observation(index)))
+        _, elapsed = internal_time(lambda index=index: internal_apply(store, f"feedback-{index}", observation(index)))
         ingestion.append(elapsed)
-    target = _observation(0)
+    target = observation(0)
     history = []
     for _ in range(samples):
-        _, elapsed = _time(
+        _, elapsed = internal_time(
             lambda: store.history(
                 target["query_identity"],
                 target["constraint_fingerprint"],
@@ -137,31 +133,30 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     encoded = feedback_state_to_json(state)
     round_trip = []
     for _ in range(samples):
-        _, elapsed = _time(lambda: feedback_state_from_json(encoded))
+        _, elapsed = internal_time(lambda: feedback_state_from_json(encoded))
         round_trip.append(elapsed)
 
-    scale_store = _populated_store(scale_records, "scale")
-    scale_started_ns = time.perf_counter_ns()
+    scale_store = populated_store(scale_records, "scale")
+    scale_started_ns = time_perf_counter_ns()
     scale_probe = scale_store.prepare(
         "scale-probe",
-        (_observation(scale_records, statement_id="scale-probe-statement"),),
+        (observation(scale_records, statement_id="scale-probe-statement"),),
     )
-    scale_prepare_ms = (time.perf_counter_ns() - scale_started_ns) / 1_000_000
+    scale_prepare_ms = (time_perf_counter_ns() - scale_started_ns) / 1_000_000
     scale_state = scale_probe["after"]
     scale_encoded = feedback_state_to_json(scale_state)
-    _, scale_round_trip_ms = _time(lambda: feedback_state_from_json(scale_encoded))
+    _, scale_round_trip_ms = internal_time(lambda: feedback_state_from_json(scale_encoded))
 
     ordinary_engine = Engram()
     ordinary = EngramCore(ordinary_engine, clock=lambda: NOW)
     cached_engine = Engram()
-    cached_engine.namespace_epochs.initialize("section6-benchmark", 1)
     cached = EngramCore(cached_engine, clock=lambda: NOW)
     request = "Section six repeated benchmark miss"
     cached.resolve_request(request, "cached-prime", namespace="section6-benchmark", configured_resolvers=("exact",))
     ordinary_misses = []
     negative_hits = []
     for index in range(samples):
-        _, elapsed = _time(
+        _, elapsed = internal_time(
             lambda index=index: ordinary.resolve_request(
                 request,
                 f"ordinary-{index}",
@@ -170,7 +165,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
             )
         )
         ordinary_misses.append(elapsed)
-        _, elapsed = _time(
+        _, elapsed = internal_time(
             lambda index=index: cached.resolve_request(
                 request,
                 f"cached-{index}",
@@ -180,23 +175,24 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         )
         negative_hits.append(elapsed)
 
-    tracemalloc.start()
-    _memory_feedback = _populated_store(memory_records, "memory")
-    _, feedback_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    tracemalloc_start()
+    feedback_store = populated_store(memory_records, "memory")
+    _, feedback_peak = tracemalloc_get_traced_memory()
+    del feedback_store
+    tracemalloc_stop()
 
-    tracemalloc.start()
+    tracemalloc_start()
     negatives = NegativeResolutionStore(max_records=memory_records, ttl_seconds=300)
     for index in range(memory_records):
-        negatives.admit(_negative_key(index), NOW_TEXT)
-    _, negative_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+        negatives.admit(internal_negative_key(index), NOW_TEXT)
+    _, negative_peak = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
 
-    ordinary_latency = _latency(ordinary_misses)
-    negative_latency = _latency(negative_hits)
-    ingestion_latency = _latency(ingestion)
-    history_latency = _latency(history)
-    round_trip_latency = _latency(round_trip)
+    ordinary_latency = internal_latency(ordinary_misses)
+    negative_latency = internal_latency(negative_hits)
+    ingestion_latency = internal_latency(ingestion)
+    history_latency = internal_latency(history)
+    round_trip_latency = internal_latency(round_trip)
     gates = {
         "feedback_peak_under_64_mib": feedback_peak < 64 * 1024 * 1024,
         "negative_peak_under_32_mib": negative_peak < 32 * 1024 * 1024,
@@ -209,8 +205,8 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "source": benchmark_source_state(),
         "provenance": "synthetic offline engineering regression; no formula or threshold was fitted from these samples",
         "environment": {
-            "python": platform.python_version(),
-            "platform": platform.platform(),
+            "python": platform_python_version(),
+            "platform": platform_platform(),
         },
         "parameters": {"samples": samples, "memory_records": memory_records, "scale_records": scale_records},
         "latency": {
@@ -224,7 +220,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
             "scale_feedback_state_round_trip_ms": round(scale_round_trip_ms, 4),
         },
         "timing_assessment": "reported observations; no pass/fail threshold",
-        "persistence": {
+        "serialization": {
             "empty_feedback_state_bytes": len(feedback_state_to_json(feedback_state()).encode("utf-8")),
             "populated_feedback_state_bytes": len(encoded.encode("utf-8")),
             "statement_records": len(state["statement_records"]),
@@ -248,7 +244,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--memory-records", type=int, default=100)
     parser.add_argument("--scale-records", type=int, default=5_000)
@@ -258,8 +254,8 @@ def main() -> None:
         raise SystemExit("samples and memory-records must be at least 10; scale-records must be from 1,000 through 9,999")
     result = run_benchmark(arguments.samples, arguments.memory_records, arguments.scale_records)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps(result, indent=2, sort_keys=True))
+    arguments.output.write_text(json_dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json_dumps(result, indent=2, sort_keys=True))
     if not result["all_engineering_gates_passed"]:
         raise SystemExit("one or more Section 6 engineering gates failed")
 

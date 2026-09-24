@@ -1,16 +1,15 @@
 # Graph retrieval contracts
 
-Graph retrieval is optional and read-only. It enriches a resolution request with
-canonical identity and retrieves bounded Proposition evidence through fixed parameterized
-capabilities with typed identity and relation inputs.
+Graph retrieval is optional and issues no writes. It enriches a resolution request
+with canonical identity and retrieves bounded Proposition evidence through fixed
+parameterized capabilities with typed identity and relation inputs.
 
 ## Context and canonical identity
 
 `EngramCore` retains one compact previous frame per user for bounded elliptical
-follow-ups. The state contains only the prior request, resolved text, canonical
-entities, relation, object type, inheritance provenance, evaluation time, and
-knowledge epoch. It expires with the configured context TTL; accepted knowledge
-remains in the repository.
+follow-ups. The state contains only the prior operator, subjects, relation,
+expected object type, temporal query, qualifiers, source turn, confidence, and
+topic. It shares the owning conversation's configured context lifetime.
 
 Contextual enrichment may inherit an unambiguous prior subject when the current
 request supplies a relation but omits the subject. Canonical entity and predicate
@@ -55,10 +54,13 @@ unknown cardinality produce `EVIDENCE` or `MISS`.
 
 ## Availability and timing
 
-Graph readiness is reported separately from core readiness. A graph connection,
-query, or optional vector-index failure makes the affected resolver unavailable and
-local resolvers continue. Cooperative cancellation is checked around graph calls but
-an executing driver call continues until the driver returns.
+Graph readiness is reported separately from core readiness. During resolution, a
+graph connection, query, or optional vector-index failure contributes no result and
+local resolvers continue. If no resolver supplies a result, the outward outcome is the
+same `MISS` returned after a successful graph query with no rows, not a separate
+unavailable resolution outcome. Component diagnostics may still report the graph
+failure. Cooperative cancellation is checked around graph calls, but an executing
+driver call continues until the driver returns.
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 

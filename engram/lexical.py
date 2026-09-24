@@ -1,10 +1,8 @@
 """Dependency-free lexical term selection shared by retrieval pipelines."""
 
-from collections.abc import Sequence
-
 
 def select_lexical_terms(
-    tokens: Sequence[str],
+    tokens: list[str],
     stopwords: set[str],
     *,
     allow_technical: bool = False,

@@ -18,15 +18,15 @@ visibility, lifecycle, identity, type, and ambiguity.
 
 ## Canonical feature contract
 
-Every canonical input has range `[0.0, 1.0]`, where larger is better.
-`NormalizedFeatureSet` contains a concrete numeric value for every feature and a
-separate availability set, distinguishing absent observations from measured zero.
+Every canonical input has range `[0.0, 1.0]`, where larger is better. A
+`NormalizedFeatureSet` dictionary contains a concrete numeric value for every
+feature and a separate availability set, distinguishing absent observations
+from measured zero.
 
 | Feature | Meaning | Available from |
 | --- | --- | --- |
 | `exact` | Scoped normalized request equality | exact lookup |
-| `pattern` | Bounded pattern specificity | pattern resolver |
-| `lexical` | Calibrated lexical relevance | lexical score or overlap |
+| `lexical` | Calibrated lexical relevance | sparse score |
 | `semantic` | Bounded semantic similarity | semantic model |
 | `entity` | Query/candidate entity identity agreement | identity comparison |
 | `relation` | Query/candidate relation agreement | relation comparison |
@@ -38,35 +38,33 @@ separate availability set, distinguishing absent observations from measured zero
 | `agreement` | Distinct resolver agreement on one statement | deduplication |
 | `margin` | Leading score minus runner-up score | two score-eligible candidates |
 
-The executable definitions, including range and absence text, are the closed `FEATURE_DEFINITIONS` mapping. Tests assert exact coverage of the 13-member `FusionFeature` vocabulary.
+The executable definitions, including range and absence text, are the closed `FEATURE_DEFINITIONS` mapping. Tests assert exact coverage of the 12-member `FusionFeature` vocabulary.
 
 ## Resolver-specific normalization
 
 Each raw resolver scale maps to named canonical features:
 
 - `exact_match` is clamped to `[0, 1]` and mapped only to `exact`.
-- `pattern_specificity = s` maps to `s / (s + 4)` after negative values are floored at zero.
-- the lexical scorer's documented `[0, 1]` `lexical_score` is used directly; `lexical_overlap` is its fallback. The legacy test-only `score` alias is accepted only for a lexical source.
-- `semantic_score` is the raw bounded similarity. `legacy_retrieval_score` and `vector_weight` are ignored because they are different or already blended scales.
+- the sparse scorer's documented `[0, 1]` `sparse_score` is used directly and mapped only to `lexical`.
+- `semantic_score` is the raw bounded similarity and is mapped only from semantic sources.
 - `entity_match`, `relation_match`, and `object_type_match` map only to their named canonical features; contextual resolution owns their trusted producers.
-- `support_coverage` is accepted only from support-semantic candidates, lexical `recency` only from lexical candidates, and `authority_score` only from semantic candidates. Raw resolver `hit_rate` is ignored; history enters through current authoritative artifact and versioned feedback statistics.
-- `priority`, `legacy_retrieval_score`, and `vector_weight` remain raw provenance and stay outside canonical features.
+- `support_coverage` is accepted only from support-semantic candidates, and `authority_score` only from semantic candidates. Raw resolver `hit_rate`, `priority`, and `vector_weight` do not become canonical features; history enters through the current authoritative artifact and feedback statistics.
 - an authoritative artifact can replace support and history with its current support links and `hit_count / query_count`. Authority is available only from an explicit finite `metadata.authority` value.
 
 Central eligibility and the threshold/margin policy run after clamping.
 
 ## Deduplication and agreement
 
-Candidates group by stable `statement_id`, then sort by the fixed source order exact, support semantic, pattern, lexical, standalone semantic, and utility. A response, scope, or lifecycle disagreement makes the group unselectable. Evidence IDs are deduplicated while every original candidate remains in its owning resolver result.
+Candidates group by stable `statement_id`, then sort by the fixed source order exact, support semantic, sparse, standalone semantic, and utility. A response, scope, or lifecycle disagreement makes the group unselectable. Evidence IDs are deduplicated while every original candidate remains in its owning resolver result.
 
-For compatible duplicates, positive relevance features take the maximum normalized observation. Entity, relation, object type, support completeness, freshness, and authority take the minimum, preserving mismatches and weak trust signals. Agreement is `min(1, (distinct_resolver_families - 1) / 2)`: one family is a measured zero, two families produce `0.5`, and three or more produce `1.0`. Distinct configured families determine agreement. The merged candidate gets a deterministic policy/request/statement-derived ID and preserves exact response bytes from the strongest compatible contribution.
+For non-conflicting duplicates, positive relevance features take the maximum normalized observation. Entity, relation, object type, support completeness, freshness, and authority take the minimum, preserving mismatches and weak trust signals. Agreement is `min(1, (distinct_resolver_families - 1) / 2)`: one family is a measured zero, two families produce `0.5`, and three or more produce `1.0`. Distinct configured families determine agreement. The merged candidate gets a deterministic policy/request/statement-derived ID and preserves exact response bytes from the strongest contribution.
 
 The report is bounded to 16,384 encoded bytes, eight candidates, and eight inline
 contribution summaries per candidate, with explicit omitted counts. Raw resolver
 results follow the separate result-output budget.
 
-`FusionDecision.working_memory_bytes` estimates the serialized working set for
-inputs, evidence, normalized contributions, fused groups, and the report. The
+`FusionDecision["working_memory_bytes"]` estimates the serialized working set
+for inputs, evidence, normalized contributions, fused groups, and the report. The
 orchestrator supplies the allowance remaining after resolver execution;
 insufficient allowance returns `fusion_memory_exhausted` with an empty selection.
 
@@ -75,7 +73,7 @@ insufficient allowance returns `fusion_memory_exhausted` with an empty selection
 Eligibility runs before a candidate can influence an answer decision:
 
 1. require exact scope and `ACTIVE` lifecycle and reject same-statement response conflicts;
-2. for artifacts, re-run lifecycle, validity-time, namespace-epoch, and repository availability policy against the captured request context;
+2. for artifacts, re-run lifecycle, validity-time, namespace, and repository availability policy against the captured request context;
 3. require the authoritative response bytes, requested metadata, and requested source label to still match;
 4. enforce ownership visibility: absent, `public`, and `scope` use the exact `ScopeKey`; `context` additionally requires the exact non-empty owner context fingerprint; unknown or private modes abstain when authoritative private-owner identity is unavailable;
 5. treat explicit `support_complete: false` as answer-ineligible;
@@ -98,7 +96,7 @@ score = exact + (1 - exact) * weighted_average
 The sums include available inputs. `margin` has weight zero because it is
 calculated after ranking. Exact match dominates at `1.0`. The versioned
 weights and gates are serialized in every fusion report and have fingerprint
-`1f9d19acaedc277b4916bc366e74dc8c03d921e335acd21ac7fc2f1b449d963c`.
+`f1c09a8f7e87cca3ac7b1bcf5712b0c7c622ac2988c1a97f41f4dbe400dce72d`.
 
 The released gates are:
 

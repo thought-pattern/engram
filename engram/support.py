@@ -4,7 +4,6 @@ Engram validates structure for safe storage and transport. It does not
 interpret epistemic state; Tapestry performs current-state validation.
 """
 
-
 SUPPORT_CONTRACT = "tapestry-engram-support-v1"
 REPRESENTATION_CONTRACT = "tapestry-ke-representation-v1"
 SUPPORT_REFERENCE_FIELDS = {
@@ -16,7 +15,6 @@ SUPPORT_REFERENCE_FIELDS = {
     "representation_contract",
     "visibility_scope",
     "dependency_state_digest",
-    "store_epoch",
 }
 VISIBILITY_FIELDS = {"kind", "company_id", "customer_id", "engagement_id"}
 
@@ -69,9 +67,9 @@ def validate_support_reference(value) -> dict:
     if not isinstance(value, dict) or set(value) != SUPPORT_REFERENCE_FIELDS:
         raise ValueError("support reference has an invalid shape")
     if value.get("schema_version", "") != SUPPORT_CONTRACT:
-        raise ValueError("support reference schema_version is incompatible")
+        raise ValueError("support reference schema_version is unsupported")
     if value.get("representation_contract", "") != REPRESENTATION_CONTRACT:
-        raise ValueError("support reference representation contract is incompatible")
+        raise ValueError("support reference representation contract is unsupported")
     kind = support_text(value.get("record_kind", ""), "support record_kind")
     if kind not in {"assertion", "proposition"}:
         raise ValueError("support record_kind is not registered")
@@ -85,12 +83,10 @@ def validate_support_reference(value) -> dict:
         proposition_revision = support_revision(proposition_revision, "support support_revision")
     elif proposition_revision != {}:
         raise ValueError("Assertion support_revision must be {}")
-    digest = support_text(
-        value.get("dependency_state_digest", ""), "support dependency_state_digest"
-    )
+    digest = support_text(value.get("dependency_state_digest", ""), "support dependency_state_digest")
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
-    return {
+    result = {
         "schema_version": SUPPORT_CONTRACT,
         "record_kind": kind,
         "id": identifier,
@@ -99,8 +95,8 @@ def validate_support_reference(value) -> dict:
         "representation_contract": REPRESENTATION_CONTRACT,
         "visibility_scope": validate_support_visibility(value.get("visibility_scope", {})),
         "dependency_state_digest": digest,
-        "store_epoch": support_text(value.get("store_epoch", ""), "support store_epoch"),
     }
+    return result
 
 
 def validate_support_references(value) -> tuple:
