@@ -2,7 +2,9 @@
 
 from difflib import SequenceMatcher
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
+from os import path as os_path
 from pathlib import Path
 from random import choice as random_choice
 from threading import Lock as threading_Lock, RLock as threading_RLock
@@ -187,6 +189,72 @@ def failed_graph_read(operation: str, error: BaseException, empty):
     return result
 
 
+def normalize_seed_pair(pair, path: str) -> dict:
+    """Validate one seed entry using the same rules as ``load_static_data``."""
+    if not isinstance(pair, dict):
+        raise ValueError(f"seed file {path} entries must be objects")
+    text = pair.get("response", "")
+    pattern = pair.get("pattern", "")
+    that = pair.get("that", "")
+    topic = pair.get("topic", "")
+    template = pair.get("template", {})
+    if not isinstance(text, str):
+        raise ValueError(f"seed file {path} responses must be strings")
+    if not all(isinstance(value, str) for value in (pattern, that, topic)):
+        raise ValueError(f"seed file {path} pattern, that, and topic values must be strings")
+    if not isinstance(template, dict):
+        raise ValueError(f"seed file {path} templates must be objects")
+    if not text.strip() and not template:
+        raise ValueError(f"seed file {path} entries require a response or template")
+    result = {
+        "pattern": pattern,
+        "response": text,
+        "that": that,
+        "topic": topic,
+        "template": dict(template),
+    }
+    return result
+
+
+def read_seed_file(path: str) -> list:
+    """Read one ``{"pairs": [...]}`` seed file."""
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("seed file paths must be non-empty strings")
+    seed_path = path.strip()
+    if not os_path.isfile(seed_path):
+        raise ValueError(f"seed file {seed_path} is missing or is not a file")
+    try:
+        with open(seed_path, encoding="utf-8") as handle:
+            data = json_load(handle)
+    except json_JSONDecodeError as error:
+        raise ValueError(f"seed file {seed_path} is not valid JSON") from error
+    pairs = data.get("pairs") if isinstance(data, dict) else ()
+    if not isinstance(pairs, list):
+        raise ValueError(f"seed file {seed_path} requires a pairs array")
+    result = [normalize_seed_pair(pair, seed_path) for pair in pairs]
+    return result
+
+
+def load_seed_files(paths: list | tuple) -> list:
+    """Read seed files in listed order and return one concatenated pair list.
+
+    This does not touch an Engram. A repeated pattern, that, and topic raises
+    before any statement is stored. The error names both files and the pattern.
+    """
+    if isinstance(paths, str) or not isinstance(paths, (list, tuple)):
+        raise ValueError("seed files must be a list of paths")
+    pairs: list[dict] = []
+    origins: dict[tuple[str, str, str], str] = {}
+    for path in paths:
+        for pair in read_seed_file(path):
+            key = (pair["pattern"], pair["that"], pair["topic"])
+            if key in origins:
+                raise ValueError(f"duplicate seed pattern {pair['pattern']!r} in {origins[key]} and {path}")
+            origins[key] = path
+            pairs.append(pair)
+    return pairs
+
+
 class Engram:
     """Keyword-indexed statement store with hit-rate tracking.
 
@@ -200,6 +268,7 @@ class Engram:
 
         Args:
             config: Configuration options. Uses defaults if not provided.
+                ``conversation.seed_files`` is read once here, before serving.
         """
         if not isinstance(config, dict):
             raise ValueError("config must be an object")
@@ -212,11 +281,18 @@ class Engram:
         self.sessions: dict[str, dict] = {}
         self.pattern_to_statement: dict[str, str] = {}  # pattern -> statement_id
 
-        # Bot properties and data (public for direct access)
+        # Bot properties and data (public for direct access). The persona name
+        # is applied before patterns are added, so {bot:name} follows config
+        # even when no seed file is loaded.
+        conversation_settings = self.config.get("conversation") or {}
+        bot_name = conversation_settings.get("bot_name", "ENGRAM")
+        if not isinstance(bot_name, str) or not bot_name.strip():
+            raise ValueError("conversation bot_name must be a non-empty string")
         self.bot_properties: dict[str, str] = {
-            "name": "ENGRAM",
+            "name": bot_name.strip(),
             "version": VERSION,
         }
+        seed_files = conversation_settings.get("seed_files") or []
         self.sets: dict[str, list[str]] = {}
         self.maps: dict[str, dict[str, str]] = {}
 
@@ -257,6 +333,11 @@ class Engram:
         self.eviction_count = 0
         self.operational_metrics = operational_telemetry()
 
+        # Reject a missing file or a repeated pattern before opening a graph
+        # connection and before any statement is stored. Indexing waits until
+        # preflight has confirmed the NLTK readers.
+        static_pairs = load_seed_files(seed_files) if seed_files else []
+
         # Graph tooling is optional even when configured. Construction records
         # its readiness, but an unavailable graph must not prevent the local
         # cache, matcher, conversation, or regulated-response paths from serving.
@@ -284,6 +365,8 @@ class Engram:
             self.component_status = self.preflight_components()
         except RuntimeError as error:
             raise ValueError(f"component preflight failed: {error}") from error
+        if static_pairs:
+            self.load_static_data(static_pairs)
 
     @property
     def graph_client(self):

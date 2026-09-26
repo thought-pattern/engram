@@ -17,6 +17,7 @@ EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
 EMPTY_RERANKER_CONFIG = EMPTY_CONFIG
 EMPTY_ROLLOUT_CONFIG = EMPTY_CONFIG
 EMPTY_UTILITY_CONFIG = EMPTY_CONFIG
+EMPTY_CONVERSATION_CONFIG = EMPTY_CONFIG
 
 
 def graph_config(
@@ -285,6 +286,55 @@ def rollout_config(
     return result
 
 
+def conversation_config(
+    bot_name: str = "ENGRAM",
+    seed_files: list | tuple = (),
+) -> dict:
+    """Build the conversation persona and the seed files loaded at startup.
+
+    An empty ``seed_files`` list loads nothing. Paths stored here are used as
+    given; ``load_config`` resolves paths from a YAML file before this runs.
+    """
+    if not isinstance(bot_name, str) or not bot_name.strip():
+        raise ValueError("conversation bot_name must be a non-empty string")
+    if isinstance(seed_files, str) or not isinstance(seed_files, (list, tuple)):
+        raise ValueError("conversation seed_files must be a list of strings")
+    paths = []
+    for entry in seed_files:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError("conversation seed_files entries must be non-empty strings")
+        paths.append(entry.strip())
+    config = {
+        "bot_name": bot_name.strip(),
+        "seed_files": paths,
+    }
+    return config
+
+
+def resolve_conversation_seed_files(seed_files, config_path: str) -> list:
+    """Resolve seed paths against the YAML file's directory.
+
+    Absolute entries stay absolute. A missing file, a directory, or any other
+    non-file raises an error that names the path and the config file.
+    """
+    if isinstance(seed_files, str) or not isinstance(seed_files, (list, tuple)):
+        raise ValueError(f"conversation seed_files in {config_path} must be a list of strings")
+    config_directory = os_path.dirname(os_path.abspath(config_path))
+    resolved = []
+    for entry in seed_files:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(f"conversation seed_files in {config_path} must contain non-empty strings")
+        raw_path = entry.strip()
+        if os_path.isabs(raw_path):
+            candidate = os_path.abspath(raw_path)
+        else:
+            candidate = os_path.abspath(os_path.join(config_directory, raw_path))
+        if not os_path.isfile(candidate):
+            raise ValueError(f"conversation seed file {candidate} listed in {config_path} is missing or is not a file")
+        resolved.append(candidate)
+    return resolved
+
+
 def engram_config(
     # Capacity settings
     capacity: int = 10000,
@@ -327,6 +377,8 @@ def engram_config(
     rollout: dict = EMPTY_ROLLOUT_CONFIG,
     # Allow-listed deterministic utility operations
     utility: dict = EMPTY_UTILITY_CONFIG,
+    # Persona name and the seed files loaded once at startup
+    conversation: dict = EMPTY_CONVERSATION_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
@@ -341,6 +393,8 @@ def engram_config(
         raise ValueError("rollout config must be an object")
     if not isinstance(utility, dict):
         raise ValueError("utility config must be an object")
+    if not isinstance(conversation, dict):
+        raise ValueError("conversation config must be an object")
     if capacity < 1:
         raise ValueError("capacity must be at least 1")
     if max_sessions < 1:
@@ -396,6 +450,7 @@ def engram_config(
         "reranker": reranker_config(**reranker) if reranker else reranker_config(),
         "rollout": rollout_config(**rollout) if rollout else rollout_config(),
         "utility": utility_config(**utility) if utility else utility_config(),
+        "conversation": conversation_config(**conversation) if conversation else conversation_config(),
     }
     return config
 
@@ -423,6 +478,9 @@ def config_to_dict(config: dict) -> dict:
     }
     data["utility"] = dict(config.get("utility", {}) or utility_config())
     data.get("utility", {})["plugins"] = list(data.get("utility", {})["plugins"])
+    conversation = dict(config.get("conversation", {}) or conversation_config())
+    conversation["seed_files"] = list(conversation.get("seed_files", ()))
+    data["conversation"] = conversation
     return data
 
 
@@ -430,8 +488,8 @@ def config_from_dict(data: dict) -> dict:
     """Rebuild a validated config dict from its JSON-ready form.
 
     Inverse of ``config_to_dict``: enum values are mapped back to their enums,
-    the stopword list back to a set, and the graph section revalidated through
-    ``graph_config``. Missing keys fall back to ``engram_config`` defaults.
+    the stopword list back to a set, and nested sections revalidated. Seed paths
+    are kept as stored. Missing keys fall back to ``engram_config`` defaults.
     """
     if not isinstance(data, dict):
         raise ValueError("serialized config must be an object")
@@ -470,6 +528,11 @@ def config_from_dict(data: dict) -> dict:
             raise ValueError("serialized utility config must be an object")
         if params.get("utility", {}):
             params["utility"] = utility_config(**params.get("utility", {}))
+    if "conversation" in params:
+        if not isinstance(params.get("conversation", {}), dict):
+            raise ValueError("serialized conversation config must be an object")
+        if params.get("conversation", {}):
+            params["conversation"] = conversation_config(**params.get("conversation", {}))
     config = engram_config(**params)
     return config
 
@@ -479,9 +542,11 @@ def load_config(path: str = "config.yml") -> dict:
 
     A missing or empty file returns the ``engram_config`` defaults. Scalar keys
     map straight through; ``session_overflow`` is given by its string value,
-    and a ``graph`` mapping is built with ``graph_config``.
-    An unknown key raises ValueError naming the key and the file -- a config
-    typo should fail loudly, not be dropped.
+    and nested mappings are built with their section normalizers. Seed paths in
+    ``conversation.seed_files`` are resolved against this file's directory and
+    stored absolute. A missing seed file, a directory, or a non-file raises
+    ValueError naming that path and this file. An unknown key raises ValueError
+    naming the key and the file -- a config typo should fail loudly, not be dropped.
 
     Args:
         path: Path to the YAML configuration file.
@@ -578,6 +643,20 @@ def load_config(path: str = "config.yml") -> dict:
                 f"(expected: {', '.join(sorted(utility_keys))})"
             )
         data["utility"] = utility_config(**data["utility"])
+    if "conversation" in data and data["conversation"]:
+        if not isinstance(data["conversation"], dict):
+            raise ValueError(f"conversation config in {path} must be an object")
+        conversation_keys = {"bot_name", "seed_files"}
+        unknown_conversation = set(data["conversation"]) - conversation_keys
+        if unknown_conversation:
+            raise ValueError(
+                f"Unknown conversation config key(s) in {path}: {', '.join(sorted(unknown_conversation))} "
+                f"(expected: {', '.join(sorted(conversation_keys))})"
+            )
+        section = dict(data["conversation"])
+        if "seed_files" in section:
+            section["seed_files"] = resolve_conversation_seed_files(section["seed_files"], path)
+        data["conversation"] = conversation_config(**section)
 
     try:
         config = engram_config(**data)

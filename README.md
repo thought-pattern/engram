@@ -35,8 +35,10 @@ the sole accepted-response artifact collection, and regulated-cache proposal
 state. Python callers and the MCP and gRPC adapters invoke that core. The lower-level
 `Engram`, `pipeline`, and `sessions` Python APIs remain available.
 
-A new process loads its current provided STATIC data once, before serving, with
-`Engram.load_static_data`. Static data is startup input, not recovered Engram
+A new process loads its current provided STATIC data once, before serving.
+When `conversation.seed_files` lists seed files, startup reads them and calls
+`Engram.load_static_data` once. Callers can still pass a pair list to that
+method on a fresh Engram. Static data is startup input, not recovered Engram
 state. Restart begins with no dynamic accepted responses, learned conversational
 statements or facts, sessions, proposals, mutation receipts, reports, turn
 diagnostics, or counters inherited from the previous process.
@@ -205,6 +207,16 @@ config = engram_config(
 )
 
 engram = Engram(config=config)
+```
+
+A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI, MCP server, and gRPC server do when the list is left empty. List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored.
+
+```yaml
+conversation:
+  bot_name: "ENGRAM"
+  seed_files:
+    - data/seed.json
+    - data/social/small-talk.json
 ```
 
 Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic

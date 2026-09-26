@@ -108,6 +108,17 @@ polish_responses: true # Repair casing in pattern-path responses
 # --- Fallback ---
 fallback_response: "" # Response when nothing matches ("" = no fallback)
 
+# --- Conversation ---
+# Seed files load once at startup, in the order listed. Paths are relative to
+# this file. Leave the list empty for a silent process. To run as a social
+# bot, list the corpus files here. Keep the catch-all pattern in one file;
+# later files add specific patterns and do not replace earlier ones.
+conversation:
+  bot_name: ENGRAM
+  seed_files: []
+  # - data/seed.json
+  # - data/social/small-talk.json
+
 # --- Knowledge graph (optional) ---
 # MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
 # interface. Standalone DDL uses: python scripts/setup_schema.py --apply

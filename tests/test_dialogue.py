@@ -20,6 +20,7 @@ from engram.dialogue import (
     extract_dialogue_entities,
     infer_active_topic,
     repeated_input_response_options,
+    repetition_response_options,
     select_turn_candidate,
     topic_from_statement_pattern,
     topic_is_referenced,
@@ -248,7 +249,7 @@ def test_conversation_integration_topic_shift_uses_the_normalized_topic() -> Non
 
     assert result["pattern"] == "LET US TALK ABOUT *"
     assert result["active_topic"] == "cities"
-    assert result["response"] == "Sure - let's talk about cities."
+    assert "cities" in result["response"].lower()
 
 
 def test_conversation_integration_return_to_is_an_explicit_topic_shift() -> None:
@@ -260,7 +261,7 @@ def test_conversation_integration_return_to_is_an_explicit_topic_shift() -> None
 
     assert result["dialogue_act"] == DIALOGUE_TOPIC_SHIFT
     assert result["active_topic"] == "Kyoto"
-    assert result["response"] == "Sure - let's talk about Kyoto."
+    assert "kyoto" in result["response"].lower()
 
 
 def test_conversation_integration_discourse_frames_do_not_displace_an_established_topic() -> None:
@@ -291,7 +292,7 @@ def test_conversation_integration_closing_act_overrides_broad_that_is_pattern() 
     result = pipeline.chat(engram, "Thank you. That is enough for today.", user_id="Robin")
 
     assert result["dialogue_act"] == DIALOGUE_CLOSING
-    assert result["response"] == "You're welcome. We can stop here for today."
+    assert result["response"] in contextual_fallback_options(DIALOGUE_CLOSING, had_gratitude=True)
 
 
 def test_conversation_integration_closing_survives_a_trailing_farewell_statement() -> None:
@@ -304,7 +305,7 @@ def test_conversation_integration_closing_survives_a_trailing_farewell_statement
     )
 
     assert result["dialogue_act"] == DIALOGUE_CLOSING
-    assert result["response"] == "Of course. We can stop here for today."
+    assert result["response"] in contextual_fallback_options(DIALOGUE_CLOSING)
 
 
 def test_conversation_integration_a_request_after_goodbye_reopens_the_turn() -> None:
@@ -313,7 +314,8 @@ def test_conversation_integration_a_request_after_goodbye_reopens_the_turn() -> 
     result = pipeline.chat(engram, "Goodbye. What is your name?", user_id="Robin")
 
     assert result["dialogue_act"] == DIALOGUE_QUESTION
-    assert result["response"] == "I'm ENGRAM, an AIML-style chatbot."
+    assert result["pattern"] == "WHAT IS YOUR NAME"
+    assert "ENGRAM" in result["response"]
 
 
 def test_conversation_integration_trailing_gratitude_does_not_hide_an_earlier_question() -> None:
@@ -323,7 +325,7 @@ def test_conversation_integration_trailing_gratitude_does_not_hide_an_earlier_qu
 
     assert result["dialogue_act"] == DIALOGUE_QUESTION
     assert result["pattern"] == "WHAT SHOULD I CALL YOU"
-    assert result["response"] == "You can call me ENGRAM."
+    assert "ENGRAM" in result["response"]
 
 
 def test_conversation_integration_topic_and_entities_are_per_user_in_process() -> None:
@@ -409,7 +411,11 @@ def test_conversation_integration_broad_that_is_pattern_yields_to_grounded_dialo
     result = pipeline.chat(engram, "That is the detail I wanted you to retain.", user_id="Robin")
 
     assert result["pattern"] == "THAT IS *"
-    assert result["response"] == "That connects with what you said about Kyoto: Kyoto is beautiful in spring."
+    assert result["response"] in contextual_fallback_options(
+        result["dialogue_act"],
+        topic="Kyoto",
+        fact_text="Kyoto is beautiful in spring.",
+    )
 
 
 def test_conversation_integration_exact_pattern_repetition_uses_an_alternative() -> None:
@@ -417,8 +423,8 @@ def test_conversation_integration_exact_pattern_repetition_uses_an_alternative()
     first = pipeline.chat(engram, "Exactly.", user_id="Robin")
     second = pipeline.chat(engram, "Exactly.", user_id="Robin")
 
-    assert first["response"] == "Exactly!"
-    assert second["response"] == "Right - I heard you."
+    assert second["response"] != first["response"]
+    assert second["response"] in repetition_response_options(DIALOGUE_ACKNOWLEDGMENT)
 
 
 def test_conversation_integration_repetition_control_reaches_beyond_three_responses() -> None:
@@ -429,8 +435,8 @@ def test_conversation_integration_repetition_control_reaches_beyond_three_respon
 
     repeated = pipeline.chat(engram, "Exactly.", user_id="Robin")
 
-    assert first["response"] == "Exactly!"
-    assert repeated["response"] == "Right - I heard you."
+    assert repeated["response"] != first["response"]
+    assert repeated["response"] in repetition_response_options(DIALOGUE_ACKNOWLEDGMENT)
 
 
 def test_conversation_integration_repeated_ordinary_input_gets_a_topic_neutral_continuation() -> None:
@@ -440,7 +446,7 @@ def test_conversation_integration_repeated_ordinary_input_gets_a_topic_neutral_c
 
     repeated = pipeline.chat(engram, text, user_id="Robin")
 
-    assert repeated["response"] == repeated_input_response_options()[0]
+    assert repeated["response"] in repeated_input_response_options()
     assert "libraries" not in repeated["response"].lower()
 
 
@@ -449,8 +455,9 @@ def test_conversation_integration_different_topic_shifts_are_not_treated_as_repe
     first = pipeline.chat(engram, "Let's talk about oceans.", user_id="Robin")
     second = pipeline.chat(engram, "Let's talk about moons.", user_id="Robin")
 
-    assert first["response"] == "Sure - let's talk about oceans."
-    assert second["response"] == "Sure - let's talk about moons."
+    assert "oceans" in first["response"].lower()
+    assert "moons" in second["response"].lower()
+    assert first["response"] != second["response"]
 
 
 def test_conversation_integration_repeated_name_recall_remains_repeatable() -> None:
@@ -459,8 +466,8 @@ def test_conversation_integration_repeated_name_recall_remains_repeatable() -> N
     first = pipeline.chat(engram, "What is my name?", user_id="Robin")
     second = pipeline.chat(engram, "What is my name?", user_id="Robin")
 
-    assert first["response"] == "Your name is Mira."
-    assert second["response"] == "Your name is Mira."
+    assert "Mira" in first["response"]
+    assert second["response"] == first["response"]
 
 
 def test_conversation_integration_meta_thought_is_not_learned_and_reason_is_visible() -> None:
@@ -511,11 +518,3 @@ def test_conversation_integration_unattributed_fact_api_is_intentionally_not_fil
     assert engram.get_statement(statement_id)["source_label"] == "research"
 
 
-def test_contextual_fallback_has_topic_grounded_option() -> None:
-    options = contextual_fallback_options(
-        DIALOGUE_STATEMENT,
-        topic="Kyoto",
-        fact_text="Kyoto is beautiful in spring.",
-    )
-
-    assert options[0] == "That connects with what you said about Kyoto: Kyoto is beautiful in spring."

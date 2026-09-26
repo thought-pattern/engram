@@ -7,6 +7,7 @@ configuration is the user's to tune, so the source of truth for defaults is
 ``engram_config()`` itself, not a hardcoded literal or the example template.
 """
 
+from os import path as os_path
 from pathlib import Path
 
 from pytest import raises as pytest_raises
@@ -91,6 +92,39 @@ def test_load_config_values_validation_applies(tmp_path):
         load_config(internal_write(tmp_path, "capacity: 0\n"))
 
 
+def test_load_config_conversation_unknown_key_raises(tmp_path):
+    with pytest_raises(ValueError, match="persona"):
+        load_config(internal_write(tmp_path, "conversation:\n  persona: Mara\n"))
+
+
+def test_load_config_conversation_blank_bot_name_raises(tmp_path):
+    with pytest_raises(ValueError, match="bot_name"):
+        load_config(internal_write(tmp_path, 'conversation:\n  bot_name: "   "\n'))
+
+
+def test_load_config_conversation_missing_seed_names_the_config_file(tmp_path):
+    config_path = internal_write(tmp_path, "conversation:\n  seed_files:\n    - data/missing.json\n")
+    with pytest_raises(ValueError, match="missing.json") as caught:
+        load_config(config_path)
+    assert config_path in str(caught.value)
+
+
+def test_load_config_conversation_directory_is_not_a_seed_file(tmp_path):
+    seed_dir = Path(tmp_path) / "seeds"
+    seed_dir.mkdir()
+    with pytest_raises(ValueError, match="missing or is not a file"):
+        load_config(internal_write(tmp_path, "conversation:\n  seed_files:\n    - seeds\n"))
+
+
+def test_load_config_absolute_seed_path_stays_absolute(tmp_path):
+    seed = Path(tmp_path) / "abs.json"
+    seed.write_text('{"pairs": []}', encoding="utf-8")
+    quoted = seed.resolve().as_posix()
+    cfg = load_config(internal_write(tmp_path, f'conversation:\n  seed_files:\n    - "{quoted}"\n'))
+    assert os_path.isabs(cfg["conversation"]["seed_files"][0])
+    assert os_path.normcase(cfg["conversation"]["seed_files"][0]) == os_path.normcase(os_path.abspath(quoted))
+
+
 """The shipped template is loadable.
 
 This is a smoke test on the loader, not an assertion about the template's
@@ -103,3 +137,4 @@ def test_example_template_example_parses():
     repo_root = Path(__file__).resolve().parents[1]
     cfg = load_config(str(repo_root / "config.example.yml"))
     assert isinstance(cfg, dict)
+    assert cfg["conversation"] == engram_config()["conversation"]
