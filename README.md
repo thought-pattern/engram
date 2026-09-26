@@ -514,11 +514,14 @@ fail to find a more specific match.
 
 ENGRAM can recall canonical facts from an optional MemGraph store. Runtime
 graph operations are reads and do not issue writes. Graph readiness is reported
-separately from local service readiness. During resolution, a graph connection,
-query, or optional vector-index failure contributes no graph result. If no local
-resolver supplies a result, Engram returns the same `MISS` it returns after a
-successful graph query with no rows; component diagnostics may still report the
-graph failure.
+separately from local service readiness. During conversation and resolution, a
+graph connection, query, or optional vector-index failure contributes no graph
+result and stays out of the user-visible response. If no local resolver supplies
+a result, Engram returns the same `MISS`, or an empty chat reply, that it
+returns after a successful graph query with no rows. The process log records
+the failed operation and exception type, and leaves out the exception text.
+Administrative schema commands still report database unavailability to the
+operator.
 
 For a standalone Engram-managed Memgraph, apply only Engram's independently
 installable corrected recall schema:

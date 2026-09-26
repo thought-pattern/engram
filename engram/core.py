@@ -175,6 +175,18 @@ def format_graph_facts(facts: list[tuple[str, str, str]]) -> str:
     return result
 
 
+def failed_graph_read(operation: str, error: BaseException, empty):
+    """Record a database failure and return the same empty result as no rows.
+
+    The log keeps the operation and exception type. It omits the exception
+    text so query and proposition content stay out of the process log and
+    out of any user-visible result.
+    """
+    logger.warning("Graph read failed (%s, %s)", operation, type(error).__name__)
+    result = empty
+    return result
+
+
 class Engram:
     """Keyword-indexed statement store with hit-rate tracking.
 
@@ -375,8 +387,7 @@ class Engram:
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
         except RuntimeError as err:
-            logger.debug("Graph query failed (%s)", type(err).__name__)
-            result = []
+            result = failed_graph_read("graph_query", err, [])
             return result
 
     def graph_read_fn(self, cypher: str, params=()) -> list:
@@ -510,7 +521,11 @@ class Engram:
         if not client or not callable(lookup):
             result = ()
             return result
-        rows = lookup(proposition_id)
+        try:
+            rows = lookup(proposition_id)
+        except RuntimeError as error:
+            result = failed_graph_read("current_proposition_projection", error, ())
+            return result
         if not isinstance(rows, list) or len(rows) > 1:
             raise ValueError("Proposition projection revalidation boundary returned an invalid collection")
         result = tuple(validate_proposition_projection(row) for row in rows)
@@ -1128,7 +1143,11 @@ class Engram:
             remaining = row_limit - len(retained)
             if not remaining:
                 break
-            rows = search(value, projection_id=projection_id, limit=remaining)
+            try:
+                rows = search(value, projection_id=projection_id, limit=remaining)
+            except RuntimeError as error:
+                result = failed_graph_read("structured_proposition_projections", error, [])
+                return result
             if not isinstance(rows, list) or len(rows) > remaining:
                 raise ValueError("structured Proposition projection boundary returned an invalid collection")
             validated_rows = [validate_proposition_projection(row) for row in rows]
@@ -1158,7 +1177,11 @@ class Engram:
         if not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(surface, limit=limit)
+        try:
+            rows = search(surface, limit=limit)
+        except RuntimeError as error:
+            result = failed_graph_read("canonical_entity_matches", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical entity boundary returned an invalid collection")
         result = [canonical_entity_match_from_graph_row(row) for row in rows]
@@ -1178,7 +1201,11 @@ class Engram:
         if not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(surface, limit=limit)
+        try:
+            rows = search(surface, limit=limit)
+        except RuntimeError as error:
+            result = failed_graph_read("canonical_predicate_matches", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical Predicate boundary returned an invalid collection")
         result = [canonical_predicate_match_from_graph_row(row) for row in rows]
@@ -1205,12 +1232,16 @@ class Engram:
         if not row_limit or not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(
-            subject_entity_id,
-            predicate_id,
-            limit=row_limit,
-            include_historical=include_historical,
-        )
+        try:
+            rows = search(
+                subject_entity_id,
+                predicate_id,
+                limit=row_limit,
+                include_historical=include_historical,
+            )
+        except RuntimeError as error:
+            result = failed_graph_read("relation_one_hop_proposition_projections", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise ValueError("relation one-hop boundary returned an invalid collection")
         result = [validate_relation_proposition_projection(row) for row in rows]

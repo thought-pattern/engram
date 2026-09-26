@@ -1,6 +1,6 @@
 """Section 15 security and privacy boundary tests."""
 
-from logging import DEBUG, ERROR
+from logging import DEBUG, ERROR, WARNING
 
 from pytest import raises as pytest_raises
 
@@ -16,6 +16,8 @@ from engram.constants import (
     MAX_RESPONSE_BYTES,
     MAX_SIGNATURE_INPUT_BYTES,
     MAX_SOURCE_LABEL_BYTES,
+    ResolutionOutcome,
+    ResolverState,
 )
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -149,3 +151,60 @@ def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -
     assert secret not in str(failure.value)
     assert secret not in caplog.text
     assert "RuntimeError" in caplog.text
+
+
+def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> None:
+    secret = "private-database-outage-detail"
+
+    class FailingGraph:
+        available = True
+
+        def execute(self, internal_query, internal_parameters=()):
+            del internal_query, internal_parameters
+            raise RuntimeError(secret)
+
+        def structured_proposition_projections(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+        def canonical_entity_matches(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+        def canonical_predicate_matches(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+        def relation_one_hop_proposition_projections(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+        def proposition_projection_by_id(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+    engine = Engram()
+    engine.internal_graph_client = FailingGraph()
+    engine.config["graph"]["enabled"] = True
+    core = EngramCore(engine)
+    engine = core.engram
+
+    with caplog.at_level(WARNING, logger="engram.core"):
+        assert engine.canonical_entity_matches("France") == []
+        assert engine.canonical_predicate_matches("capital") == []
+        assert engine.relation_one_hop_proposition_projections("entity:france", "predicate:capital") == []
+        assert engine.current_proposition_projection("proposition:paris") == ()
+        assert engine.structured_proposition_projections("France") == []
+        resolved = core.resolve_request("What is the capital of France?", "database-failure")
+        started = core.start_conversation(user_id="alice")
+        turn = core.chat(started["user_id"], "What is the capital of France?")
+
+    visible = f"{resolved}{turn}"
+    assert secret not in visible
+    assert secret not in caplog.text
+    assert "Graph read failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert resolved["outcome"] == ResolutionOutcome.MISS
+    assert all(item["state"] != ResolverState.FAILED for item in resolved["resolver_results"])
+    assert turn["response"] == ""
+    core.close()
