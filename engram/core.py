@@ -1383,6 +1383,9 @@ class Engram:
             result = ()
             return result
 
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "pattern query evaluation time")
+
         session = {}
         that = ""
         topic = ""
@@ -1553,6 +1556,7 @@ class Engram:
                                 session,
                                 thatstars=thatstars,
                                 topicstars=topicstars,
+                                evaluation_time=selected_evaluation_time,
                             )
                             if is_pure_wildcard(matched_pattern):
                                 catchall_render = (selected, captured, sentence, thatstars, topicstars)
@@ -1575,7 +1579,7 @@ class Engram:
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
-            graph_response = self.graph_lookup(text, evaluation_time=evaluation_time) if include_graph else ""
+            graph_response = self.graph_lookup(text, evaluation_time=selected_evaluation_time) if include_graph else ""
             if graph_response:
                 if session:
                     with self.session_lock:
@@ -1692,6 +1696,7 @@ class Engram:
                         session,
                         thatstars=thatstars,
                         topicstars=topicstars,
+                        evaluation_time=selected_evaluation_time,
                     )
                     if not response_repeats(candidate, recent_responses, allow_similarity=allow_similarity):
                         combined_response = candidate
@@ -1753,6 +1758,7 @@ class Engram:
         session,
         thatstars=(),
         topicstars=(),
+        evaluation_time: str = "",
     ) -> str:
         """Process a statement's template with context.
 
@@ -1781,6 +1787,7 @@ class Engram:
             gender_subs=self.substitution_maps["gender"],
             category_count=len(self.statements),
             graph_fn=self.graph_read_fn,
+            evaluation_time=evaluation_time,
         )
 
         if session:
@@ -1833,6 +1840,7 @@ class Engram:
                             redirect_fn=redirect_fn,
                             learn_fn=context["learn_fn"],
                             graph_fn=self.graph_read_fn,
+                            evaluation_time=context.get("evaluation_time", ""),
                         )
                         template_to_process = redirect_stmt.get("template", {}) or redirect_stmt.get("text", "")
                         redirect_response = self.template_processor.process(template_to_process, new_context)

@@ -24,6 +24,8 @@ from tomllib import loads as toml_loads
 # place, and core.py exposes it as the bot's ``version`` property.
 VERSION = "1.1.11"
 DEFAULT_USER_ID = "0"
+# An abandoned anonymous conversation (for example a crashed client) stops blocking new ones after this idle lease.
+ANONYMOUS_CONVERSATION_LEASE_SECONDS = 300.0
 EMPTY_MAPPING = {}
 EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
@@ -103,6 +105,14 @@ def read_frame_overrides(path: Path) -> dict:
 
 
 FRAME_OVERRIDES = read_frame_overrides(FRAME_OVERRIDES_PATH)
+GRAPH_SPO_MEANING_GUARD = (
+    "AND proposition.polarity = 'positive' "
+    "AND proposition.modality_family = 'none' AND proposition.modality_operator = 'none' "
+    "AND size([(proposition)-[:HAS_ARGUMENT]->(argument) | argument]) = 2 "
+    "AND NOT exists((proposition)-[:HAS_QUALIFICATION]->()) "
+    "AND NOT exists((proposition)-[:HAS_CONTEXT]->()) "
+    "AND NOT exists((proposition)-[:HAS_APPLICABILITY_SCOPE]->()) "
+)
 GRAPH_ENTITY_FACTS_QUERY = (
     "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
     "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
@@ -115,8 +125,7 @@ GRAPH_ENTITY_FACTS_QUERY = (
     "OR toLower($name) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
     "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL "
-    "AND (assertion.valid_time_start IS NULL "
+    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
     "OR assertion.valid_time_start <= datetime($evaluation_time)) "
     "AND (assertion.valid_time_end IS NULL "
     "OR datetime($evaluation_time) < assertion.valid_time_end) "
@@ -143,8 +152,7 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "OR toLower(coalesce(predicate.label, predicate.canonical_id)) CONTAINS toLower($keyword)) "
     "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL "
-    "AND (assertion.valid_time_start IS NULL "
+    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
     "OR assertion.valid_time_start <= datetime($evaluation_time)) "
     "AND (assertion.valid_time_end IS NULL "
     "OR datetime($evaluation_time) < assertion.valid_time_end) "
@@ -161,33 +169,53 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "LIMIT 3"
 )
 TRIPLE_QUERY_OBJECT = (
-    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), "
-    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
-    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(proposition)-[:USES_PREDICATE]->(p:Predicate), "
+    "(proposition)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE sb.role = 'subject' AND ob.role = 'object' "
     "AND (toLower(s.primary_label) = toLower($subject) "
     "OR toLower($subject) IN [a IN s.aliases | toLower(a)] "
     ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
-    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    + GRAPH_SPO_MEANING_GUARD
+    + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
+    "AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN o.primary_label AS result LIMIT 1"
 )
 TRIPLE_QUERY_SUBJECT = (
-    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), "
-    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
-    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(proposition)-[:USES_PREDICATE]->(p:Predicate), "
+    "(proposition)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE sb.role = 'subject' AND ob.role = 'object' "
     "AND (toLower(o.primary_label) = toLower($object) "
     "OR toLower($object) IN [a IN o.aliases | toLower(a)] "
     ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
-    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    + GRAPH_SPO_MEANING_GUARD
+    + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
+    "AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN s.primary_label AS result LIMIT 1"
 )
 ARTIFACT_SCHEMA_VERSION = 2
@@ -1075,12 +1103,28 @@ MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
 MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES = 256
 MAX_PROPOSITION_PROJECTION_TERM_BYTES = 4_096
 MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES = 40
+PROPOSITION_SEMANTIC_PROJECTION_FIELDS = (
+    "polarity",
+    "modality_family",
+    "modality_operator",
+    "argument_count",
+    "qualification_count",
+    "context_count",
+    "applicability_count",
+)
 PROPOSITION_PROJECTION_FIELDS = set(
     {
         "proposition_id",
         "subject_entity_id",
         "predicate_id",
         "object_entity_id",
+        "polarity",
+        "modality_family",
+        "modality_operator",
+        "argument_count",
+        "qualification_count",
+        "context_count",
+        "applicability_count",
         "invalidated_at",
         "invalidated_at_available",
         "system_from",
@@ -1145,6 +1189,12 @@ PROPOSITION_PROJECTION_RETURN = (
     "subject.canonical_id AS subject_entity_id, "
     "predicate.canonical_id AS predicate_id, "
     "object.canonical_id AS object_entity_id, "
+    "c.polarity AS polarity, c.modality_family AS modality_family, "
+    "c.modality_operator AS modality_operator, "
+    "size([(c)-[:HAS_ARGUMENT]->(argument) | argument]) AS argument_count, "
+    "size([(c)-[:HAS_QUALIFICATION]->(qualification) | qualification]) AS qualification_count, "
+    "size([(c)-[:HAS_CONTEXT]->(context) | context]) AS context_count, "
+    "size([(c)-[:HAS_APPLICABILITY_SCOPE]->(applicability) | applicability]) AS applicability_count, "
     "CASE WHEN c.lifecycle_disposition = 'invalidated' THEN c.retired_at ELSE null END AS invalidated_at, "
     "c.lifecycle_disposition = 'invalidated' AND c.retired_at IS NOT NULL AS invalidated_at_available, "
     "c.recorded_at AS system_from, c.recorded_at IS NOT NULL AS system_from_available, "
@@ -1450,6 +1500,7 @@ class PropositionEligibilityReason(StrEnum):
     VALID_TIME_NOT_YET_CURRENT = "valid_time_not_yet_current"
     VALID_TIME_NO_LONGER_CURRENT = "valid_time_no_longer_current"
     RETRIEVAL_ONLY = "retrieval_only"
+    SEMANTIC_MEANING_UNREPRESENTED = "semantic_meaning_unrepresented"
     VISIBILITY_AUTHORITY_UNAVAILABLE = "visibility_authority_unavailable"
     VISIBILITY_AUTHORITY_FAILED = "visibility_authority_failed"
     VISIBILITY_SCOPE_MISMATCH = "visibility_scope_mismatch"

@@ -25,6 +25,10 @@ class ConflictError(ValueError, EngramCoreError):
     """The request conflicts with an existing lifecycle or idempotency record."""
 
 
+class ConversationOwnershipError(ValueError, EngramCoreError):
+    """A conversation operation did not present the token its owner received at start."""
+
+
 class LifecycleError(ValueError, EngramCoreError):
     """The core is not in a state that permits the requested operation."""
 

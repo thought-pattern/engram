@@ -35,6 +35,7 @@ from engram.constants import (
 )
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     EngramCoreError,
     InvalidRequestError,
     LifecycleError,
@@ -150,6 +151,9 @@ def status_code(error: EngramCoreError, context: grpc_ServicerContext) -> grpc_S
     if isinstance(error, ConflictError):
         result = grpc_StatusCode.ABORTED
         return result
+    if isinstance(error, ConversationOwnershipError):
+        result = grpc_StatusCode.PERMISSION_DENIED
+        return result
     if isinstance(error, LifecycleError):
         result = grpc_StatusCode.FAILED_PRECONDITION
         return result
@@ -254,24 +258,50 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def Chat(self, request: engram_pb2.ChatRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.chat(normalize_service_user_id(request.user_id), request.text)))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.chat(
+                    normalize_service_user_id(request.user_id), request.text, conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "Chat")
         return result
 
     def InspectConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         message = self.invoke(
-            context, lambda: to_struct(self.core.inspect_conversation(normalize_service_user_id(request.user_id)))
+            context,
+            lambda: to_struct(
+                self.core.inspect_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
         )
         result = require_struct_message(message, "InspectConversation")
         return result
 
     def FinishConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.finish_conversation(normalize_service_user_id(request.user_id))))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.finish_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "FinishConversation")
         return result
 
     def StopConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.stop_conversation(normalize_service_user_id(request.user_id))))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.stop_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "StopConversation")
         return result
 
@@ -373,6 +403,13 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     def RetireResponses(self, request: engram_pb2.RetireResponsesRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         message = self.invoke(context, lambda: to_struct(self.core.retire_responses(retirement_entries_from_request(request))))
         result = require_struct_message(message, "RetireResponses")
+        return result
+
+    def ResponsesBySupport(
+        self, request: engram_pb2.ResponsesBySupportRequest, context: grpc_ServicerContext
+    ) -> struct_pb2.Struct:
+        message = self.invoke(context, lambda: to_struct(self.core.responses_by_support(list(request.record_ids))))
+        result = require_struct_message(message, "ResponsesBySupport")
         return result
 
     def GetStatus(self, request: empty_pb2.Empty, context: grpc_ServicerContext) -> struct_pb2.Struct:

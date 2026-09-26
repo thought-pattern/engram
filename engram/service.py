@@ -20,6 +20,7 @@ from uuid import uuid4
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
+    ANONYMOUS_CONVERSATION_LEASE_SECONDS,
     DEFAULT_USER_ID,
     EARLIEST_UTC,
     EMPTY_CONFIG,
@@ -58,6 +59,7 @@ from engram.core import Engram
 from engram.eligibility import EligibilityContextCapture
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     IdentityValidationError,
     InvalidRequestError,
     LifecycleError,
@@ -458,6 +460,9 @@ class EngramCore:
             raise InvalidRequestError("engram must be an Engram")
         self.engram = selected_engram
         self.conversations: dict[str, ConversationRuntime] = {}
+        # Anonymous ("0") conversations are exclusive: each is owned by the token its start returned.
+        self.conversation_tokens: dict[str, str] = {}
+        self.conversation_activity: dict[str, float] = {}
         self.resolution_requests: dict[str, dict] = {}
         self.internal_clock = ServiceClock(clock)
         self.lock = threading_RLock()
@@ -1174,6 +1179,10 @@ class EngramCore:
         with self.lock:
             self.require_running()
             conversation_id = normalize_service_user_id(user_id)
+            if conversation_id == DEFAULT_USER_ID and conversation_id in self.conversations:
+                idle = time_monotonic() - self.conversation_activity.get(conversation_id, time_monotonic())
+                if idle >= ANONYMOUS_CONVERSATION_LEASE_SECONDS:
+                    self.release_conversation(self.conversations.get(conversation_id))
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
             try:
@@ -1188,6 +1197,7 @@ class EngramCore:
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
             self.conversations[conversation_id] = runtime
+            self.conversation_activity[conversation_id] = time_monotonic()
             snapshot = runtime.inspect()
             result = {
                 "started": True,
@@ -1197,7 +1207,31 @@ class EngramCore:
                 "statement_count": snapshot["metrics"]["statement_count"],
                 "memory_only": True,
             }
+            if conversation_id == DEFAULT_USER_ID:
+                token = uuid4().hex
+                self.conversation_tokens[conversation_id] = token
+                result["conversation_token"] = token
             return result
+
+    def owned_conversation(self, user_id: str, conversation_token: str) -> ConversationRuntime:
+        """Return an active runtime, requiring the anonymous owner's token and renewing its lease."""
+        runtime = self.get_conversation(user_id)
+        if runtime.user_id == DEFAULT_USER_ID:
+            expected = self.conversation_tokens.get(runtime.user_id, "")
+            if not expected or not isinstance(conversation_token, str) or conversation_token != expected:
+                raise ConversationOwnershipError("anonymous conversation requires the token issued when it started")
+        self.conversation_activity[runtime.user_id] = time_monotonic()
+        return runtime
+
+    def release_conversation(self, runtime: object) -> None:
+        """Remove one runtime and its anonymous session, ownership token, and lease."""
+        if not isinstance(runtime, ConversationRuntime):
+            raise LifecycleError("active conversation runtime is malformed")
+        self.conversations.pop(runtime.user_id, {})
+        self.conversation_tokens.pop(runtime.user_id, "")
+        self.conversation_activity.pop(runtime.user_id, 0.0)
+        if runtime.user_id == DEFAULT_USER_ID:
+            sessions.delete_session(self.engram, runtime.session_id)
 
     def get_conversation(self, user_id: str) -> ConversationRuntime:
         """Return an active user runtime or raise a lifecycle error."""
@@ -1211,25 +1245,25 @@ class EngramCore:
                 raise LifecycleError("active conversation runtime is malformed")
             return result
 
-    def chat(self, user_id: str, text: str) -> dict:
+    def chat(self, user_id: str, text: str, conversation_token: str = "") -> dict:
         """Submit one chatbot turn to an active user conversation."""
         conversation_id = normalize_service_user_id(user_id)
         operation_id = f"chat:{uuid4().hex}"
         with self.resolution_slot(operation_id, conversation_id), self.lock:
             self.require_running()
-            runtime = self.get_conversation(conversation_id)
+            runtime = self.owned_conversation(conversation_id, conversation_token)
             try:
                 result = runtime.send(text)
             except ValueError as error:
                 raise InvalidRequestError(str(error)) from error
             return result
 
-    def inspect_conversation(self, user_id: str) -> dict:
+    def inspect_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """Inspect one conversation and shared regulated-cache metrics."""
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            snapshot = self.get_conversation(user_id).inspect()
+            snapshot = self.owned_conversation(user_id, conversation_token).inspect()
             snapshot["regulated_cache"] = self.regulated_cache_metrics()
             snapshot["core_status"] = self.status()
             return snapshot
@@ -1247,23 +1281,21 @@ class EngramCore:
             result = statement_view(self.engram.get_statement(statement_id))
             return result
 
-    def finish_conversation(self, user_id: str) -> dict:
+    def finish_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """Return a report without ending or persisting the conversation."""
         with self.lock:
             self.require_running()
-            runtime = self.get_conversation(user_id)
+            runtime = self.owned_conversation(user_id, conversation_token)
             result = runtime.report()
             return result
 
-    def stop_conversation(self, user_id: str) -> dict:
+    def stop_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """End one conversation while leaving the shared core available."""
         with self.lock:
             self.require_running()
-            runtime = self.get_conversation(user_id)
+            runtime = self.owned_conversation(user_id, conversation_token)
             report = runtime.report()
-            self.conversations.pop(runtime.user_id, {})
-            if runtime.user_id == DEFAULT_USER_ID:
-                sessions.delete_session(self.engram, runtime.session_id)
+            self.release_conversation(runtime)
             result = {
                 "stopped": True,
                 "user_id": report["user_id"],
@@ -1673,12 +1705,13 @@ class EngramCore:
             )
             if outcome == "accepted":
                 proposal = record["proposal"]
-                sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
-                sessions.update_session_context(
-                    self.engram,
-                    proposal["user_id"],
-                    current_artifact.get("response", ""),
-                )
+                if proposal.get("user_id", "") != DEFAULT_USER_ID:
+                    sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
+                    sessions.update_session_context(
+                        self.engram,
+                        proposal["user_id"],
+                        current_artifact.get("response", ""),
+                    )
                 self.regulated_metrics["accepted"] += 1
             else:
                 self.regulated_metrics["rejections"][outcome] += 1
@@ -1752,7 +1785,7 @@ class EngramCore:
             learned = receipt["result_code"].value != "REJECTED_CAPACITY"
             if learned and not mutation["replayed"]:
                 self.engram.eviction_count += len(evicted_statement_ids)
-            if learned:
+            if learned and normalized_user_id != DEFAULT_USER_ID:
                 sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 sessions.update_session_context(self.engram, normalized_user_id, response)
             if mutation["replayed"]:
@@ -1874,6 +1907,25 @@ class EngramCore:
             }
             self.enforce_transient_bound()
             result = deepcopy(result)
+            return result
+
+    def responses_by_support(self, record_ids: list[str]) -> dict:
+        """List ACTIVE accepted responses whose support names any given durable record."""
+        with self.lock:
+            self.require_running()
+            if not isinstance(record_ids, list) or not record_ids:
+                raise InvalidRequestError("record_ids must be a non-empty list")
+            for identifier in record_ids:
+                require_service_text(identifier, "record_id", MAX_ARTIFACT_ID_BYTES)
+            wanted = set(record_ids)
+            artifacts = self.engram.response_repository.snapshot().get("artifacts", {})
+            statement_ids = sorted(
+                identifier
+                for identifier, artifact in artifacts.items()
+                if artifact.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
+                and any(reference.get("id", "") in wanted for reference in artifact.get("support_references", ()))
+            )
+            result = {"statement_ids": statement_ids}
             return result
 
     def retire_responses(self, entries: list[dict]) -> dict:

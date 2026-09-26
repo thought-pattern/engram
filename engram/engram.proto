@@ -24,6 +24,7 @@ service EngramService {
   rpc LearnResponse(LearnResponseRequest) returns (google.protobuf.Struct);
   rpc RetireResponse(RetireResponseRequest) returns (google.protobuf.Struct);
   rpc RetireResponses(RetireResponsesRequest) returns (google.protobuf.Struct);
+  rpc ResponsesBySupport(ResponsesBySupportRequest) returns (google.protobuf.Struct);
   // Trusted administrative barrier; no user/session label authorizes removal.
   rpc MaintainEngagement(google.protobuf.Struct) returns (google.protobuf.Struct);
 
@@ -44,10 +45,12 @@ message StartConversationRequest {
 message ChatRequest {
   string user_id = 1;
   string text = 2;
+  string conversation_token = 3;
 }
 
 message UserRequest {
   string user_id = 1;
+  string conversation_token = 2;
 }
 
 message AddFactRequest {
@@ -117,6 +120,10 @@ message RetireResponseRequest {
 
 message RetireResponsesRequest {
   repeated RetireResponseRequest entries = 1;
+}
+
+message ResponsesBySupportRequest {
+  repeated string record_ids = 1;
 }
 
 message ResolveEvidenceRequest {

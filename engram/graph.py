@@ -27,6 +27,7 @@ from engram.constants import (
     CANONICAL_PREDICATE_MATCH_FIELDS,
     CANONICAL_PREDICATE_MATCH_QUERY,
     CONNECTION_LOST_MARKERS,
+    GRAPH_SPO_MEANING_GUARD,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
@@ -58,7 +59,8 @@ from engram.scope import validate_visibility_scope, visibility_parameters
 logger = logging_getLogger(__name__)
 
 
-VECTOR_SEARCH_PROPOSITIONS_QUERY = """
+VECTOR_SEARCH_PROPOSITIONS_QUERY = (
+    """
     CALL vector_search.search(
         $index_name, $limit, $query_embedding
     ) YIELD node, distance
@@ -74,6 +76,9 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = """
       AND assertion.lifecycle_disposition = 'active'
       AND assertion.retired_at IS NULL
       AND support.retired_at IS NULL
+    """
+    + GRAPH_SPO_MEANING_GUARD
+    + """
       AND (assertion.valid_time_start IS NULL
         OR assertion.valid_time_start <= datetime($evaluation_time))
       AND (assertion.valid_time_end IS NULL
@@ -95,6 +100,7 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = """
            similarity
     ORDER BY similarity DESC, proposition.id
 """
+)
 
 FIXED_READ_PROCEDURE_QUERIES = (
     VECTOR_PROPOSITION_PROJECTION_QUERY,
@@ -273,6 +279,13 @@ def proposition_projection(
     subject_entity_id: object,
     predicate_id: object,
     object_entity_id: object,
+    polarity: object,
+    modality_family: object,
+    modality_operator: object,
+    argument_count: object,
+    qualification_count: object,
+    context_count: object,
+    applicability_count: object,
     invalidated_at: object,
     invalidated_at_available: object,
     system_from: object,
@@ -304,6 +317,25 @@ def proposition_projection(
     normalized_subject_id = projection_identifier(subject_entity_id, "Proposition projection subject_entity_id")
     normalized_predicate_id = projection_identifier(predicate_id, "Proposition projection predicate_id")
     normalized_object_id = projection_identifier(object_entity_id, "Proposition projection object_entity_id")
+    normalized_polarity = projection_text(polarity, "Proposition projection polarity", 16, allow_empty=False)
+    if normalized_polarity not in {"positive", "negative"}:
+        raise InvalidRequestError("Proposition projection polarity is unsupported")
+    normalized_modality_family = projection_text(modality_family, "Proposition projection modality family", 16, allow_empty=False)
+    normalized_modality_operator = projection_text(
+        modality_operator, "Proposition projection modality operator", 32, allow_empty=False
+    )
+    modal_operators = {
+        "none": {"none"},
+        "alethic": {"possible", "necessary", "impossible"},
+        "epistemic": {"possible", "probable", "certain"},
+        "deontic": {"obligation", "permission", "prohibition", "recommendation"},
+    }
+    if normalized_modality_operator not in modal_operators.get(normalized_modality_family, set()):
+        raise InvalidRequestError("Proposition projection modality is unsupported")
+    normalized_argument_count = projection_int(argument_count, "Proposition projection argument_count", 0, 1_000_000)
+    normalized_qualification_count = projection_int(qualification_count, "Proposition projection qualification_count", 0, 1_000_000)
+    normalized_context_count = projection_int(context_count, "Proposition projection context_count", 0, 1_000_000)
+    normalized_applicability_count = projection_int(applicability_count, "Proposition projection applicability_count", 0, 1_000_000)
     normalized_invalidated_available = projection_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
     normalized_system_from_available = projection_bool(system_from_available, "Proposition projection system_from_available")
     normalized_system_to_available = projection_bool(system_to_available, "Proposition projection system_to_available")
@@ -390,6 +422,13 @@ def proposition_projection(
         "subject_entity_id": normalized_subject_id,
         "predicate_id": normalized_predicate_id,
         "object_entity_id": normalized_object_id,
+        "polarity": normalized_polarity,
+        "modality_family": normalized_modality_family,
+        "modality_operator": normalized_modality_operator,
+        "argument_count": normalized_argument_count,
+        "qualification_count": normalized_qualification_count,
+        "context_count": normalized_context_count,
+        "applicability_count": normalized_applicability_count,
         "invalidated_at": normalized_invalidated_at,
         "invalidated_at_available": normalized_invalidated_available,
         "system_from": normalized_system_from,
@@ -471,6 +510,13 @@ def proposition_projection_from_graph_row(
         subject_entity_id=value["subject_entity_id"],
         predicate_id=value["predicate_id"],
         object_entity_id=value["object_entity_id"],
+        polarity=value["polarity"],
+        modality_family=value["modality_family"],
+        modality_operator=value["modality_operator"],
+        argument_count=value["argument_count"],
+        qualification_count=value["qualification_count"],
+        context_count=value["context_count"],
+        applicability_count=value["applicability_count"],
         invalidated_at=value["invalidated_at"],
         invalidated_at_available=invalidated_available,
         system_from=value["system_from"],

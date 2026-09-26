@@ -315,6 +315,9 @@ that session on stop; failed initialization restores the prior session. There
 is no generated anonymous identity or separate empty-user namespace. Restarting Engram
 loads only the STATIC data provided for that new process; without provided
 STATIC data, it starts empty.
+Accepted cache resolution and learned information update named-user session
+context only; they never create or alter the reserved unknown user's social
+session. Cache results and idempotent receipts are unaffected.
 See the [Python API contract](documentation/python-api.md) for unified resolution,
 feedback, lifecycle, and error behavior.
 

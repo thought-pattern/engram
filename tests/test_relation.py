@@ -10,6 +10,13 @@ def proposition_row(proposition_id: str = "proposition:ada-birthplace", object_i
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",
         "object_entity_id": object_id,
+        "polarity": "positive",
+        "modality_family": "none",
+        "modality_operator": "none",
+        "argument_count": 2,
+        "qualification_count": 0,
+        "context_count": 0,
+        "applicability_count": 0,
         "invalidated_at": "",
         "invalidated_at_available": False,
         "system_from": "2026-01-01T00:00:00Z",
@@ -120,5 +127,7 @@ class RelationGraph:
         return result
 
     def proposition_projection_by_id(self, proposition_id):
-        result = [internal_current(item) for item in self.results if item.get("projection", {}).get("proposition_id") == proposition_id]
+        result = [
+            internal_current(item) for item in self.results if item.get("projection", {}).get("proposition_id") == proposition_id
+        ]
         return result

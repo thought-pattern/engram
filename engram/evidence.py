@@ -14,6 +14,7 @@ from engram.constants import (
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
     PROPOSITION_EVIDENCE_PRODUCERS,
     PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
+    PROPOSITION_SEMANTIC_PROJECTION_FIELDS,
     SEMANTIC_SIMILARITY_FLOOR,
     SOURCE_AGREEMENT_FLOOR,
     STRUCTURED_MATCH_FLOOR,
@@ -791,6 +792,17 @@ class PropositionEligibilityEvaluator:
         if not projection.get("predicate_canonical", False) or projection.get("predicate_id", "") == "generic_relation":
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.RETRIEVAL_ONLY)
             return result
+        if (
+            projection.get("polarity", "") != "positive"
+            or projection.get("modality_family", "") != "none"
+            or projection.get("modality_operator", "") != "none"
+            or projection.get("argument_count", 0) != 2
+            or projection.get("qualification_count", 0) != 0
+            or projection.get("context_count", 0) != 0
+            or projection.get("applicability_count", 0) != 0
+        ):
+            result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SEMANTIC_MEANING_UNREPRESENTED)
+            return result
 
         ownership = PropositionOwnership(projection.get("ownership_category", PropositionOwnership.PUBLIC))
         if ownership == PropositionOwnership.PUBLIC:
@@ -894,6 +906,11 @@ class PropositionEligibilityEvaluator:
                 projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
             )
             return result
+        if any(discovered.get(field) != projection.get(field) for field in PROPOSITION_SEMANTIC_PROJECTION_FIELDS):
+            result = proposition_exclusion_decision(
+                projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
+            )
+            return result
         decision = self.evaluate(projection, frame)
         result = proposition_eligibility_decision_with_changes(decision, {"revalidated": True})
         return result
@@ -967,6 +984,8 @@ def proposition_evidence_record(
     )
     if discovered_identity != current_identity:
         raise InvalidRequestError("Proposition evidence discovery and current canonical identity conflict")
+    if any(discovered.get(field) != current.get(field) for field in PROPOSITION_SEMANTIC_PROJECTION_FIELDS):
+        raise InvalidRequestError("Proposition evidence discovery and current semantic projection conflict")
     values = {"canonical_completeness": 1.0}
     unavailable = ["source_agreement"]
     reasons = [

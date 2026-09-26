@@ -7,7 +7,7 @@ random selection, conditionals, redirects, and more.
 The evaluation context is a plain dict built by ``TemplateContext``.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from random import choice as random_choice
 from re import compile as re_compile, match as re_match
 
@@ -28,7 +28,7 @@ from engram.constants import (
     TRIPLE_QUERY_SUBJECT,
     VERSION,
 )
-from engram.graph import graph_is_empty, graph_single, is_write_cypher
+from engram.graph import graph_is_empty, graph_single, is_write_cypher, projection_timestamp
 from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
 from engram.text import extract_name, first_clause
@@ -71,6 +71,7 @@ def template_context(
     session_id: str = "",
     category_count: int = 0,
     vocabulary_count: int = 0,
+    evaluation_time: str = "",
     # Callbacks (set by processor)
     redirect_fn=(),
     learn_fn=(),
@@ -81,6 +82,8 @@ def template_context(
     Contains all data needed to evaluate a template, including wildcard captures,
     session predicates, bot properties, and history.
     """
+    selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    projection_timestamp(selected_evaluation_time, True, "template evaluation time")
     context = {
         "stars": list(stars or ()),
         "thatstars": list(thatstars or ()),
@@ -99,6 +102,7 @@ def template_context(
         "session_id": session_id,
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
+        "evaluation_time": selected_evaluation_time,
         "redirect_fn": redirect_fn,
         "learn_fn": learn_fn,
         "graph_fn": graph_fn,
@@ -529,6 +533,9 @@ class TemplateProcessor:
         else:
             result = ""
             return result
+
+        evaluation_time = projection_timestamp(context.get("evaluation_time", ""), True, "template evaluation time")
+        params["evaluation_time"] = evaluation_time
 
         records = graph(query, params)
         if records and graph_single(records):

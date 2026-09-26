@@ -7,10 +7,11 @@ from threading import Event as threading_Event
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import metrics, sessions
-from engram.constants import MAX_RESPONSE_BYTES, Tier
+from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, MAX_RESPONSE_BYTES, Tier
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     InvalidRequestError,
     LifecycleError,
     ResolutionCancelledError,
@@ -191,22 +192,36 @@ def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     core = EngramCore()
     named_id = " named:π "
     core.start_conversation(named_id, initial_bot_text="Named context.")
-    core.start_conversation("0", initial_bot_text="Explicit zero context.")
+    first = core.start_conversation("0", initial_bot_text="Explicit zero context.")
+    first_token = first.get("conversation_token", "")
+    assert first_token
     with pytest_raises(ConflictError):
         core.start_conversation("")
-    assert core.inspect_conversation("0").get("session", {}).get("previous_response", "") == "Explicit zero context."
-    core.stop_conversation("0")
+    with pytest_raises(ConversationOwnershipError):
+        core.stop_conversation("0")
+    with pytest_raises(ConversationOwnershipError):
+        core.chat("0", "Taking over someone else's anonymous conversation.", conversation_token="wrong")
+    assert (
+        core.inspect_conversation("0", conversation_token=first_token).get("session", {}).get("previous_response", "")
+        == "Explicit zero context."
+    )
+    core.stop_conversation("0", conversation_token=first_token)
 
     started = core.start_conversation("")
     runtime = core.get_conversation("")
+    token = started.get("conversation_token", "")
 
     assert started.get("user_id", "") == "0"
+    assert token and token != first_token
     assert runtime.session_id == "0"
-    assert core.inspect_conversation("").get("session", {}).get("previous_response", "") == ""
-    assert core.inspect_conversation("0").get("session", {}).get("previous_response", "") == ""
-    assert core.finish_conversation("0").get("metrics_baseline", {}).get("session_count", 0) == 2
+    assert core.inspect_conversation("", conversation_token=token).get("session", {}).get("previous_response", "") == ""
+    assert core.inspect_conversation("0", conversation_token=token).get("session", {}).get("previous_response", "") == ""
+    assert core.finish_conversation("0", conversation_token=token).get("metrics_baseline", {}).get("session_count", 0) == 2
 
-    core.stop_conversation("")
+    core.conversation_activity["0"] -= ANONYMOUS_CONVERSATION_LEASE_SECONDS
+    expired_replacement = core.start_conversation("")
+    assert expired_replacement.get("conversation_token", "") not in {"", token}
+    core.stop_conversation("", conversation_token=expired_replacement.get("conversation_token", ""))
     core.set_predicate("0", "preserved", "value")
     with pytest_raises(InvalidRequestError):
         core.start_conversation("", initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))

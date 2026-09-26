@@ -28,14 +28,15 @@ class InteractiveChat:
         self.core = core
         self.session_id = session_id or "cli"
         self.debug_mode = False
-        self.core.start_conversation(
+        started = self.core.start_conversation(
             user_id=self.session_id,
             initial_bot_text=initial_bot_text,
         )
+        self.conversation_token = str(started.get("conversation_token", "") or "")
 
     def process_input(self, user_input: str) -> str:
         """Process one user turn and return Engram's response."""
-        result = self.core.chat(self.session_id, user_input)
+        result = self.core.chat(self.session_id, user_input, conversation_token=self.conversation_token)
         if self.debug_mode:
             detail = f"Source: {result.get('source', '')} | Score: {result.get('score', 0.0):.2f}"
             if result.get("pattern", ""):
@@ -73,10 +74,12 @@ class InteractiveChat:
             self.debug_mode = not self.debug_mode
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
         elif command == "metrics":
-            metrics = self.core.inspect_conversation(self.session_id).get("metrics", {})
+            metrics = self.core.inspect_conversation(self.session_id, conversation_token=self.conversation_token).get(
+                "metrics", {}
+            )
             print(json_dumps(metrics, indent=2))
         elif command == "inspect":
-            print(json_dumps(self.core.inspect_conversation(self.session_id), indent=2))
+            print(json_dumps(self.core.inspect_conversation(self.session_id, conversation_token=self.conversation_token), indent=2))
         elif command == "finish":
             print(json_dumps(self.core.finish_conversation(self.session_id), indent=2))
         elif command == "topic" and len(parts) >= 2:
@@ -138,7 +141,7 @@ def main(argv=()) -> int:
                 initial_bot_text=getattr(args, "initial_bot_text", ""),
             )
             chat.run()
-            core.stop_conversation(chat.session_id)
+            core.stop_conversation(chat.session_id, conversation_token=chat.conversation_token)
         core.close()
     except EngramCoreError as error:
         print(f"Error: {error}", file=sys_stderr)

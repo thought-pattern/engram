@@ -157,13 +157,19 @@ def test_unknown_user_wire_lifecycle_uses_explicit_zero() -> None:
         started = as_dict(
             stub.StartConversation(engram_pb2.StartConversationRequest(initial_bot_text="Unknown context."), timeout=5)
         )
-        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello"), timeout=5))
+        token = started.get("conversation_token", "")
+        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello", conversation_token=token), timeout=5))
         stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="", name="mood", value="curious"), timeout=5)
         assert stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="0", name="mood"), timeout=5).value == "curious"
-        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0"), timeout=5))
-        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id=""), timeout=5))
+        inspected = as_dict(
+            stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5)
+        )
+        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="", conversation_token=token), timeout=5))
         assert core.get_conversation("0").user_id == "0"
-        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="0"), timeout=5))
+        with pytest_raises(grpc_RpcError) as unowned:
+            stub.StopConversation(engram_pb2.UserRequest(user_id="0"), timeout=5)
+        assert unowned.value.code() == grpc_StatusCode.PERMISSION_DENIED
+        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
 
         assert started.get("user_id", "") == "0"
         assert turn.get("user_id", "") == "0"
@@ -456,9 +462,11 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
             barrier.wait()
             results = [future.result(timeout=10) for future in futures]
 
-        python_view = core.inspect_conversation("0")["session"]
+        python_view = core.inspect_conversation("0", conversation_token=mcp.active_conversation_token)["session"]
         mcp_view = mcp.inspect()["session"]
-        grpc_view = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]
+        grpc_view = as_dict(
+            stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=mcp.active_conversation_token))
+        )["session"]
 
         assert sum(result["idempotent"] is False for result in results) == 1
         assert sum(result["idempotent"] is True for result in results) == 5
@@ -520,10 +528,10 @@ def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str) -> dict:
+    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text)
+        result = original_chat(user_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat
@@ -546,10 +554,10 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str) -> dict:
+    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text)
+        result = original_chat(user_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat

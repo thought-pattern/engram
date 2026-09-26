@@ -28,6 +28,7 @@ class MCPConversationService:
         self.static_pairs = deepcopy(selected_pairs)
         self.core = ()
         self.active_user_id = ""
+        self.active_conversation_token = ""
         self.lock = threading_RLock()
 
     @property
@@ -69,20 +70,21 @@ class MCPConversationService:
                 raise
             self.core = core
             self.active_user_id = conversation_user_id
+            self.active_conversation_token = str(started.get("conversation_token", "") or "")
             return started
 
     def send(self, text: str) -> dict:
         """Submit exactly one conversational message."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.chat(user_id, text)
+            result = core.chat(user_id, text, conversation_token=self.active_conversation_token)
             return result
 
     def inspect(self) -> dict:
         """Inspect user context, learned facts, and metrics."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.inspect_conversation(user_id)
+            result = core.inspect_conversation(user_id, conversation_token=self.active_conversation_token)
             return result
 
     def add_fact(self, text: str, source_label: str = "") -> dict:
@@ -96,17 +98,18 @@ class MCPConversationService:
         """Return the current report without ending the conversation."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.finish_conversation(user_id)
+            result = core.finish_conversation(user_id, conversation_token=self.active_conversation_token)
             return result
 
     def stop(self) -> dict:
         """Discard process memory and release the MCP-owned core."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.stop_conversation(user_id)
+            result = core.stop_conversation(user_id, conversation_token=self.active_conversation_token)
             core.close()
             self.core = ()
             self.active_user_id = ""
+            self.active_conversation_token = ""
             return result
 
     def propose(
