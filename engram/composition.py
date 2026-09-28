@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from re import compile as re_compile
 
@@ -27,6 +28,8 @@ from engram.evidence import validate_proposition_eligibility_decision
 from engram.graph import validate_relation_proposition_projection
 from engram.relation import canonical_resolution, validate_canonical_resolution
 from engram.resolution import validate_query_frame
+
+logger = logging_getLogger(__name__)
 
 
 def internal_text(value: object, name: str, maximum: int = 256, *, allow_empty: bool = False) -> str:
@@ -659,7 +662,8 @@ def execute_composition_plan(
                 query_limit = min(sentinel_limit, remaining)
                 try:
                     raw_rows = query(state["entity_id"], step["predicate_id"], query_limit)
-                except Exception:
+                except Exception as error:
+                    logger.warning("Composition graph step failed", exc_info=error)
                     branch_failed = True
                     reasons.add(CompositionReason.DEPENDENCY_FAILED)
                     if state["path"]:

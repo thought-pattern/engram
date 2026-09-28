@@ -13,6 +13,7 @@ from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
 from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.errors import InvalidRequestError
 from engram.text import normalize
 
 
@@ -158,21 +159,21 @@ class ConversationRuntime:
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
         if not isinstance(anonymous_session_id, str):
-            raise ValueError("anonymous_session_id must be a string")
+            raise InvalidRequestError("anonymous_session_id must be a string")
         if anonymous_session_id and user_id != "":
-            raise ValueError("anonymous_session_id requires an empty user_id")
+            raise InvalidRequestError("anonymous_session_id requires an empty user_id")
         if not isinstance(initial_bot_text, str):
-            raise ValueError("initial_bot_text must be a string")
+            raise InvalidRequestError("initial_bot_text must be a string")
         try:
             initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
         except UnicodeEncodeError as error:
-            raise ValueError("initial_bot_text must contain valid Unicode") from error
+            raise InvalidRequestError("initial_bot_text must contain valid Unicode") from error
         if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
-            raise ValueError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
+            raise InvalidRequestError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
         if not isinstance(random_seed, int) or isinstance(random_seed, bool):
-            raise ValueError("random_seed must be an integer")
+            raise InvalidRequestError("random_seed must be an integer")
         if not isinstance(random_seed_present, bool):
-            raise ValueError("random_seed_present must be a boolean")
+            raise InvalidRequestError("random_seed_present must be a boolean")
 
         self.engram = engram
         self.user_id = user_id if user_id == "" else normalized_user_id
@@ -198,13 +199,13 @@ class ConversationRuntime:
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("text must be one non-empty string")
+            raise InvalidRequestError("text must be one non-empty string")
         try:
             text_bytes = len(text.encode("utf-8"))
         except UnicodeEncodeError as err:
-            raise ValueError("text must contain valid Unicode") from err
+            raise InvalidRequestError("text must contain valid Unicode") from err
         if text_bytes > MAX_REQUEST_BYTES:
-            raise ValueError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
+            raise InvalidRequestError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
             session = self.engram.sessions.get(self.session_id, {})

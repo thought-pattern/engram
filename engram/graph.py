@@ -772,7 +772,7 @@ class MemGraphConnection:
                 with self.internal_lock:
                     self.available = False
                     self.reconnect_needed = True
-                logger.warning("Graph database unavailable at %s:%d (%s)", self.host, self.port, type(err).__name__)
+                logger.warning("Graph database unavailable at %s:%d", self.host, self.port, exc_info=err)
                 result = ()
                 return result
             with self.internal_lock:
@@ -813,7 +813,7 @@ class MemGraphConnection:
             try:
                 await asyncio_wait_for(lost_driver.close(), self.timeout_seconds)
             except Exception as err:
-                logger.debug("Closing the lost graph driver failed (%s)", type(err).__name__)
+                logger.warning("Closing the lost graph driver failed", exc_info=err)
         try:
             driver = await asyncio_wait_for(self.open_driver(), self.timeout_seconds)
         except Exception as err:
@@ -822,7 +822,7 @@ class MemGraphConnection:
                 first_failure = self.reconnect_failures == 1
             # Warn once per outage; the retry after every turn would flood the log.
             log = logger.warning if first_failure else logger.debug
-            log("Graph database reconnect failed at %s:%d (%s)", self.host, self.port, type(err).__name__)
+            log("Graph database reconnect failed at %s:%d", self.host, self.port, exc_info=err)
             result = False
             return result
         with self.internal_lock:
@@ -856,7 +856,7 @@ class MemGraphConnection:
             future.result(timeout=2 * self.timeout_seconds)
         except Exception as err:
             future.cancel()
-            logger.debug("Graph driver shutdown did not finish (%s)", type(err).__name__)
+            logger.warning("Graph driver shutdown did not finish", exc_info=err)
         loop.call_soon_threadsafe(loop.stop)
         thread.join(self.timeout_seconds)
         if not thread.is_alive():
@@ -929,11 +929,12 @@ class MemGraphConnection:
         except Exception as err:
             err_str = str(err).lower()
             if isinstance(err, TimeoutError):
-                logger.error("Query timed out after %.0f ms", self.timeout_seconds * 1000)
+                logger.error("Query timed out after %.0f ms", self.timeout_seconds * 1000, exc_info=err)
             elif "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                logger.debug("Query failed as expected (%s)", type(err).__name__)
+                logger.debug("Query failed as expected", exc_info=err)
             else:
-                logger.error("Query failed (%s)", type(err).__name__)
+                logger.error("Query failed", exc_info=err)
+            # Only the exception type crosses this boundary; the log has the rest.
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
     def execute_admin(self, statement: str, parameters=()) -> list:

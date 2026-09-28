@@ -29,6 +29,10 @@ class LifecycleError(ValueError, EngramCoreError):
     """The core is not in a state that permits the requested operation."""
 
 
+class ResourceExhaustedError(EngramCoreError):
+    """A configured capacity limit refuses the request."""
+
+
 class ResolutionCancelledError(EngramCoreError):
     """A caller cancelled transport-neutral resolution cooperatively."""
 

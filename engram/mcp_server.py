@@ -1,13 +1,39 @@
 """MCPServer adapter for the transport-neutral Engram core."""
 
+from functools import wraps as functools_wraps
+from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
 from mcp.server.mcpserver import MCPServer
 
 from engram.config import load_config
 from engram.constants import EMPTY_METADATA, VERSION
-from engram.errors import ConflictError, LifecycleError
+from engram.errors import ConflictError, EngramCoreError, LifecycleError
 from engram.service import EngramCore, normalize_service_user_id
+
+logger = logging_getLogger(__name__)
+
+
+def guarded_tool(operation):
+    """Log a failed tool call in full and give the client only a stable message.
+
+    The MCP SDK sends an exception's text to the client, so only Engram's
+    own errors, whose messages are written for callers, pass through.
+    """
+
+    @functools_wraps(operation)
+    def guarded(*args, **kwargs):
+        try:
+            result = operation(*args, **kwargs)
+            return result
+        except EngramCoreError as error:
+            logger.warning("Engram MCP tool %s was refused", operation.__name__, exc_info=error)
+            raise
+        except Exception as error:
+            logger.error("Engram MCP tool %s failed", operation.__name__, exc_info=error)
+            raise RuntimeError("internal Engram failure") from None
+
+    return guarded
 
 
 class MCPConversationService:
@@ -183,16 +209,19 @@ class EngramMCPServer(MCPServer):
             ),
         )
         self.conversation_service = service or MCPConversationService()
-        self.tool()(self.engram_start)
-        self.tool()(self.engram_send)
-        self.tool()(self.engram_inspect)
-        self.tool()(self.engram_add_fact)
-        self.tool()(self.engram_finish)
-        self.tool()(self.engram_stop)
-        self.tool()(self.engram_propose)
-        self.tool()(self.engram_resolve)
-        self.tool()(self.engram_learn_response)
-        self.tool()(self.engram_retire_response)
+        for operation in (
+            self.engram_start,
+            self.engram_send,
+            self.engram_inspect,
+            self.engram_add_fact,
+            self.engram_finish,
+            self.engram_stop,
+            self.engram_propose,
+            self.engram_resolve,
+            self.engram_learn_response,
+            self.engram_retire_response,
+        ):
+            self.tool()(guarded_tool(operation))
 
     def engram_start(
         self,

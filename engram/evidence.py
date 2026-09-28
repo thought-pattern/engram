@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
 from engram.constants import (
@@ -45,6 +46,8 @@ from engram.resolution import (
     validate_proposition_evidence_record,
     validate_query_frame,
 )
+
+logger = logging_getLogger(__name__)
 
 
 def empty_disclosure_decision() -> dict:
@@ -825,12 +828,14 @@ class PropositionEligibilityEvaluator:
             return result
         try:
             authorization = authority_method(frame.get("scope", {}), ownership)
-        except Exception:
+        except Exception as error:
+            logger.warning("Visibility authority failed", exc_info=error)
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
             return result
         try:
             authorization = validate_visibility_authorization(authorization)
-        except InvalidRequestError:
+        except InvalidRequestError as error:
+            logger.warning("Visibility authority returned an invalid authorization", exc_info=error)
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
             return result
         if authorization["scope"] != frame.get("scope", {}):
@@ -873,7 +878,8 @@ class PropositionEligibilityEvaluator:
         discovered = validate_proposition_projection(discovered)
         try:
             current = current_proposition_projection(discovered.get("proposition_id", ""))
-        except Exception:
+        except Exception as error:
+            logger.warning("Proposition revalidation read failed", exc_info=error)
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
             return result
         if not isinstance(current, tuple) or len(current) != 1:
@@ -881,7 +887,8 @@ class PropositionEligibilityEvaluator:
             return result
         try:
             projection = validate_proposition_projection(current[0])
-        except InvalidRequestError:
+        except InvalidRequestError as error:
+            logger.warning("Proposition revalidation returned an invalid projection", exc_info=error)
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_MISSING)
             return result
         if projection["projection_id"] != PropositionProjectionQuery.BY_ID_V1:

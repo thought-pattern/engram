@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from gc import collect as gc_collect, freeze as gc_freeze
 from logging import (
+    ERROR,
     INFO,
+    WARNING,
     basicConfig,
     getLevelNamesMapping,
     getLogger,
@@ -34,6 +36,7 @@ from engram.errors import (
     InvalidRequestError,
     LifecycleError,
     ResolutionCancelledError,
+    ResourceExhaustedError,
     ResourceNotFoundError,
 )
 from engram.identity import query_identity_from_dict
@@ -41,6 +44,13 @@ from engram.resolution import resolution_budget_from_dict, resolution_result_to_
 from engram.service import EngramCore
 
 LOGGER = getLogger(__name__)
+# Log levels for errors returned to a client: internal failures are errors,
+# cancellations are routine, and anything else the caller caused is a warning.
+REQUEST_ERROR_LOG_LEVELS = {
+    grpc_StatusCode.INTERNAL: ERROR,
+    grpc_StatusCode.CANCELLED: INFO,
+    grpc_StatusCode.DEADLINE_EXCEEDED: INFO,
+}
 SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramService"].full_name
 EVIDENCE_SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramEvidenceService"].full_name
 
@@ -148,6 +158,9 @@ def status_code(error: EngramCoreError, context: grpc_ServicerContext) -> grpc_S
     if isinstance(error, LifecycleError):
         result = grpc_StatusCode.FAILED_PRECONDITION
         return result
+    if isinstance(error, ResourceExhaustedError):
+        result = grpc_StatusCode.RESOURCE_EXHAUSTED
+        return result
     result = grpc_StatusCode.INTERNAL
     return result
 
@@ -212,11 +225,15 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
         except EngramCoreError as error:
+            # The client gets the error's own message, written for callers;
+            # the log gets the full exception.
+            code = status_code(error, context)
+            LOGGER.log(REQUEST_ERROR_LOG_LEVELS.get(code, WARNING), "Engram gRPC request ended with %s", code.name, exc_info=error)
             metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
             context.set_trailing_metadata(tuple(metadata))
-            context.abort(status_code(error, context), str(error))
+            context.abort(code, str(error))
         except Exception as error:
-            LOGGER.error("Unhandled Engram gRPC operation failure (%s)", type(error).__name__)
+            LOGGER.error("Unhandled Engram gRPC operation failure", exc_info=error)
             context.abort(grpc_StatusCode.INTERNAL, "internal Engram failure")
         finally:
             self.core.reconnect_graph_after_turn()
@@ -535,7 +552,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
     except (EngramCoreError, RuntimeError) as error:
         # An enabled graph that is unreachable or fails schema preflight
         # raises RuntimeError at startup; report it like any startup failure.
-        LOGGER.error("Unable to initialize Engram gRPC server (%s)", type(error).__name__)
+        LOGGER.error("Unable to initialize Engram gRPC server", exc_info=error)
         result = 1
         return result
 
@@ -562,7 +579,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
     try:
         server.stop(args.grace_period)
     except EngramCoreError as error:
-        LOGGER.error("Engram gRPC shutdown failed (%s)", type(error).__name__)
+        LOGGER.error("Engram gRPC shutdown failed", exc_info=error)
         result = 1
         return result
     LOGGER.info("Engram gRPC server stopped")

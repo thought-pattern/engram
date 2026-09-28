@@ -439,7 +439,8 @@ class EngramCore:
             try:
                 selected_engram = Engram(config=config)
             except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+                LOGGER.error("Engram could not start with the supplied configuration", exc_info=error)
+                raise InvalidRequestError("Engram configuration is invalid; the server log has the details") from error
         elif isinstance(engram, Engram):
             if config:
                 raise InvalidRequestError("config cannot be supplied with an existing Engram")
@@ -546,7 +547,7 @@ class EngramCore:
         try:
             reconnect()
         except Exception as error:
-            LOGGER.warning("graph reconnect could not start (%s)", type(error).__name__)
+            LOGGER.warning("graph reconnect could not start", exc_info=error)
 
     @contextlib_contextmanager
     def graph_operation(self):
@@ -1033,7 +1034,7 @@ class EngramCore:
                 raise
             except Exception as error:
                 # Negative-cache ownership and lookup are optional optimizations.
-                LOGGER.warning("negative-resolution lookup failed closed: %s", error)
+                LOGGER.warning("negative-resolution lookup failed closed", exc_info=error)
                 negative_key_available = False
                 negative_hit = False
             if negative_hit:
@@ -1056,7 +1057,7 @@ class EngramCore:
                         frame["eligibility_context"]["evaluation_time"],
                     )
                 except Exception as error:
-                    LOGGER.warning("negative-resolution admission failed: %s", error)
+                    LOGGER.warning("negative-resolution admission failed", exc_info=error)
             result = apply_rollout(raw_result, rollout)
             candidate_statement_ids = finalization["candidate_statement_ids"] if rollout_mode != RolloutMode.SHADOW else ()
             candidacy_observations = self.feedback_observations(
@@ -1153,9 +1154,11 @@ class EngramCore:
                             "external regulator marked the observed candidate generation stale",
                         )
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
-                    except (ConflictError, ResourceNotFoundError, InvalidRequestError):
+                    except (ConflictError, ResourceNotFoundError, InvalidRequestError) as error:
+                        LOGGER.info("stale-lifecycle handoff conflicted", exc_info=error)
                         lifecycle_status = LifecycleHandoffStatus.CONFLICTED
-                    except MutationCoordinationError:
+                    except MutationCoordinationError as error:
+                        LOGGER.error("stale-lifecycle handoff failed", exc_info=error)
                         lifecycle_status = LifecycleHandoffStatus.FAILED
                 else:
                     lifecycle_status = LifecycleHandoffStatus.PENDING
@@ -1200,17 +1203,16 @@ class EngramCore:
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
             anonymous_session_id = f"anonymous_{uuid4().hex}" if conversation_id == "" else ""
-            try:
-                runtime = ConversationRuntime(
-                    self.engram,
-                    user_id=conversation_id,
-                    anonymous_session_id=anonymous_session_id,
-                    initial_bot_text=initial_bot_text,
-                    random_seed=random_seed,
-                    random_seed_present=random_seed_present,
-                )
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            # Request validation raises InvalidRequestError with its own message;
+            # anything else is an internal failure, logged at the transport.
+            runtime = ConversationRuntime(
+                self.engram,
+                user_id=conversation_id,
+                anonymous_session_id=anonymous_session_id,
+                initial_bot_text=initial_bot_text,
+                random_seed=random_seed,
+                random_seed_present=random_seed_present,
+            )
             self.conversations[conversation_id] = runtime
             snapshot = runtime.inspect()
             result = {
@@ -1242,10 +1244,7 @@ class EngramCore:
         with self.resolution_slot(operation_id, conversation_id), self.lock:
             self.require_running()
             runtime = self.get_conversation(conversation_id)
-            try:
-                result = runtime.send(text)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            result = runtime.send(text)
             return result
 
     def inspect_conversation(self, user_id: str) -> dict:
@@ -1264,10 +1263,7 @@ class EngramCore:
             self.require_running()
             require_service_text(text, "text", MAX_RESPONSE_BYTES)
             require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
-            try:
-                statement_id = self.engram.add_fact(text, source_label=source_label)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            statement_id = self.engram.add_fact(text, source_label=source_label)
             result = statement_view(self.engram.get_statement(statement_id))
             return result
 
@@ -1330,7 +1326,8 @@ class EngramCore:
                 result = self.internal_component_status["vector"]["ready"] and self.internal_component_status["vector"]["enabled"]
                 return result
             except Exception as error:
-                raise InvalidRequestError(f"unable to initialize vector recall: {error}") from error
+                LOGGER.error("Vector recall could not be initialized", exc_info=error)
+                raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from error
 
     def close(self) -> bool:
         """Release all transport-independent runtime state."""
@@ -1351,7 +1348,7 @@ class EngramCore:
                 try:
                     disconnect()
                 except Exception as error:
-                    LOGGER.warning("graph client disconnect failed while closing Engram: %s", error)
+                    LOGGER.warning("graph client disconnect failed while closing Engram", exc_info=error)
             self.internal_state = CoreState.CLOSED
             self.resolution_condition.notify_all()
             result = True

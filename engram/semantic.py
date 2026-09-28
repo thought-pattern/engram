@@ -3,6 +3,7 @@
 from collections.abc import Container, Iterable
 from hashlib import sha256 as hashlib_sha256
 from itertools import batched as itertools_batched
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite, sqrt as math_sqrt
 from pathlib import Path
 from threading import Lock as threading_Lock
@@ -24,6 +25,8 @@ from engram.constants import (
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes
+
+logger = logging_getLogger(__name__)
 
 SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION = 32
 SEMANTIC_RECORD_WORKING_BYTES_PER_DIMENSION = 64
@@ -266,6 +269,7 @@ class StandaloneSemanticRetriever:
                 self.internal_identity = internal_artifact_identity(self.internal_settings, actual_sha256)
                 self.internal_healthy = True
             except Exception as error:
+                logger.warning("Semantic retrieval model is unavailable", exc_info=error)
                 self.internal_healthy = False
                 self.internal_last_error = type(error).__name__
         # statement_id -> (artifact, {(origin, ordinal): record}). A record is a

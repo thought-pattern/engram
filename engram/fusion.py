@@ -2,6 +2,7 @@
 
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
 from engram.artifacts import LifecycleState
@@ -77,6 +78,8 @@ from engram.resolution import (
     validate_query_frame,
 )
 from engram.utilities import UTILITY_PLUGIN_VERSION, evaluate_named_utility
+
+logger = logging_getLogger(__name__)
 
 EMPTY_FEATURE_VALUES = {}
 
@@ -2207,6 +2210,7 @@ class CandidateFusionEngine:
             except ResolutionCancelledError:
                 raise
             except Exception as error:
+                logger.warning("Reranker failed; using the baseline order", exc_info=error)
                 self.internal_reranker.record_fallback("reranker_exception")
                 reranker_report = {
                     "applied": False,

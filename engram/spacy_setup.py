@@ -11,10 +11,13 @@ Install once after dependencies:
 """
 
 from functools import lru_cache
+from logging import getLogger as logging_getLogger
 
 from spacy import load as spacy_load
 
 from engram.constants import MODEL_NAME
+
+logger = logging_getLogger(__name__)
 
 
 def internal_load(model_name: str, disable):
@@ -22,7 +25,8 @@ def internal_load(model_name: str, disable):
     try:
         nlp = spacy_load(model_name, disable=list(disable))
         return nlp
-    except OSError:
+    except OSError as error:
+        logger.warning("spaCy model %s is not available", model_name, exc_info=error)
         result = ()
         return result
 

@@ -2,6 +2,7 @@
 
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
 from engram.artifacts import LifecycleState
@@ -107,6 +108,8 @@ from engram.resolution import (
     validate_resolver_result,
 )
 from engram.utilities import UtilityRegistry
+
+logger = logging_getLogger(__name__)
 
 
 def resolver_contract(value: object) -> tuple[str, CostClass, object, object]:
@@ -2162,7 +2165,8 @@ class ResolverRegistry:
             availability_failed = False
             try:
                 available = bool(selected and cost_allowed and resolver_available(available_operation, frame))
-            except Exception:
+            except Exception as error:
+                logger.warning("Resolver %s availability check failed", name, exc_info=error)
                 available = False
                 availability_failed = True
             reason = ""
@@ -2512,6 +2516,7 @@ class ResolverExecutor:
             except ResolutionCancelledError:
                 raise
             except Exception as error:
+                logger.warning("Resolver %s failed", resolver_name, exc_info=error)
                 finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
                 result = resolver_result(
@@ -2527,6 +2532,7 @@ class ResolverExecutor:
                 try:
                     current_raw = validate_resolver_result(raw)
                 except InvalidRequestError as error:
+                    logger.warning("Resolver %s returned an invalid result", resolver_name, exc_info=error)
                     result = resolver_result(
                         resolver=resolver_name,
                         state=ResolverState.FAILED,

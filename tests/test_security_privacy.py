@@ -105,7 +105,7 @@ def test_initial_context_and_service_signatures_are_bounded() -> None:
     core.close()
 
 
-def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
+def test_core_graph_failure_is_logged_in_full_and_returns_no_rows(caplog) -> None:
     secret = "private-request-and-proposition-content"
 
     class FailingGraph:
@@ -122,10 +122,10 @@ def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
         assert engine.graph_query("RETURN 1") == []
 
     assert "RuntimeError" in caplog.text
-    assert secret not in caplog.text
+    assert secret in caplog.text
 
 
-def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -> None:
+def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_type(caplog) -> None:
     secret = "private-graph-driver-content"
     stub = BoltStub()
     stub.mode = "fail"
@@ -148,7 +148,7 @@ def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -
 
     assert secret in str(failure.value.__cause__)
     assert secret not in str(failure.value)
-    assert secret not in caplog.text
+    assert secret in caplog.text
     assert "DatabaseError" in caplog.text
 
 
@@ -200,7 +200,7 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
 
     visible = f"{resolved}{turn}"
     assert secret not in visible
-    assert secret not in caplog.text
+    assert secret in caplog.text
     assert "Graph read failed" in caplog.text
     assert "RuntimeError" in caplog.text
     assert resolved["outcome"] == ResolutionOutcome.MISS

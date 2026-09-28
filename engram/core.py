@@ -36,6 +36,7 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
+from engram.errors import InvalidRequestError
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
 from engram.graph import (
@@ -160,13 +161,11 @@ def format_graph_facts(facts: list[tuple[str, str, str]]) -> str:
 
 
 def failed_graph_read(operation: str, error: BaseException, empty):
-    """Record a database failure and return the same empty result as no rows.
+    """Log a database failure in full and return the same empty result as no rows.
 
-    The log keeps the operation and exception type. It omits the exception
-    text so query and proposition content stay out of the process log and
-    out of any user-visible result.
+    The caller sees an ordinary empty result, never the failure text.
     """
-    logger.warning("Graph read failed (%s, %s)", operation, type(error).__name__)
+    logger.warning("Graph read failed (%s)", operation, exc_info=error)
     result = empty
     return result
 
@@ -482,7 +481,7 @@ class Engram:
                 self.load_graph_embedding_model()
             except Exception as error:
                 self.graph_embedding_model = ()
-                logger.warning("Optional graph vector model is unavailable: %s", type(error).__name__)
+                logger.warning("Optional graph vector model is unavailable", exc_info=error)
         try:
             self.component_status = self.preflight_components()
         except RuntimeError as error:
@@ -519,7 +518,7 @@ class Engram:
             try:
                 vector_ready = self.warm_vector_recall()
             except Exception as error:
-                logger.warning("Optional graph vector recall is unavailable: %s", type(error).__name__)
+                logger.warning("Optional graph vector recall is unavailable", exc_info=error)
         if spacy_full_enabled and not get_nlp():
             raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
         spacy_ready = bool(get_nlp()) if spacy_full_enabled or spacy_phrasing_enabled else False
@@ -665,7 +664,7 @@ class Engram:
             result = rows if isinstance(rows, list) else []
             return result
         except Exception as err:
-            logger.warning("Vector graph recall unavailable; using keyword fallback (%s)", type(err).__name__)
+            logger.warning("Vector graph recall unavailable; using keyword fallback", exc_info=err)
             result = []
             return result
 
@@ -712,10 +711,7 @@ class Engram:
         except (TimeoutError, MemoryError):
             raise
         except Exception as err:
-            logger.warning(
-                "Vector Proposition projection unavailable; omitting response-less evidence (%s)",
-                type(err).__name__,
-            )
+            logger.warning("Vector Proposition projection unavailable; omitting response-less evidence", exc_info=err)
             result = []
             return result
 
@@ -2065,9 +2061,9 @@ class Engram:
         context. The returned id identifies the primary stored statement.
         """
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("fact text must be a non-empty string")
+            raise InvalidRequestError("fact text must be a non-empty string")
         if not isinstance(source_label, str):
-            raise ValueError("source_label must be a string")
+            raise InvalidRequestError("source_label must be a string")
 
         fact_text = text.strip()
         facts = extract_facts(fact_text) if self.config["use_spacy_facts"] else []

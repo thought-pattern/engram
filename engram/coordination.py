@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from contextlib import contextmanager
+from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
 from engram.constants import COORDINATED_MUTATION_CANDIDATE_FIELDS, COORDINATED_RESPONSE_STATE_FIELDS
@@ -12,6 +13,8 @@ from engram.mutations import (
     validate_mutation_receipt,
 )
 from engram.repository import MAX_PLANNED_CANDIDATES, ArtifactRepository, validate_repository_state
+
+logger = logging_getLogger(__name__)
 
 
 class MutationCoordinationError(EngramCoreError):
@@ -303,12 +306,15 @@ class AtomicMutationCoordinator:
                     self.publication_hook(before)
                     self.mutation_receipts.replace_from_snapshot(before["mutation_receipts"])
                 except Exception as rollback_error:
+                    logger.error("Cache mutation publication failed", exc_info=error)
+                    logger.error("Cache mutation rollback failed", exc_info=rollback_error)
                     raise MutationCoordinationError(
-                        f"cache mutation publication failed and rollback failed: {error}; {rollback_error}",
+                        "cache mutation publication failed and rollback failed",
                         live_state_changed=True,
                     ) from rollback_error
+                logger.error("Cache mutation publication failed and was rolled back", exc_info=error)
                 raise MutationCoordinationError(
-                    f"cache mutation publication failed and was rolled back: {error}",
+                    "cache mutation publication failed and was rolled back",
                     live_state_changed=False,
                 ) from error
             result = mutation_execution_result(validated_candidate["receipt"], True)

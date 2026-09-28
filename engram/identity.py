@@ -140,7 +140,7 @@ def load_json_object(value: str, name: str) -> dict:
     try:
         decoded = json_loads(value)
     except json_JSONDecodeError as error:
-        raise IdentityValidationError(f"{name} is not valid JSON: {error.msg}") from error
+        raise IdentityValidationError(f"{name} is not valid JSON") from error
     result = require_mapping(decoded, name)
     return result
 

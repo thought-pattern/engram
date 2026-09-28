@@ -7,10 +7,11 @@ retrieval, updates, expiration, and cleanup of user sessions.
 from datetime import UTC, datetime, timedelta
 
 from engram.constants import DEFAULT_USER_ID, EARLIEST_UTC, SessionOverflow
+from engram.errors import InvalidRequestError, ResourceExhaustedError
 from engram.models import session, session_update_context
 
 
-class SessionLimitExceededError(Exception):
+class SessionLimitExceededError(ResourceExhaustedError):
     """Raised when session limit is reached and overflow is REJECT."""
 
     pass
@@ -27,7 +28,7 @@ def normalize_user_id(user_id: str = "") -> str:
     if user_id == "":
         return DEFAULT_USER_ID
     if not isinstance(user_id, str):
-        raise ValueError("user_id must be a string")
+        raise InvalidRequestError("user_id must be a string")
     return user_id
 
 

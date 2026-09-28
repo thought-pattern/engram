@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
 from importlib.metadata import version as package_version
 from importlib.resources import files
+from logging import getLogger as logging_getLogger
 from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -28,6 +29,8 @@ from engram.constants import (
     UTILITY_PLUGIN_NAMES,
     UTILITY_UNIT_PRECISION_DIGITS,
 )
+
+logger = logging_getLogger(__name__)
 
 UTILITY_PLUGIN_VERSION = "1.0.0"
 UTILITY_TZDATA_VERSION = package_version("tzdata")
@@ -703,7 +706,8 @@ def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     except UtilityInputError as error:
         result = evaluation("rejected", plugin_name, error_code=error.code)
         return result
-    except Exception:
+    except Exception as error:
+        logger.warning("Utility plugin %s failed", plugin_name, exc_info=error)
         result = evaluation("failed", plugin_name, error_code="plugin_failure")
         return result
     if len(response.encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES:

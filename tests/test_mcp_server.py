@@ -2,6 +2,7 @@
 
 from asyncio import run as asyncio_run
 from json import loads as json_loads
+from logging import WARNING
 
 from mcp.client import Client
 from pytest import raises as pytest_raises
@@ -38,6 +39,36 @@ def tool_json(result) -> dict:
     value = json_loads(result.content[0].text)
     assert isinstance(value, dict)
     return value
+
+
+def test_tool_failures_are_logged_in_full_and_clients_see_only_stable_messages(caplog) -> None:
+    secret = "private-internal-failure-detail"
+
+    class FailingService:
+        def send(self, text: str) -> dict:
+            del text
+            raise RuntimeError(secret)
+
+        def inspect(self) -> dict:
+            raise LifecycleError("no active conversation; call engram_start first")
+
+    server = EngramMCPServer(service=FailingService())
+
+    async def exercise() -> tuple:
+        async with Client(server) as client:
+            failed = await client.call_tool("engram_send", {"text": "hello"})
+            refused = await client.call_tool("engram_inspect", {})
+        return failed, refused
+
+    with caplog.at_level(WARNING, logger="engram.mcp_server"):
+        failed, refused = asyncio_run(exercise())
+
+    assert failed.is_error is True
+    assert "internal Engram failure" in failed.content[0].text
+    assert secret not in failed.content[0].text
+    assert refused.is_error is True
+    assert "no active conversation; call engram_start first" in refused.content[0].text
+    assert secret in caplog.text
 
 
 def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:
