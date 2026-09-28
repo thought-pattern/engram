@@ -233,3 +233,24 @@ def test_semantic_resolver_reads_artifacts_without_a_live_index(tmp_path: Path) 
     assert result["candidates"][0]["source"] == CandidateSource.STANDALONE_SEMANTIC
     assert result["candidates"][0]["statement_id"] == "sushi"
     assert engine.get_statement("sushi") == {}
+
+
+def test_semantic_records_are_reused_only_while_an_artifact_is_unchanged(tmp_path: Path) -> None:
+    model = FakeSemanticModel()
+    configuration = engram_config(semantic=settings(tmp_path))
+    engine = Engram(config=configuration)
+    engine.semantic_retriever = StandaloneSemanticRetriever(configuration["semantic"], model=model)
+    engine.response_repository = ArtifactRepository((artifact("sushi", "best sushi", "Sushi", aliases=("japanese rolls",)),))
+    options = {"limit": 5, "max_vector_results": 10, "max_working_memory_bytes": 10_000_000}
+
+    first = engine.semantic_candidates("japanese rolls", scope_key(namespace="tenant-a"), **options)
+    encoded = len(model.encoded_texts)
+    again = engine.semantic_candidates("japanese rolls", scope_key(namespace="tenant-a"), **options)
+
+    assert again == first
+    # Only the query is encoded again; the artifact's records are reused.
+    assert model.encoded_texts[encoded:] == ["japanese rolls"]
+    engine.response_repository = ArtifactRepository((artifact("cats", "best cats", "Cats", aliases=("feline guide",)),))
+    replaced = engine.semantic_candidates("feline guide", scope_key(namespace="tenant-a"), **options)
+    assert [match["statement_id"] for match in replaced["matches"]] == ["cats"]
+    assert set(engine.semantic_retriever.internal_records) == {"cats"}

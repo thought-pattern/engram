@@ -11,13 +11,14 @@ SOURCE_GLOBS = (
     ("scripts", ("*.py",)),
     ("eval", ("*.py", "*.json")),
     ("tests", ("*.py",)),
+    # Workflows are globbed: naming one file broke every benchmark when it was renamed.
+    (".github/workflows", ("*.yml",)),
 )
 SOURCE_FILES = (
     "pyproject.toml",
     "requirements.txt",
     "config.example.yml",
     "schema.cypher",
-    ".github/workflows/ci.yml",
 )
 
 

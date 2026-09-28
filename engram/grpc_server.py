@@ -3,6 +3,7 @@
 from argparse import ArgumentParser as argparse_ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from gc import collect as gc_collect, freeze as gc_freeze
 from logging import (
     INFO,
     basicConfig,
@@ -546,6 +547,12 @@ def main(argv: tuple[str, ...] = ()) -> int:
     signal(SIGINT, request_shutdown)
     signal(SIGTERM, request_shutdown)
 
+    # Models, seed data, and the stored state live for the whole process.
+    # Freezing them after startup keeps full garbage collections from
+    # rescanning them, which otherwise pauses requests for hundreds of
+    # milliseconds on a large store.
+    gc_collect()
+    gc_freeze()
     server.start()
     LOGGER.info("Engram gRPC server listening on %s", server.target)
     with suppress(KeyboardInterrupt):

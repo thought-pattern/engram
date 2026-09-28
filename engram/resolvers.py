@@ -90,7 +90,6 @@ from engram.resolution import (
     evidence_reference_to_dict,
     feature_set,
     proposition_evidence_path_step,
-    proposition_evidence_record_to_dict,
     proposition_evidence_record_with_changes,
     resolver_result,
     resolver_result_to_dict,
@@ -480,6 +479,17 @@ def json_size(value: object) -> int:
             allow_nan=False,
         ).encode("utf-8")
     )
+    return result
+
+
+def json_array_bytes(item_bytes: int, count: int) -> int:
+    """Return ``json_size`` of a list from its items' total size, or 0 for an empty list.
+
+    Compact JSON adds two brackets and one comma between items, so trimming
+    can keep a running total instead of re-encoding the remaining list.
+    ``json_array_size`` is the same rule over a list of item sizes.
+    """
+    result = 2 + item_bytes + count - 1 if count else 0
     return result
 
 
@@ -1232,14 +1242,16 @@ class StructuredGraphResolver:
             )
             return result
 
+        checked_frame = validate_query_frame(frame)
         execution = execute_composition_plan(
             plan,
             query,
-            lambda projection: self.internal_eligibility_evaluator.evaluate(projection, frame),
+            lambda projection: self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True),
             lambda projection: self.internal_eligibility_evaluator.revalidate(
                 projection,
-                frame,
+                checked_frame,
                 self.internal_engram.current_proposition_projection,
+                trusted_frame=True,
             ),
             check,
         )
@@ -1275,7 +1287,9 @@ class StructuredGraphResolver:
             if not path:
                 continue
             terminal = path[-1]
-            base = proposition_evidence_record(terminal["proposition"]["projection"], terminal["decision"], frame, self.name)
+            base = proposition_evidence_record(
+                terminal["proposition"]["projection"], terminal["decision"], frame, self.name, trusted=True
+            )
             aggregation_inputs = plan["aggregation_inputs"]
             path_steps = tuple(
                 proposition_evidence_path_step(
@@ -1397,13 +1411,16 @@ class StructuredGraphResolver:
             )
 
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
         while candidates and output_bytes > budget.get("max_output_bytes", 0):
@@ -1544,10 +1561,11 @@ class StructuredGraphResolver:
         retained: list[tuple[dict, dict, float, bool]] = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
+        checked_frame = validate_query_frame(frame)
         for item in results:
             check()
             projection = item["projection"]
-            initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+            initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
             if not initial["eligible"]:
                 reason = initial["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
@@ -1555,7 +1573,7 @@ class StructuredGraphResolver:
             if graph_rows >= budget.get("max_graph_rows", 0):
                 break
             decision = self.internal_eligibility_evaluator.revalidate(
-                projection, frame, self.internal_engram.current_proposition_projection
+                projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
             graph_rows += 1
             if decision["revalidated"]:
@@ -1574,7 +1592,7 @@ class StructuredGraphResolver:
         records = []
         ambiguous_result = not selection["direct_answer"]
         for item, decision, type_match, type_match_available in retained:
-            base = proposition_evidence_record(item["projection"], decision, frame, self.name)
+            base = proposition_evidence_record(item["projection"], decision, frame, self.name, trusted=True)
             values = dict(base["features"]["values"])
             values.update({"entity_match": subject["score"], "relation_match": predicate["score"]})
             unavailable = set(base["features"]["unavailable"])
@@ -1658,13 +1676,16 @@ class StructuredGraphResolver:
                     )
                 )
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
         while candidates and output_bytes > budget.get("max_output_bytes", 0):
@@ -1780,15 +1801,16 @@ class StructuredGraphResolver:
         records = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
+        checked_frame = validate_query_frame(frame)
         for projection in projections:
             run_cooperative_check(cooperative_check)
-            initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+            initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
             if not initial["eligible"]:
                 reason = initial["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             decision = self.internal_eligibility_evaluator.revalidate(
-                projection, frame, self.internal_engram.current_proposition_projection
+                projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
             if decision["revalidated"]:
                 revalidation_rows += 1
@@ -1796,19 +1818,23 @@ class StructuredGraphResolver:
                 reason = decision["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
-            records.append(proposition_evidence_record(projection, decision, frame, self.name))
+            records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
         records.sort(key=lambda record: record["proposition_id"])
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         while records and record_bytes() > budget.get("max_output_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("output_bytes")
         working_memory = json_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
         if working_memory > budget.get("max_working_memory_bytes", 0):
@@ -1997,9 +2023,10 @@ class SupportSemanticResolver:
         exhausted = set()
         remaining_evidence = max(0, budget.get("max_evidence", 0) - evidence_count)
         if proposition_capacity and remaining_evidence:
+            checked_frame = validate_query_frame(frame)
             for projection in projections:
                 run_cooperative_check(cooperative_check)
-                initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+                initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
                 if not initial["eligible"]:
                     reason = initial["reason"].value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
@@ -2009,7 +2036,7 @@ class SupportSemanticResolver:
                     break
                 revalidation_attempts += 1
                 decision = self.internal_eligibility_evaluator.revalidate(
-                    projection, frame, self.internal_engram.current_proposition_projection
+                    projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
                 )
                 if decision["revalidated"]:
                     revalidation_rows += 1
@@ -2017,52 +2044,51 @@ class SupportSemanticResolver:
                     reason = decision["reason"].value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
-                records.append(proposition_evidence_record(projection, decision, frame, self.name))
+                records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
                 if len(records) >= remaining_evidence:
                     break
         records.sort(key=lambda record: record["proposition_id"])
 
-        def evidence_values() -> list[dict[str, object]]:
-            result = [evidence_reference_to_dict(reference) for candidate in candidates for reference in candidate["evidence"]] + [
-                proposition_evidence_record_to_dict(record) for record in records
-            ]
-            return result
+        # Candidates are fixed while records are trimmed, so their sizes are
+        # computed once and each record's size is subtracted as it goes.
+        reference_sizes = [
+            json_size(evidence_reference_to_dict(reference)) for candidate in candidates for reference in candidate["evidence"]
+        ]
+        candidate_sizes = [json_size(candidate_to_dict(candidate)) for candidate in candidates]
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def evidence_bytes() -> int:
-            values = evidence_values()
-            result = json_size(values) if values else 0
+            result = json_array_bytes(sum(reference_sizes) + record_total, len(reference_sizes) + len(records))
             return result
 
         def output_bytes() -> int:
-            values = [candidate_to_dict(candidate) for candidate in candidates] + [
-                proposition_evidence_record_to_dict(record) for record in records
-            ]
-            result = json_size(values) if values else 0
+            result = json_array_bytes(sum(candidate_sizes) + record_total, len(candidate_sizes) + len(records))
             return result
 
         while records and evidence_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         while records and output_bytes() > budget.get("max_output_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("output_bytes")
-        working_memory = (
-            working_size(graph_rows)
-            + working_size(projections)
-            + working_size(matches)
-            + working_size(candidates)
-            + working_size(records)
+        fixed_working_memory = (
+            working_size(graph_rows) + working_size(projections) + working_size(matches) + working_size(candidates)
         )
+        # working_size counts a shared object once, in list order, so each
+        # record's share is fixed by the records before it and dropping from
+        # the end subtracts exactly that share.
+        record_visited = {id(records)}
+        record_shares = [working_size(record, record_visited) for record in records]
+        record_working = 64 + sum(record_shares)
+        working_memory = fixed_working_memory + record_working
         while records and working_memory > budget.get("max_working_memory_bytes", 0):
             records.pop()
+            record_working -= record_shares.pop()
             exhausted.add("working_memory_bytes")
-            working_memory = (
-                working_size(graph_rows)
-                + working_size(projections)
-                + working_size(matches)
-                + working_size(candidates)
-                + working_size(records)
-            )
+            working_memory = fixed_working_memory + record_working
         if working_memory > budget.get("max_working_memory_bytes", 0):
             result = memory_exhausted_result(self.name)
             return result

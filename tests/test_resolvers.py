@@ -66,6 +66,8 @@ from engram.resolvers import (
     bound_resolver_result,
     execution_report_canonical_proposition_evidence,
     execution_report_with_changes,
+    json_array_bytes,
+    json_size,
     resolution_plan_to_dict,
     resolver_budget as build_resolver_budget,
     resolver_budget_from_json,
@@ -2025,3 +2027,12 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     assert result["budget"]["output_bytes"] == encoded_size
     assert "output_truncated" in result["reason_codes"]
     assert "output_bytes" in result["budget"]["exhausted_dimensions"]
+
+
+def test_json_array_bytes_matches_encoding_every_prefix() -> None:
+    values = [{"proposition_id": f"p-{index}", "label": "Ü" * index, "scores": [index, 0.5], "flag": True} for index in range(12)]
+
+    for count in range(len(values) + 1):
+        prefix = values[:count]
+        expected = json_size(prefix) if prefix else 0
+        assert json_array_bytes(sum(json_size(value) for value in prefix), count) == expected

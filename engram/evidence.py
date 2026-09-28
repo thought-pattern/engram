@@ -508,9 +508,14 @@ def proposition_exclusion_decision(
 def proposition_validity_inputs_from_eligibility(
     decision: dict,
     frame: dict,
+    *,
+    trusted: bool = False,
 ) -> dict:
-    """Derive validity inputs from an eligible publication-time decision."""
-    decision = validate_proposition_eligibility_decision(decision)
+    """Derive validity inputs from an eligible publication-time decision.
+
+    ``trusted`` skips revalidating a decision the evaluator just produced.
+    """
+    decision = decision if trusted else validate_proposition_eligibility_decision(decision)
     if (
         not decision.get("eligible", False)
         or not decision.get("revalidated", False)
@@ -668,9 +673,14 @@ class PropositionEligibilityEvaluator:
             raise InvalidRequestError("visibility authority must implement evaluate")
         self.internal_visibility_authority = selected_authority
 
-    def evaluate(self, projection: dict, frame: dict) -> dict:
+    def evaluate(self, projection: dict, frame: dict, *, trusted_frame: bool = False) -> dict:
+        """Decide whether one projection may be used for this request.
+
+        ``trusted_frame`` skips revalidating a frame the caller validated once
+        for all of its projections.
+        """
         projection = validate_proposition_projection(projection)
-        frame = validate_query_frame(frame)
+        frame = frame if trusted_frame else validate_query_frame(frame)
         context = frame.get("eligibility_context", {})
         if not context["evaluation_time_available"]:
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.EVALUATION_TIME_UNAVAILABLE)
@@ -854,6 +864,8 @@ class PropositionEligibilityEvaluator:
         discovered: dict,
         frame: dict,
         current_proposition_projection: object,
+        *,
+        trusted_frame: bool = False,
     ) -> dict:
         if not callable(current_proposition_projection):
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
@@ -894,7 +906,7 @@ class PropositionEligibilityEvaluator:
                 projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
             )
             return result
-        decision = self.evaluate(projection, frame)
+        decision = self.evaluate(projection, frame, trusted_frame=trusted_frame)
         result = proposition_eligibility_decision_with_changes(decision, {"revalidated": True})
         return result
 
@@ -928,10 +940,17 @@ def proposition_evidence_record(
     decision: dict,
     frame: dict,
     source_resolver: str,
+    *,
+    trusted: bool = False,
 ) -> dict:
-    """Construct one strict full record only from eligible revalidated state."""
-    discovered = validate_proposition_projection(discovered)
-    decision = validate_proposition_eligibility_decision(decision)
+    """Construct one strict full record only from eligible revalidated state.
+
+    ``trusted`` is for a resolver passing the projection it discovered and the
+    decision the evaluator just returned for it; neither is revalidated.
+    Every eligibility and identity check below still runs.
+    """
+    discovered = discovered if trusted else validate_proposition_projection(discovered)
+    decision = decision if trusted else validate_proposition_eligibility_decision(decision)
     source = token(source_resolver, "Proposition evidence source_resolver", 96)
     if source not in PROPOSITION_EVIDENCE_PRODUCERS:
         raise InvalidRequestError("Proposition evidence source_resolver is not an allowed producer")
@@ -1002,7 +1021,7 @@ def proposition_evidence_record(
             current["predicate_id"],
             current["object_entity_id"],
         ),
-        validity=proposition_validity_inputs_from_eligibility(decision, frame),
+        validity=proposition_validity_inputs_from_eligibility(decision, frame, trusted=trusted),
         trust=proposition_trust_inputs(
             current["trust_category"],
             current["trust_category_available"],
@@ -1014,6 +1033,8 @@ def proposition_evidence_record(
         disclosure=decision.get("disclosure", {}),
         path=(current["proposition_id"],),
         selection_reasons=tuple(sorted(reasons)),
+        # Every component above was just built by its validating constructor.
+        trusted_components=True,
     )
     return result
 

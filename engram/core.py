@@ -1,5 +1,6 @@
 """Core ENGRAM implementation."""
 
+from bisect import bisect_left
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
@@ -70,7 +71,7 @@ from engram.resources import estimate_working_bytes, require_working_memory
 from engram.scoring import score_statement_components
 from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
-from engram.sparse import search_sparse_artifacts
+from engram.sparse import SparseIndex, search_sparse_artifacts
 from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences, substitution_maps
 from engram.telemetry import operational_telemetry, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
@@ -378,10 +379,22 @@ class Engram:
 
         # Core data structures
         self.statements: list[dict] = []
-        self.statement_index: dict[str, int] = {}  # id -> list index
+        # Statement bookkeeping. ``statements`` keeps store order. Lookups go
+        # through ``statement_by_id``; a position comes from the store-order
+        # sequence (``statement_position``), so removing one statement does not
+        # renumber the rest. DYNAMIC statements sit in a lazily checked LRU heap.
+        self.statement_by_id: dict[str, dict] = {}
+        self.statement_sequence: dict[str, int] = {}
+        self.statement_sequences: list[int] = []
+        self.next_statement_sequence = 0
+        self.dynamic_statement_ids: set[str] = set()
+        self.dynamic_lru: list[tuple] = []
         self.keywords: dict[str, dict] = {}
         self.sessions: dict[str, dict] = {}
         self.pattern_to_statement: dict[str, str] = {}  # pattern -> statement_id
+        # Registered pattern or alias -> ids of the statements carrying it, in
+        # store order, so matching and eviction never scan every statement.
+        self.pattern_statements: dict[str, list[str]] = {}
 
         # Bot properties and data (public for direct access). The persona name
         # is applied before patterns are added, so {bot:name} follows config
@@ -428,6 +441,8 @@ class Engram:
         self.count_lock = threading_Lock()
         self.response_repository = ArtifactRepository()
         self.semantic_retriever = StandaloneSemanticRetriever(self.config.get("semantic") or {})
+        # Per-scope sparse index, synced to the artifact snapshot on each search.
+        self.sparse_index = SparseIndex()
         self.reranker = TransparentLogisticReranker(self.config.get("reranker") or {})
         self.utility_registry = UtilityRegistry(self.config.get("utility") or {})
         self.mutation_receipts = MutationReceiptLedger()
@@ -753,15 +768,16 @@ class Engram:
         max_working_memory_bytes: int,
     ) -> dict:
         """Search request-local sparse structures derived from the current artifacts."""
-        repository = self.response_repository.snapshot()
+        artifacts = self.response_repository.trusted_artifacts()
         result = search_sparse_artifacts(
-            tuple(repository.get("artifacts", {}).values()),
+            tuple(artifacts.values()),
             text,
             scope,
             self.config.get("sparse") or {},
             limit=limit,
             max_working_memory_bytes=max_working_memory_bytes,
             trusted_artifacts=True,
+            index=self.sparse_index,
         )
         return result
 
@@ -776,15 +792,17 @@ class Engram:
         cooperative_check=(),
     ) -> dict:
         """Search request-local embeddings derived from the current artifacts."""
-        repository = self.response_repository.snapshot()
+        artifacts = self.response_repository.trusted_artifacts()
+        self.semantic_retriever.retain(artifacts)
         result = self.semantic_retriever.search(
             text,
             scope,
-            tuple(repository.get("artifacts", {}).values()),
+            tuple(artifacts.values()),
             limit=limit,
             max_vector_results=max_vector_results,
             max_working_memory_bytes=max_working_memory_bytes,
             cooperative_check=cooperative_check,
+            trusted_artifacts=True,
         )
         return result
 
@@ -874,7 +892,7 @@ class Engram:
         scored: list[tuple[float, int, dict]] = []
         scored_bytes = 64
         retained_bytes = source_working_bytes + estimate_working_bytes(support_scores)
-        repository = self.response_repository.snapshot()
+        repository = self.response_repository.trusted_state()
         edge_count = 0
         for index, artifact in enumerate(repository.get("artifacts", {}).values()):
             run_cooperative_check(cooperative_check)
@@ -1062,7 +1080,7 @@ class Engram:
             source_label=source_label,
         )
         with self.mutation_lock, self.statement_lock, self.keyword_lock:
-            if stmt["id"] in self.statement_index:
+            if stmt["id"] in self.statement_by_id:
                 raise ValueError(f"duplicate statement id: {stmt['id']}")
 
             # Register the pattern under the same lock that guards matching,
@@ -1073,14 +1091,22 @@ class Engram:
                     self.pattern_to_statement[registered_pattern] = stmt["id"]
 
             if tier == Tier.DYNAMIC:
-                dynamic_count = sum(1 for s in self.statements if s["tier"] == Tier.DYNAMIC)
-                while dynamic_count >= self.config["capacity"]:
+                while len(self.dynamic_statement_ids) >= self.config["capacity"]:
                     if not eviction_mod.evict_dynamic(self):
                         break
-                    dynamic_count -= 1
 
-            self.statement_index[stmt["id"]] = len(self.statements)
+            sequence = self.next_statement_sequence
+            self.next_statement_sequence += 1
             self.statements.append(stmt)
+            self.statement_sequences.append(sequence)
+            self.statement_by_id[stmt["id"]] = stmt
+            self.statement_sequence[stmt["id"]] = sequence
+            if tier == Tier.DYNAMIC:
+                self.dynamic_statement_ids.add(stmt["id"])
+                heapq_heappush(self.dynamic_lru, eviction_mod.lru_entry(stmt, sequence))
+            if pattern:
+                for registered_pattern in [pattern, *aliases]:
+                    self.pattern_statements.setdefault(registered_pattern, []).append(stmt["id"])
             for kw in keywords:
                 if kw not in self.keywords:
                     self.keywords[kw] = keyword_entry(keyword=kw)
@@ -1179,10 +1205,11 @@ class Engram:
             total = len(self.statements)
             for statement_id in candidate_ids:
                 run_cooperative_check(cooperative_check)
-                if statement_id not in self.statement_index:
+                if statement_id not in self.statement_by_id:
                     continue
-                index = self.statement_index[statement_id]
-                statement_value = self.statements[index]
+                # Store order breaks score ties, as the list position did.
+                index = self.statement_sequence[statement_id]
+                statement_value = self.statement_by_id[statement_id]
                 if statement_filter and not statement_filter(statement_value):
                     continue
                 components = score_statement_components(
@@ -1518,6 +1545,18 @@ class Engram:
         )
         return result
 
+    @property
+    def statement_index(self) -> dict[str, int]:
+        """Return statement id -> position in ``statements``, built on request."""
+        with self.statement_lock:
+            result = {stmt["id"]: position for position, stmt in enumerate(self.statements)}
+            return result
+
+    def statement_position(self, statement_id: str) -> int:
+        """Return a stored statement's position in ``statements``."""
+        result = bisect_left(self.statement_sequences, self.statement_sequence[statement_id])
+        return result
+
     def holds_state_lock(self) -> bool:
         """Return whether the calling thread holds any Engram state lock."""
         result = any(
@@ -1534,9 +1573,9 @@ class Engram:
         stored. The caller holds statement_lock.
         """
         selected: dict = {}
-        for stmt in self.statements:
-            carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
-            triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
+        for statement_id in self.pattern_statements.get(matched_pattern, ()):
+            stmt = self.statement_by_id[statement_id]
+            triple_match = stmt["topic"] == matched_topic and stmt["that"] == matched_that
             if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
                 selected = stmt
         result = selected
@@ -1948,8 +1987,8 @@ class Engram:
                     self.keywords[kw]["hit_count"] += 1
         if statement_id:
             with self.statement_lock:
-                if statement_id in self.statement_index:
-                    record_statement_hit(self.statements[self.statement_index[statement_id]])
+                if statement_id in self.statement_by_id:
+                    record_statement_hit(self.statement_by_id[statement_id])
 
     def learn_fact(
         self,
@@ -1982,8 +2021,8 @@ class Engram:
         # store() takes them in this order too.
         subject_pattern = fact_subject_upper(fact)
         with self.mutation_lock, self.statement_lock:
-            for stmt in self.statements:
-                if stmt["pattern"] == subject_pattern:
+            for statement_id in self.pattern_statements.get(subject_pattern, ()):
+                if self.statement_by_id[statement_id]["pattern"] == subject_pattern:
                     result = False
                     return result
 
@@ -2074,8 +2113,8 @@ class Engram:
             Statement dict if found, {} otherwise.
         """
         with self.statement_lock:
-            if statement_id in self.statement_index:
-                result = self.statements[self.statement_index[statement_id]]
+            if statement_id in self.statement_by_id:
+                result = self.statement_by_id[statement_id]
                 return result
         result = {}
         return result
@@ -2096,10 +2135,10 @@ class Engram:
             True if a statement was removed, False if the id was not present.
         """
         with self.mutation_lock, self.statement_lock:
-            if statement_id not in self.statement_index:
+            if statement_id not in self.statement_by_id:
                 result = False
                 return result
-            result = eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
+            result = eviction_mod.evict_statement_at(self, self.statement_position(statement_id))
             return result
 
     # =========================================================================
@@ -2160,7 +2199,7 @@ class Engram:
             )
 
         with self.mutation_lock, self.statement_lock, self.session_lock:
-            artifacts = self.response_repository.snapshot().get("artifacts", {})
+            artifacts = self.response_repository.trusted_artifacts()
             has_process_state = (
                 bool(self.statements)
                 or bool(self.sessions)

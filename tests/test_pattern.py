@@ -1100,3 +1100,63 @@ def test_stemming_false_positives_stemming_fallback_still_works_for_real_inflect
     pm = PatternMatcher(use_stemming=True, use_lemmatization=False)
     pm.add_pattern("CATS ARE GREAT", "Indeed")
     assert pm.match("cats are great")
+
+
+def graph_size(node, seen=None) -> int:
+    """Count nodes reachable from a graphmaster root, including that and topic subtrees."""
+    seen = set() if seen is None else seen
+    if id(node) in seen:
+        return 0
+    seen.add(id(node))
+    children = [*node.dollar.values(), *node.atoms.values(), *node.bots.values(), *node.sets.values()]
+    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.subtree) if child]
+    result = 1 + sum(graph_size(child, seen) for child in children)
+    return result
+
+
+def matcher_graph_size(pm: PatternMatcher) -> int:
+    result = graph_size(pm.default_trie) + graph_size(pm.topic_router)
+    return result
+
+
+def test_removal_in_place_matches_a_full_rebuild():
+    from random import Random
+
+    random = Random(20260927)
+    words = ["HELLO", "WORLD", "HOW", "ARE", "YOU", "*", "_", "#", "^", "$THERE"]
+    thats = ["", "", "DO YOU AGREE", "WHAT DO YOU LIKE *"]
+    topics = ["", "", "PYTHON", "UNIT-TESTING"]
+    probes = ["hello world", "how are you", "hello there you", "yes", "anything at all", "world hello how", "there"]
+    contexts = [("", ""), ("Do you agree?", ""), ("What do you like about pizza?", "python"), ("", "unit testing")]
+    stemming = PatternMatcher(use_stemming=True, use_lemmatization=True)
+    plain = PatternMatcher()
+    added = []
+    for index in range(160):
+        pattern = " ".join(random.choice(words) for _ in range(random.randint(1, 3)))
+        entry = (pattern, f"reply {index}", random.choice(thats), random.choice(topics))
+        added.append(entry)
+        for pm in (stemming, plain):
+            pm.add_pattern(entry[0], entry[1], that=entry[2], topic=entry[3])
+
+    for step in range(120):
+        pattern, _, that, topic = random.choice(added)
+        for pm in (stemming, plain):
+            pm.remove_pattern(pattern, that=that, topic=topic)
+        if step % 20:
+            continue
+        for pm, flags in ((stemming, {"use_stemming": True, "use_lemmatization": True}), (plain, {})):
+            rebuilt = PatternMatcher(**flags)
+            for entry in pm.internal_patterns:
+                rebuilt.add_pattern(entry["pattern"], entry["response"], that=entry["that"], topic=entry["topic"])
+            for probe in probes:
+                for that_text, topic_text in contexts:
+                    assert pm.match(probe, that=that_text, topic=topic_text) == rebuilt.match(
+                        probe, that=that_text, topic=topic_text
+                    ), (probe, that_text, topic_text)
+            # Removed paths are pruned, so the graph is no larger than a rebuild.
+            assert matcher_graph_size(pm) == matcher_graph_size(rebuilt)
+
+    for pattern, _, that, topic in added:
+        plain.remove_pattern(pattern, that=that, topic=topic)
+    assert len(plain) == 0
+    assert matcher_graph_size(plain) == 2

@@ -1,7 +1,9 @@
 """Authoritative live accepted-response artifact repository."""
 
+from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import datetime
+from heapq import nsmallest as heapq_nsmallest
 from threading import RLock as threading_RLock
 
 from engram.artifacts import lifecycle_after_capacity_eviction, validate_cached_response_artifact
@@ -15,8 +17,16 @@ from engram.constants import (
     RepositoryRemovalReason,
     Tier,
 )
+from engram.copies import structural_copy
 from engram.eligibility import ContextualExactLookup
-from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError, ResourceNotFoundError
+from engram.identity import (
+    retrieval_representation_bindings,
+    trusted_scoped_retrieval_key_signature,
+    validate_scoped_retrieval_key,
+)
+
+MAX_PLANNED_CANDIDATES = 16
 
 
 def tier_admission_policy(dynamic_capacity: int) -> dict:
@@ -60,21 +70,41 @@ def eviction_order_key(artifact: dict) -> tuple[datetime, int, str]:
     return result
 
 
+def trusted_or_validated_artifact(artifact: object, trusted: dict | None) -> dict:
+    """Return the live artifact when ``artifact`` is it or equals it, else validate.
+
+    Live artifacts were validated when they entered the repository and are
+    never changed in place, so an equal value needs no second validation.
+    Returning the live object keeps the stored form canonical.
+    """
+    if trusted is not None and (artifact is trusted or artifact == trusted):
+        result = trusted
+        return result
+    result = validate_cached_response_artifact(artifact)
+    return result
+
+
 def repository_state(
     state_generation: int,
     artifacts: object,
+    trusted_artifacts: object = (),
 ) -> dict:
-    """Build one validated repository snapshot dictionary."""
+    """Build one validated repository snapshot dictionary.
+
+    ``trusted_artifacts`` maps statement IDs to live, already validated
+    artifacts. An entry equal to its live artifact is not validated again.
+    """
 
     generation = positive_int(state_generation, "repository state_generation")
     if not isinstance(artifacts, dict):
         raise InvalidRequestError("repository artifacts must be an object")
+    trusted = trusted_artifacts if isinstance(trusted_artifacts, dict) else {}
     validated_artifacts = {}
     for statement_id, artifact in artifacts.items():
         if not isinstance(statement_id, str) or not statement_id:
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values")
         try:
-            validated_artifact = validate_cached_response_artifact(artifact)
+            validated_artifact = trusted_or_validated_artifact(artifact, trusted.get(statement_id))
         except InvalidRequestError as error:
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values") from error
         if validated_artifact.get("statement_id", "") != statement_id:
@@ -88,8 +118,11 @@ def repository_state(
     return result
 
 
-def validate_repository_state(value: object) -> dict:
-    """Validate and copy one repository snapshot dictionary."""
+def validate_repository_state(value: object, trusted_artifacts: object = ()) -> dict:
+    """Validate and copy one repository snapshot dictionary.
+
+    Artifacts equal to their entry in ``trusted_artifacts`` are reused.
+    """
 
     if not isinstance(value, dict) or set(value) != REPOSITORY_STATE_FIELDS:
         raise InvalidRequestError("repository state must be a RepositoryState")
@@ -97,7 +130,18 @@ def validate_repository_state(value: object) -> dict:
     artifacts = value.get("artifacts", ())
     if not isinstance(state_generation, int):
         raise InvalidRequestError("repository state must be a RepositoryState")
-    result = repository_state(state_generation, artifacts)
+    result = repository_state(state_generation, artifacts, trusted_artifacts)
+    return result
+
+
+def trusted_repository_state(state_generation: int, artifacts: dict) -> dict:
+    """Assemble a state from live and freshly validated artifacts without revalidating them."""
+    if len(artifacts) > MAX_REPOSITORY_ARTIFACTS:
+        raise InvalidRequestError(f"repository artifacts exceed the limit of {MAX_REPOSITORY_ARTIFACTS}")
+    result: dict = {
+        "state_generation": positive_int(state_generation, "repository state_generation"),
+        "artifacts": artifacts,
+    }
     return result
 
 
@@ -108,15 +152,24 @@ def admission_plan(
     evicted_statement_ids: tuple[str, ...],
     residency_changed: bool,
     lifecycle_changed: bool,
+    trusted_artifacts: object = (),
+    candidate_trusted: bool = False,
 ) -> dict:
-    """Build one validated off-live tier-admission result dictionary."""
+    """Build one validated off-live tier-admission result dictionary.
+
+    ``candidate_trusted`` skips revalidating a candidate the repository built
+    from its live state and a freshly validated artifact.
+    """
 
     if not isinstance(outcome, AdmissionOutcome):
         raise InvalidRequestError("admission outcome must be an AdmissionOutcome")
-    try:
-        validated_candidate = validate_repository_state(candidate)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("admission candidate must be a RepositoryState") from error
+    if candidate_trusted:
+        validated_candidate = candidate
+    else:
+        try:
+            validated_candidate = validate_repository_state(candidate, trusted_artifacts)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("admission candidate must be a RepositoryState") from error
     if not isinstance(admitted_statement_id, str):
         raise InvalidRequestError("admitted_statement_id must be a string")
     valid_evicted_ids = isinstance(evicted_statement_ids, tuple) and all(
@@ -248,16 +301,114 @@ def repository_state_with_artifact_updates(
 
 
 class ArtifactRepository:
-    """Atomic owner of authoritative accepted-response artifacts."""
+    """Atomic owner of authoritative accepted-response artifacts.
+
+    Artifacts are validated once, when they enter. The live state dictionary
+    is replaced, never changed in place, so package code may read it through
+    ``trusted_state`` without copying. Public reads (``snapshot``,
+    ``get_artifact``, ``find_artifact``) return structural copies a caller may
+    change freely. Candidate states share live artifacts for entries they do
+    not change; they go back to ``atomic_replace`` or the coordinator and must
+    not be changed in place.
+    """
 
     def __init__(self, artifacts: tuple[dict, ...] = ()) -> None:
         self.internal_lock = threading_RLock()
         self.internal_state = normalize_repository_state(artifacts)
+        # Exact-key index over the live state: statement_id -> (artifact, key
+        # signatures), and key signature -> statement IDs carrying it.
+        self.internal_indexed: dict[str, tuple[dict, tuple[tuple, ...]]] = {}
+        self.internal_key_owners: dict[tuple, set[str]] = {}
+        # DYNAMIC statement IDs, so admission need not scan STATIC artifacts.
+        self.internal_dynamic_ids: set[str] = set()
+        # Recent candidates this repository built: id -> (candidate, base state,
+        # changed statement IDs). A candidate handed back unchanged needs only
+        # its changed entries checked, not every stored artifact.
+        self.internal_planned: dict[int, tuple[dict, dict, frozenset[str]]] = {}
+        self.index_state(self.internal_state)
+
+    def plan(self, candidate: dict, changed: Iterable[str]) -> dict:
+        """Remember a candidate built from the live state along with the IDs it changes."""
+        with self.internal_lock:
+            while len(self.internal_planned) >= MAX_PLANNED_CANDIDATES:
+                del self.internal_planned[next(iter(self.internal_planned))]
+            self.internal_planned[id(candidate)] = (candidate, self.internal_state, frozenset(changed))
+            return candidate
+
+    def planned_changes(self, candidate: object, base: dict) -> frozenset[str] | None:
+        """Return the changed IDs of a candidate this repository built from ``base``, else None."""
+        with self.internal_lock:
+            entry = self.internal_planned.get(id(candidate))
+            if entry is None or entry[0] is not candidate or entry[1] is not base:
+                result = None
+                return result
+            result = entry[2]
+            return result
+
+    def index_state(self, state: dict, changed: Iterable[str] | None = None) -> None:
+        """Bring the exact-key index in line with ``state``.
+
+        Artifacts are compared by identity, so only added, replaced, and
+        removed artifacts have their retrieval bindings computed. ``changed``
+        limits the comparison to those statement IDs when the caller knows them.
+        """
+        artifacts = state.get("artifacts", {})
+        candidates = self.internal_indexed if changed is None else [value for value in changed if value in self.internal_indexed]
+        stale = [
+            statement_id for statement_id in candidates if artifacts.get(statement_id) is not self.internal_indexed[statement_id][0]
+        ]
+        for statement_id in stale:
+            self.internal_dynamic_ids.discard(statement_id)
+            _, signatures = self.internal_indexed.pop(statement_id)
+            for signature in signatures:
+                owners = self.internal_key_owners.get(signature)
+                if owners is not None:
+                    owners.discard(statement_id)
+                    if not owners:
+                        del self.internal_key_owners[signature]
+        additions = artifacts if changed is None else {value: artifacts[value] for value in changed if value in artifacts}
+        for statement_id, artifact in additions.items():
+            if statement_id in self.internal_indexed:
+                continue
+            signatures = tuple(
+                trusted_scoped_retrieval_key_signature(binding.get("key", {}))
+                for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
+            )
+            self.internal_indexed[statement_id] = (artifact, signatures)
+            if artifact.get("tier", Tier.STATIC) == Tier.DYNAMIC:
+                self.internal_dynamic_ids.add(statement_id)
+            for signature in signatures:
+                self.internal_key_owners.setdefault(signature, set()).add(statement_id)
+
+    def key_owner_ids(self, keys: tuple[dict, ...]) -> tuple[str, ...]:
+        """Return the statement IDs whose retrieval bindings include any of ``keys``."""
+        with self.internal_lock:
+            owners: set[str] = set()
+            for key in keys:
+                owners.update(self.internal_key_owners.get(trusted_scoped_retrieval_key_signature(key), ()))
+            result = tuple(sorted(owners))
+            return result
+
+    def trusted_state(self) -> dict:
+        """Return the live state for package-internal reads. Do not modify it."""
+        with self.internal_lock:
+            result = self.internal_state
+            return result
+
+    def trusted_artifacts(self) -> dict:
+        """Return the live artifact map for package-internal reads. Do not modify it."""
+        with self.internal_lock:
+            result = self.internal_state.get("artifacts", {})
+            return result
 
     def snapshot(self) -> dict:
         with self.internal_lock:
-            snapshot = validate_repository_state(self.internal_state)
-            return snapshot
+            state = self.internal_state
+        snapshot = {
+            "state_generation": state.get("state_generation", 0),
+            "artifacts": {statement_id: structural_copy(artifact) for statement_id, artifact in state.get("artifacts", {}).items()},
+        }
+        return snapshot
 
     @contextmanager
     def coordinated_mutation(self):
@@ -267,24 +418,20 @@ class ArtifactRepository:
             yield
 
     def has_artifact(self, statement_id: str) -> bool:
-        """Return whether an artifact exists, without validating the repository."""
+        """Return whether an artifact exists."""
         with self.internal_lock:
             result = statement_id in self.internal_state.get("artifacts", {})
             return result
 
     def find_artifact(self, statement_id: str) -> dict:
-        """Return one validated artifact, or {} when it does not exist.
-
-        A single lookup validates only that artifact. ``snapshot`` validates
-        every artifact and is too costly to call once per candidate.
-        """
+        """Return a copy of one artifact, or {} when it does not exist."""
         with self.internal_lock:
-            artifacts = self.internal_state.get("artifacts", {})
-            if statement_id not in artifacts:
-                result: dict = {}
-                return result
-            result = validate_cached_response_artifact(artifacts[statement_id])
+            artifact = self.internal_state.get("artifacts", {}).get(statement_id)
+        if artifact is None:
+            result: dict = {}
             return result
+        result = structural_copy(artifact)
+        return result
 
     def get_artifact(self, statement_id: str) -> dict:
         if not isinstance(statement_id, str) or not statement_id:
@@ -293,8 +440,9 @@ class ArtifactRepository:
             artifacts = self.internal_state.get("artifacts", {})
             if statement_id not in artifacts:
                 raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
-            artifact = validate_cached_response_artifact(artifacts.get(statement_id, {}))
-            return artifact
+            artifact = artifacts[statement_id]
+        result = structural_copy(artifact)
+        return result
 
     def candidate_with_artifact(self, artifact: dict) -> dict:
         try:
@@ -304,11 +452,9 @@ class ArtifactRepository:
         with self.internal_lock:
             artifacts = dict(self.internal_state.get("artifacts", {}))
             artifacts[artifact.get("statement_id", "")] = artifact
-            candidate = normalize_repository_state(
-                tuple(artifacts.values()),
-                self.internal_state.get("state_generation", 0) + 1,
-            )
-            return candidate
+            candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, artifacts)
+            result = self.plan(candidate, (artifact.get("statement_id", ""),))
+            return result
 
     def candidate_with_artifacts(self, artifacts: tuple[dict, ...]) -> dict:
         """Build one next-generation candidate containing multiple artifact updates."""
@@ -328,11 +474,9 @@ class ArtifactRepository:
                 if statement_id not in updated:
                     raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
                 updated[statement_id] = artifact
-            candidate = normalize_repository_state(
-                tuple(updated.values()),
-                self.internal_state.get("state_generation", 0) + 1,
-            )
-            return candidate
+            candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, updated)
+            result = self.plan(candidate, (artifact.get("statement_id", "") for artifact in validated_artifacts))
+            return result
 
     def plan_admission(self, artifact: dict, policy: dict) -> dict:
         """Plan bounded tier admission without publishing any live mutation."""
@@ -342,52 +486,59 @@ class ArtifactRepository:
         except InvalidRequestError as error:
             raise InvalidRequestError("admission artifact must be a CachedResponseArtifact") from error
         validated_policy = validate_tier_admission_policy(policy)
+        statement_id = artifact.get("statement_id", "")
         with self.internal_lock:
-            if artifact.get("statement_id", "") in self.internal_state.get("artifacts", {}):
-                raise ConflictError(f"artifact statement_id already exists: {artifact.get('statement_id', "")}")
-            artifacts = dict(self.internal_state.get("artifacts", {}))
+            live_artifacts = self.internal_state.get("artifacts", {})
+            if statement_id in live_artifacts:
+                raise ConflictError(f"artifact statement_id already exists: {statement_id}")
+            artifacts = dict(live_artifacts)
             if artifact.get("tier", Tier.STATIC) == Tier.STATIC:
-                artifacts[artifact.get("statement_id", "")] = artifact
-                candidate = normalize_repository_state(
-                    tuple(artifacts.values()),
-                    self.internal_state.get("state_generation", 0) + 1,
-                )
+                artifacts[statement_id] = artifact
+                candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, artifacts)
                 plan = admission_plan(
                     outcome=AdmissionOutcome.ADMITTED,
                     candidate=candidate,
-                    admitted_statement_id=artifact.get("statement_id", ""),
+                    admitted_statement_id=statement_id,
                     evicted_statement_ids=(),
                     residency_changed=True,
                     lifecycle_changed=False,
+                    candidate_trusted=True,
                 )
+                self.plan(plan["candidate"], (statement_id,))
                 return plan
 
-            dynamics = tuple(existing for existing in artifacts.values() if existing.get("tier", Tier.STATIC) == Tier.DYNAMIC)
-            required_evictions = max(0, len(dynamics) - validated_policy.get("dynamic_capacity", 0) + 1)
-            victims = tuple(
-                sorted(
-                    dynamics,
-                    key=eviction_order_key,
-                )[:required_evictions]
+            dynamic_ids = self.internal_dynamic_ids
+            required_evictions = max(0, len(dynamic_ids) - validated_policy.get("dynamic_capacity", 0) + 1)
+            # Eviction keys end with the statement ID, so they are unique and
+            # nsmallest picks the same victims as sorting every dynamic artifact.
+            victims = (
+                tuple(
+                    heapq_nsmallest(
+                        required_evictions,
+                        (live_artifacts[dynamic_id] for dynamic_id in dynamic_ids),
+                        key=eviction_order_key,
+                    )
+                )
+                if required_evictions
+                else ()
             )
             for victim in victims:
                 lifecycle_after_capacity_eviction(victim.get("lifecycle", LifecycleState.ACTIVE))
                 victim_id = victim.get("statement_id", "")
                 del artifacts[victim_id]
-            artifacts[artifact.get("statement_id", "")] = artifact
-            candidate = normalize_repository_state(
-                tuple(artifacts.values()),
-                self.internal_state.get("state_generation", 0) + 1,
-            )
+            artifacts[statement_id] = artifact
+            candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, artifacts)
             outcome = AdmissionOutcome.ADMITTED_WITH_EVICTION if victims else AdmissionOutcome.ADMITTED
             plan = admission_plan(
                 outcome=outcome,
                 candidate=candidate,
-                admitted_statement_id=artifact.get("statement_id", ""),
+                admitted_statement_id=statement_id,
                 evicted_statement_ids=tuple(victim.get("statement_id", "") for victim in victims),
                 residency_changed=True,
                 lifecycle_changed=False,
+                candidate_trusted=True,
             )
+            self.plan(plan["candidate"], (statement_id, *plan["evicted_statement_ids"]))
             return plan
 
     def candidate_without_artifact(
@@ -416,49 +567,67 @@ class ArtifactRepository:
                 lifecycle_after_capacity_eviction(artifact.get("lifecycle", LifecycleState.ACTIVE))
             artifacts = dict(current_artifacts)
             del artifacts[statement_id]
-            candidate = normalize_repository_state(
-                tuple(artifacts.values()),
-                self.internal_state.get("state_generation", 0) + 1,
-            )
-            return candidate
+            candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, artifacts)
+            result = self.plan(candidate, (statement_id,))
+            return result
 
     def atomic_replace(self, candidate: dict, expected_state_generation: int) -> dict:
-        validated_candidate = validate_repository_state(candidate)
         expected = positive_int(expected_state_generation, "expected repository state_generation")
         with self.internal_lock:
+            validated_candidate = validate_repository_state(candidate, self.internal_state.get("artifacts", {}))
+            self.replace_trusted(validated_candidate, expected)
+        published = self.snapshot()
+        return published
+
+    def replace_trusted(self, candidate: dict, expected_state_generation: int, changed: Iterable[str] | None = None) -> None:
+        """Publish a candidate the caller validated against this repository's live state.
+
+        ``changed`` names the statement IDs that differ from the live state, when known.
+        """
+        with self.internal_lock:
             current_generation = self.internal_state.get("state_generation", 0)
-            if current_generation != expected:
-                raise ConflictError(f"repository state generation conflict: expected {expected}, current {current_generation}")
-            if validated_candidate.get("state_generation", 0) != expected + 1:
+            if current_generation != expected_state_generation:
+                raise ConflictError(
+                    f"repository state generation conflict: expected {expected_state_generation}, current {current_generation}"
+                )
+            if candidate.get("state_generation", 0) != expected_state_generation + 1:
                 raise ConflictError("candidate repository state_generation must advance by exactly one")
-            self.internal_state = repository_state(
-                state_generation=validated_candidate.get("state_generation", 0),
-                artifacts=validated_candidate.get("artifacts", {}),
-            )
-            published = validate_repository_state(self.internal_state)
-            return published
+            self.internal_state = candidate
+            self.index_state(candidate, changed)
 
     def restore_state(self, state: dict) -> dict:
         """Restore one previously validated in-process repository state."""
 
-        validated_state = validate_repository_state(state)
         with self.internal_lock:
-            self.internal_state = repository_state(
-                state_generation=validated_state.get("state_generation", 0),
-                artifacts=validated_state.get("artifacts", {}),
-            )
-            recovered = validate_repository_state(self.internal_state)
-            return recovered
+            validated_state = validate_repository_state(state, self.internal_state.get("artifacts", {}))
+            self.restore_trusted(validated_state)
+        recovered = self.snapshot()
+        return recovered
+
+    def restore_trusted(self, state: dict, changed: Iterable[str] | None = None) -> None:
+        """Roll back to a state that was live earlier in this process."""
+        with self.internal_lock:
+            self.internal_state = state
+            self.index_state(state, changed)
 
     def exact_lookup(
         self,
         key: dict,
         context: dict,
     ) -> dict:
+        """Look up one key among the artifacts the index says carry it.
+
+        The lookup compares bindings exactly, and an artifact without the key
+        never matches, so passing only the carriers gives the same result as
+        scanning every artifact.
+        """
+        try:
+            signature = trusted_scoped_retrieval_key_signature(validate_scoped_retrieval_key(key))
+        except IdentityValidationError as error:
+            raise InvalidRequestError("contextual exact key must be a ScopedRetrievalKey") from error
         with self.internal_lock:
-            lookup = ContextualExactLookup(
-                self.internal_state.get("artifacts", {}),
-                trusted_artifacts=True,
-            ).exact_lookup(key, context)
+            artifacts = self.internal_state.get("artifacts", {})
+            carriers = {statement_id: artifacts[statement_id] for statement_id in self.internal_key_owners.get(signature, ())}
+            lookup = ContextualExactLookup(carriers, trusted_artifacts=True).exact_lookup(key, context)
             result = lookup
             return result

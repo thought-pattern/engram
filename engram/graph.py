@@ -405,10 +405,30 @@ def proposition_projection(
     return result
 
 
+# Validated projections by exact input: every field, value, and value type.
+# A projection is a flat map of scalars and validation is a pure function of
+# them, so an equal input always validates to an equal result. Including the
+# type keeps True apart from 1 and an enum apart from its string value.
+VALIDATED_PROJECTIONS: dict[tuple, dict] = {}
+MAX_VALIDATED_PROJECTIONS = 4_096
+
+
 def validate_proposition_projection(value: object) -> dict:
-    """Revalidate and copy one in-memory Proposition projection."""
+    """Revalidate and copy one in-memory Proposition projection.
+
+    Evidence handling validates the same projection several times per record,
+    so results are remembered by exact input; each call still returns its own copy.
+    """
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection must be an object")
+    try:
+        key: tuple | None = (tuple(value), tuple(value.values()), tuple(map(type, value.values())))
+        cached = VALIDATED_PROJECTIONS.get(key)
+    except TypeError:
+        key, cached = None, None
+    if cached is not None:
+        result = dict(cached)
+        return result
     observed = set(value)
     if observed != PROPOSITION_PROJECTION_RECORD_FIELDS:
         raise InvalidRequestError(
@@ -417,6 +437,10 @@ def validate_proposition_projection(value: object) -> dict:
             f"extra={sorted(observed - PROPOSITION_PROJECTION_RECORD_FIELDS)}"
         )
     result = proposition_projection(**value)
+    if key is not None:
+        if len(VALIDATED_PROJECTIONS) >= MAX_VALIDATED_PROJECTIONS:
+            VALIDATED_PROJECTIONS.pop(next(iter(VALIDATED_PROJECTIONS), None), None)
+        VALIDATED_PROJECTIONS[key] = dict(result)
     return result
 
 

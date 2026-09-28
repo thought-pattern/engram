@@ -75,6 +75,7 @@ from engram.constants import (
     LifecycleHandoffStatus,
     NegativeResolutionReason,
 )
+from engram.copies import structural_copy
 from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError
 from engram.identity import (
     query_identity,
@@ -1595,15 +1596,22 @@ def trusted_feedback_state(
 
 
 def trusted_feedback_state_copy(value: dict) -> dict:
-    """Defensively copy state whose invariants are already established."""
-    receipts = MutationReceiptLedger(state=value.get("receipts", ())).snapshot()
+    """Defensively copy state whose invariants are already established.
+
+    The records were validated when they entered the store, so a structural
+    copy is enough; validating them again made every snapshot cost as much
+    as loading the whole store.
+    """
+    copied = structural_copy(value)
+    if not isinstance(copied, dict):
+        raise InvalidRequestError("feedback state did not remain an object")
     result = trusted_feedback_state(
-        validate_feedback_policy(value.get("policy", {})),
-        tuple(validate_statement_feedback_record(record) for record in value.get("statement_records", {})),
-        tuple(validate_relationship_feedback_record(record) for record in value.get("relationship_records", {})),
-        tuple(validate_policy_suppression(suppression) for suppression in value.get("policy_suppressions", {})),
-        tuple(validate_stale_exclusion(exclusion) for exclusion in value.get("stale_exclusions", {})),
-        receipts,
+        copied.get("policy", {}),
+        copied.get("statement_records", ()),
+        copied.get("relationship_records", ()),
+        copied.get("policy_suppressions", ()),
+        copied.get("stale_exclusions", ()),
+        copied.get("receipts", {}),
         value.get("statement_evictions", 0),
         value.get("relationship_evictions", 0),
         value.get("policy_suppression_evictions", 0),
@@ -1991,6 +1999,29 @@ class FeedbackStore:
         result = validate_feedback_policy(self.internal_policy)
         return result
 
+    def clone(self) -> "FeedbackStore":
+        """Return an independent off-live store without revalidating its records.
+
+        Records are frozen when they enter and replaced, never changed in
+        place, so the clone shares them and copies only the containers.
+        """
+        with self.internal_lock:
+            result = FeedbackStore.__new__(FeedbackStore)
+            result.internal_lock = threading_RLock()
+            result.state_dirty = self.state_dirty
+            result.internal_state = self.internal_state
+            result.internal_policy = self.internal_policy
+            result.internal_statement_records = dict(self.internal_statement_records)
+            result.internal_relationship_records = dict(self.internal_relationship_records)
+            result.internal_policy_suppressions = dict(self.internal_policy_suppressions)
+            result.internal_stale_exclusions = dict(self.internal_stale_exclusions)
+            result.internal_receipts = self.internal_receipts.clone()
+            result.internal_statement_evictions = self.internal_statement_evictions
+            result.internal_relationship_evictions = self.internal_relationship_evictions
+            result.internal_policy_suppression_evictions = self.internal_policy_suppression_evictions
+            result.internal_stale_exclusion_evictions = self.internal_stale_exclusion_evictions
+            return result
+
     def snapshot(self) -> dict:
         with self.internal_lock:
             if not self.state_dirty:
@@ -2013,24 +2044,27 @@ class FeedbackStore:
             result = trusted_feedback_state_copy(state)
             return result
 
+    def adopt(self, candidate: "FeedbackStore") -> None:
+        """Publish an off-live clone of this store without revalidating it."""
+        with self.internal_lock, candidate.internal_lock:
+            self.internal_state = candidate.internal_state
+            self.state_dirty = candidate.state_dirty
+            self.internal_policy = candidate.internal_policy
+            self.internal_statement_records = dict(candidate.internal_statement_records)
+            self.internal_relationship_records = dict(candidate.internal_relationship_records)
+            self.internal_policy_suppressions = dict(candidate.internal_policy_suppressions)
+            self.internal_stale_exclusions = dict(candidate.internal_stale_exclusions)
+            self.internal_receipts = candidate.internal_receipts.clone()
+            self.internal_statement_evictions = candidate.internal_statement_evictions
+            self.internal_relationship_evictions = candidate.internal_relationship_evictions
+            self.internal_policy_suppression_evictions = candidate.internal_policy_suppression_evictions
+            self.internal_stale_exclusion_evictions = candidate.internal_stale_exclusion_evictions
+
     def replace_from_snapshot(self, state: dict) -> bool:
         if isinstance(state, PreparedFeedbackState) and state.target is self and isinstance(state.candidate, FeedbackStore):
             if dict(state) != state.canonical:
                 raise InvalidRequestError("prepared feedback state was modified before publication")
-            candidate = state.candidate
-            with self.internal_lock, candidate.internal_lock:
-                self.internal_state = candidate.internal_state
-                self.state_dirty = candidate.state_dirty
-                self.internal_policy = candidate.internal_policy
-                self.internal_statement_records = dict(candidate.internal_statement_records)
-                self.internal_relationship_records = dict(candidate.internal_relationship_records)
-                self.internal_policy_suppressions = dict(candidate.internal_policy_suppressions)
-                self.internal_stale_exclusions = dict(candidate.internal_stale_exclusions)
-                self.internal_receipts = MutationReceiptLedger(state=candidate.internal_receipts.snapshot())
-                self.internal_statement_evictions = candidate.internal_statement_evictions
-                self.internal_relationship_evictions = candidate.internal_relationship_evictions
-                self.internal_policy_suppression_evictions = candidate.internal_policy_suppression_evictions
-                self.internal_stale_exclusion_evictions = candidate.internal_stale_exclusion_evictions
+            self.adopt(state.candidate)
             return False
         validated_state = validate_feedback_state(state)
         with self.internal_lock:
@@ -2128,6 +2162,42 @@ class FeedbackStore:
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict:
         """Prepare observations already validated by an internal service boundary."""
+        with self.internal_lock:
+            before = self.snapshot()
+            planned = self.internal_plan(request_id, validated_observations, lifecycle_status)
+            if planned["replayed"]:
+                result = trusted_feedback_mutation_candidate(before, before, planned["receipt"], True)
+                return result
+            candidate = planned["candidate"]
+            after = PreparedFeedbackState(candidate.snapshot(), self, candidate)
+            result = trusted_feedback_mutation_candidate(before, after, planned["receipt"], False)
+            return result
+
+    def apply_validated(
+        self,
+        request_id: str,
+        validated_observations: tuple[dict, ...],
+        lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
+    ) -> dict:
+        """Record and publish validated observations, returning the receipt and replay flag.
+
+        This is ``prepare_validated`` followed by publication, without the
+        before and after state projections that only the prepare contract needs.
+        """
+        with self.internal_lock:
+            planned = self.internal_plan(request_id, validated_observations, lifecycle_status)
+            if not planned["replayed"]:
+                self.adopt(planned["candidate"])
+            result = {"receipt": planned["receipt"], "replayed": planned["replayed"]}
+            return result
+
+    def internal_plan(
+        self,
+        request_id: str,
+        validated_observations: tuple[dict, ...],
+        lifecycle_status: LifecycleHandoffStatus,
+    ) -> dict:
+        """Check the receipt and apply observations to an off-live clone."""
         internal_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not validated_observations or len(validated_observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError("validated feedback observations must be a non-empty bounded tuple")
@@ -2135,10 +2205,9 @@ class FeedbackStore:
             raise InvalidRequestError("feedback lifecycle_status must be LifecycleHandoffStatus")
         signature = feedback_payload_signature(validated_observations)
         with self.internal_lock:
-            before = self.snapshot()
             lookup = self.internal_receipts.lookup(request_id, MutationOperation.RECORD_FEEDBACK, signature)
             if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
-                result = trusted_feedback_mutation_candidate(before, before, receipt_lookup_receipt(lookup), True)
+                result: dict = {"candidate": None, "receipt": receipt_lookup_receipt(lookup), "replayed": True}
                 return result
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"feedback request_id is associated with a different observation: {request_id}")
@@ -2146,7 +2215,7 @@ class FeedbackStore:
                 raise ConflictError(f"feedback request is already in progress: {request_id}")
             if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"feedback request result expired and cannot be reapplied safely: {request_id}")
-            candidate = FeedbackStore(before)
+            candidate = self.clone()
             for observation in validated_observations:
                 candidate.apply_observation(observation)
             candidate.enforce_capacity()
@@ -2169,8 +2238,7 @@ class FeedbackStore:
                 created_at=max(observation["observed_at"] for observation in validated_observations),
             )
             candidate.internal_receipts.record(receipt)
-            after = PreparedFeedbackState(candidate.snapshot(), self, candidate)
-            result = trusted_feedback_mutation_candidate(before, after, receipt, False)
+            result = {"candidate": candidate, "receipt": receipt, "replayed": False}
             return result
 
     def history(

@@ -644,7 +644,7 @@ class EngramCore:
             record_regulator_outcome(self.engram.operational_metrics, outcome)
 
     def candidate_generation(self, statement_id: str, resolution: dict) -> tuple[int, bool]:
-        artifact = self.engram.response_repository.snapshot()["artifacts"].get(statement_id)
+        artifact = self.engram.response_repository.trusted_artifacts().get(statement_id)
         if artifact:
             result = artifact["generation"], True
             return result
@@ -708,9 +708,7 @@ class EngramCore:
         observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict[str, object]:
-        candidate = self.engram.feedback_store.prepare_validated(request_id, observations, lifecycle_status)
-        if not candidate["replayed"]:
-            self.engram.feedback_store.replace_from_snapshot(candidate["after"])
+        candidate = self.engram.feedback_store.apply_validated(request_id, observations, lifecycle_status)
         receipt_value = mutation_receipt_to_dict(candidate["receipt"])
         result = receipt_value["result"]
         if not isinstance(result, dict):
@@ -758,7 +756,7 @@ class EngramCore:
             frame.get("required_source_label", ""),
         )
         policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
-        repository = self.engram.response_repository.snapshot()["artifacts"]
+        repository = self.engram.response_repository.trusted_artifacts()
         values = []
         for statement_id in statement_ids:
             artifact = repository.get(statement_id)
@@ -1389,7 +1387,7 @@ class EngramCore:
                 diagnostic_seed=f"proposal:{request_id}",
             )
             feedback_policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
-            response_artifacts = self.engram.response_repository.snapshot()["artifacts"]
+            response_artifacts = self.engram.response_repository.trusted_artifacts()
 
             def artifact_matches_scope(artifact: dict) -> bool:
                 statement_id = str(artifact.get("statement_id", ""))
@@ -1751,7 +1749,7 @@ class EngramCore:
             require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
             require_service_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
             require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            response_artifacts = self.engram.response_repository.snapshot()["artifacts"]
+            response_artifacts = self.engram.response_repository.trusted_artifacts()
             if statement_id in response_artifacts:
                 previous = self.retire_requests.get(request_id, {})
                 if previous and (previous["result"]["statement_id"] != statement_id or previous["result"]["reason"] != reason):

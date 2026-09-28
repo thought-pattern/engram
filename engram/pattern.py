@@ -365,6 +365,23 @@ def specific_pattern_result(result: tuple) -> tuple:
 class _GraphNode:
     """One node in a pattern, that, or topic graphmaster."""
 
+    def is_empty(self) -> bool:
+        """Return whether this node holds no category, context root, subtree, or edge."""
+        result = (
+            self.category is None
+            and self.that_root is None
+            and self.subtree is None
+            and self.underscore is None
+            and self.caret is None
+            and self.hash is None
+            and self.star is None
+            and not self.dollar
+            and not self.atoms
+            and not self.bots
+            and not self.sets
+        )
+        return result
+
     def __init__(self) -> None:
         self.dollar: dict[str, _GraphNode] = {}
         self.underscore: _GraphNode | None = None
@@ -405,7 +422,14 @@ class PatternMatcher:
             use_spacy_lemmatization: If True, lemmatize with spaCy's context-aware
                 lemmatizer instead of the WordNet heuristic.
         """
-        self.internal_patterns: list[dict] = []
+        # Entries by insertion id; dict order is insertion order.
+        self.internal_entries: dict[int, dict] = {}
+        self.internal_next_entry_id = 0
+        # (pattern, that, topic) -> entry ids, so removal finds its entry directly.
+        self.internal_entry_ids: dict[tuple[str, str, str], list[int]] = {}
+        # Normalized graph path -> ids of the entries filed there, in insertion
+        # order. The first one owns the leaf; the next takes over when it goes.
+        self.internal_path_claims: dict[tuple[str, str, bool, str], list[int]] = {}
         self.default_trie = _GraphNode()
         self.topic_router = _GraphNode()
         self.topic_tries: dict[str, _GraphNode] = {}
@@ -415,6 +439,12 @@ class PatternMatcher:
         self.internal_use_stemming = use_stemming
         self.internal_use_lemmatization = use_lemmatization
         self.internal_lemmatize = lemmatize_text_spacy if use_spacy_lemmatization else lemmatize_text
+
+    @property
+    def internal_patterns(self) -> list[dict]:
+        """Entries in insertion order."""
+        result = list(self.internal_entries.values())
+        return result
 
     def add_pattern(
         self,
@@ -437,32 +467,177 @@ class PatternMatcher:
             "that": that or "",
             "topic": topic or "",
         }
-        self.internal_patterns.append(entry)
-        self._index_entry(entry)
+        entry_id = self.internal_next_entry_id
+        self.internal_next_entry_id += 1
+        self.internal_entries[entry_id] = entry
+        self.internal_entry_ids.setdefault((entry["pattern"], entry["that"], entry["topic"]), []).append(entry_id)
+        self._index_entry(entry_id, entry)
 
-    def _index_entry(self, entry: dict) -> None:
-        """File one category under its topic, pattern, and that path.
+    @staticmethod
+    def _path_key(entry: dict) -> tuple[str, str, bool, str]:
+        """Return the normalized topic, pattern, and that path an entry is filed under."""
+        topic_key = normalize_pattern(entry["topic"]) if entry["topic"] else ""
+        that_key = normalize_pattern(entry["that"]) if entry["that"] else ""
+        result = (topic_key, normalize_pattern(entry["pattern"]), bool(entry["that"]), that_key)
+        return result
 
-        The first category to claim a path keeps it. A later copy of the same
-        path stays in the list for removal, and does not change the walk.
-        """
-        trie = self._trie_for_topic(entry["topic"])
-        leaf = self._insert_tokens(trie, normalize_pattern(entry["pattern"]).split())
-        payload = {
+    @staticmethod
+    def _payload(entry: dict) -> dict:
+        result = {
             "pattern": entry["pattern"],
             "response": entry["response"],
             "that": entry["that"],
             "topic": entry["topic"],
         }
-        if entry["that"]:
+        return result
+
+    def _index_entry(self, entry_id: int, entry: dict) -> None:
+        """File one category under its topic, pattern, and that path.
+
+        The first category to claim a path keeps it. A later copy of the same
+        path waits in the path's claim list and takes over if the first is
+        removed.
+        """
+        key = self._path_key(entry)
+        claims = self.internal_path_claims.setdefault(key, [])
+        claims.append(entry_id)
+        if len(claims) == 1:
+            self._category_leaf(key).category = self._payload(entry)
+
+    def _category_leaf(self, key: tuple[str, str, bool, str]) -> _GraphNode:
+        """Return the node holding a path's category, creating the path if needed."""
+        topic_key, pattern_key, has_that, that_key = key
+        leaf = self._insert_tokens(self._trie_for_topic(topic_key), pattern_key.split())
+        if has_that:
             if leaf.that_root is None:
                 leaf.that_root = _GraphNode()
-            that_leaf = self._insert_tokens(leaf.that_root, normalize_pattern(entry["that"]).split())
-            if that_leaf.category is None:
-                that_leaf.category = payload
+            leaf = self._insert_tokens(leaf.that_root, that_key.split())
+        return leaf
+
+    def _unindex_entry(self, entry_id: int, entry: dict) -> None:
+        """Take one entry out of the graph, handing its leaf to the next claimant."""
+        key = self._path_key(entry)
+        claims = self.internal_path_claims.get(key, [])
+        if entry_id not in claims:
             return
-        if leaf.category is None:
-            leaf.category = payload
+        was_owner = claims[0] == entry_id
+        claims.remove(entry_id)
+        if claims:
+            if was_owner:
+                self._category_leaf(key).category = self._payload(self.internal_entries[claims[0]])
+            return
+        del self.internal_path_claims[key]
+        self._prune_path(key)
+
+    def _prune_path(self, key: tuple[str, str, bool, str]) -> None:
+        """Clear a path's category and drop the nodes that no longer lead anywhere."""
+        topic_key, pattern_key, has_that, that_key = key
+        trie = self.topic_tries.get(topic_key) if topic_key else self.default_trie
+        if trie is None:
+            return
+        pattern_path = self._existing_path(trie, pattern_key.split())
+        if pattern_path is None:
+            return
+        leaf = pattern_path[-1][2] if pattern_path else trie
+        if has_that:
+            if leaf.that_root is not None:
+                that_path = self._existing_path(leaf.that_root, that_key.split())
+                if that_path is not None:
+                    that_leaf = that_path[-1][2] if that_path else leaf.that_root
+                    that_leaf.category = None
+                    self._prune_edges(that_path)
+                if leaf.that_root.is_empty():
+                    leaf.that_root = None
+        else:
+            leaf.category = None
+        self._prune_edges(pattern_path)
+        if topic_key and trie.is_empty():
+            del self.topic_tries[topic_key]
+            router_path = self._existing_path(self.topic_router, topic_key.split())
+            if router_path is not None:
+                router_leaf = router_path[-1][2] if router_path else self.topic_router
+                router_leaf.subtree = None
+                self._prune_edges(router_path)
+
+    def _existing_path(self, root: _GraphNode, words: list[str]) -> list[tuple[_GraphNode, str, _GraphNode]] | None:
+        """Follow existing edges for ``words`` and return (parent, word, child) steps, or None."""
+        path = []
+        node = root
+        for word in words:
+            child = self._existing_edge(node, word)
+            if child is None:
+                return None
+            path.append((node, word, child))
+            node = child
+        return path
+
+    def _existing_edge(self, node: _GraphNode, word: str) -> _GraphNode | None:
+        """Return the child for one pattern token without creating it."""
+        kind, name = self._edge_kind(word)
+        if kind == "underscore":
+            return node.underscore
+        if kind == "caret":
+            return node.caret
+        if kind == "hash":
+            return node.hash
+        if kind == "star":
+            return node.star
+        if kind == "dollar":
+            return node.dollar.get(name)
+        if kind == "bot":
+            return node.bots.get(name)
+        if kind == "set":
+            return node.sets.get(name)
+        result = node.atoms.get(word)
+        return result
+
+    def _prune_edges(self, path: list[tuple[_GraphNode, str, _GraphNode]]) -> None:
+        """Detach empty nodes from the end of a path back toward its root."""
+        for parent, word, child in reversed(path):
+            if not child.is_empty():
+                break
+            self._detach(parent, word, child)
+
+    def _detach(self, parent: _GraphNode, word: str, child: _GraphNode) -> None:
+        """Remove the edge ``word`` from ``parent``, including its fallback index entries."""
+        kind, name = self._edge_kind(word)
+        if kind == "underscore":
+            parent.underscore = None
+        elif kind == "caret":
+            parent.caret = None
+        elif kind == "hash":
+            parent.hash = None
+        elif kind == "star":
+            parent.star = None
+        elif kind == "dollar":
+            parent.dollar.pop(name, None)
+            self._forget_flexible(parent.lemma_dollar, parent.stem_dollar, name, child)
+        elif kind == "bot":
+            parent.bots.pop(name, None)
+        elif kind == "set":
+            parent.sets.pop(name, None)
+        else:
+            parent.atoms.pop(word, None)
+            self._forget_flexible(parent.lemma_atoms, parent.stem_atoms, word, child)
+
+    @staticmethod
+    def _edge_kind(word: str) -> tuple[str, str]:
+        """Classify a pattern token the way ``_edge`` files it."""
+        wildcards = {"_": "underscore", "^": "caret", "#": "hash", "*": "star"}
+        if word in wildcards:
+            result = (wildcards[word], "")
+            return result
+        if len(word) > 1 and word.startswith("$") and word[1:].isalnum():
+            result = ("dollar", word[1:])
+            return result
+        if word.startswith("{bot:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            result = ("bot", word[5:-1])
+            return result
+        if word.startswith("{set:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            result = ("set", word[5:-1])
+            return result
+        result = ("atom", word)
+        return result
 
     def _trie_for_topic(self, topic: str) -> _GraphNode:
         """Return the category trie for a topic pattern, creating it on first use."""
@@ -544,6 +719,20 @@ class PatternMatcher:
         result = child
         return result
 
+    def _forget_flexible(self, lemma_index: dict, stem_index: dict, word: str, child: _GraphNode) -> None:
+        """Drop a detached edge from the lemma and stem fallback indexes."""
+        keys = []
+        if self.internal_use_lemmatization:
+            keys.append((lemma_index, self.internal_lemmatize(word)))
+        if self.internal_use_stemming:
+            keys.append((stem_index, stem_text(word)))
+        for index, key in keys:
+            bucket = index.get(key)
+            if bucket and child in bucket:
+                bucket.remove(child)
+                if not bucket:
+                    del index[key]
+
     def _remember_flexible(self, lemma_index: dict, stem_index: dict, word: str, child: _GraphNode) -> None:
         """Index an exact edge under its lemma and stem for the fallback walks."""
         if self.internal_use_lemmatization:
@@ -562,23 +751,24 @@ class PatternMatcher:
                 bucket.append(child)
 
     def rebuild_indexes(self) -> None:
-        """Rebuild the graphmaster from the current pattern list.
+        """Rebuild the graphmaster from the current entries.
 
-        Entry identity shifts when a pattern is removed, so the tries are
-        rebuilt from scratch rather than patched in place.
+        Removal updates the graph in place, so this is only needed after the
+        fallback settings change.
         """
         self.default_trie = _GraphNode()
         self.topic_router = _GraphNode()
         self.topic_tries = {}
-        for entry in self.internal_patterns:
-            self._index_entry(entry)
+        self.internal_path_claims = {}
+        for entry_id, entry in self.internal_entries.items():
+            self._index_entry(entry_id, entry)
 
     def remove_pattern(self, pattern: str, that: str = "", topic: str = "") -> bool:
         """Remove the first entry matching (pattern, that, topic).
 
         Called when the statement backing a pattern is evicted or retired, so a
         dead pattern cannot keep matching (and shadowing live patterns) after
-        its statement is gone.
+        its statement is gone. Only that entry's graph path changes.
 
         Args:
             pattern: AIML-style pattern to remove.
@@ -588,13 +778,17 @@ class PatternMatcher:
         Returns:
             True if an entry was removed, False if no entry matched.
         """
-        for i, entry in enumerate(self.internal_patterns):
-            if entry["pattern"] == pattern and entry["that"] == that and entry["topic"] == topic:
-                del self.internal_patterns[i]
-                self.rebuild_indexes()
-                result = True
-                return result
-        result = False
+        key = (pattern, that, topic)
+        entry_ids = self.internal_entry_ids.get(key)
+        if not entry_ids:
+            result = False
+            return result
+        entry_id = entry_ids.pop(0)
+        if not entry_ids:
+            del self.internal_entry_ids[key]
+        entry = self.internal_entries.pop(entry_id)
+        self._unindex_entry(entry_id, entry)
+        result = True
         return result
 
     def match(
@@ -875,7 +1069,7 @@ class PatternMatcher:
         Returns:
             List of (pattern, response) tuples.
         """
-        pairs = [(p["pattern"], p["response"]) for p in self.internal_patterns]
+        pairs = [(p["pattern"], p["response"]) for p in self.internal_entries.values()]
         return pairs
 
     def get_patterns_with_context(self) -> list[tuple[str, str, str, str]]:
@@ -884,17 +1078,19 @@ class PatternMatcher:
         Returns:
             List of (pattern, response, that, topic) tuples.
         """
-        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self.internal_patterns]
+        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self.internal_entries.values()]
         return entries
 
     def clear(self) -> None:
         """Remove all patterns."""
-        self.internal_patterns.clear()
+        self.internal_entries.clear()
+        self.internal_entry_ids.clear()
+        self.internal_path_claims.clear()
         self.default_trie = _GraphNode()
         self.topic_router = _GraphNode()
         self.topic_tries = {}
 
     def __len__(self) -> int:
         """Return number of patterns."""
-        count = len(self.internal_patterns)
+        count = len(self.internal_entries)
         return count

@@ -1,6 +1,7 @@
 """Transport-neutral contracts for the bounded unified resolution pipeline."""
 
 from datetime import datetime
+from functools import lru_cache
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -175,7 +176,21 @@ def require_bool(value: object, name: str) -> bool:
     return value
 
 
+@lru_cache(maxsize=16_384)
+def valid_identifier_text(value: str, name: str, maximum_bytes: int) -> str:
+    """Validate one plain-string identifier; only successful results are cached."""
+    identifier = require_text(value, name, maximum_bytes, allow_empty=False)
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in identifier):
+        raise InvalidRequestError(f"{name} must not contain whitespace or control characters")
+    return identifier
+
+
 def require_identifier(value: object, name: str, maximum_bytes: int = MAX_PROPOSITION_IDENTIFIER_BYTES) -> str:
+    # Evidence records check the same identifiers many times per request.
+    # Plain strings go through a cache; anything else is checked directly.
+    if type(value) is str and type(name) is str and type(maximum_bytes) is int:
+        result = valid_identifier_text(value, name, maximum_bytes)
+        return result
     identifier = require_text(value, name, maximum_bytes, allow_empty=False)
     if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in identifier):
         raise InvalidRequestError(f"{name} must not contain whitespace or control characters")
@@ -1257,6 +1272,12 @@ def proposition_validity_inputs_with_changes(value: object, changes: object) -> 
 def proposition_validity_inputs_to_dict(value: object) -> dict[str, object]:
     """Serialize Proposition-validity inputs."""
     validity = validate_proposition_validity_inputs(value)
+    result = trusted_proposition_validity_inputs_to_dict(validity)
+    return result
+
+
+def trusted_proposition_validity_inputs_to_dict(validity: dict) -> dict[str, object]:
+    """Serialize Proposition-validity inputs already validated inside a trusted record."""
     result: dict[str, object] = dict(validity)
     result["temporal_operator"] = validity["temporal_operator"].value
     result["temporal_axis"] = validity["temporal_axis"].value
@@ -1616,8 +1637,16 @@ def proposition_evidence_record(
     path: object,
     selection_reasons: object,
     schema_version: object = 1,
+    *,
+    trusted_components: bool = False,
 ) -> dict:
-    """Build strict wire-safe full-Proposition evidence without unrestricted graph content."""
+    """Build strict wire-safe full-Proposition evidence without unrestricted graph content.
+
+    ``trusted_components`` is for a caller that has just built ``features``,
+    ``canonical_references``, ``validity``, ``trust``, and ``disclosure`` with
+    their validating constructors; they are not validated again. Identifiers,
+    ordering, and path checks always run.
+    """
     version = require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
     normalized_proposition_id = require_identifier(proposition_id, "Proposition evidence proposition_id")
     source = require_identifier(source_resolver, "Proposition evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
@@ -1635,26 +1664,33 @@ def proposition_evidence_record(
         raise InvalidRequestError("Proposition evidence source_contributions must be unique and sorted")
     if source not in contributions:
         raise InvalidRequestError("Proposition evidence source_resolver must be present in source_contributions")
-    try:
-        validated_features = validate_feature_set(features)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
-    try:
-        validated_references = validate_canonical_proposition_references(canonical_references)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
-    try:
-        validated_validity = validate_proposition_validity_inputs(validity)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
-    try:
-        validated_trust = validate_proposition_trust_inputs(trust)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
-    try:
-        validated_disclosure = validate_disclosure_decision(disclosure)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
+    if trusted_components:
+        validated_features = features
+        validated_references = canonical_references
+        validated_validity = validity
+        validated_trust = trust
+        validated_disclosure = disclosure
+    else:
+        try:
+            validated_features = validate_feature_set(features)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
+        try:
+            validated_references = validate_canonical_proposition_references(canonical_references)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
+        try:
+            validated_validity = validate_proposition_validity_inputs(validity)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
+        try:
+            validated_trust = validate_proposition_trust_inputs(trust)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
+        try:
+            validated_disclosure = validate_disclosure_decision(disclosure)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
     if version == 1:
@@ -1766,7 +1802,7 @@ def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, objec
             "unavailable": list(record.get("features", {})["unavailable"]),
         },
         "canonical_references": dict(record.get("canonical_references", {})),
-        "validity": proposition_validity_inputs_to_dict(record.get("validity", {})),
+        "validity": trusted_proposition_validity_inputs_to_dict(record.get("validity", {})),
         "trust": dict(record.get("trust", {})),
         "disclosure": {
             "schema_version": record.get("disclosure", {})["schema_version"],

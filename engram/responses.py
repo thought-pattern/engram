@@ -132,14 +132,16 @@ def response_collision_owner_ids(
     coordinator: AtomicMutationCoordinator,
 ) -> tuple[str, ...]:
     """Return current owners that collide with an artifact's retrieval keys."""
-    artifacts = coordinator.snapshot()["repository"]["artifacts"]
+    artifacts = coordinator.repository.trusted_artifacts()
     target_keys = tuple(
         binding.get("key")
         for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
     )
+    # The key index narrows the check to artifacts that carry one of the keys.
+    candidates = coordinator.repository.key_owner_ids(target_keys)
     owners = {
         statement_id
-        for statement_id, current in artifacts.items()
+        for statement_id, current in ((statement_id, artifacts[statement_id]) for statement_id in candidates)
         if any(
             any(binding.get("key") == target_key for target_key in target_keys)
             for binding in retrieval_representation_bindings(current["retrieval"], current["scope"])
@@ -219,7 +221,7 @@ class AcceptedResponseService:
         payload_signature: str,
         created_at: str,
     ) -> dict:
-        current = self.internal_coordinator.snapshot()["repository"]
+        current = self.internal_coordinator.repository.trusted_state()
         current_artifacts = current["artifacts"]
         if artifact.get("statement_id", "") in current_artifacts:
             raise ConflictError(f"artifact statement_id already exists: {artifact.get('statement_id', '')}")
@@ -722,7 +724,7 @@ class AcceptedResponseService:
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
 
-            before = self.internal_coordinator.snapshot()["repository"]
+            before = self.internal_coordinator.repository.trusted_state()
             current = self.internal_coordinator.repository.get_artifact(normalized_statement_id)
             if current["generation"] != expected_generation:
                 raise ConflictError(

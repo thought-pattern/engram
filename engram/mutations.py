@@ -552,14 +552,53 @@ class MutationReceiptLedger:
         if all_sequences and self.internal_next_sequence <= max(all_sequences):
             raise InvalidRequestError("next receipt sequence must exceed every retained sequence")
         self.internal_lock = threading_RLock()
-        self.internal_receipts = {receipt["request_id"]: receipt for receipt in validated_receipts}
-        self.internal_tombstones = {tombstone["request_id"]: tombstone for tombstone in validated_tombstones}
+        # Dict order is sequence order, so the oldest entry is always first.
+        self.internal_receipts = {
+            receipt["request_id"]: receipt for receipt in sorted(validated_receipts, key=lambda item: item["sequence"])
+        }
+        self.internal_tombstones = {
+            tombstone["request_id"]: tombstone for tombstone in sorted(validated_tombstones, key=lambda item: item["sequence"])
+        }
+        # Advances on every change, so a clone taken earlier can tell it is stale.
+        self.internal_revision = 0
 
     @property
     def next_sequence(self) -> int:
         with self.internal_lock:
             sequence = self.internal_next_sequence
             return sequence
+
+    @property
+    def revision(self) -> int:
+        with self.internal_lock:
+            result = self.internal_revision
+            return result
+
+    def clone(self) -> "MutationReceiptLedger":
+        """Return an independent copy without revalidating its already validated entries."""
+        with self.internal_lock:
+            result = MutationReceiptLedger.__new__(MutationReceiptLedger)
+            result.max_receipts = self.max_receipts
+            result.max_tombstones = self.max_tombstones
+            result.internal_next_sequence = self.internal_next_sequence
+            result.internal_lock = threading_RLock()
+            result.internal_receipts = dict(self.internal_receipts)
+            result.internal_tombstones = dict(self.internal_tombstones)
+            result.internal_revision = self.internal_revision
+            return result
+
+    def adopt(self, other: "MutationReceiptLedger") -> None:
+        """Publish another in-process ledger's state without changing owner identity."""
+        if not isinstance(other, MutationReceiptLedger):
+            raise InvalidRequestError("adopted ledger must be a MutationReceiptLedger")
+        replacement = other.clone()
+        with self.internal_lock:
+            self.max_receipts = replacement.max_receipts
+            self.max_tombstones = replacement.max_tombstones
+            self.internal_next_sequence = replacement.internal_next_sequence
+            self.internal_receipts = replacement.internal_receipts
+            self.internal_tombstones = replacement.internal_tombstones
+            self.internal_revision = replacement.internal_revision
 
     def lookup(self, request_id: str, operation: MutationOperation, payload_signature: str) -> dict:
         normalized_id = require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
@@ -616,6 +655,7 @@ class MutationReceiptLedger:
                 ):
                     raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {request_id}")
                 self.internal_receipts[request_id] = validated_receipt
+                self.internal_revision += 1
                 return validated_receipt
             if validated_receipt["sequence"] != self.internal_next_sequence:
                 received_sequence = validated_receipt["sequence"]
@@ -624,12 +664,13 @@ class MutationReceiptLedger:
                 )
             self.internal_receipts[request_id] = validated_receipt
             self.internal_next_sequence += 1
+            self.internal_revision += 1
             self.prune()
             return validated_receipt
 
     def prune(self) -> None:
         while len(self.internal_receipts) > self.max_receipts:
-            oldest = min(self.internal_receipts.values(), key=lambda receipt: receipt["sequence"])
+            oldest = next(iter(self.internal_receipts.values()))
             oldest_request_id = oldest["request_id"]
             del self.internal_receipts[oldest_request_id]
             tombstone = receipt_tombstone(
@@ -640,7 +681,7 @@ class MutationReceiptLedger:
             )
             self.internal_tombstones[oldest_request_id] = tombstone
         while len(self.internal_tombstones) > self.max_tombstones:
-            oldest = min(self.internal_tombstones.values(), key=lambda tombstone: tombstone["sequence"])
+            oldest = next(iter(self.internal_tombstones.values()))
             del self.internal_tombstones[oldest["request_id"]]
 
     def snapshot(self) -> dict:
@@ -661,9 +702,16 @@ class MutationReceiptLedger:
             }
             return result
 
-    def replace_from_snapshot(self, value: dict) -> None:
-        """Atomically publish validated in-process ledger state without changing owner identity."""
+    def replace_from_snapshot(self, value: object) -> None:
+        """Atomically publish validated in-process ledger state without changing owner identity.
 
+        A ``MutationReceiptLedger`` is adopted as is; a snapshot dictionary is
+        validated first.
+        """
+
+        if isinstance(value, MutationReceiptLedger):
+            self.adopt(value)
+            return
         replacement = MutationReceiptLedger(state=value)
         with self.internal_lock:
             self.max_receipts = replacement.max_receipts
@@ -671,6 +719,7 @@ class MutationReceiptLedger:
             self.internal_next_sequence = replacement.internal_next_sequence
             self.internal_receipts = dict(replacement.internal_receipts)
             self.internal_tombstones = dict(replacement.internal_tombstones)
+            self.internal_revision += 1
 
 
 def mutation_receipt_ledger_state(
