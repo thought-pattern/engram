@@ -111,13 +111,22 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 # --- Conversation ---
 # Seed files load once at startup, in the order listed. Paths are relative to
 # this file. Leave the list empty for a silent process. To run as a social
-# bot, list the corpus files here. Keep the catch-all pattern in one file;
-# later files add specific patterns and do not replace earlier ones.
+# bot, list the corpus files here. Keep the catch-all pattern in one file.
+# duplicate_policy defaults to error, which rejects a repeated pattern.
+# Set it to last when a later file should replace that same pattern, or
+# first to keep the earlier pair. Different patterns are kept either way.
 conversation:
   bot_name: ENGRAM
   seed_files: []
+  # duplicate_policy: last
   # - data/seed.json
   # - data/social/small-talk.json
+  # AIML tables load before the categories. Leave them unset until a file exists.
+  # set_files: []            # JSON object: set name -> list of words
+  # map_files: []            # JSON object: map name -> object of strings
+  # properties_file: ""      # flat bot properties; bot_name still wins
+  # predicate_file: ""       # defaults copied into each new session
+  # substitution_file: ""    # optional contractions, person, person2, gender, custom
 
 # --- Knowledge graph (optional) ---
 # MemGraph connection (pymgclient), matching the Tapestry knowledge-graph

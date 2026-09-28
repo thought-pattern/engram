@@ -4,7 +4,6 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import nlp
 from engram.config import engram_config
-from engram.constants import LEARNED_ACKNOWLEDGMENTS
 from engram.core import Engram
 from engram.models import Tier
 from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns, input_kind, is_question
@@ -106,7 +105,7 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
     assert result1
     stmt, captured, response = result1
 
-    assert response in LEARNED_ACKNOWLEDGMENTS  # Acknowledgment
+    assert response.casefold() == "default"
 
     # Retrieve the fact
     result2 = engram.pattern_query("What are dogs")

@@ -4,7 +4,7 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import spacy_setup
 from engram.config import engram_config
-from engram.constants import DEFAULT_STOPWORDS, LEARNED_ACKNOWLEDGMENTS
+from engram.constants import DEFAULT_STOPWORDS
 from engram.core import Engram
 from engram.pattern import PatternMatcher
 from engram.spacy_setup import get_nlp
@@ -92,7 +92,7 @@ def test_spacy_fact_learning_learns_relational_fact():
     # No copula: the default NLTK extractor cannot learn from this.
     result = engram.pattern_query("Einstein developed the theory of relativity")
 
-    assert result[2] in LEARNED_ACKNOWLEDGMENTS
+    assert result[2] == "Tell me more."
     patterns = [s["pattern"] for s in engram.statements]
     assert "EINSTEIN" in patterns
 

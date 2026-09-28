@@ -1,0 +1,2007 @@
+{
+  "pairs": [
+    {
+      "pattern": "WHAT IS PYTHON",
+      "response": "Python is a programming language that reads close to ordinary speech. You can try one line at a time, or save a program in a file. It comes with a large standard library, and the 3.12 manual is at https://docs.python.org/3.12/."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON LANGUAGE",
+      "response": "Python is a programming language that reads close to ordinary speech. You can try one line at a time, or save a program in a file. It comes with a large standard library, and the 3.12 manual is at https://docs.python.org/3.12/."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON",
+      "response": "Python is a programming language that reads close to ordinary speech. You can try one line at a time, or save a program in a file. It comes with a large standard library, and the 3.12 manual is at https://docs.python.org/3.12/."
+    },
+    {
+      "pattern": "EXPLAIN PYTHON",
+      "response": "Python is a programming language that reads close to ordinary speech. You can try one line at a time, or save a program in a file. It comes with a large standard library, and the 3.12 manual is at https://docs.python.org/3.12/."
+    },
+    {
+      "pattern": "WHAT IS PYTHON 3.12",
+      "response": "Python 3.12 came out on October 2, 2023. The manual for that line is https://docs.python.org/3.12/. The language still feels like Python. The visible changes are freer formatted strings, a shorter way to write generic types, and a lock that can belong to one interpreter."
+    },
+    {
+      "pattern": "WHAT VERSION OF PYTHON",
+      "response": "Python 3.12 came out on October 2, 2023. The manual for that line is https://docs.python.org/3.12/. The language still feels like Python. The visible changes are freer formatted strings, a shorter way to write generic types, and a lock that can belong to one interpreter."
+    },
+    {
+      "pattern": "WHICH PYTHON VERSION",
+      "response": "Python 3.12 came out on October 2, 2023. The manual for that line is https://docs.python.org/3.12/. The language still feels like Python. The visible changes are freer formatted strings, a shorter way to write generic types, and a lock that can belong to one interpreter."
+    },
+    {
+      "pattern": "WHAT PYTHON VERSION IS THIS",
+      "response": "Python 3.12 came out on October 2, 2023. The manual for that line is https://docs.python.org/3.12/. The language still feels like Python. The visible changes are freer formatted strings, a shorter way to write generic types, and a lock that can belong to one interpreter."
+    },
+    {
+      "pattern": "WHAT IS NEW IN PYTHON 3.12",
+      "response": "In 3.12, formatted strings can hold any expression, generic types can be written next to the name, and sub-interpreters can each have their own GIL through the C API. Error messages got better at guessing what you meant. distutils, asynchat, asyncore, and imp left the standard library."
+    },
+    {
+      "pattern": "WHAT IS NEW IN PYTHON",
+      "response": "In 3.12, formatted strings can hold any expression, generic types can be written next to the name, and sub-interpreters can each have their own GIL through the C API. Error messages got better at guessing what you meant. distutils, asynchat, asyncore, and imp left the standard library."
+    },
+    {
+      "pattern": "WHAT CHANGED IN PYTHON 3.12",
+      "response": "In 3.12, formatted strings can hold any expression, generic types can be written next to the name, and sub-interpreters can each have their own GIL through the C API. Error messages got better at guessing what you meant. distutils, asynchat, asyncore, and imp left the standard library."
+    },
+    {
+      "pattern": "PYTHON 3.12 CHANGES",
+      "response": "In 3.12, formatted strings can hold any expression, generic types can be written next to the name, and sub-interpreters can each have their own GIL through the C API. Error messages got better at guessing what you meant. distutils, asynchat, asyncore, and imp left the standard library."
+    },
+    {
+      "pattern": "WHERE ARE THE PYTHON DOCS",
+      "response": "The 3.12 documentation is at https://docs.python.org/3.12/. The tutorial is the tour. The library reference is everything that ships with Python. The language reference is the formal description."
+    },
+    {
+      "pattern": "WHERE IS THE PYTHON DOCUMENTATION",
+      "response": "The 3.12 documentation is at https://docs.python.org/3.12/. The tutorial is the tour. The library reference is everything that ships with Python. The language reference is the formal description."
+    },
+    {
+      "pattern": "PYTHON DOCUMENTATION",
+      "response": "The 3.12 documentation is at https://docs.python.org/3.12/. The tutorial is the tour. The library reference is everything that ships with Python. The language reference is the formal description."
+    },
+    {
+      "pattern": "PYTHON DOCS",
+      "response": "The 3.12 documentation is at https://docs.python.org/3.12/. The tutorial is the tour. The library reference is everything that ships with Python. The language reference is the formal description."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON TUTORIAL",
+      "response": "Start with the tutorial at https://docs.python.org/3.12/tutorial/. It walks the interpreter, text and numbers, lists, loops, functions, modules, files, errors, and classes. Have a prompt open and try the lines as you go."
+    },
+    {
+      "pattern": "WHERE DO I START WITH PYTHON",
+      "response": "Start with the tutorial at https://docs.python.org/3.12/tutorial/. It walks the interpreter, text and numbers, lists, loops, functions, modules, files, errors, and classes. Have a prompt open and try the lines as you go."
+    },
+    {
+      "pattern": "WHERE SHOULD I START WITH PYTHON",
+      "response": "Start with the tutorial at https://docs.python.org/3.12/tutorial/. It walks the interpreter, text and numbers, lists, loops, functions, modules, files, errors, and classes. Have a prompt open and try the lines as you go."
+    },
+    {
+      "pattern": "HOW DO I LEARN PYTHON",
+      "response": "Start with the tutorial at https://docs.python.org/3.12/tutorial/. It walks the interpreter, text and numbers, lists, loops, functions, modules, files, errors, and classes. Have a prompt open and try the lines as you go."
+    },
+    {
+      "pattern": "HOW DO I LEARN PYTHON IN PYTHON",
+      "response": "Start with the tutorial at https://docs.python.org/3.12/tutorial/. It walks the interpreter, text and numbers, lists, loops, functions, modules, files, errors, and classes. Have a prompt open and try the lines as you go."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON LIBRARY REFERENCE",
+      "response": "The library reference catalogs the modules that come with Python, from math and pathlib to asyncio and unittest. It is at https://docs.python.org/3.12/library/."
+    },
+    {
+      "pattern": "WHERE IS THE STANDARD LIBRARY DOCUMENTATION",
+      "response": "The library reference catalogs the modules that come with Python, from math and pathlib to asyncio and unittest. It is at https://docs.python.org/3.12/library/."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON LANGUAGE REFERENCE",
+      "response": "The language reference is the precise description of syntax and the data model. Reach for it when the tutorial is too loose. It is at https://docs.python.org/3.12/reference/."
+    },
+    {
+      "pattern": "WHERE IS THE LANGUAGE REFERENCE",
+      "response": "The language reference is the precise description of syntax and the data model. Reach for it when the tutorial is too loose. It is at https://docs.python.org/3.12/reference/."
+    },
+    {
+      "pattern": "WHAT IS A PYTHON HOWTO",
+      "response": "The how-to guides go deeper on one subject at a time, such as sorting, logging, Unicode, and sockets. They live at https://docs.python.org/3.12/howto/."
+    },
+    {
+      "pattern": "WHERE ARE THE PYTHON HOWTOS",
+      "response": "The how-to guides go deeper on one subject at a time, such as sorting, logging, Unicode, and sockets. They live at https://docs.python.org/3.12/howto/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL PYTHON",
+      "response": "Download it from https://www.python.org/, or use the copy your system already has. On Windows, the installer from python.org is the usual path. After that, python or python3 should open a prompt. Setup notes are at https://docs.python.org/3.12/using/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL PYTHON IN PYTHON",
+      "response": "Download it from https://www.python.org/, or use the copy your system already has. On Windows, the installer from python.org is the usual path. After that, python or python3 should open a prompt. Setup notes are at https://docs.python.org/3.12/using/."
+    },
+    {
+      "pattern": "HOW DO I SET UP PYTHON",
+      "response": "Download it from https://www.python.org/, or use the copy your system already has. On Windows, the installer from python.org is the usual path. After that, python or python3 should open a prompt. Setup notes are at https://docs.python.org/3.12/using/."
+    },
+    {
+      "pattern": "HOW DO I SET UP PYTHON IN PYTHON",
+      "response": "Download it from https://www.python.org/, or use the copy your system already has. On Windows, the installer from python.org is the usual path. After that, python or python3 should open a prompt. Setup notes are at https://docs.python.org/3.12/using/."
+    },
+    {
+      "pattern": "WHERE DO I DOWNLOAD PYTHON",
+      "response": "Download it from https://www.python.org/, or use the copy your system already has. On Windows, the installer from python.org is the usual path. After that, python or python3 should open a prompt. Setup notes are at https://docs.python.org/3.12/using/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL A PYTHON PACKAGE",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL A PYTHON PACKAGE IN PYTHON",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL PYTHON MODULES",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I INSTALL PYTHON MODULES IN PYTHON",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I USE PIP",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I USE PIP IN PYTHON",
+      "response": "From the environment you want to change, run python -m pip install the-package. That talks to PyPI. Do it inside a virtual environment so one project does not step on another. The guide is at https://docs.python.org/3.12/installing/."
+    },
+    {
+      "pattern": "HOW DO I PUBLISH A PYTHON PACKAGE",
+      "response": "Packaging is its own subject: a project file, a build, and an upload to PyPI. The 3.12 docs start that conversation at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I PUBLISH A PYTHON PACKAGE IN PYTHON",
+      "response": "Packaging is its own subject: a project file, a build, and an upload to PyPI. The 3.12 docs start that conversation at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I DISTRIBUTE A PYTHON MODULE",
+      "response": "Packaging is its own subject: a project file, a build, and an upload to PyPI. The 3.12 docs start that conversation at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I DISTRIBUTE A PYTHON MODULE IN PYTHON",
+      "response": "Packaging is its own subject: a project file, a build, and an upload to PyPI. The 3.12 docs start that conversation at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I EXTEND PYTHON",
+      "response": "You can add types and functions in C, or embed the interpreter in another program. That is the extending guide and the C API reference, under https://docs.python.org/3.12/extending/ and https://docs.python.org/3.12/c-api/."
+    },
+    {
+      "pattern": "HOW DO I EXTEND PYTHON IN PYTHON",
+      "response": "You can add types and functions in C, or embed the interpreter in another program. That is the extending guide and the C API reference, under https://docs.python.org/3.12/extending/ and https://docs.python.org/3.12/c-api/."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON C API",
+      "response": "You can add types and functions in C, or embed the interpreter in another program. That is the extending guide and the C API reference, under https://docs.python.org/3.12/extending/ and https://docs.python.org/3.12/c-api/."
+    },
+    {
+      "pattern": "HOW DO I EMBED PYTHON",
+      "response": "You can add types and functions in C, or embed the interpreter in another program. That is the extending guide and the C API reference, under https://docs.python.org/3.12/extending/ and https://docs.python.org/3.12/c-api/."
+    },
+    {
+      "pattern": "HOW DO I EMBED PYTHON IN PYTHON",
+      "response": "You can add types and functions in C, or embed the interpreter in another program. That is the extending guide and the C API reference, under https://docs.python.org/3.12/extending/ and https://docs.python.org/3.12/c-api/."
+    },
+    {
+      "pattern": "WHERE IS THE PYTHON FAQ",
+      "response": "The frequently asked questions are at https://docs.python.org/3.12/faq/. They cover the language, the library, Windows, and the usual why-does-it-do-that moments."
+    },
+    {
+      "pattern": "PYTHON FAQ",
+      "response": "The frequently asked questions are at https://docs.python.org/3.12/faq/. They cover the language, the library, Windows, and the usual why-does-it-do-that moments."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON GLOSSARY",
+      "response": "The glossary is a short list of the words Python uses in a particular way: iterable, GIL, EAFP, and the rest. It is at https://docs.python.org/3.12/glossary.html."
+    },
+    {
+      "pattern": "WHERE IS THE PYTHON GLOSSARY",
+      "response": "The glossary is a short list of the words Python uses in a particular way: iterable, GIL, EAFP, and the rest. It is at https://docs.python.org/3.12/glossary.html."
+    },
+    {
+      "pattern": "WHAT IS DEPRECATED IN PYTHON",
+      "response": "Deprecations are features that still run but are on the way out. The 3.12 list is at https://docs.python.org/3.12/deprecations/. When something warns, that page is the place to look."
+    },
+    {
+      "pattern": "PYTHON DEPRECATIONS",
+      "response": "Deprecations are features that still run but are on the way out. The 3.12 list is at https://docs.python.org/3.12/deprecations/. When something warns, that page is the place to look."
+    },
+    {
+      "pattern": "HOW DO I START THE PYTHON INTERPRETER",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "HOW DO I START THE PYTHON INTERPRETER IN PYTHON",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "HOW DO I OPEN PYTHON",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "HOW DO I OPEN PYTHON IN PYTHON",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON PROMPT",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "WHAT IS THE PYTHON REPL",
+      "response": "In a terminal, run python or python3 with no file. You get >>>. Type an expression and it prints the value. A blank line ends a block. Ctrl-D leaves. On Windows, Ctrl-Z and Enter does that."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON SCRIPT",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON SCRIPT IN PYTHON",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON FILE",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON FILE IN PYTHON",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON PROGRAM",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "HOW DO I RUN A PYTHON PROGRAM IN PYTHON",
+      "response": "Save it as a .py file and run python that-file.py. Words after the file name are in sys.argv, and the first item is the script path."
+    },
+    {
+      "pattern": "WHAT IS INTERACTIVE MODE",
+      "response": "Interactive mode is the prompt. It is the fastest way to ask Python what an expression does. A script is the same language, saved so you can run it again."
+    },
+    {
+      "pattern": "WHAT IS THE INTERPRETER",
+      "response": "Interactive mode is the prompt. It is the fastest way to ask Python what an expression does. A script is the same language, saved so you can run it again."
+    },
+    {
+      "pattern": "WHAT ENCODING DOES PYTHON USE",
+      "response": "Python 3 reads source as UTF-8 unless the file says otherwise. You can name another encoding in a comment near the top, but UTF-8 is the one to stay with."
+    },
+    {
+      "pattern": "WHAT IS SOURCE ENCODING",
+      "response": "Python 3 reads source as UTF-8 unless the file says otherwise. You can name another encoding in a comment near the top, but UTF-8 is the one to stay with."
+    },
+    {
+      "pattern": "WHAT IS A COMMENT IN PYTHON",
+      "response": "A comment starts with # and runs to the end of the line. Python skips it. Write one when the next person would otherwise have to guess."
+    },
+    {
+      "pattern": "HOW DO I COMMENT IN PYTHON",
+      "response": "A comment starts with # and runs to the end of the line. Python skips it. Write one when the next person would otherwise have to guess."
+    },
+    {
+      "pattern": "PYTHON COMMENTS",
+      "response": "A comment starts with # and runs to the end of the line. Python skips it. Write one when the next person would otherwise have to guess."
+    },
+    {
+      "pattern": "WHAT IS INDENTATION IN PYTHON",
+      "response": "Indentation is the block. After a colon, the next lines that belong together sit in, usually four spaces. Tabs mixed with spaces will be rejected. The indent is the structure, not decoration."
+    },
+    {
+      "pattern": "WHY DOES INDENTATION MATTER IN PYTHON",
+      "response": "Indentation is the block. After a colon, the next lines that belong together sit in, usually four spaces. Tabs mixed with spaces will be rejected. The indent is the structure, not decoration."
+    },
+    {
+      "pattern": "HOW DO I INDENT PYTHON",
+      "response": "Indentation is the block. After a colon, the next lines that belong together sit in, usually four spaces. Tabs mixed with spaces will be rejected. The indent is the structure, not decoration."
+    },
+    {
+      "pattern": "HOW DO I INDENT PYTHON IN PYTHON",
+      "response": "Indentation is the block. After a colon, the next lines that belong together sit in, usually four spaces. Tabs mixed with spaces will be rejected. The indent is the structure, not decoration."
+    },
+    {
+      "pattern": "WHAT IS A STATEMENT IN PYTHON",
+      "response": "An expression produces a value, like 2 + 2 or len(name). A statement does a step, like assignment, if, for, or def. The prompt prints expression results. A script just runs the statements."
+    },
+    {
+      "pattern": "WHAT IS AN EXPRESSION IN PYTHON",
+      "response": "An expression produces a value, like 2 + 2 or len(name). A statement does a step, like assignment, if, for, or def. The prompt prints expression results. A script just runs the statements."
+    },
+    {
+      "pattern": "WHAT ARE NUMBERS IN PYTHON",
+      "response": "Whole numbers are ints, and they grow as large as memory allows. A decimal point makes a float, like 3.14. 7 / 2 is 3.5. 7 // 2 is 3. The percent sign is the remainder."
+    },
+    {
+      "pattern": "HOW DO NUMBERS WORK IN PYTHON",
+      "response": "Whole numbers are ints, and they grow as large as memory allows. A decimal point makes a float, like 3.14. 7 / 2 is 3.5. 7 // 2 is 3. The percent sign is the remainder."
+    },
+    {
+      "pattern": "PYTHON NUMBERS",
+      "response": "Whole numbers are ints, and they grow as large as memory allows. A decimal point makes a float, like 3.14. 7 / 2 is 3.5. 7 // 2 is 3. The percent sign is the remainder."
+    },
+    {
+      "pattern": "WHAT IS AN INT",
+      "response": "An int is a whole number. You do not pick a bit width. 2 ** 100 is just a bigger int."
+    },
+    {
+      "pattern": "WHAT IS AN INTEGER IN PYTHON",
+      "response": "An int is a whole number. You do not pick a bit width. 2 ** 100 is just a bigger int."
+    },
+    {
+      "pattern": "WHAT IS AN INT IN PYTHON",
+      "response": "An int is a whole number. You do not pick a bit width. 2 ** 100 is just a bigger int."
+    },
+    {
+      "pattern": "WHAT IS A FLOAT",
+      "response": "A float is a binary fraction, so many decimal values are only approximate. 0.1 + 0.2 is not exactly 0.3. Round it to show it, and use decimal when the exact decimal matters, especially money."
+    },
+    {
+      "pattern": "WHAT IS A FLOAT IN PYTHON",
+      "response": "A float is a binary fraction, so many decimal values are only approximate. 0.1 + 0.2 is not exactly 0.3. Round it to show it, and use decimal when the exact decimal matters, especially money."
+    },
+    {
+      "pattern": "WHY IS FLOATING POINT WEIRD",
+      "response": "A float is a binary fraction, so many decimal values are only approximate. 0.1 + 0.2 is not exactly 0.3. Round it to show it, and use decimal when the exact decimal matters, especially money."
+    },
+    {
+      "pattern": "WHAT IS INTEGER DIVISION",
+      "response": "One slash divides and gives a float. Two slashes divide and floor the result. 7 // 2 is 3, and -7 // 2 floors downward, not toward zero."
+    },
+    {
+      "pattern": "WHAT IS FLOOR DIVISION",
+      "response": "One slash divides and gives a float. Two slashes divide and floor the result. 7 // 2 is 3, and -7 // 2 floors downward, not toward zero."
+    },
+    {
+      "pattern": "WHAT DOES DOUBLE SLASH MEAN",
+      "response": "One slash divides and gives a float. Two slashes divide and floor the result. 7 // 2 is 3, and -7 // 2 floors downward, not toward zero."
+    },
+    {
+      "pattern": "WHAT IS A COMPLEX NUMBER IN PYTHON",
+      "response": "A complex number is written like 3+4j. The j marks the imaginary part. The cmath module has the math functions for those values."
+    },
+    {
+      "pattern": "WHAT DOES J MEAN IN PYTHON",
+      "response": "A complex number is written like 3+4j. The j marks the imaginary part. The cmath module has the math functions for those values."
+    },
+    {
+      "pattern": "WHAT IS A STRING",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "WHAT IS A STRING IN PYTHON",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "WHAT IS TEXT IN PYTHON",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "HOW DO STRINGS WORK",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "TELL ME ABOUT STRINGS",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON STRINGS",
+      "response": "A string is text. Single or double quotes both work, and triple quotes can span lines. Strings do not change in place. Methods like upper and replace hand you a new one."
+    },
+    {
+      "pattern": "HOW DO I INDEX A STRING",
+      "response": "Indexes start at zero. A negative index counts back from the end. s[1:4] takes a slice and leaves s alone. The end index is not included. In 3.12, slice objects can be dict keys, because they became hashable."
+    },
+    {
+      "pattern": "HOW DO I INDEX A STRING IN PYTHON",
+      "response": "Indexes start at zero. A negative index counts back from the end. s[1:4] takes a slice and leaves s alone. The end index is not included. In 3.12, slice objects can be dict keys, because they became hashable."
+    },
+    {
+      "pattern": "WHAT IS SLICING",
+      "response": "Indexes start at zero. A negative index counts back from the end. s[1:4] takes a slice and leaves s alone. The end index is not included. In 3.12, slice objects can be dict keys, because they became hashable."
+    },
+    {
+      "pattern": "WHAT IS A SLICE",
+      "response": "Indexes start at zero. A negative index counts back from the end. s[1:4] takes a slice and leaves s alone. The end index is not included. In 3.12, slice objects can be dict keys, because they became hashable."
+    },
+    {
+      "pattern": "ARE STRINGS MUTABLE",
+      "response": "No. You build a new string. If you need to edit characters, turn it into a list, change the list, and join it back."
+    },
+    {
+      "pattern": "CAN I CHANGE A STRING",
+      "response": "No. You build a new string. If you need to edit characters, turn it into a list, change the list, and join it back."
+    },
+    {
+      "pattern": "WHAT IS AN FSTRING",
+      "response": "A formatted string has an f before the quote and expressions in braces: f'The total is {price}'. In 3.12 the expression can be any Python, including the same quotes as the outside, more than one line, comments, and backslashes."
+    },
+    {
+      "pattern": "WHAT IS AN F STRING",
+      "response": "A formatted string has an f before the quote and expressions in braces: f'The total is {price}'. In 3.12 the expression can be any Python, including the same quotes as the outside, more than one line, comments, and backslashes."
+    },
+    {
+      "pattern": "WHAT IS A FORMATTED STRING",
+      "response": "A formatted string has an f before the quote and expressions in braces: f'The total is {price}'. In 3.12 the expression can be any Python, including the same quotes as the outside, more than one line, comments, and backslashes."
+    },
+    {
+      "pattern": "WHAT IS A FORMATTED STRING LITERAL",
+      "response": "A formatted string has an f before the quote and expressions in braces: f'The total is {price}'. In 3.12 the expression can be any Python, including the same quotes as the outside, more than one line, comments, and backslashes."
+    },
+    {
+      "pattern": "WHAT IS THE FORMAT METHOD",
+      "response": "Older code uses 'Hello, {}'.format(name), or the percent style. A formatted string is the one to reach for now. The format method is still there when you are filling a template you received as data."
+    },
+    {
+      "pattern": "HOW DO I FORMAT A STRING",
+      "response": "Older code uses 'Hello, {}'.format(name), or the percent style. A formatted string is the one to reach for now. The format method is still there when you are filling a template you received as data."
+    },
+    {
+      "pattern": "HOW DO I FORMAT A STRING IN PYTHON",
+      "response": "Older code uses 'Hello, {}'.format(name), or the percent style. A formatted string is the one to reach for now. The format method is still there when you are filling a template you received as data."
+    },
+    {
+      "pattern": "WHAT IS A RAW STRING",
+      "response": "A raw string, written with an r before the quote, treats backslashes as ordinary characters. Regular expressions want that, so the pattern sees the backslash."
+    },
+    {
+      "pattern": "WHAT IS A RAW STRING IN PYTHON",
+      "response": "A raw string, written with an r before the quote, treats backslashes as ordinary characters. Regular expressions want that, so the pattern sees the backslash."
+    },
+    {
+      "pattern": "WHAT IS A LIST",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "WHAT IS A LIST IN PYTHON",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "WHAT ARE LISTS",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "WHAT IS A PYTHON LIST",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "EXPLAIN LISTS",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "TELL ME ABOUT LISTS",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON LISTS",
+      "response": "A list is an ordered collection you can change. colors = ['red', 'blue']. append adds at the end. The first item is colors[0]. A list can hold anything, including other lists."
+    },
+    {
+      "pattern": "HOW DO I ADD TO A LIST",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I ADD TO A LIST IN PYTHON",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I APPEND TO A LIST",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I APPEND TO A LIST IN PYTHON",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I MAKE A LIST",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I MAKE A LIST IN PYTHON",
+      "response": "Start with brackets, empty or not. append adds one item at the end. extend adds every item from another sequence. insert places one at an index."
+    },
+    {
+      "pattern": "HOW DO I REMOVE FROM A LIST",
+      "response": "pop() takes the last item and returns it. pop(i) takes the item at that index. remove(value) takes the first matching value. del items[i] deletes by index and does not hand the value back."
+    },
+    {
+      "pattern": "HOW DO I REMOVE FROM A LIST IN PYTHON",
+      "response": "pop() takes the last item and returns it. pop(i) takes the item at that index. remove(value) takes the first matching value. del items[i] deletes by index and does not hand the value back."
+    },
+    {
+      "pattern": "WHAT DOES POP DO",
+      "response": "pop() takes the last item and returns it. pop(i) takes the item at that index. remove(value) takes the first matching value. del items[i] deletes by index and does not hand the value back."
+    },
+    {
+      "pattern": "WHAT DOES DEL DO",
+      "response": "pop() takes the last item and returns it. pop(i) takes the item at that index. remove(value) takes the first matching value. del items[i] deletes by index and does not hand the value back."
+    },
+    {
+      "pattern": "WHAT IS A LIST AS A STACK",
+      "response": "append and pop on the same end make a stack. The last thing you put on is the first thing you take off."
+    },
+    {
+      "pattern": "HOW DO I USE A LIST AS A STACK",
+      "response": "append and pop on the same end make a stack. The last thing you put on is the first thing you take off."
+    },
+    {
+      "pattern": "HOW DO I USE A LIST AS A STACK IN PYTHON",
+      "response": "append and pop on the same end make a stack. The last thing you put on is the first thing you take off."
+    },
+    {
+      "pattern": "WHAT IS A QUEUE IN PYTHON",
+      "response": "A list can pretend to be a queue, but taking from the front is slow. collections.deque is the tool that was built for that."
+    },
+    {
+      "pattern": "HOW DO I USE A LIST AS A QUEUE",
+      "response": "A list can pretend to be a queue, but taking from the front is slow. collections.deque is the tool that was built for that."
+    },
+    {
+      "pattern": "HOW DO I USE A LIST AS A QUEUE IN PYTHON",
+      "response": "A list can pretend to be a queue, but taking from the front is slow. collections.deque is the tool that was built for that."
+    },
+    {
+      "pattern": "WHAT IS A LIST COMPREHENSION",
+      "response": "A comprehension builds a collection in one expression. squares = [n * n for n in range(10) if n % 2 == 0]. Read it as n squared, for each n in the range, when n is even. In 3.12 those run faster because they are inlined, and the loop names still stay inside."
+    },
+    {
+      "pattern": "WHAT IS A COMPREHENSION",
+      "response": "A comprehension builds a collection in one expression. squares = [n * n for n in range(10) if n % 2 == 0]. Read it as n squared, for each n in the range, when n is even. In 3.12 those run faster because they are inlined, and the loop names still stay inside."
+    },
+    {
+      "pattern": "HOW DO COMPREHENSIONS WORK",
+      "response": "A comprehension builds a collection in one expression. squares = [n * n for n in range(10) if n % 2 == 0]. Read it as n squared, for each n in the range, when n is even. In 3.12 those run faster because they are inlined, and the loop names still stay inside."
+    },
+    {
+      "pattern": "WHAT IS A NESTED LIST COMPREHENSION",
+      "response": "You can put one for after another. It reads left to right, like the loops would if you wrote them out. Keep it short. When it gets dense, an ordinary loop is kinder."
+    },
+    {
+      "pattern": "WHAT IS A TUPLE",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "WHAT IS A TUPLE IN PYTHON",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "WHAT ARE TUPLES",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "EXPLAIN TUPLES",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "TELL ME ABOUT TUPLES",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON TUPLES",
+      "response": "A tuple is an ordered collection you do not change. point = (3, 4), or just 3, 4. One item needs a trailing comma, or the parentheses are only grouping. Use a tuple when the shape is part of the meaning."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN A LIST AND A TUPLE",
+      "response": "Use a list when the collection will grow or change. Use a tuple when the group is fixed, like a coordinate or a row you are only reading. Tuples can be dict keys when their contents can."
+    },
+    {
+      "pattern": "LIST OR TUPLE",
+      "response": "Use a list when the collection will grow or change. Use a tuple when the group is fixed, like a coordinate or a row you are only reading. Tuples can be dict keys when their contents can."
+    },
+    {
+      "pattern": "WHEN DO I USE A TUPLE",
+      "response": "Use a list when the collection will grow or change. Use a tuple when the group is fixed, like a coordinate or a row you are only reading. Tuples can be dict keys when their contents can."
+    },
+    {
+      "pattern": "WHAT IS UNPACKING",
+      "response": "You can split a sequence across names: x, y = point. The number of names has to fit, unless you gather the rest with a star: first, *rest = items."
+    },
+    {
+      "pattern": "WHAT IS TUPLE UNPACKING",
+      "response": "You can split a sequence across names: x, y = point. The number of names has to fit, unless you gather the rest with a star: first, *rest = items."
+    },
+    {
+      "pattern": "HOW DO I UNPACK A TUPLE",
+      "response": "You can split a sequence across names: x, y = point. The number of names has to fit, unless you gather the rest with a star: first, *rest = items."
+    },
+    {
+      "pattern": "HOW DO I UNPACK A TUPLE IN PYTHON",
+      "response": "You can split a sequence across names: x, y = point. The number of names has to fit, unless you gather the rest with a star: first, *rest = items."
+    },
+    {
+      "pattern": "WHAT IS A SET",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "WHAT IS A SET IN PYTHON",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "WHAT ARE SETS",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "EXPLAIN SETS",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "TELL ME ABOUT SETS",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON SETS",
+      "response": "A set holds unique values and does not promise an order. colors = {'red', 'blue'}. Empty curly braces make a dict, so an empty set is set(). Membership tests are the reason you reach for one."
+    },
+    {
+      "pattern": "HOW DO SET OPERATIONS WORK",
+      "response": "The bar is union, the ampersand is intersection, and the minus is the difference. You can also call .union and .intersection if the symbols feel cryptic."
+    },
+    {
+      "pattern": "WHAT IS A UNION",
+      "response": "The bar is union, the ampersand is intersection, and the minus is the difference. You can also call .union and .intersection if the symbols feel cryptic."
+    },
+    {
+      "pattern": "WHAT IS AN INTERSECTION",
+      "response": "The bar is union, the ampersand is intersection, and the minus is the difference. You can also call .union and .intersection if the symbols feel cryptic."
+    },
+    {
+      "pattern": "WHAT IS A DICTIONARY",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "WHAT IS A DICT",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "WHAT IS A DICT IN PYTHON",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "WHAT IS A DICTIONARY IN PYTHON",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "EXPLAIN DICTIONARIES",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "TELL ME ABOUT DICTS",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "TELL ME ABOUT DICTIONARIES",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON DICTS",
+      "response": "A dict maps a key to a value. person = {'name': 'Ada'}. You look up the key, not a position. Since 3.7 it keeps insertion order. A missing key raises KeyError. .get(key, default) returns the default instead."
+    },
+    {
+      "pattern": "HOW DO I ADD TO A DICT",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I ADD TO A DICT IN PYTHON",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I UPDATE A DICTIONARY",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I UPDATE A DICTIONARY IN PYTHON",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I MAKE A DICT",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I MAKE A DICT IN PYTHON",
+      "response": "Assign to a key: person['city'] = 'London'. update takes another mapping and copies its pairs in. A comprehension can build one: {name: len(name) for name in names}."
+    },
+    {
+      "pattern": "HOW DO I LOOP OVER A DICT",
+      "response": "Looping a dict walks the keys. .items() hands you each key and value. .values() hands you just the values. Do not add or delete keys while you are walking it."
+    },
+    {
+      "pattern": "HOW DO I LOOP OVER A DICT IN PYTHON",
+      "response": "Looping a dict walks the keys. .items() hands you each key and value. .values() hands you just the values. Do not add or delete keys while you are walking it."
+    },
+    {
+      "pattern": "HOW DO I ITERATE A DICTIONARY",
+      "response": "Looping a dict walks the keys. .items() hands you each key and value. .values() hands you just the values. Do not add or delete keys while you are walking it."
+    },
+    {
+      "pattern": "HOW DO I ITERATE A DICTIONARY IN PYTHON",
+      "response": "Looping a dict walks the keys. .items() hands you each key and value. .values() hands you just the values. Do not add or delete keys while you are walking it."
+    },
+    {
+      "pattern": "WHAT IS AN IF STATEMENT",
+      "response": "if runs a block when the test is true. elif tries another test. else is what remains. The line ends with a colon, and the block is indented. Comparisons can chain: 1 < x < 10."
+    },
+    {
+      "pattern": "HOW DOES IF WORK IN PYTHON",
+      "response": "if runs a block when the test is true. elif tries another test. else is what remains. The line ends with a colon, and the block is indented. Comparisons can chain: 1 < x < 10."
+    },
+    {
+      "pattern": "HOW DO I WRITE AN IF",
+      "response": "if runs a block when the test is true. elif tries another test. else is what remains. The line ends with a colon, and the block is indented. Comparisons can chain: 1 < x < 10."
+    },
+    {
+      "pattern": "HOW DO I WRITE AN IF IN PYTHON",
+      "response": "if runs a block when the test is true. elif tries another test. else is what remains. The line ends with a colon, and the block is indented. Comparisons can chain: 1 < x < 10."
+    },
+    {
+      "pattern": "WHAT IS TRUTHY",
+      "response": "False, None, zero, and empty containers are false. Almost everything else is true. You can write if items: and it means the list is not empty."
+    },
+    {
+      "pattern": "WHAT COUNTS AS FALSE IN PYTHON",
+      "response": "False, None, zero, and empty containers are false. Almost everything else is true. You can write if items: and it means the list is not empty."
+    },
+    {
+      "pattern": "WHAT IS TRUTH VALUE TESTING",
+      "response": "False, None, zero, and empty containers are false. Almost everything else is true. You can write if items: and it means the list is not empty."
+    },
+    {
+      "pattern": "WHAT IS AND OR NOT",
+      "response": "and and or return one of the values, not always True or False. or stops at the first true value. and stops at the first false one. not flips the truth of what follows."
+    },
+    {
+      "pattern": "HOW DO BOOLEAN OPERATORS WORK",
+      "response": "and and or return one of the values, not always True or False. or stops at the first true value. and stops at the first false one. not flips the truth of what follows."
+    },
+    {
+      "pattern": "WHAT IS A FOR LOOP",
+      "response": "for walks something that can produce items. for color in colors: print(color). You do not manage an index unless you ask for one with enumerate."
+    },
+    {
+      "pattern": "HOW DOES FOR WORK IN PYTHON",
+      "response": "for walks something that can produce items. for color in colors: print(color). You do not manage an index unless you ask for one with enumerate."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FOR LOOP",
+      "response": "for walks something that can produce items. for color in colors: print(color). You do not manage an index unless you ask for one with enumerate."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FOR LOOP IN PYTHON",
+      "response": "for walks something that can produce items. for color in colors: print(color). You do not manage an index unless you ask for one with enumerate."
+    },
+    {
+      "pattern": "WHAT IS RANGE",
+      "response": "range(5) is 0, 1, 2, 3, 4. It does not build a list. range(2, 10, 2) starts at 2 and steps by 2. Wrap it in list() only when you actually want the list."
+    },
+    {
+      "pattern": "WHAT DOES RANGE DO",
+      "response": "range(5) is 0, 1, 2, 3, 4. It does not build a list. range(2, 10, 2) starts at 2 and steps by 2. Wrap it in list() only when you actually want the list."
+    },
+    {
+      "pattern": "HOW DOES RANGE WORK",
+      "response": "range(5) is 0, 1, 2, 3, 4. It does not build a list. range(2, 10, 2) starts at 2 and steps by 2. Wrap it in list() only when you actually want the list."
+    },
+    {
+      "pattern": "WHAT IS A WHILE LOOP",
+      "response": "while repeats as long as the test stays true. Something inside has to change, or it never ends. If you are walking a collection, for is usually the clearer loop."
+    },
+    {
+      "pattern": "HOW DOES WHILE WORK",
+      "response": "while repeats as long as the test stays true. Something inside has to change, or it never ends. If you are walking a collection, for is usually the clearer loop."
+    },
+    {
+      "pattern": "WHAT DOES BREAK DO",
+      "response": "break leaves the loop immediately. The rest of that round does not run, and neither do later rounds."
+    },
+    {
+      "pattern": "WHAT IS BREAK",
+      "response": "break leaves the loop immediately. The rest of that round does not run, and neither do later rounds."
+    },
+    {
+      "pattern": "WHAT DOES CONTINUE DO",
+      "response": "continue skips the rest of this round and starts the next one. The loop itself keeps going."
+    },
+    {
+      "pattern": "WHAT IS CONTINUE",
+      "response": "continue skips the rest of this round and starts the next one. The loop itself keeps going."
+    },
+    {
+      "pattern": "WHAT IS THE ELSE ON A LOOP",
+      "response": "An else on for or while runs when the loop finishes without hitting break. It reads as 'we looked at all of them and never took the early exit.'"
+    },
+    {
+      "pattern": "WHY DOES A FOR LOOP HAVE AN ELSE",
+      "response": "An else on for or while runs when the loop finishes without hitting break. It reads as 'we looked at all of them and never took the early exit.'"
+    },
+    {
+      "pattern": "WHAT DOES PASS DO",
+      "response": "pass is an empty statement. You use it when Python insists on a block and you have nothing to put there yet."
+    },
+    {
+      "pattern": "WHAT IS PASS",
+      "response": "pass is an empty statement. You use it when Python insists on a block and you have nothing to put there yet."
+    },
+    {
+      "pattern": "WHAT IS MATCH",
+      "response": "match compares one value with several patterns. match command: then case ['quit']: or case ['go', direction]:. A bare underscore catches whatever is left. It has been in the language since 3.10."
+    },
+    {
+      "pattern": "WHAT IS A MATCH STATEMENT",
+      "response": "match compares one value with several patterns. match command: then case ['quit']: or case ['go', direction]:. A bare underscore catches whatever is left. It has been in the language since 3.10."
+    },
+    {
+      "pattern": "WHAT IS PATTERN MATCHING",
+      "response": "match compares one value with several patterns. match command: then case ['quit']: or case ['go', direction]:. A bare underscore catches whatever is left. It has been in the language since 3.10."
+    },
+    {
+      "pattern": "WHAT IS STRUCTURAL PATTERN MATCHING",
+      "response": "match compares one value with several patterns. match command: then case ['quit']: or case ['go', direction]:. A bare underscore catches whatever is left. It has been in the language since 3.10."
+    },
+    {
+      "pattern": "WHAT IS A FUNCTION",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "HOW DO I DEFINE A FUNCTION",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "HOW DO I DEFINE A FUNCTION IN PYTHON",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "WHAT DOES DEF DO",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FUNCTION",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FUNCTION IN PYTHON",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "TELL ME ABOUT FUNCTIONS",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON FUNCTIONS",
+      "response": "def names a function. def greet(name): return f'Hello, {name}'. Call it with greet('Ada'). If there is no return, the result is None."
+    },
+    {
+      "pattern": "WHAT IS A DEFAULT ARGUMENT",
+      "response": "A default sits in the signature: def greet(name='friend'). It is computed once, when the function is defined. A list or dict used as a default is shared by every call. Use None, and create a fresh list inside."
+    },
+    {
+      "pattern": "WHAT IS A DEFAULT PARAMETER",
+      "response": "A default sits in the signature: def greet(name='friend'). It is computed once, when the function is defined. A list or dict used as a default is shared by every call. Use None, and create a fresh list inside."
+    },
+    {
+      "pattern": "WHY NOT A MUTABLE DEFAULT",
+      "response": "A default sits in the signature: def greet(name='friend'). It is computed once, when the function is defined. A list or dict used as a default is shared by every call. Use None, and create a fresh list inside."
+    },
+    {
+      "pattern": "WHAT IS A KEYWORD ARGUMENT",
+      "response": "You can pass a value by name: greet(name='Ada'). Names can go in any order. That is useful once a function has several parameters and you do not want to count."
+    },
+    {
+      "pattern": "WHAT ARE KEYWORD ARGUMENTS",
+      "response": "You can pass a value by name: greet(name='Ada'). Names can go in any order. That is useful once a function has several parameters and you do not want to count."
+    },
+    {
+      "pattern": "WHAT IS ARGS",
+      "response": "*args gathers extra positional arguments into a tuple. **kwargs gathers extra named arguments into a dict. You can also unpack on the way in: function(*pair) or function(**options)."
+    },
+    {
+      "pattern": "WHAT IS KWARGS",
+      "response": "*args gathers extra positional arguments into a tuple. **kwargs gathers extra named arguments into a dict. You can also unpack on the way in: function(*pair) or function(**options)."
+    },
+    {
+      "pattern": "WHAT DOES STAR ARGS MEAN",
+      "response": "*args gathers extra positional arguments into a tuple. **kwargs gathers extra named arguments into a dict. You can also unpack on the way in: function(*pair) or function(**options)."
+    },
+    {
+      "pattern": "WHAT ARE ARBITRARY ARGUMENTS",
+      "response": "*args gathers extra positional arguments into a tuple. **kwargs gathers extra named arguments into a dict. You can also unpack on the way in: function(*pair) or function(**options)."
+    },
+    {
+      "pattern": "WHAT IS POSITIONAL ONLY",
+      "response": "A slash in the parameter list means everything before it must be passed by position. A bare star means everything after it must be passed by name. The tutorial spells the combinations out."
+    },
+    {
+      "pattern": "WHAT IS KEYWORD ONLY",
+      "response": "A slash in the parameter list means everything before it must be passed by position. A bare star means everything after it must be passed by name. The tutorial spells the combinations out."
+    },
+    {
+      "pattern": "WHAT DOES THE SLASH MEAN IN A SIGNATURE",
+      "response": "A slash in the parameter list means everything before it must be passed by position. A bare star means everything after it must be passed by name. The tutorial spells the combinations out."
+    },
+    {
+      "pattern": "WHAT IS A LAMBDA",
+      "response": "A lambda is a small function written where you need it: lambda n: n * n. It can only be an expression. When it needs statements, write a def."
+    },
+    {
+      "pattern": "WHAT IS A LAMBDA IN PYTHON",
+      "response": "A lambda is a small function written where you need it: lambda n: n * n. It can only be an expression. When it needs statements, write a def."
+    },
+    {
+      "pattern": "WHAT IS AN ANONYMOUS FUNCTION",
+      "response": "A lambda is a small function written where you need it: lambda n: n * n. It can only be an expression. When it needs statements, write a def."
+    },
+    {
+      "pattern": "WHAT IS A DOCSTRING",
+      "response": "The string written as the first line of a function, class, or module becomes its docstring. help() shows it. Write it for the person who will call the function."
+    },
+    {
+      "pattern": "WHAT IS A DOCUMENTATION STRING",
+      "response": "The string written as the first line of a function, class, or module becomes its docstring. help() shows it. Write it for the person who will call the function."
+    },
+    {
+      "pattern": "WHAT IS A FUNCTION ANNOTATION",
+      "response": "Annotations are notes on parameters and the return, like def greet(name: str) -> str. Python stores them and does not enforce them. Type checkers and editors are the ones that read them."
+    },
+    {
+      "pattern": "WHAT ARE TYPE HINTS",
+      "response": "Annotations are notes on parameters and the return, like def greet(name: str) -> str. Python stores them and does not enforce them. Type checkers and editors are the ones that read them."
+    },
+    {
+      "pattern": "WHAT ARE ANNOTATIONS",
+      "response": "Annotations are notes on parameters and the return, like def greet(name: str) -> str. Python stores them and does not enforce them. Type checkers and editors are the ones that read them."
+    },
+    {
+      "pattern": "WHAT IS PEP 695",
+      "response": "3.12 lets you declare a type parameter on the thing that uses it: def first[T](items: list[T]) -> T. type Point = tuple[float, float] makes a type alias. The parameter is visible inside that declaration, not after it."
+    },
+    {
+      "pattern": "WHAT IS THE TYPE STATEMENT",
+      "response": "3.12 lets you declare a type parameter on the thing that uses it: def first[T](items: list[T]) -> T. type Point = tuple[float, float] makes a type alias. The parameter is visible inside that declaration, not after it."
+    },
+    {
+      "pattern": "WHAT IS TYPE PARAMETER SYNTAX",
+      "response": "3.12 lets you declare a type parameter on the thing that uses it: def first[T](items: list[T]) -> T. type Point = tuple[float, float] makes a type alias. The parameter is visible inside that declaration, not after it."
+    },
+    {
+      "pattern": "WHAT IS TYPING OVERRIDE",
+      "response": "typing.override marks a method you intend to replace from a parent. A type checker can then tell you when the name does not actually match anything above it. It arrived in 3.12."
+    },
+    {
+      "pattern": "WHAT DOES OVERRIDE DO",
+      "response": "typing.override marks a method you intend to replace from a parent. A type checker can then tell you when the name does not actually match anything above it. It arrived in 3.12."
+    },
+    {
+      "pattern": "WHAT IS A MODULE",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "HOW DO I IMPORT A MODULE",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "HOW DO I IMPORT A MODULE IN PYTHON",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "HOW DOES IMPORT WORK",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "TELL ME ABOUT MODULES",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON MODULES",
+      "response": "A module is a Python file. import math, then math.sqrt(9). from math import sqrt brings that name in directly. The module name is the file name without .py."
+    },
+    {
+      "pattern": "WHAT IS IF NAME MAIN",
+      "response": "if __name__ == '__main__': runs only when you start that file as a program. When another file imports it, the guard stays quiet. Put the script's entry there, and leave the reusable parts outside."
+    },
+    {
+      "pattern": "WHAT DOES IF NAME EQUALS MAIN MEAN",
+      "response": "if __name__ == '__main__': runs only when you start that file as a program. When another file imports it, the guard stays quiet. Put the script's entry there, and leave the reusable parts outside."
+    },
+    {
+      "pattern": "WHAT IS THE MAIN GUARD",
+      "response": "if __name__ == '__main__': runs only when you start that file as a program. When another file imports it, the guard stays quiet. Put the script's entry there, and leave the reusable parts outside."
+    },
+    {
+      "pattern": "WHAT IS SYS PATH",
+      "response": "sys.path is the list of places import searches. The folder you started from is early, then the standard library, then installed packages. You can change it, and you should be reluctant to."
+    },
+    {
+      "pattern": "WHERE DOES PYTHON LOOK FOR MODULES",
+      "response": "sys.path is the list of places import searches. The folder you started from is early, then the standard library, then installed packages. You can change it, and you should be reluctant to."
+    },
+    {
+      "pattern": "WHAT IS THE MODULE SEARCH PATH",
+      "response": "sys.path is the list of places import searches. The folder you started from is early, then the standard library, then installed packages. You can change it, and you should be reluctant to."
+    },
+    {
+      "pattern": "WHAT IS DIR",
+      "response": "dir(some_module) lists the names defined there. dir() with no argument lists the names where you are standing. It is the quick look around."
+    },
+    {
+      "pattern": "WHAT DOES DIR DO",
+      "response": "dir(some_module) lists the names defined there. dir() with no argument lists the names where you are standing. It is the quick look around."
+    },
+    {
+      "pattern": "HOW DO I SEE WHAT A MODULE CONTAINS",
+      "response": "dir(some_module) lists the names defined there. dir() with no argument lists the names where you are standing. It is the quick look around."
+    },
+    {
+      "pattern": "HOW DO I SEE WHAT A MODULE CONTAINS IN PYTHON",
+      "response": "dir(some_module) lists the names defined there. dir() with no argument lists the names where you are standing. It is the quick look around."
+    },
+    {
+      "pattern": "WHAT IS A PACKAGE",
+      "response": "A package is a folder of modules you import with dots, like email.mime.text. The folder has to be on the search path. A name can be a module or a package, and import does not make you care which."
+    },
+    {
+      "pattern": "WHAT IS A PYTHON PACKAGE",
+      "response": "A package is a folder of modules you import with dots, like email.mime.text. The folder has to be on the search path. A name can be a module or a package, and import does not make you care which."
+    },
+    {
+      "pattern": "HOW DO PACKAGES WORK",
+      "response": "A package is a folder of modules you import with dots, like email.mime.text. The folder has to be on the search path. A name can be a module or a package, and import does not make you care which."
+    },
+    {
+      "pattern": "WHAT IS PYCACHE",
+      "response": "When Python imports a module it can write a compiled copy under __pycache__. That makes the next import faster. You do not edit those files. They are a cache."
+    },
+    {
+      "pattern": "WHAT ARE PYC FILES",
+      "response": "When Python imports a module it can write a compiled copy under __pycache__. That makes the next import faster. You do not edit those files. They are a cache."
+    },
+    {
+      "pattern": "HOW DO I PRINT",
+      "response": "print writes text and then a newline. print(a, b, sep=', ') puts a comma between the values. end='' keeps it from adding the newline."
+    },
+    {
+      "pattern": "HOW DO I PRINT IN PYTHON",
+      "response": "print writes text and then a newline. print(a, b, sep=', ') puts a comma between the values. end='' keeps it from adding the newline."
+    },
+    {
+      "pattern": "WHAT DOES PRINT DO",
+      "response": "print writes text and then a newline. print(a, b, sep=', ') puts a comma between the values. end='' keeps it from adding the newline."
+    },
+    {
+      "pattern": "HOW DOES PRINT WORK",
+      "response": "print writes text and then a newline. print(a, b, sep=', ') puts a comma between the values. end='' keeps it from adding the newline."
+    },
+    {
+      "pattern": "HOW DO I READ INPUT",
+      "response": "input('Name: ') shows the prompt and returns whatever was typed, always as a string. Pass it through int() or float() when you need a number, and be ready for that to fail."
+    },
+    {
+      "pattern": "HOW DO I READ INPUT IN PYTHON",
+      "response": "input('Name: ') shows the prompt and returns whatever was typed, always as a string. Pass it through int() or float() when you need a number, and be ready for that to fail."
+    },
+    {
+      "pattern": "WHAT DOES INPUT DO",
+      "response": "input('Name: ') shows the prompt and returns whatever was typed, always as a string. Pass it through int() or float() when you need a number, and be ready for that to fail."
+    },
+    {
+      "pattern": "HOW DOES INPUT WORK",
+      "response": "input('Name: ') shows the prompt and returns whatever was typed, always as a string. Pass it through int() or float() when you need a number, and be ready for that to fail."
+    },
+    {
+      "pattern": "HOW DO I OPEN A FILE",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I OPEN A FILE IN PYTHON",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I READ A FILE",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I READ A FILE IN PYTHON",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FILE",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I WRITE A FILE IN PYTHON",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "WHAT IS THE WITH STATEMENT",
+      "response": "Use with so the file closes even when something fails. with open('notes.txt', encoding='utf-8') as handle: text = handle.read(). 'w' replaces the file, 'a' adds to the end. Say the encoding."
+    },
+    {
+      "pattern": "HOW DO I USE JSON",
+      "response": "json.dumps turns basic Python values into a string. json.loads turns that string back. json.load and json.dump do the same with a file. Keys come back as strings."
+    },
+    {
+      "pattern": "HOW DO I USE JSON IN PYTHON",
+      "response": "json.dumps turns basic Python values into a string. json.loads turns that string back. json.load and json.dump do the same with a file. Keys come back as strings."
+    },
+    {
+      "pattern": "WHAT IS THE JSON MODULE",
+      "response": "json.dumps turns basic Python values into a string. json.loads turns that string back. json.load and json.dump do the same with a file. Keys come back as strings."
+    },
+    {
+      "pattern": "HOW DO I READ JSON",
+      "response": "json.dumps turns basic Python values into a string. json.loads turns that string back. json.load and json.dump do the same with a file. Keys come back as strings."
+    },
+    {
+      "pattern": "HOW DO I READ JSON IN PYTHON",
+      "response": "json.dumps turns basic Python values into a string. json.loads turns that string back. json.load and json.dump do the same with a file. Keys come back as strings."
+    },
+    {
+      "pattern": "WHAT IS A SYNTAX ERROR",
+      "response": "A SyntaxError means Python could not read the code. A missing colon, a quote left open, or a bad indent. Nothing in that file runs until the text is valid. 3.12 is better at pointing at the spot."
+    },
+    {
+      "pattern": "WHAT IS A SYNTAXERROR",
+      "response": "A SyntaxError means Python could not read the code. A missing colon, a quote left open, or a bad indent. Nothing in that file runs until the text is valid. 3.12 is better at pointing at the spot."
+    },
+    {
+      "pattern": "WHAT IS AN EXCEPTION",
+      "response": "An exception is a problem raised while the program runs. The usual early ones are NameError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, and FileNotFoundError. Uncaught, it prints a traceback and stops."
+    },
+    {
+      "pattern": "WHAT ARE EXCEPTIONS",
+      "response": "An exception is a problem raised while the program runs. The usual early ones are NameError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, and FileNotFoundError. Uncaught, it prints a traceback and stops."
+    },
+    {
+      "pattern": "WHAT IS AN ERROR IN PYTHON",
+      "response": "An exception is a problem raised while the program runs. The usual early ones are NameError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, and FileNotFoundError. Uncaught, it prints a traceback and stops."
+    },
+    {
+      "pattern": "TELL ME ABOUT EXCEPTIONS",
+      "response": "An exception is a problem raised while the program runs. The usual early ones are NameError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, and FileNotFoundError. Uncaught, it prints a traceback and stops."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON EXCEPTIONS",
+      "response": "An exception is a problem raised while the program runs. The usual early ones are NameError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, and FileNotFoundError. Uncaught, it prints a traceback and stops."
+    },
+    {
+      "pattern": "WHAT IS A TRACEBACK",
+      "response": "A traceback is the path the call took, newest frame last. Read the last line for the kind of error, then the line above it for where it happened. The frames above that are how you got there."
+    },
+    {
+      "pattern": "HOW DO I READ A TRACEBACK",
+      "response": "A traceback is the path the call took, newest frame last. Read the last line for the kind of error, then the line above it for where it happened. The frames above that are how you got there."
+    },
+    {
+      "pattern": "HOW DO I READ A TRACEBACK IN PYTHON",
+      "response": "A traceback is the path the call took, newest frame last. Read the last line for the kind of error, then the line above it for where it happened. The frames above that are how you got there."
+    },
+    {
+      "pattern": "HOW DO I CATCH AN EXCEPTION",
+      "response": "try wraps the lines that might fail. except ValueError as exc: catches that kind and leaves other kinds alone. else runs when nothing was raised. finally runs whether it failed or not."
+    },
+    {
+      "pattern": "HOW DO I CATCH AN EXCEPTION IN PYTHON",
+      "response": "try wraps the lines that might fail. except ValueError as exc: catches that kind and leaves other kinds alone. else runs when nothing was raised. finally runs whether it failed or not."
+    },
+    {
+      "pattern": "WHAT IS TRY EXCEPT",
+      "response": "try wraps the lines that might fail. except ValueError as exc: catches that kind and leaves other kinds alone. else runs when nothing was raised. finally runs whether it failed or not."
+    },
+    {
+      "pattern": "HOW DOES TRY EXCEPT WORK",
+      "response": "try wraps the lines that might fail. except ValueError as exc: catches that kind and leaves other kinds alone. else runs when nothing was raised. finally runs whether it failed or not."
+    },
+    {
+      "pattern": "HOW DO I RAISE AN EXCEPTION",
+      "response": "raise ValueError('need a positive number') sends the problem to the caller. Raise a specific type, and put a short reason in the message."
+    },
+    {
+      "pattern": "HOW DO I RAISE AN EXCEPTION IN PYTHON",
+      "response": "raise ValueError('need a positive number') sends the problem to the caller. Raise a specific type, and put a short reason in the message."
+    },
+    {
+      "pattern": "WHAT DOES RAISE DO",
+      "response": "raise ValueError('need a positive number') sends the problem to the caller. Raise a specific type, and put a short reason in the message."
+    },
+    {
+      "pattern": "WHAT IS EXCEPTION CHAINING",
+      "response": "raise NewError('while saving') from original keeps the first error as the cause. The traceback shows both, so the reader can see what led to what."
+    },
+    {
+      "pattern": "WHAT DOES RAISE FROM DO",
+      "response": "raise NewError('while saving') from original keeps the first error as the cause. The traceback shows both, so the reader can see what led to what."
+    },
+    {
+      "pattern": "WHAT IS AN EXCEPTION GROUP",
+      "response": "An ExceptionGroup holds several errors that happened together. except* catches matching members of the group. It showed up in 3.11 and it is part of the 3.12 language."
+    },
+    {
+      "pattern": "WHAT IS EXCEPT STAR",
+      "response": "An ExceptionGroup holds several errors that happened together. except* catches matching members of the group. It showed up in 3.11 and it is part of the 3.12 language."
+    },
+    {
+      "pattern": "WHAT IS A NAMEERROR",
+      "response": "NameError means that name is not defined here. In 3.12, if it looks like a standard-library module, the message may say you forgot to import it. Inside a method it may suggest self.something."
+    },
+    {
+      "pattern": "WHAT IS A NAME ERROR",
+      "response": "NameError means that name is not defined here. In 3.12, if it looks like a standard-library module, the message may say you forgot to import it. Inside a method it may suggest self.something."
+    },
+    {
+      "pattern": "WHAT IS A TYPEERROR",
+      "response": "TypeError means the operation does not apply to those types. Adding a string to an int, or calling something that is not callable. The message names the types it actually saw."
+    },
+    {
+      "pattern": "WHAT IS A TYPE ERROR",
+      "response": "TypeError means the operation does not apply to those types. Adding a string to an int, or calling something that is not callable. The message names the types it actually saw."
+    },
+    {
+      "pattern": "WHAT IS A VALUEERROR",
+      "response": "ValueError means the type was acceptable and the value was not. int('nope') is the classic. The text looked like a string, and it was not a number."
+    },
+    {
+      "pattern": "WHAT IS A VALUE ERROR",
+      "response": "ValueError means the type was acceptable and the value was not. int('nope') is the classic. The text looked like a string, and it was not a number."
+    },
+    {
+      "pattern": "WHAT IS A KEYERROR",
+      "response": "KeyError means the dict does not have that key. If a missing key is ordinary, use .get or catch the error. Do not use it to mean 'this index is out of range.' That is IndexError."
+    },
+    {
+      "pattern": "WHAT IS A KEY ERROR",
+      "response": "KeyError means the dict does not have that key. If a missing key is ordinary, use .get or catch the error. Do not use it to mean 'this index is out of range.' That is IndexError."
+    },
+    {
+      "pattern": "WHAT IS AN INDEXERROR",
+      "response": "IndexError means the sequence is not that long. items[5] on a three-item list. Indexes start at zero, so the last valid one is len(items) - 1."
+    },
+    {
+      "pattern": "WHAT IS AN INDEX ERROR",
+      "response": "IndexError means the sequence is not that long. items[5] on a three-item list. Indexes start at zero, so the last valid one is len(items) - 1."
+    },
+    {
+      "pattern": "WHAT IS AN ATTRIBUTEERROR",
+      "response": "AttributeError means the object has no attribute by that name. Often a typo, or a None where you expected a real object."
+    },
+    {
+      "pattern": "WHAT IS AN ATTRIBUTE ERROR",
+      "response": "AttributeError means the object has no attribute by that name. Often a typo, or a None where you expected a real object."
+    },
+    {
+      "pattern": "WHAT IS AN IMPORTERROR",
+      "response": "ImportError, and its subclass ModuleNotFoundError, means import could not find the name. In 3.12, from module import misspelled can suggest the name you probably wanted."
+    },
+    {
+      "pattern": "WHAT IS AN IMPORT ERROR",
+      "response": "ImportError, and its subclass ModuleNotFoundError, means import could not find the name. In 3.12, from module import misspelled can suggest the name you probably wanted."
+    },
+    {
+      "pattern": "WHAT IS A ZERODIVISIONERROR",
+      "response": "Dividing by zero raises ZeroDivisionError. Check the divisor, or catch it, when zero is a value your data can actually hold."
+    },
+    {
+      "pattern": "WHAT HAPPENS IF I DIVIDE BY ZERO",
+      "response": "Dividing by zero raises ZeroDivisionError. Check the divisor, or catch it, when zero is a value your data can actually hold."
+    },
+    {
+      "pattern": "WHAT IS A FILENOTFOUNDERROR",
+      "response": "FileNotFoundError means that path does not exist. It is a kind of OSError. Catch it when a missing file is a normal outcome, and let it surface when it means the program is lost."
+    },
+    {
+      "pattern": "WHAT IF THE FILE IS MISSING",
+      "response": "FileNotFoundError means that path does not exist. It is a kind of OSError. Catch it when a missing file is a normal outcome, and let it surface when it means the program is lost."
+    },
+    {
+      "pattern": "WHAT IS A CLASS",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "WHAT IS A CLASS IN PYTHON",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "HOW DO I DEFINE A CLASS",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "HOW DO I DEFINE A CLASS IN PYTHON",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "WHAT IS A PYTHON CLASS",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "TELL ME ABOUT CLASSES",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON CLASSES",
+      "response": "A class describes objects that share behavior. class Point: then def __init__(self, x, y): self.x = x. You make one with Point(3, 4). self is that instance, and Python passes it for you."
+    },
+    {
+      "pattern": "WHAT IS SELF",
+      "response": "self is the instance the method was called on. It is an ordinary parameter, just always first. When you write point.move(1), Python calls Point.move(point, 1)."
+    },
+    {
+      "pattern": "WHAT DOES SELF MEAN",
+      "response": "self is the instance the method was called on. It is an ordinary parameter, just always first. When you write point.move(1), Python calls Point.move(point, 1)."
+    },
+    {
+      "pattern": "WHAT IS INIT",
+      "response": "__init__ sets up a new instance after it has been created. It is where you attach the starting attributes. It should not return anything but None."
+    },
+    {
+      "pattern": "WHAT IS A CONSTRUCTOR IN PYTHON",
+      "response": "__init__ sets up a new instance after it has been created. It is where you attach the starting attributes. It should not return anything but None."
+    },
+    {
+      "pattern": "WHAT IS INHERITANCE",
+      "response": "class ColorPoint(Point) starts with what Point can do and adds more. super() calls up to the parent. You can list more than one base. Do that only when you can say why."
+    },
+    {
+      "pattern": "HOW DOES INHERITANCE WORK",
+      "response": "class ColorPoint(Point) starts with what Point can do and adds more. super() calls up to the parent. You can list more than one base. Do that only when you can say why."
+    },
+    {
+      "pattern": "WHAT IS A SUBCLASS",
+      "response": "class ColorPoint(Point) starts with what Point can do and adds more. super() calls up to the parent. You can list more than one base. Do that only when you can say why."
+    },
+    {
+      "pattern": "WHAT IS A CLASS VARIABLE",
+      "response": "A name set on self belongs to that instance. A name set on the class is shared. A list stored on the class is one list for everybody, which is a common surprise."
+    },
+    {
+      "pattern": "WHAT IS AN INSTANCE VARIABLE",
+      "response": "A name set on self belongs to that instance. A name set on the class is shared. A list stored on the class is one list for everybody, which is a common surprise."
+    },
+    {
+      "pattern": "WHAT IS PRIVATE IN PYTHON",
+      "response": "There is no hard private. A single leading underscore means internal, by convention. Two leading underscores, not ending in two, get rewritten so a subclass is less likely to clash with them."
+    },
+    {
+      "pattern": "ARE THERE PRIVATE VARIABLES",
+      "response": "There is no hard private. A single leading underscore means internal, by convention. Two leading underscores, not ending in two, get rewritten so a subclass is less likely to clash with them."
+    },
+    {
+      "pattern": "WHAT IS A SCOPE",
+      "response": "A function looks for a name in itself, then in the function that contains it, then in the module, then in builtins. Assigning to a name makes it local, unless you declare global or nonlocal."
+    },
+    {
+      "pattern": "WHAT IS A NAMESPACE",
+      "response": "A function looks for a name in itself, then in the function that contains it, then in the module, then in builtins. Assigning to a name makes it local, unless you declare global or nonlocal."
+    },
+    {
+      "pattern": "WHAT IS LEGB",
+      "response": "A function looks for a name in itself, then in the function that contains it, then in the module, then in builtins. Assigning to a name makes it local, unless you declare global or nonlocal."
+    },
+    {
+      "pattern": "WHAT IS GLOBAL",
+      "response": "global says the assignment touches the module-level name. nonlocal says it touches a name in an enclosing function. Without one of those, an assignment stays local."
+    },
+    {
+      "pattern": "WHAT IS NONLOCAL",
+      "response": "global says the assignment touches the module-level name. nonlocal says it touches a name in an enclosing function. Without one of those, an assignment stays local."
+    },
+    {
+      "pattern": "WHAT IS A DECORATOR",
+      "response": "A decorator wraps a function or class. @decorator above def is the same as writing name = decorator(name) afterward. You see them on routes, properties, and class methods."
+    },
+    {
+      "pattern": "HOW DO DECORATORS WORK",
+      "response": "A decorator wraps a function or class. @decorator above def is the same as writing name = decorator(name) afterward. You see them on routes, properties, and class methods."
+    },
+    {
+      "pattern": "WHAT IS A PROPERTY",
+      "response": "A property looks like an attribute and runs a method when you read it. @property marks the getter. A setter lets assignment run code too."
+    },
+    {
+      "pattern": "WHAT DOES PROPERTY DO",
+      "response": "A property looks like an attribute and runs a method when you read it. @property marks the getter. A setter lets assignment run code too."
+    },
+    {
+      "pattern": "WHAT IS A DATACLASS",
+      "response": "A dataclass writes __init__ and a few other methods from the fields you declare. It has been in the standard library since 3.7. Use it when a class is mostly stored values."
+    },
+    {
+      "pattern": "WHAT ARE DATACLASSES",
+      "response": "A dataclass writes __init__ and a few other methods from the fields you declare. It has been in the standard library since 3.7. Use it when a class is mostly stored values."
+    },
+    {
+      "pattern": "WHAT IS AN ITERATOR",
+      "response": "An iterable can produce an iterator, like a list. An iterator hands out the next item until it is done. for uses that, and you can drive it yourself with iter and next."
+    },
+    {
+      "pattern": "WHAT IS ITERABLE",
+      "response": "An iterable can produce an iterator, like a list. An iterator hands out the next item until it is done. for uses that, and you can drive it yourself with iter and next."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN ITERABLE AND ITERATOR",
+      "response": "An iterable can produce an iterator, like a list. An iterator hands out the next item until it is done. for uses that, and you can drive it yourself with iter and next."
+    },
+    {
+      "pattern": "WHAT IS A GENERATOR",
+      "response": "A generator is a function that yields. Each yield pauses and gives a value back, and the function keeps its place. It is how you produce a long sequence without building the whole list."
+    },
+    {
+      "pattern": "WHAT DOES YIELD DO",
+      "response": "A generator is a function that yields. Each yield pauses and gives a value back, and the function keeps its place. It is how you produce a long sequence without building the whole list."
+    },
+    {
+      "pattern": "HOW DO GENERATORS WORK",
+      "response": "A generator is a function that yields. Each yield pauses and gives a value back, and the function keeps its place. It is how you produce a long sequence without building the whole list."
+    },
+    {
+      "pattern": "TELL ME ABOUT GENERATORS",
+      "response": "A generator is a function that yields. Each yield pauses and gives a value back, and the function keeps its place. It is how you produce a long sequence without building the whole list."
+    },
+    {
+      "pattern": "WHAT IS A GENERATOR EXPRESSION",
+      "response": "A generator expression looks like a comprehension in parentheses: (n * n for n in range(10)). It produces one value at a time. Leave the parentheses off only when it is the only argument to a call."
+    },
+    {
+      "pattern": "WHAT IS THE STANDARD LIBRARY",
+      "response": "The standard library is the pile of modules that ship with Python: files, paths, math, dates, json, sqlite, tests, and a lot more. The tour in the tutorial is a good first pass, then the library reference."
+    },
+    {
+      "pattern": "WHAT COMES WITH PYTHON",
+      "response": "The standard library is the pile of modules that ship with Python: files, paths, math, dates, json, sqlite, tests, and a lot more. The tour in the tutorial is a good first pass, then the library reference."
+    },
+    {
+      "pattern": "WHAT IS BATTERIES INCLUDED",
+      "response": "The standard library is the pile of modules that ship with Python: files, paths, math, dates, json, sqlite, tests, and a lot more. The tour in the tutorial is a good first pass, then the library reference."
+    },
+    {
+      "pattern": "WHAT IS THE OS MODULE",
+      "response": "os is the operating-system counter. Current directory, environment variables, making folders, process ids. For paths, pathlib is usually the nicer surface, and it calls this underneath."
+    },
+    {
+      "pattern": "WHAT DOES OS DO",
+      "response": "os is the operating-system counter. Current directory, environment variables, making folders, process ids. For paths, pathlib is usually the nicer surface, and it calls this underneath."
+    },
+    {
+      "pattern": "WHAT IS PATHLIB",
+      "response": "pathlib.Path treats a path as an object. Path('docs') / 'readme.txt' joins the parts the way your system expects. In 3.12 you can subclass Path, and Path.walk() walks a tree the way os.walk does."
+    },
+    {
+      "pattern": "WHAT IS PATHLIB PATH",
+      "response": "pathlib.Path treats a path as an object. Path('docs') / 'readme.txt' joins the parts the way your system expects. In 3.12 you can subclass Path, and Path.walk() walks a tree the way os.walk does."
+    },
+    {
+      "pattern": "HOW DO I USE PATHLIB",
+      "response": "pathlib.Path treats a path as an object. Path('docs') / 'readme.txt' joins the parts the way your system expects. In 3.12 you can subclass Path, and Path.walk() walks a tree the way os.walk does."
+    },
+    {
+      "pattern": "HOW DO I USE PATHLIB IN PYTHON",
+      "response": "pathlib.Path treats a path as an object. Path('docs') / 'readme.txt' joins the parts the way your system expects. In 3.12 you can subclass Path, and Path.walk() walks a tree the way os.walk does."
+    },
+    {
+      "pattern": "WHAT IS GLOB",
+      "response": "glob.glob('*.py') returns names that match the pattern. Path.glob does the same from a folder. The star is a filename pattern, not a regular expression."
+    },
+    {
+      "pattern": "HOW DO I LIST FILES BY PATTERN",
+      "response": "glob.glob('*.py') returns names that match the pattern. Path.glob does the same from a folder. The star is a filename pattern, not a regular expression."
+    },
+    {
+      "pattern": "HOW DO I LIST FILES BY PATTERN IN PYTHON",
+      "response": "glob.glob('*.py') returns names that match the pattern. Path.glob does the same from a folder. The star is a filename pattern, not a regular expression."
+    },
+    {
+      "pattern": "WHAT IS SYS ARGV",
+      "response": "sys.argv is the list of command-line words. argv[0] is the script. For real flags, argparse is calmer than slicing that list by hand."
+    },
+    {
+      "pattern": "HOW DO I READ COMMAND LINE ARGUMENTS",
+      "response": "sys.argv is the list of command-line words. argv[0] is the script. For real flags, argparse is calmer than slicing that list by hand."
+    },
+    {
+      "pattern": "HOW DO I READ COMMAND LINE ARGUMENTS IN PYTHON",
+      "response": "sys.argv is the list of command-line words. argv[0] is the script. For real flags, argparse is calmer than slicing that list by hand."
+    },
+    {
+      "pattern": "WHAT IS ARGPARSE",
+      "response": "argparse defines the flags your program accepts, reads sys.argv, and prints a help message when you pass -h. Use it once the program has more than one option."
+    },
+    {
+      "pattern": "HOW DO I PARSE ARGUMENTS",
+      "response": "argparse defines the flags your program accepts, reads sys.argv, and prints a help message when you pass -h. Use it once the program has more than one option."
+    },
+    {
+      "pattern": "HOW DO I PARSE ARGUMENTS IN PYTHON",
+      "response": "argparse defines the flags your program accepts, reads sys.argv, and prints a help message when you pass -h. Use it once the program has more than one option."
+    },
+    {
+      "pattern": "WHAT IS THE RE MODULE",
+      "response": "The re module matches text with regular expressions. Write the pattern as a raw string so backslashes survive. In 3.12, an invalid escape in an ordinary string warns, which is another reason to use the raw form."
+    },
+    {
+      "pattern": "HOW DO I USE REGULAR EXPRESSIONS",
+      "response": "The re module matches text with regular expressions. Write the pattern as a raw string so backslashes survive. In 3.12, an invalid escape in an ordinary string warns, which is another reason to use the raw form."
+    },
+    {
+      "pattern": "HOW DO I USE REGULAR EXPRESSIONS IN PYTHON",
+      "response": "The re module matches text with regular expressions. Write the pattern as a raw string so backslashes survive. In 3.12, an invalid escape in an ordinary string warns, which is another reason to use the raw form."
+    },
+    {
+      "pattern": "WHAT IS REGEX IN PYTHON",
+      "response": "The re module matches text with regular expressions. Write the pattern as a raw string so backslashes survive. In 3.12, an invalid escape in an ordinary string warns, which is another reason to use the raw form."
+    },
+    {
+      "pattern": "WHAT IS THE MATH MODULE",
+      "response": "math has square root, trig, logs, and the constants pi and e. math.sumprod, added in 3.12, adds up a series of products in one pass."
+    },
+    {
+      "pattern": "WHAT DOES MATH SUMPROD DO",
+      "response": "math has square root, trig, logs, and the constants pi and e. math.sumprod, added in 3.12, adds up a series of products in one pass."
+    },
+    {
+      "pattern": "WHAT IS DATETIME",
+      "response": "The datetime module builds dates and times. date.today() is today. Store an aware time, one with a timezone, when the zone matters. Naive times will bite you later."
+    },
+    {
+      "pattern": "HOW DO I HANDLE DATES IN PYTHON",
+      "response": "The datetime module builds dates and times. date.today() is today. Store an aware time, one with a timezone, when the zone matters. Naive times will bite you later."
+    },
+    {
+      "pattern": "WHAT IS THE RANDOM MODULE",
+      "response": "random can pick, shuffle, and draw numbers. It is not for passwords or tokens. The secrets module is the one for anything an attacker might guess."
+    },
+    {
+      "pattern": "HOW DO I GET A RANDOM NUMBER",
+      "response": "random can pick, shuffle, and draw numbers. It is not for passwords or tokens. The secrets module is the one for anything an attacker might guess."
+    },
+    {
+      "pattern": "HOW DO I GET A RANDOM NUMBER IN PYTHON",
+      "response": "random can pick, shuffle, and draw numbers. It is not for passwords or tokens. The secrets module is the one for anything an attacker might guess."
+    },
+    {
+      "pattern": "WHAT IS ITERTOOLS",
+      "response": "itertools is a set of looping tools: chain, cycle, islice, and friends. itertools.batched, new in 3.12, groups items into tuples of a given size, and the last group can be shorter."
+    },
+    {
+      "pattern": "WHAT DOES ITERTOOLS BATCHED DO",
+      "response": "itertools is a set of looping tools: chain, cycle, islice, and friends. itertools.batched, new in 3.12, groups items into tuples of a given size, and the last group can be shorter."
+    },
+    {
+      "pattern": "WHAT IS COLLECTIONS",
+      "response": "collections adds a few containers the builtins do not have. deque is a fast queue. Counter tallies items. defaultdict builds a missing value the first time you touch the key."
+    },
+    {
+      "pattern": "WHAT IS A DEQUE",
+      "response": "collections adds a few containers the builtins do not have. deque is a fast queue. Counter tallies items. defaultdict builds a missing value the first time you touch the key."
+    },
+    {
+      "pattern": "WHAT IS A COUNTER",
+      "response": "collections adds a few containers the builtins do not have. deque is a fast queue. Counter tallies items. defaultdict builds a missing value the first time you touch the key."
+    },
+    {
+      "pattern": "WHAT IS A DEFAULTDICT",
+      "response": "collections adds a few containers the builtins do not have. deque is a fast queue. Counter tallies items. defaultdict builds a missing value the first time you touch the key."
+    },
+    {
+      "pattern": "WHAT IS LOGGING",
+      "response": "The logging module is the durable replacement for print. You name a logger, pick a level, and the configuration decides where the lines go. The how-to is worth reading once."
+    },
+    {
+      "pattern": "HOW DO I LOG IN PYTHON",
+      "response": "The logging module is the durable replacement for print. You name a logger, pick a level, and the configuration decides where the lines go. The how-to is worth reading once."
+    },
+    {
+      "pattern": "WHAT IS THREADING",
+      "response": "threading runs callables side by side in one process. They share memory. Ordinary threads still share one GIL, so this helps when the work is waiting, not when it is pure calculation."
+    },
+    {
+      "pattern": "HOW DO THREADS WORK IN PYTHON",
+      "response": "threading runs callables side by side in one process. They share memory. Ordinary threads still share one GIL, so this helps when the work is waiting, not when it is pure calculation."
+    },
+    {
+      "pattern": "WHAT IS MULTIPROCESSING",
+      "response": "multiprocessing starts separate processes, each with its own interpreter. That is the usual way to use more cores for CPU work. You pay for it by passing data across a boundary."
+    },
+    {
+      "pattern": "HOW DO I USE MORE THAN ONE CORE",
+      "response": "multiprocessing starts separate processes, each with its own interpreter. That is the usual way to use more cores for CPU work. You pay for it by passing data across a boundary."
+    },
+    {
+      "pattern": "HOW DO I USE MORE THAN ONE CORE IN PYTHON",
+      "response": "multiprocessing starts separate processes, each with its own interpreter. That is the usual way to use more cores for CPU work. You pay for it by passing data across a boundary."
+    },
+    {
+      "pattern": "WHAT IS ASYNCIO",
+      "response": "asyncio runs many tasks that spend their time waiting, usually on the network. You write async def and you await the points where you can yield. Parts of it got faster in 3.12."
+    },
+    {
+      "pattern": "WHAT IS ASYNC AWAIT",
+      "response": "asyncio runs many tasks that spend their time waiting, usually on the network. You write async def and you await the points where you can yield. Parts of it got faster in 3.12."
+    },
+    {
+      "pattern": "HOW DOES ASYNCIO WORK",
+      "response": "asyncio runs many tasks that spend their time waiting, usually on the network. You write async def and you await the points where you can yield. Parts of it got faster in 3.12."
+    },
+    {
+      "pattern": "WHAT IS THE GIL",
+      "response": "The GIL is a lock that lets only one thread run Python code at a time in an interpreter. In 3.12, sub-interpreters can each be given their own GIL, through the C API. Ordinary threads in one interpreter still share one."
+    },
+    {
+      "pattern": "WHAT IS THE GLOBAL INTERPRETER LOCK",
+      "response": "The GIL is a lock that lets only one thread run Python code at a time in an interpreter. In 3.12, sub-interpreters can each be given their own GIL, through the C API. Ordinary threads in one interpreter still share one."
+    },
+    {
+      "pattern": "WHAT IS A PER INTERPRETER GIL",
+      "response": "The GIL is a lock that lets only one thread run Python code at a time in an interpreter. In 3.12, sub-interpreters can each be given their own GIL, through the C API. Ordinary threads in one interpreter still share one."
+    },
+    {
+      "pattern": "TELL ME ABOUT THE GIL",
+      "response": "The GIL is a lock that lets only one thread run Python code at a time in an interpreter. In 3.12, sub-interpreters can each be given their own GIL, through the C API. Ordinary threads in one interpreter still share one."
+    },
+    {
+      "pattern": "WHAT IS SYS MONITORING",
+      "response": "sys.monitoring, from 3.12, is how profilers and debuggers watch calls, lines, and exceptions. You pay for the events you turn on, which is why the overhead can stay low."
+    },
+    {
+      "pattern": "WHAT IS PEP 669",
+      "response": "sys.monitoring, from 3.12, is how profilers and debuggers watch calls, lines, and exceptions. You pay for the events you turn on, which is why the overhead can stay low."
+    },
+    {
+      "pattern": "WHAT IS DECIMAL",
+      "response": "decimal.Decimal keeps base-10 fractions. Use it for money and for any number where binary float error is not acceptable. It is slower than float, and it is exact in the way people expect."
+    },
+    {
+      "pattern": "WHEN DO I USE DECIMAL",
+      "response": "decimal.Decimal keeps base-10 fractions. Use it for money and for any number where binary float error is not acceptable. It is slower than float, and it is exact in the way people expect."
+    },
+    {
+      "pattern": "WHAT IS SQLITE3",
+      "response": "sqlite3 is a database in a file, included with Python. You connect, you execute SQL, you commit. In 3.12 you can also run python -m sqlite3, and connections grew an autocommit mode."
+    },
+    {
+      "pattern": "HOW DO I USE SQLITE",
+      "response": "sqlite3 is a database in a file, included with Python. You connect, you execute SQL, you commit. In 3.12 you can also run python -m sqlite3, and connections grew an autocommit mode."
+    },
+    {
+      "pattern": "HOW DO I USE SQLITE IN PYTHON",
+      "response": "sqlite3 is a database in a file, included with Python. You connect, you execute SQL, you commit. In 3.12 you can also run python -m sqlite3, and connections grew an autocommit mode."
+    },
+    {
+      "pattern": "WHAT IS THE SQLITE3 MODULE",
+      "response": "sqlite3 is a database in a file, included with Python. You connect, you execute SQL, you commit. In 3.12 you can also run python -m sqlite3, and connections grew an autocommit mode."
+    },
+    {
+      "pattern": "WHAT IS UNITTEST",
+      "response": "unittest ships with Python. Subclass TestCase, name methods test_, and run python -m unittest. In 3.12, --durations shows the slowest tests. pytest is popular too, and it is a separate install."
+    },
+    {
+      "pattern": "HOW DO I TEST PYTHON",
+      "response": "unittest ships with Python. Subclass TestCase, name methods test_, and run python -m unittest. In 3.12, --durations shows the slowest tests. pytest is popular too, and it is a separate install."
+    },
+    {
+      "pattern": "HOW DO I TEST PYTHON IN PYTHON",
+      "response": "unittest ships with Python. Subclass TestCase, name methods test_, and run python -m unittest. In 3.12, --durations shows the slowest tests. pytest is popular too, and it is a separate install."
+    },
+    {
+      "pattern": "HOW DO I WRITE A UNIT TEST",
+      "response": "unittest ships with Python. Subclass TestCase, name methods test_, and run python -m unittest. In 3.12, --durations shows the slowest tests. pytest is popular too, and it is a separate install."
+    },
+    {
+      "pattern": "HOW DO I WRITE A UNIT TEST IN PYTHON",
+      "response": "unittest ships with Python. Subclass TestCase, name methods test_, and run python -m unittest. In 3.12, --durations shows the slowest tests. pytest is popular too, and it is a separate install."
+    },
+    {
+      "pattern": "WHAT IS DOCTEST",
+      "response": "doctest runs the examples written in your docstrings. If the prompt lines in the docstring fail, the test fails. It is a good fit for small examples and a poor fit for setup-heavy tests."
+    },
+    {
+      "pattern": "WHAT IS THE BUFFER PROTOCOL",
+      "response": "The buffer protocol is how objects share a block of memory without copying it. In 3.12, a Python class can take part by defining __buffer__. collections.abc.Buffer is the type you can annotate with."
+    },
+    {
+      "pattern": "WHAT IS PEP 688",
+      "response": "The buffer protocol is how objects share a block of memory without copying it. In 3.12, a Python class can take part by defining __buffer__. collections.abc.Buffer is the type you can annotate with."
+    },
+    {
+      "pattern": "WHAT IS A BUFFER",
+      "response": "The buffer protocol is how objects share a block of memory without copying it. In 3.12, a Python class can take part by defining __buffer__. collections.abc.Buffer is the type you can annotate with."
+    },
+    {
+      "pattern": "WHAT IS A VIRTUAL ENVIRONMENT",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "HOW DO I MAKE A VIRTUAL ENVIRONMENT",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "HOW DO I MAKE A VIRTUAL ENVIRONMENT IN PYTHON",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "WHAT IS VENV",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "HOW DO I USE VENV",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "HOW DO I USE VENV IN PYTHON",
+      "response": "A virtual environment is a private set of packages for one project. python -m venv .venv creates it. Activate it, then install into it. In 3.12 a new environment does not come with setuptools already installed."
+    },
+    {
+      "pattern": "WHAT HAPPENED TO DISTUTILS",
+      "response": "distutils was removed in 3.12. The setuptools project still provides it if an old build needs it. For a new project, follow the current packaging guide instead of reaching for distutils."
+    },
+    {
+      "pattern": "WHERE DID DISTUTILS GO",
+      "response": "distutils was removed in 3.12. The setuptools project still provides it if an old build needs it. For a new project, follow the current packaging guide instead of reaching for distutils."
+    },
+    {
+      "pattern": "WHAT IS DISTUTILS",
+      "response": "distutils was removed in 3.12. The setuptools project still provides it if an old build needs it. For a new project, follow the current packaging guide instead of reaching for distutils."
+    },
+    {
+      "pattern": "WHAT HAPPENED TO ASYNCHAT",
+      "response": "asynchat, asyncore, and imp were removed in 3.12. asyncio replaced the first two. importlib replaced imp. If old code imports them, it has to move."
+    },
+    {
+      "pattern": "WHAT HAPPENED TO ASYNCORE",
+      "response": "asynchat, asyncore, and imp were removed in 3.12. asyncio replaced the first two. importlib replaced imp. If old code imports them, it has to move."
+    },
+    {
+      "pattern": "WHAT HAPPENED TO IMP",
+      "response": "asynchat, asyncore, and imp were removed in 3.12. asyncio replaced the first two. importlib replaced imp. If old code imports them, it has to move."
+    },
+    {
+      "pattern": "WHAT IS NONE",
+      "response": "None is the single value that means 'no value.' Functions return it when they do not say otherwise. Test for it with is None, not with equality, though equality works."
+    },
+    {
+      "pattern": "WHAT DOES NONE MEAN",
+      "response": "None is the single value that means 'no value.' Functions return it when they do not say otherwise. Test for it with is None, not with equality, though equality works."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN IS AND EQUALS",
+      "response": "is asks whether two names point at the same object. == asks whether their values count as equal. Use is for None. Do not use it for numbers or strings. Small ints are sometimes cached, which makes is look like it works."
+    },
+    {
+      "pattern": "WHAT IS IS VERSUS EQUALS",
+      "response": "is asks whether two names point at the same object. == asks whether their values count as equal. Use is for None. Do not use it for numbers or strings. Small ints are sometimes cached, which makes is look like it works."
+    },
+    {
+      "pattern": "WHEN DO I USE IS",
+      "response": "is asks whether two names point at the same object. == asks whether their values count as equal. Use is for None. Do not use it for numbers or strings. Small ints are sometimes cached, which makes is look like it works."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN EQUALS AND ASSIGNMENT",
+      "response": "One equals sign assigns. Two ask whether the values are equal. if x = 1 is a syntax error. if x == 1 is the test."
+    },
+    {
+      "pattern": "WHAT IS ENUMERATE",
+      "response": "enumerate pairs each item with a count. for i, color in enumerate(colors): gives you the index and the value, starting at zero unless you pass a start."
+    },
+    {
+      "pattern": "WHAT DOES ENUMERATE DO",
+      "response": "enumerate pairs each item with a count. for i, color in enumerate(colors): gives you the index and the value, starting at zero unless you pass a start."
+    },
+    {
+      "pattern": "WHAT IS ZIP",
+      "response": "zip walks several sequences together and stops at the shortest. dict(zip(keys, values)) is a common way to build a dict from two lists."
+    },
+    {
+      "pattern": "WHAT DOES ZIP DO",
+      "response": "zip walks several sequences together and stops at the shortest. dict(zip(keys, values)) is a common way to build a dict from two lists."
+    },
+    {
+      "pattern": "WHAT IS MAP AND FILTER",
+      "response": "map applies a function to each item. filter keeps items that pass a test. A comprehension usually reads more clearly. Both return iterators, not lists."
+    },
+    {
+      "pattern": "WHAT DOES MAP DO",
+      "response": "map applies a function to each item. filter keeps items that pass a test. A comprehension usually reads more clearly. Both return iterators, not lists."
+    },
+    {
+      "pattern": "WHAT DOES FILTER DO",
+      "response": "map applies a function to each item. filter keeps items that pass a test. A comprehension usually reads more clearly. Both return iterators, not lists."
+    },
+    {
+      "pattern": "WHAT IS SORTED",
+      "response": "sorted(items) returns a new list. items.sort() changes the list and returns None. key= is how you say what to compare. reverse=True flips the order."
+    },
+    {
+      "pattern": "HOW DO I SORT IN PYTHON",
+      "response": "sorted(items) returns a new list. items.sort() changes the list and returns None. key= is how you say what to compare. reverse=True flips the order."
+    },
+    {
+      "pattern": "WHAT IS LEN",
+      "response": "len returns how many items a sequence, a set, or a dict has. On a dict it counts keys. On a string it counts characters."
+    },
+    {
+      "pattern": "WHAT DOES LEN DO",
+      "response": "len returns how many items a sequence, a set, or a dict has. On a dict it counts keys. On a string it counts characters."
+    },
+    {
+      "pattern": "WHAT IS ISINSTANCE",
+      "response": "isinstance(value, int) is true when value is an int or a subclass. type(value) is the exact class. Prefer isinstance when you are asking what you can do with the value."
+    },
+    {
+      "pattern": "WHAT DOES ISINSTANCE DO",
+      "response": "isinstance(value, int) is true when value is an int or a subclass. type(value) is the exact class. Prefer isinstance when you are asking what you can do with the value."
+    },
+    {
+      "pattern": "WHAT IS TYPE",
+      "response": "isinstance(value, int) is true when value is an int or a subclass. type(value) is the exact class. Prefer isinstance when you are asking what you can do with the value."
+    },
+    {
+      "pattern": "WHAT ARE BUILTINS",
+      "response": "Builtins are the names you can use without importing: len, print, range, int, str, list, dict, open, and the exceptions. They live in the builtins module. Shadowing one, like naming a variable list, hides the real one."
+    },
+    {
+      "pattern": "WHAT IS THE BUILTINS MODULE",
+      "response": "Builtins are the names you can use without importing: len, print, range, int, str, list, dict, open, and the exceptions. They live in the builtins module. Shadowing one, like naming a variable list, hides the real one."
+    },
+    {
+      "pattern": "WHAT IS THE WALRUS OPERATOR",
+      "response": "The walrus, :=, assigns inside an expression. if (n := len(items)) > 10: both measures the list and keeps n. It has been around since 3.8. Use it when naming the value saves a second lookup."
+    },
+    {
+      "pattern": "WHAT IS ASSIGNMENT EXPRESSION",
+      "response": "The walrus, :=, assigns inside an expression. if (n := len(items)) > 10: both measures the list and keeps n. It has been around since 3.8. Use it when naming the value saves a second lookup."
+    },
+    {
+      "pattern": "WHAT IS IMPORT THIS",
+      "response": "Type import this at the prompt. It prints the Zen of Python. The part people remember is that explicit beats implicit, and simple beats complicated."
+    },
+    {
+      "pattern": "WHAT IS THE ZEN OF PYTHON",
+      "response": "Type import this at the prompt. It prints the Zen of Python. The part people remember is that explicit beats implicit, and simple beats complicated."
+    },
+    {
+      "pattern": "WHO MADE PYTHON",
+      "response": "Guido van Rossum started Python. A large group maintains it now, under the Python Software Foundation. The language is not one person's project anymore."
+    },
+    {
+      "pattern": "WHO CREATED PYTHON",
+      "response": "Guido van Rossum started Python. A large group maintains it now, under the Python Software Foundation. The language is not one person's project anymore."
+    },
+    {
+      "pattern": "WHO INVENTED PYTHON",
+      "response": "Guido van Rossum started Python. A large group maintains it now, under the Python Software Foundation. The language is not one person's project anymore."
+    },
+    {
+      "pattern": "IS PYTHON FREE",
+      "response": "Yes. Python is free to use and distribute under the Python Software Foundation license. The interpreter and the standard library come from https://www.python.org/."
+    },
+    {
+      "pattern": "WHAT LICENSE IS PYTHON",
+      "response": "Yes. Python is free to use and distribute under the Python Software Foundation license. The interpreter and the standard library come from https://www.python.org/."
+    },
+    {
+      "pattern": "CAN I USE PYTHON",
+      "response": "Yes. Python is free to use and distribute under the Python Software Foundation license. The interpreter and the standard library come from https://www.python.org/."
+    },
+    {
+      "pattern": "WHAT IS PEP 8",
+      "response": "PEP 8 is the style guide: four-space indents, names in snake_case for functions, CapWords for classes, and lines that a person can read. The tutorial's short version is enough to start. Tools can fix the spacing for you."
+    },
+    {
+      "pattern": "WHAT IS PYTHON STYLE",
+      "response": "PEP 8 is the style guide: four-space indents, names in snake_case for functions, CapWords for classes, and lines that a person can read. The tutorial's short version is enough to start. Tools can fix the spacing for you."
+    },
+    {
+      "pattern": "HOW SHOULD I FORMAT PYTHON",
+      "response": "PEP 8 is the style guide: four-space indents, names in snake_case for functions, CapWords for classes, and lines that a person can read. The tutorial's short version is enough to start. Tools can fix the spacing for you."
+    },
+    {
+      "pattern": "WHAT IS EAFP",
+      "response": "EAFP is 'easier to ask forgiveness than permission': try the operation and catch the exception. LBYL is 'look before you leap': test first. Python code usually prefers EAFP, because the check and the action can still race."
+    },
+    {
+      "pattern": "WHAT IS LBYL",
+      "response": "EAFP is 'easier to ask forgiveness than permission': try the operation and catch the exception. LBYL is 'look before you leap': test first. Python code usually prefers EAFP, because the check and the action can still race."
+    },
+    {
+      "pattern": "I AM LEARNING PYTHON",
+      "response": "Good. Open the prompt and the tutorial together. Try each example before you move on. When one idea sticks, ask about the next one."
+    },
+    {
+      "pattern": "I AM NEW TO PYTHON",
+      "response": "Good. Open the prompt and the tutorial together. Try each example before you move on. When one idea sticks, ask about the next one."
+    },
+    {
+      "pattern": "I AM A PYTHON BEGINNER",
+      "response": "Good. Open the prompt and the tutorial together. Try each example before you move on. When one idea sticks, ask about the next one."
+    },
+    {
+      "pattern": "I LIKE PYTHON",
+      "response": "It is a friendly language to think in. What part are you in the middle of?"
+    },
+    {
+      "pattern": "I LOVE PYTHON",
+      "response": "It is a friendly language to think in. What part are you in the middle of?"
+    },
+    {
+      "pattern": "PYTHON IS HARD",
+      "response": "It usually gets hard at one specific spot, not all at once. Indentation, the difference between a name and a call, or a type you did not expect. Which line is fighting you?"
+    },
+    {
+      "pattern": "I DO NOT UNDERSTAND PYTHON",
+      "response": "It usually gets hard at one specific spot, not all at once. Indentation, the difference between a name and a call, or a type you did not expect. Which line is fighting you?"
+    },
+    {
+      "pattern": "PYTHON CONFUSES ME",
+      "response": "It usually gets hard at one specific spot, not all at once. Indentation, the difference between a name and a call, or a type you did not expect. Which line is fighting you?"
+    },
+    {
+      "pattern": "CAN YOU TEACH ME PYTHON",
+      "response": "Yes. We can go in tutorial order: the prompt, values, lists, loops, functions, then files and classes. Tell me where you are and we will start there."
+    },
+    {
+      "pattern": "TEACH ME PYTHON",
+      "response": "Yes. We can go in tutorial order: the prompt, values, lists, loops, functions, then files and classes. Tell me where you are and we will start there."
+    },
+    {
+      "pattern": "HELP ME LEARN PYTHON",
+      "response": "Yes. We can go in tutorial order: the prompt, values, lists, loops, functions, then files and classes. Tell me where you are and we will start there."
+    },
+    {
+      "pattern": "WHAT SHOULD I LEARN FIRST IN PYTHON",
+      "response": "Values, then lists and dicts, then if and for, then functions. After that, files and exceptions. Classes once you have written a few functions you wish were grouped."
+    },
+    {
+      "pattern": "WHAT SHOULD I LEARN NEXT IN PYTHON",
+      "response": "Values, then lists and dicts, then if and for, then functions. After that, files and exceptions. Classes once you have written a few functions you wish were grouped."
+    },
+    {
+      "pattern": "HOW DO I PACKAGE THIS FOR SOMEONE ELSE",
+      "response": "Put the tool in a project with a build file, then decide whether the other person installs it or you hand them the folder. They still need a short note on how to run it. Publishing steps start at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I PACKAGE IT FOR SOMEONE ELSE",
+      "response": "Put the tool in a project with a build file, then decide whether the other person installs it or you hand them the folder. They still need a short note on how to run it. Publishing steps start at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I PACKAGE THIS",
+      "response": "Put the tool in a project with a build file, then decide whether the other person installs it or you hand them the folder. They still need a short note on how to run it. Publishing steps start at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "HOW DO I PACKAGE THE TOOL",
+      "response": "Put the tool in a project with a build file, then decide whether the other person installs it or you hand them the folder. They still need a short note on how to run it. Publishing steps start at https://docs.python.org/3.12/distributing/."
+    },
+    {
+      "pattern": "WHAT IS * IN PYTHON",
+      "response": "I can talk about that.",
+      "template": {
+        "text": "I can talk about {star1} in Python. Ask what it is, or how you use it, and I will be more specific."
+      }
+    },
+    {
+      "pattern": "HOW DO I * IN PYTHON",
+      "response": "Tell me the smaller step.",
+      "template": {
+        "text": "How to {star1} in Python depends on the details. Ask the smaller step and I will walk it."
+      }
+    },
+    {
+      "pattern": "HOW DO YOU * IN PYTHON",
+      "response": "Tell me the smaller step.",
+      "template": {
+        "text": "How to {star1} in Python depends on the details. Ask the smaller step and I will walk it."
+      }
+    },
+    {
+      "pattern": "EXPLAIN * IN PYTHON",
+      "response": "I can explain that.",
+      "template": {
+        "text": "I can explain {star1}. Ask what it is, or for a short example."
+      }
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON *",
+      "response": "What part of that?",
+      "template": {
+        "text": "Python {star1}. What part do you want: what it is, or how you use it?"
+      }
+    }
+  ]
+}

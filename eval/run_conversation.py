@@ -19,6 +19,7 @@ history) and reports what the store learned along the way.
 
 Usage:
     python eval/run_conversation.py                        # bundled script
+    python eval/run_conversation.py --config config.yml    # that file's seed list
     python eval/run_conversation.py --script mine.json     # custom turns
     python eval/run_conversation.py --json report.json     # full report
     python eval/run_conversation.py --quiet                # summary only
@@ -35,7 +36,7 @@ if REPO_ROOT not in sys_path:
     sys_path.insert(0, REPO_ROOT)
 
 from engram import metrics, pipeline, sessions
-from engram.config import engram_config
+from engram.config import engram_config, load_config
 from engram.constants import Tier
 from engram.core import Engram
 
@@ -44,8 +45,11 @@ LOOP_LENGTH = 3  # identical consecutive responses that count as a loop
 LOWER_I_FORMS = {"i", "i'm", "i've", "i'll", "i'd"}
 
 
-def load_static_engram() -> Engram:
-    """Load a fresh Engram from the bundled STATIC data."""
+def load_static_engram(config_path: str = "") -> Engram:
+    """Load a fresh Engram from config seed files, or from data/seed.json."""
+    if config_path:
+        result = Engram(config=load_config(config_path))
+        return result
     engram = Engram(config=engram_config(learn_user_facts=True))
     seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
@@ -98,9 +102,9 @@ def check_response(response: str, source: str) -> tuple[list, list]:
     return result
 
 
-def run_conversation(turns: list, verbose: bool) -> dict:
+def run_conversation(turns: list, verbose: bool, config_path: str = "") -> dict:
     """Run the scripted conversation and collect the per-turn report."""
-    engram = load_static_engram()
+    engram = load_static_engram(config_path)
     sessions.start_session(engram, session_id=SESSION_ID)
     baseline = metrics.get_metrics(engram)
 
@@ -175,6 +179,7 @@ def run_conversation(turns: list, verbose: bool) -> dict:
 def main() -> int:
     """Run the conversation soak and print a report."""
     parser = argparse_ArgumentParser(description="Engram conversation soak rig")
+    parser.add_argument("--config", default="", help="Config whose conversation.seed_files are loaded")
     parser.add_argument("--script", default="", help="Conversation script (default: eval/conversation.json)")
     parser.add_argument("--json", default="", help="Write the full JSON report to this path")
     parser.add_argument("--quiet", action="store_true", help="Suppress the per-turn transcript")
@@ -186,7 +191,7 @@ def main() -> int:
         result = 1
         return result
 
-    report = run_conversation(turns, verbose=not args.quiet)
+    report = run_conversation(turns, verbose=not args.quiet, config_path=args.config)
 
     records = report["turns"]
     defect_turns = [r for r in records if r["defects"]]

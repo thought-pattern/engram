@@ -1,0 +1,152 @@
+{
+  "pairs": [
+    {
+      "pattern": "WHAT IS SOFTWARE IMPLEMENTATION",
+      "response": "Implementation is writing the code and the data for each piece, following the design. When you finish a piece, you test that piece. Building and that first test belong together."
+    },
+    {
+      "pattern": "WHAT DOES IT MEAN TO BUILD THE SOFTWARE",
+      "response": "Implementation is writing the code and the data for each piece, following the design. When you finish a piece, you test that piece. Building and that first test belong together."
+    },
+    {
+      "pattern": "WHAT IS UNIT TESTING",
+      "response": "Unit testing checks one piece against the design, before you rely on it inside a larger whole. Prepare the cases, run them, fix what fails, and run them again. Write down what passed and what you changed. This is the author's test of a piece. It is not yet the test that the whole product meets its requirements."
+    },
+    {
+      "pattern": "WHAT IS TESTING ONE PIECE OF SOFTWARE",
+      "response": "Unit testing checks one piece against the design, before you rely on it inside a larger whole. Prepare the cases, run them, fix what fails, and run them again. Write down what passed and what you changed. This is the author's test of a piece. It is not yet the test that the whole product meets its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST A SOFTWARE UNIT",
+      "response": "Unit testing checks one piece against the design, before you rely on it inside a larger whole. Prepare the cases, run them, fix what fails, and run them again. Write down what passed and what you changed. This is the author's test of a piece. It is not yet the test that the whole product meets its requirements."
+    },
+    {
+      "pattern": "WHAT IS INTEGRATION TESTING",
+      "response": "Integration testing joins pieces and checks the joins. You prepare those tests, run them, fix and retest, and record the result. A piece can pass on its own and still fail where it meets another piece. That is what this step is for."
+    },
+    {
+      "pattern": "WHAT IS TESTING THE PIECES TOGETHER",
+      "response": "Integration testing joins pieces and checks the joins. You prepare those tests, run them, fix and retest, and record the result. A piece can pass on its own and still fail where it meets another piece. That is what this step is for."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE TEST PLAN",
+      "response": "The test plan says how you will show that the software meets its requirements, and how you will take part in showing that the whole system meets its requirements. It is the approach, the setup, and the schedule. The individual cases live in the test description, and the outcome lives in the test report."
+    },
+    {
+      "pattern": "HOW DO I PLAN SOFTWARE TESTING",
+      "response": "The test plan says how you will show that the software meets its requirements, and how you will take part in showing that the whole system meets its requirements. It is the approach, the setup, and the schedule. The individual cases live in the test description, and the outcome lives in the test report."
+    },
+    {
+      "pattern": "WHAT IS A TEST DESCRIPTION",
+      "response": "A test description holds the cases, the procedures, and the link from each case back to the requirement it checks. Write it for the formal tests of the software product and of the whole system. The notes from testing a single piece can stay with that piece."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE TEST DESCRIPTION",
+      "response": "A test description holds the cases, the procedures, and the link from each case back to the requirement it checks. Write it for the formal tests of the software product and of the whole system. The notes from testing a single piece can stay with that piece."
+    },
+    {
+      "pattern": "WHAT GOES IN A TEST CASE",
+      "response": "A test description holds the cases, the procedures, and the link from each case back to the requirement it checks. Write it for the formal tests of the software product and of the whole system. The notes from testing a single piece can stay with that piece."
+    },
+    {
+      "pattern": "WHAT IS A TEST REPORT",
+      "response": "A test report says what happened when the formal tests were run, and what those results mean. A failure goes back to the problem list, gets fixed, and is tested again. The report should say which version was tested."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE TEST REPORT",
+      "response": "A test report says what happened when the formal tests were run, and what those results mean. A failure goes back to the problem list, gets fixed, and is tested again. The report should say which version was tested."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN A TEST PLAN AND A TEST REPORT",
+      "response": "The test plan says how you intend to test. The test description says the cases and the steps. The test report says what happened. They are three different moments. A plan that also tries to be the results will be wrong one way or the other."
+    },
+    {
+      "pattern": "HOW DO I SHOW THE SOFTWARE MEETS ITS REQUIREMENTS",
+      "response": "Test the software product against its own requirements list. Plan it, write the cases, do a practice run, then run it on the computer the software will actually use. The people who run this test should not be the people who designed and wrote that product. Record the results, and retest after a fix."
+    },
+    {
+      "pattern": "WHAT IS ACCEPTANCE TESTING FOR A SOFTWARE PRODUCT",
+      "response": "Test the software product against its own requirements list. Plan it, write the cases, do a practice run, then run it on the computer the software will actually use. The people who run this test should not be the people who designed and wrote that product. Record the results, and retest after a fix."
+    },
+    {
+      "pattern": "WHY A PRACTICE RUN OF THE TESTS",
+      "response": "A practice run finds problems in the test itself: missing data, a step that cannot be followed, a setup that is not the real computer. Do it before the formal run of the software tests and again before the formal run of the system tests."
+    },
+    {
+      "pattern": "WHAT IS A DRY RUN OF A TEST",
+      "response": "A practice run finds problems in the test itself: missing data, a step that cannot be followed, a setup that is not the real computer. Do it before the formal run of the software tests and again before the formal run of the system tests."
+    },
+    {
+      "pattern": "WHY TEST ON THE REAL COMPUTER",
+      "response": "The formal test of the software, and the formal test of the whole system, run on the computer the software will actually use. A result from a convenient stand-in is useful earlier. It is not the result you use to say the requirement was met."
+    },
+    {
+      "pattern": "WHAT IS TESTING ON THE TARGET COMPUTER",
+      "response": "The formal test of the software, and the formal test of the whole system, run on the computer the software will actually use. A result from a convenient stand-in is useful earlier. It is not the result you use to say the requirement was met."
+    },
+    {
+      "pattern": "WHAT IS TESTING SOFTWARE WITH HARDWARE",
+      "response": "After the software has been tested on its own, test it with the hardware it has to work with. Prepare that combined test, run it, fix and retest, and write down the result. The system test comes after this, and it judges the whole system."
+    },
+    {
+      "pattern": "HOW DO SOFTWARE AND HARDWARE GET TESTED TOGETHER",
+      "response": "After the software has been tested on its own, test it with the hardware it has to work with. Prepare that combined test, run it, fix and retest, and write down the result. The system test comes after this, and it judges the whole system."
+    },
+    {
+      "pattern": "WHAT IS SYSTEM TESTING",
+      "response": "System testing shows that the whole system meets the system requirements. Use people who are independent of the work, do a practice run, run it on the real computer, and record the analysis. A software product can pass its own tests and the system can still fail. Both results matter."
+    },
+    {
+      "pattern": "HOW DO I TEST THE WHOLE SYSTEM",
+      "response": "System testing shows that the whole system meets the system requirements. Use people who are independent of the work, do a practice run, run it on the real computer, and record the analysis. A software product can pass its own tests and the system can still fail. Both results matter."
+    },
+    {
+      "pattern": "HOW DO I TEST THIS",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST IT",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST THE SOFTWARE",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST THE TOOL",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST THE SCRIPT",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "HOW DO I TEST THE PROGRAM",
+      "response": "Try the risky part on a sample you already understand. Record what passed, and what you changed. A later pass can show the whole product against its requirements."
+    },
+    {
+      "pattern": "WHAT IS A GOOD WAY TO TEST A PYTHON PROGRAM",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    },
+    {
+      "pattern": "HOW DO I TEST A PYTHON PROGRAM",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    },
+    {
+      "pattern": "HOW SHOULD I TEST A PYTHON PROGRAM",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    },
+    {
+      "pattern": "WHAT IS A GOOD WAY TO TEST A PYTHON SCRIPT",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    },
+    {
+      "pattern": "HOW DO I TEST A PYTHON SCRIPT",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    },
+    {
+      "pattern": "HOW SHOULD I TEST A PYTHON SCRIPT",
+      "response": "Use unittest for one function, and run it with python -m unittest. For the whole program, run the cases you wrote in the requirements, including a bad file. Those two checks answer different questions."
+    }
+  ]
+}

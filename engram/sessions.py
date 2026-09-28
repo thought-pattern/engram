@@ -57,6 +57,7 @@ def start_session(engram, session_id: str = "", metadata=()) -> str:
                 expire_lru_session(engram)
 
         sess = session(session_id=session_id, metadata=metadata)
+        sess["predicates"] = dict(engram.default_predicates)
         identifier = sess.get("session_id", "")
         engram.sessions[identifier] = sess
         result = identifier

@@ -95,6 +95,10 @@
     { "pattern": "THANK YOU *", "response": "You're welcome." },
     { "pattern": "THANKS", "response": "Anytime." },
     { "pattern": "THANKS *", "response": "No problem." },
+    { "pattern": "THANKS THAT HELPS", "response": "Good. We can pick up the next part whenever you want." },
+    { "pattern": "THAT HELPS", "response": "Good. We can pick up the next part whenever you want." },
+    { "pattern": "THAT HELPED", "response": "Good. We can pick up the next part whenever you want." },
+    { "pattern": "THIS HELPS", "response": "Good. We can pick up the next part whenever you want." },
     { "pattern": "THX", "response": "Sure." },
     { "pattern": "THX *", "response": "No problem." },
     { "pattern": "I APPRECIATE IT", "response": "Of course." },
@@ -441,15 +445,19 @@
         ]
       }
     },
-    { "pattern": "I LIKE *", "response": "Yeah?", "template": { "text": "Yeah? What do you like about {star1}?" } },
-    { "pattern": "I LOVE *", "response": "That's a strong one.", "template": { "text": "That's a strong one. What is it about {star1}?" } },
+    { "pattern": "I LIKE *", "response": "What do you like about it?", "template": { "text": "What do you like about {star1}?" } },
+    { "pattern": "I LIKE *", "that": "WHAT DO YOU LIKE ABOUT *", "response": "Yeah. That's the part that matters." },
+    { "pattern": "I LOVE *", "response": "What is it about it?", "template": { "text": "What is it about {star1}?" } },
+    { "pattern": "I LOVE *", "that": "WHAT IS IT ABOUT *", "response": "That's a strong one. I heard you." },
     {
       "pattern": "I HATE *",
       "response": "Yeah.",
       "template": { "text": "Yeah. {star1} can get under your skin." }
     },
     { "pattern": "I WANT *", "response": "What would it take?", "template": { "text": "What would it take to get {star1}?" } },
-    { "pattern": "I NEED *", "response": "Okay.", "template": { "text": "Okay. What kind of {star1}?" } },
+    { "pattern": "I WANT *", "that": "WHAT WOULD IT TAKE TO GET *", "response": "Okay. That's the aim." },
+    { "pattern": "I NEED *", "response": "What kind?", "template": { "text": "What kind of {star1}?" } },
+    { "pattern": "I NEED *", "that": "WHAT KIND OF *", "response": "Okay. That narrows it." },
     { "pattern": "I DO NOT KNOW", "response": "That's fine. We can sit with it." },
     { "pattern": "I DO NOT KNOW *", "response": "That's fine. We don't have to settle it right now." },
     { "pattern": "I DO NOT UNDERSTAND", "response": "Which part is fuzzy?" },
@@ -459,9 +467,10 @@
     { "pattern": "CAN I ASK YOU SOMETHING", "response": "Yes. Go ahead." },
     {
       "pattern": "I THINK *",
-      "response": "Maybe.",
-      "template": { "text": "Maybe. What makes you think {star1}?" }
+      "response": "What makes you think that?",
+      "template": { "text": "What makes you think {star1}?" }
     },
+    { "pattern": "I THINK *", "that": "WHAT MAKES YOU THINK *", "response": "Okay. I'll take that as your read." },
     {
       "pattern": "I FEEL *",
       "response": "Thanks for saying so.",

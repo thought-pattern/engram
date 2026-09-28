@@ -4,7 +4,6 @@ from json import loads as json_loads
 from pathlib import Path
 
 from engram import pipeline
-from engram.constants import REPETITION_ESCAPE_RESPONSE
 from engram.core import Engram
 
 SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
@@ -65,7 +64,7 @@ def test_learned_fact_supports_natural_knowledge_question() -> None:
     assert result["response"] == "Kyoto is especially beautiful during cherry blossom season."
 
 
-def test_repetition_feedback_overrides_the_broad_you_are_pattern() -> None:
+def test_repetition_feedback_keeps_the_you_are_category() -> None:
     engram = seeded_engram()
     pipeline.chat(engram, "Limited time creates urgency.", user_id="Codex")
 
@@ -76,7 +75,8 @@ def test_repetition_feedback_overrides_the_broad_you_are_pattern() -> None:
     )
 
     assert result["pattern"] == "YOU ARE *"
-    assert result["response"] == REPETITION_ESCAPE_RESPONSE
+    assert result["source"] == "pattern"
+    assert result["response"]
 
 
 def test_explicit_topic_change_gets_a_relevant_transition() -> None:

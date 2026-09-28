@@ -1,12 +1,10 @@
 """Core ENGRAM implementation."""
 
-from difflib import SequenceMatcher
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
 from os import path as os_path
 from pathlib import Path
-from random import choice as random_choice
 from threading import Lock as threading_Lock, RLock as threading_RLock
 
 from sentence_transformers import SentenceTransformer
@@ -14,45 +12,25 @@ from sentence_transformers import SentenceTransformer
 from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import (
-    CONFLICTING_FACT_RESPONSES,
     DIALOGUE_ACKNOWLEDGMENT,
-    DIALOGUE_CLOSING,
-    DIALOGUE_COMMAND,
     DIALOGUE_EMOTION,
-    DIALOGUE_FACT,
-    DIALOGUE_GRATITUDE,
-    DIALOGUE_GREETING,
     DIALOGUE_OPINION,
-    DIALOGUE_QUESTION,
-    DIALOGUE_SELF_INTRODUCTION,
-    DIALOGUE_TOPIC_SHIFT,
     EMPTY_CONFIG,
     GRAPH_ENTITY_FACTS_QUERY,
     GRAPH_KEYWORD_FACTS_QUERY,
     KIND_STATEMENT,
-    KNOWN_FACT_RESPONSES,
-    LEARNED_ACKNOWLEDGMENTS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
     MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
-    REPETITION_ESCAPE_RESPONSE,
-    REPETITION_FEEDBACK_MARKERS,
-    REPETITION_HISTORY_SIZE,
-    RESPONSE_SIMILARITY_THRESHOLD,
     VERSION,
-    WILDCARD_TOKENS,
     Tier,
 )
 from engram.dialogue import (
     classify_dialogue_act,
-    contextual_fallback_options,
     conversational_fact_admission,
     dialogue_act_clears_unreferenced_topic,
     extract_dialogue_entities,
     infer_active_topic,
-    pattern_is_broad,
-    repeated_input_response_options,
-    repetition_response_options,
     select_turn_candidate,
     topic_from_statement_pattern,
     topic_is_referenced,
@@ -83,7 +61,7 @@ from engram.models import (
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.nltk_data import ensure_nltk_data
-from engram.pattern import PatternMatcher, is_pure_wildcard
+from engram.pattern import PatternMatcher
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
@@ -93,7 +71,7 @@ from engram.scoring import score_statement_components
 from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
 from engram.sparse import search_sparse_artifacts
-from engram.substitutions import expand_contractions, split_sentences, substitution_maps
+from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences, substitution_maps
 from engram.telemetry import operational_telemetry, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
@@ -118,44 +96,6 @@ def run_cooperative_check(check=()) -> None:
         if not callable(check):
             raise ValueError("cooperative_check must be callable")
         check()
-
-
-def reports_repetition(text: str) -> bool:
-    normalized_text = normalize(text)
-    result = any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
-    return result
-
-
-def response_repeats(candidate: str, recent_responses: list[str], *, allow_similarity: bool = True) -> bool:
-    normalized_candidate = normalize(candidate)
-    if not normalized_candidate:
-        result = False
-        return result
-    for recent in recent_responses:
-        normalized_recent = normalize(recent)
-        if normalized_recent and (
-            normalized_candidate == normalized_recent
-            or (
-                allow_similarity
-                and SequenceMatcher(lambda _: False, normalized_candidate, normalized_recent).ratio()
-                >= RESPONSE_SIMILARITY_THRESHOLD
-            )
-        ):
-            result = True
-            return result
-    result = False
-    return result
-
-
-def input_repeats(candidate: str, recent_inputs: list[str]) -> bool:
-    normalized_candidate = normalize(candidate)
-    result = bool(normalized_candidate and any(normalized_candidate == normalize(recent_input) for recent_input in recent_inputs))
-    return result
-
-
-def pattern_has_wildcard(pattern: str) -> bool:
-    result = any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
-    return result
 
 
 def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
@@ -235,24 +175,148 @@ def read_seed_file(path: str) -> list:
     return result
 
 
-def load_seed_files(paths: list | tuple) -> list:
+def load_seed_files(paths: list | tuple, duplicate_policy: str = "error") -> list:
     """Read seed files in listed order and return one concatenated pair list.
 
-    This does not touch an Engram. A repeated pattern, that, and topic raises
-    before any statement is stored. The error names both files and the pattern.
+    This does not touch an Engram. ``duplicate_policy`` decides a repeated
+    pattern, that, and topic before any statement is stored. ``error`` raises
+    and names both files. ``last`` keeps the later pair. ``first`` keeps the
+    earlier pair. Different patterns are both kept.
     """
     if isinstance(paths, str) or not isinstance(paths, (list, tuple)):
         raise ValueError("seed files must be a list of paths")
+    if duplicate_policy not in {"error", "last", "first"}:
+        raise ValueError("conversation duplicate_policy must be error, last, or first")
     pairs: list[dict] = []
     origins: dict[tuple[str, str, str], str] = {}
+    indexes: dict[tuple[str, str, str], int] = {}
     for path in paths:
         for pair in read_seed_file(path):
             key = (pair["pattern"], pair["that"], pair["topic"])
             if key in origins:
-                raise ValueError(f"duplicate seed pattern {pair['pattern']!r} in {origins[key]} and {path}")
+                if duplicate_policy == "error":
+                    raise ValueError(f"duplicate seed pattern {pair['pattern']!r} in {origins[key]} and {path}")
+                if duplicate_policy == "first":
+                    continue
+                pairs[indexes[key]] = pair
+                origins[key] = path
+                continue
+            indexes[key] = len(pairs)
             origins[key] = path
             pairs.append(pair)
     return pairs
+
+
+def read_json_object(path: str, label: str) -> dict:
+    """Read one JSON object file used by the conversation tables."""
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(f"{label} paths must be non-empty strings")
+    table_path = path.strip()
+    if not os_path.isfile(table_path):
+        raise ValueError(f"{label} file {table_path} is missing or is not a file")
+    try:
+        with open(table_path, encoding="utf-8") as handle:
+            data = json_load(handle)
+    except json_JSONDecodeError as error:
+        raise ValueError(f"{label} file {table_path} is not valid JSON") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} file {table_path} requires an object")
+    return data
+
+
+def read_string_map(path: str, label: str) -> dict[str, str]:
+    """Read a flat JSON object of strings."""
+    data = read_json_object(path, label)
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"{label} file {path} keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise ValueError(f"{label} file {path} values must be strings")
+        result[key.strip()] = value
+    return result
+
+
+def read_set_file(path: str) -> dict[str, list[str]]:
+    """Read a JSON object of set name to member words."""
+    data = read_json_object(path, "set")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"set file {path} names must be non-empty strings")
+        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+            raise ValueError(f"set file {path} entries must be lists of non-empty strings")
+        result[key.strip()] = [item.strip() for item in value]
+    return result
+
+
+def read_map_file(path: str) -> dict[str, dict[str, str]]:
+    """Read a JSON object of map name to string tables."""
+    data = read_json_object(path, "map")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"map file {path} names must be non-empty strings")
+        if not isinstance(value, dict):
+            raise ValueError(f"map file {path} entries must be objects of strings")
+        table = {}
+        for inner_key, inner_value in value.items():
+            if not isinstance(inner_key, str) or not inner_key.strip() or not isinstance(inner_value, str):
+                raise ValueError(f"map file {path} entries must be objects of strings")
+            table[inner_key.strip()] = inner_value
+        result[key.strip()] = table
+    return result
+
+
+_SUBSTITUTION_KEYS = {"contractions", "person", "person2", "gender", "custom"}
+
+
+def read_substitution_file(path: str) -> dict[str, dict[str, str]]:
+    """Read optional contraction, person, gender, and custom substitution tables."""
+    data = read_json_object(path, "substitution")
+    unknown = set(data) - _SUBSTITUTION_KEYS
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise ValueError(f"substitution file {path} has unknown keys: {names}")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"substitution file {path} tables must be objects of strings")
+        table = {}
+        for inner_key, inner_value in value.items():
+            if not isinstance(inner_key, str) or not inner_key.strip() or not isinstance(inner_value, str):
+                raise ValueError(f"substitution file {path} tables must be objects of strings")
+            table[inner_key.strip().lower()] = inner_value
+        result[key] = table
+    return result
+
+
+def load_conversation_tables(engram, settings: dict) -> None:
+    """Load properties, sets, maps, predicates, and substitutions before categories.
+
+    A later file replaces the same set name, map name, or property. Substitutions
+    merge over the built-in tables. ``bot_name`` and the library version win
+    over a properties file.
+    """
+    properties_file = settings.get("properties_file") or ""
+    if properties_file:
+        engram.bot_properties.update(read_string_map(properties_file, "properties"))
+    bot_name = settings.get("bot_name", "ENGRAM")
+    engram.bot_properties["name"] = bot_name.strip() if isinstance(bot_name, str) else bot_name
+    engram.bot_properties["version"] = VERSION
+    for path in settings.get("set_files") or []:
+        for name, members in read_set_file(path).items():
+            engram.sets[name] = members
+    for path in settings.get("map_files") or []:
+        for name, table in read_map_file(path).items():
+            engram.maps[name] = table
+    predicate_file = settings.get("predicate_file") or ""
+    if predicate_file:
+        engram.default_predicates.update(read_string_map(predicate_file, "predicate"))
+    substitution_file = settings.get("substitution_file") or ""
+    if substitution_file:
+        for key, table in read_substitution_file(substitution_file).items():
+            engram.substitution_maps[key].update(table)
 
 
 class Engram:
@@ -293,6 +357,7 @@ class Engram:
             "version": VERSION,
         }
         seed_files = conversation_settings.get("seed_files") or []
+        duplicate_policy = conversation_settings.get("duplicate_policy", "error")
         self.sets: dict[str, list[str]] = {}
         self.maps: dict[str, dict[str, str]] = {}
 
@@ -334,9 +399,11 @@ class Engram:
         self.operational_metrics = operational_telemetry()
 
         # Reject a missing file or a repeated pattern before opening a graph
-        # connection and before any statement is stored. Indexing waits until
-        # preflight has confirmed the NLTK readers.
-        static_pairs = load_seed_files(seed_files) if seed_files else []
+        # connection and before any statement is stored. Tables load first so
+        # categories can use them. Indexing waits until preflight has confirmed
+        # the NLTK readers.
+        load_conversation_tables(self, conversation_settings)
+        static_pairs = load_seed_files(seed_files, duplicate_policy=duplicate_policy) if seed_files else []
 
         # Graph tooling is optional even when configured. Construction records
         # its readiness, but an unavailable graph must not prevent the local
@@ -1144,13 +1211,11 @@ class Engram:
         require_working_memory(retained_bytes, max_working_memory_bytes)
         for sentence in sentences:
             run_cooperative_check(cooperative_check)
-            match_text = sentence
-            if self.config["use_spell_correction"]:
-                with self.keyword_lock:
-                    vocabulary = set(self.keywords)
-                match_text = correct_spelling(normalize(sentence), vocabulary)
+            match_text = self._expand_for_match(sentence)
+            match_that = self._expand_for_match(that)
+            match_topic = self._expand_for_match(topic)
             with self.statement_lock:
-                matched = self.pattern_matcher.match(match_text, that=that, topic=topic)
+                matched = self.pattern_matcher.match(match_text, that=match_that, topic=match_topic)
                 run_cooperative_check(cooperative_check)
                 if not matched:
                     continue
@@ -1392,7 +1457,7 @@ class Engram:
         if self.config["expand_contractions"]:
             expanded_text = expand_contractions(
                 expanded_text,
-                self.substitution_maps["contractions"],
+                get_all_input_subs(self.substitution_maps),
             )
         if context_id:
             session = sessions_mod.get_session(self, context_id, create_if_missing=True)
@@ -1421,6 +1486,18 @@ class Engram:
         )
         return result
 
+    def _expand_for_match(self, text: str) -> str:
+        """Expand contractions before the graphmaster sees a sentence, that, or topic.
+
+        Hyphen splitting and the first sentence of ``that`` happen inside the
+        matcher. Spell correction stays on the keyword path.
+        """
+        if not text or not self.config["expand_contractions"]:
+            result = text
+            return result
+        result = expand_contractions(text, get_all_input_subs(self.substitution_maps))
+        return result
+
     def pattern_query(
         self,
         text: str,
@@ -1440,7 +1517,9 @@ class Engram:
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
-            For multi-sentence input, returns the candidate selected for the complete turn.
+            For multi-sentence input, the response joins every matched sentence
+            and the statement is the last one matched. The stored dialogue act
+            still comes from the sentence that represents the turn.
         """
         with self.count_lock:
             self.query_count += 1
@@ -1449,7 +1528,7 @@ class Engram:
 
         processed_text = text
         if self.config["expand_contractions"]:
-            processed_text = expand_contractions(text, self.substitution_maps["contractions"])
+            processed_text = expand_contractions(text, get_all_input_subs(self.substitution_maps))
 
         sentences = split_sentences(processed_text)
         if not sentences:
@@ -1472,14 +1551,6 @@ class Engram:
                     topic = session.get("predicates", {}).get("topic", "")
                     active_topic = session.get("active_topic", "")
 
-        # Input cleanup: correct typos toward the store's vocabulary before
-        # matching. Fact extraction below still sees the raw sentence, since
-        # its punctuation and casing carry signal.
-        vocabulary: set[str] = set()
-        if self.config["use_spell_correction"]:
-            with self.keyword_lock:
-                vocabulary = set(self.keywords)
-
         responses: list[str] = []
         candidates: list[dict] = []
         turn_dialogue_acts: list[str] = []
@@ -1487,10 +1558,6 @@ class Engram:
         turn_fact_admissions: list[dict] = []
 
         for sentence in sentences:
-            match_text = sentence
-            if vocabulary:
-                match_text = correct_spelling(normalize(sentence), vocabulary)
-
             # Interpret every sentence before response selection.  Fact
             # admission is intentionally narrower than extraction: transient,
             # hedged, and conversation-meta assertions can shape the current
@@ -1502,7 +1569,7 @@ class Engram:
                 else:
                     extracted = extract_fact(sentence)
                     extracted_facts = [extracted] if extracted else []
-            if extracted_facts and input_kind(match_text) != KIND_STATEMENT:
+            if extracted_facts and input_kind(sentence) != KIND_STATEMENT:
                 extracted_facts = []
             fact_decisions = []
             for fact in extracted_facts:
@@ -1554,7 +1621,13 @@ class Engram:
             turn_entities.extend(sentence_entities)
 
             with self.statement_lock:
-                result = self.pattern_matcher.match(match_text, that=that, topic=topic)
+                # ``sentence`` was already expanded before it was split. Expanding
+                # it again would apply a custom substitution twice.
+                result = self.pattern_matcher.match(
+                    sentence,
+                    that=self._expand_for_match(that),
+                    topic=self._expand_for_match(topic),
+                )
             if result:
                 (
                     response_text,
@@ -1567,27 +1640,11 @@ class Engram:
                 ) = result
                 captured = restore_capture_case(captured, sentence)
 
-                learned = False
-                known_response = ""
                 for fact in admitted_facts:
-                    if self.learn_fact(
+                    self.learn_fact(
                         fact,
                         introduced_by_user_id=attributed_user_id,
-                    ):
-                        learned = True
-                        continue
-                    # Already known. Surface the stored belief instead of a
-                    # generic deflection: the no-overwrite rule protects the
-                    # stored fact, but staying silent about a contradiction
-                    # would read as agreement.
-                    existing_id = self.pattern_to_statement.get(fact_subject_upper(fact), "")
-                    existing = self.get_statement(existing_id)
-                    if existing and existing["text"]:
-                        if normalize(existing["text"]) == normalize(fact["original"]):
-                            reply = random_choice(KNOWN_FACT_RESPONSES)
-                        else:
-                            reply = random_choice(CONFLICTING_FACT_RESPONSES)
-                        known_response = reply.replace("{existing}", existing["text"])
+                    )
 
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
@@ -1607,26 +1664,16 @@ class Engram:
                         record_statement_query(selected)
                         record_statement_hit(selected)
 
-                        # If we learned a fact and matched catch-all, acknowledge
-                        # instead -- rotating the phrasing so a teaching session
-                        # does not answer identically every turn. A restated or
-                        # contradicted known fact surfaces the stored belief.
-                        catchall_render = ()
-                        if learned and matched_pattern == "*":
-                            final_response = random_choice(LEARNED_ACKNOWLEDGMENTS)
-                        elif known_response and matched_pattern == "*":
-                            final_response = known_response
-                        else:
-                            final_response = self.process_statement_template(
-                                selected,
-                                captured,
-                                sentence,
-                                session,
-                                thatstars=thatstars,
-                                topicstars=topicstars,
-                            )
-                            if is_pure_wildcard(matched_pattern):
-                                catchall_render = (selected, captured, sentence, thatstars, topicstars)
+                        final_response = self.process_statement_template(
+                            selected,
+                            captured,
+                            sentence,
+                            session,
+                            thatstars=thatstars,
+                            topicstars=topicstars,
+                            that=that,
+                            topic=topic,
+                        )
                         responses.append(final_response)
                         candidates.append(
                             {
@@ -1634,15 +1681,13 @@ class Engram:
                                 "captured": captured,
                                 "response": final_response,
                                 "dialogue_act": sentence_act,
-                                "topic": active_topic if topic_grounded else "",
-                                "topic_grounded": topic_grounded,
-                                "learned": learned,
-                                "known_response": bool(known_response),
-                                "catchall_render": catchall_render,
                             }
                         )
 
                         that = final_response
+                        if session:
+                            with self.session_lock:
+                                topic = session.get("predicates", {}).get("topic", "")
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
@@ -1670,9 +1715,9 @@ class Engram:
             return result
 
         selected_candidate = select_turn_candidate(candidates)
-        combined_response = selected_candidate["response"]
-        returned_stmt = selected_candidate["statement"]
-        returned_captured = selected_candidate["captured"]
+        combined_response = " ".join(responses)
+        returned_stmt = candidates[-1]["statement"]
+        returned_captured = candidates[-1]["captured"]
 
         # A successful learned-fact recall is direct evidence of the new
         # topic, even when the query used an inverse alias such as
@@ -1681,121 +1726,6 @@ class Engram:
             recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
             if recalled_topic:
                 active_topic = recalled_topic
-                selected_candidate["topic"] = recalled_topic
-                selected_candidate["topic_grounded"] = True
-
-        recent_responses = session.get("response_history", [])[:REPETITION_HISTORY_SIZE] if session else []
-        allow_similarity = selected_candidate["dialogue_act"] != DIALOGUE_TOPIC_SHIFT
-        expected_fact_recall = bool(
-            returned_stmt
-            and returned_stmt.get("pattern_aliases")
-            and selected_candidate["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION}
-        )
-        expected_name_recall = bool(
-            returned_stmt
-            and returned_stmt["pattern"] in {"DO YOU REMEMBER MY NAME", "WHAT IS MY NAME"}
-            and selected_candidate["dialogue_act"] == DIALOGUE_QUESTION
-        )
-        redirect_repeated_input = bool(
-            session
-            and not reports_repetition(text)
-            and input_repeats(text, session.get("input_history", [])[:REPETITION_HISTORY_SIZE])
-            and selected_candidate["dialogue_act"]
-            not in {
-                DIALOGUE_ACKNOWLEDGMENT,
-                DIALOGUE_CLOSING,
-                DIALOGUE_FACT,
-                DIALOGUE_GRATITUDE,
-                DIALOGUE_GREETING,
-                DIALOGUE_SELF_INTRODUCTION,
-            }
-            and not (expected_fact_recall or expected_name_recall)
-        )
-
-        # Broad prompts should not override stronger dialogue evidence or
-        # argue with explicit feedback that the conversation is looping.
-        if session and returned_stmt and reports_repetition(text) and pattern_has_wildcard(returned_stmt["pattern"]):
-            combined_response = REPETITION_ESCAPE_RESPONSE
-        elif (
-            session
-            and returned_stmt
-            and (
-                (is_pure_wildcard(returned_stmt["pattern"]) and bool(returned_stmt["template"]))
-                or pattern_is_broad(returned_stmt["pattern"])
-                or (
-                    selected_candidate["dialogue_act"] in {DIALOGUE_CLOSING, DIALOGUE_TOPIC_SHIFT}
-                    and pattern_has_wildcard(returned_stmt["pattern"])
-                )
-            )
-        ):
-            # Prefer a response grounded in the active per-user topic over
-            # a generic therapist-style prompt. Learned/known fact
-            # acknowledgments remain authoritative.
-            can_ground_fallback = selected_candidate["topic_grounded"] or selected_candidate["dialogue_act"] in {
-                DIALOGUE_CLOSING,
-                DIALOGUE_TOPIC_SHIFT,
-            }
-            if can_ground_fallback and not selected_candidate["learned"] and not selected_candidate["known_response"]:
-                fact_text = ""
-                if active_topic:
-                    fact_id = self.pattern_to_statement.get(active_topic.upper(), "")
-                    topic_fact = self.get_statement(fact_id)
-                    fact_text = topic_fact.get("text", "") if topic_fact else ""
-                options = contextual_fallback_options(
-                    selected_candidate["dialogue_act"],
-                    topic=selected_candidate["topic"] or active_topic,
-                    fact_text=fact_text,
-                    had_gratitude=DIALOGUE_GRATITUDE in turn_dialogue_acts,
-                )
-                for option in options:
-                    if not response_repeats(option, recent_responses, allow_similarity=allow_similarity):
-                        combined_response = option
-                        break
-
-            catchall_render = selected_candidate["catchall_render"]
-            if response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity) and catchall_render:
-                selected, captured, sentence, thatstars, topicstars = catchall_render
-                for _ in range(8):
-                    candidate = self.process_statement_template(
-                        selected,
-                        captured,
-                        sentence,
-                        session,
-                        thatstars=thatstars,
-                        topicstars=topicstars,
-                    )
-                    if not response_repeats(candidate, recent_responses, allow_similarity=allow_similarity):
-                        combined_response = candidate
-                        break
-                else:
-                    combined_response = REPETITION_ESCAPE_RESPONSE
-
-        if redirect_repeated_input:
-            for option in repeated_input_response_options():
-                if not response_repeats(option, recent_responses):
-                    combined_response = option
-                    break
-            else:
-                combined_response = REPETITION_ESCAPE_RESPONSE
-
-        # Repetition control applies to every conversational response,
-        # including exact authored patterns. Repeated factual recalls are
-        # useful and remain exempt.
-        if (
-            session
-            and response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity)
-            and not (expected_fact_recall or expected_name_recall)
-        ):
-            if selected_candidate["learned"]:
-                alternatives = LEARNED_ACKNOWLEDGMENTS
-            elif selected_candidate["known_response"]:
-                alternatives = ()
-            else:
-                alternatives = repetition_response_options(selected_candidate["dialogue_act"], active_topic)
-            for alternative in alternatives:
-                if not response_repeats(alternative, recent_responses, allow_similarity=allow_similarity):
-                    combined_response = alternative
-                    break
 
         # Output cleanup: repair casing (sentence starts, the pronoun I) that
         # lowercase wildcard captures splice into authored text.
@@ -1824,6 +1754,8 @@ class Engram:
         session,
         thatstars=(),
         topicstars=(),
+        that: str = "",
+        topic: str = "",
     ) -> str:
         """Process a statement's template with context.
 
@@ -1864,7 +1796,11 @@ class Engram:
 
         def redirect_fn(pattern: str) -> str:
             with self.statement_lock:
-                result = self.pattern_matcher.match(pattern)
+                result = self.pattern_matcher.match(
+                    self._expand_for_match(pattern),
+                    that=self._expand_for_match(that),
+                    topic=self._expand_for_match(topic),
+                )
             if result:
                 (
                     response_text,

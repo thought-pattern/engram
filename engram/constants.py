@@ -20,7 +20,7 @@ from re import IGNORECASE as IGNORECASE, compile as re_compile, escape as re_esc
 # Canonical package version. pyproject.toml derives the distribution version
 # from this via setuptools' dynamic ``attr``, so the version lives in exactly one
 # place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "1.1.11"
+VERSION = "1.2.0"
 DEFAULT_USER_ID = "0"
 EMPTY_MAPPING = {}
 EMPTY_CONFIG: dict = {}
@@ -2339,48 +2339,6 @@ SUBJECT_PRONOUNS = {"i", "you", "he", "she", "it", "we", "they"}
 # would greet a possessive).
 MIN_STEM_TOKEN_LENGTH = 4
 
-# Acknowledgments rotated when a fact is learned from conversation, so a
-# teaching session does not answer with the same phrase every turn.
-LEARNED_ACKNOWLEDGMENTS = (
-    "I see.",
-    "Noted.",
-    "Got it - I'll remember that.",
-    "Understood.",
-    "Okay, I'll keep that in mind.",
-)
-
-# Conversational escape used when a catch-all would repeat a recent prompt or
-# the caller explicitly points out that the bot is looping.
-REPETITION_ESCAPE_RESPONSE = "You're right - I was repeating myself. Let's take a different approach."
-REPETITION_FEEDBACK_MARKERS = (
-    "same question",
-    "you are repeating",
-    "youre repeating",
-    "you keep repeating",
-    "repeat yourself",
-    "already explained",
-    "just explained",
-    "already answered",
-    "asked that already",
-)
-RESPONSE_SIMILARITY_THRESHOLD = 0.72
-REPETITION_HISTORY_SIZE = 8
-
-# Responses when a stated fact matches what is already stored ({existing} is
-# replaced with the stored statement text).
-KNOWN_FACT_RESPONSES = (
-    "Yes - {existing}",
-    "Right, that matches what I have: {existing}",
-)
-
-# Responses when a stated fact contradicts what is already stored. The stored
-# belief is protected (no overwrite), but silence would read as agreement, so
-# the conflict is surfaced.
-CONFLICTING_FACT_RESPONSES = (
-    "Hmm, I have it differently: {existing}",
-    "That differs from what I know: {existing}",
-)
-
 # Output polish: the pronoun I and its contractions are always capitalized
 STANDALONE_I_FORMS = {"i": "I", "i'm": "I'm", "i've": "I've", "i'll": "I'll", "i'd": "I'd"}
 
@@ -2641,9 +2599,6 @@ SYNONYM_OVERLAP_WEIGHT = 0.5
 # Pattern matching
 # =============================================================================
 
-TOPIC_PRIORITY = 1000  # Having topic match adds significant priority
-THAT_PRIORITY = 500  # Having that match adds priority
-
 WILDCARD_TOKENS = {"*", "_", "#", "^"}
 
 
@@ -2803,7 +2758,9 @@ DIALOGUE_EMOTION_RE = re_compile(
 )
 DIALOGUE_OPINION_RE = re_compile(r"\b(?:i think|i believe|in my opinion|i prefer|i like|i dislike|seems to me)\b", IGNORECASE)
 DIALOGUE_ACKNOWLEDGMENT_RE = re_compile(
-    r"^\s*(?:yes|yeah|yep|no|nope|okay|ok|right|exactly|sure|agreed|understood|i see|got it|fair enough)" r"[.!\s]*$",
+    r"^\s*(?:yes|yeah|yep|no|nope|okay|ok|right|exactly|sure|agreed|understood|i see|got it|fair enough"
+    r"|that helps|that helped|this helps)"
+    r"[.!\s]*$",
     IGNORECASE,
 )
 DIALOGUE_REFERRING_RE = re_compile(
@@ -2852,7 +2809,27 @@ DIALOGUE_META_FACT_WORDS = set(
         "turn",
     }
 )
-DIALOGUE_VAGUE_FACT_SUBJECTS = set({"anything", "everything", "nothing", "something", "stuff", "thing", "things"})
+DIALOGUE_VAGUE_FACT_SUBJECTS = set(
+    {"anything", "draft", "everything", "note", "nothing", "part", "something", "stuff", "thing", "things", "try"}
+)
+DIALOGUE_WH_TOPIC_WORDS = set(
+    {
+        "how",
+        "however",
+        "what",
+        "whatever",
+        "when",
+        "whenever",
+        "where",
+        "wherever",
+        "which",
+        "whichever",
+        "who",
+        "whom",
+        "whose",
+        "why",
+    }
+)
 DIALOGUE_TOPIC_TRAILERS = set({"again", "broadly", "instead", "next", "now", "please", "specifically"})
 DIALOGUE_TOPIC_LEADING_MODIFIERS = set(
     {
@@ -2933,7 +2910,9 @@ DIALOGUE_GRAMMATICAL_TOPIC_WORDS = set(
         "yours",
     }
 )
-DIALOGUE_INVALID_TOPIC_WORDS = DIALOGUE_META_FACT_WORDS | DIALOGUE_VAGUE_FACT_SUBJECTS | DIALOGUE_GRAMMATICAL_TOPIC_WORDS
+DIALOGUE_INVALID_TOPIC_WORDS = (
+    DIALOGUE_META_FACT_WORDS | DIALOGUE_VAGUE_FACT_SUBJECTS | DIALOGUE_GRAMMATICAL_TOPIC_WORDS | DIALOGUE_WH_TOPIC_WORDS
+)
 DIALOGUE_AMBIGUOUS_CAPITALIZED_LEADS = set(
     {"after", "allow", "because", "before", "for", "here", "if", "in", "one", "there", "to", "which", "with"}
 )
@@ -2972,7 +2951,6 @@ DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS = set({"actually", "no", "okay", "right", 
 DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS = set({"generally", "occasionally", "often", "sometimes", "typically", "usually"})
 DIALOGUE_PERSONAL_FACT_OBJECT_WORDS = set({"i", "me", "mine", "my", "our", "ours", "us", "we", "you", "your", "yours"})
 DIALOGUE_ENTITY_LABEL_PRIORITY = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
-DIALOGUE_BROAD_PATTERNS = set({"THAT *", "THAT IS *", "THE *"})
 LIFECYCLE_EXCLUSION_REASONS = {
     LifecycleDecisionReason.SUPERSEDED: EligibilityExclusionReason.LIFECYCLE_SUPERSEDED,
     LifecycleDecisionReason.INVALIDATED: EligibilityExclusionReason.LIFECYCLE_INVALIDATED,

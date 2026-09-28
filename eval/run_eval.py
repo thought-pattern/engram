@@ -5,8 +5,8 @@ the bundled STATIC data,
 instance, classifies how each prompt is answered, and prints the gaps so that
 content and engine improvements can be driven from real signal.
 
-The harness is side-effect free: it loads process memory from data/seed.json
-and writes no Engram state.
+The harness is side-effect free: it loads process memory from data/seed.json,
+or from the seed files named by --config, and writes no Engram state.
 
 Classification (pattern path):
     specific  - matched a real, intentional pattern (the desired outcome)
@@ -19,6 +19,7 @@ points to an engine bug; a topic with no related pattern points to a content gap
 
 Usage:
     python eval/run_eval.py
+    python eval/run_eval.py --config config.yml
     python eval/run_eval.py --json path/to/report.json
 """
 
@@ -31,7 +32,7 @@ REPO_ROOT = os_path.dirname(os_path.dirname(os_path.abspath(__file__)))
 if REPO_ROOT not in sys_path:
     sys_path.insert(0, REPO_ROOT)
 
-from engram.config import engram_config
+from engram.config import engram_config, load_config
 from engram.constants import Tier
 from engram.core import Engram
 
@@ -39,8 +40,11 @@ CATCHALL = "*"
 WEAK_SCORE = 0.5  # calibrated keyword top-score at or below this is a weak retrieval
 
 
-def load_static_engram() -> Engram:
-    """Load a fresh Engram from the bundled STATIC data."""
+def load_static_engram(config_path: str = "") -> Engram:
+    """Load a fresh Engram from config seed files, or from data/seed.json."""
+    if config_path:
+        result = Engram(config=load_config(config_path))
+        return result
     engram = Engram(config=engram_config())
     seed_path = "data/seed.json"
     with open(seed_path, encoding="utf-8") as f:
@@ -114,10 +118,11 @@ def pct(part: int, total: int) -> str:
 def main() -> int:
     """Run the evaluation corpus and print a coverage report."""
     parser = argparse_ArgumentParser(description="Engram evaluation harness")
+    parser.add_argument("--config", default="", help="Config whose conversation.seed_files are loaded")
     parser.add_argument("--json", default="", help="Write a JSON report to this path")
     args = parser.parse_args()
 
-    engram = load_static_engram()
+    engram = load_static_engram(args.config)
     prompts = load_corpus()
     results = [classify(engram, p) for p in prompts]
 

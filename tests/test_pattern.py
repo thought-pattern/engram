@@ -41,6 +41,18 @@ def test_normalize_pattern_collapse_whitespace():
     assert normalize_pattern("HELLO   WORLD") == "hello world"
 
 
+def test_normalize_pattern_splits_intra_word_hyphen_and_underscore():
+    assert normalize_pattern("WHAT IS MIL-STD-498") == "what is mil std 498"
+    assert normalize_pattern("WHAT IS MIL STD 498") == "what is mil std 498"
+    assert normalize_pattern("IF_NAME") == "if name"
+    assert normalize_pattern("HELLO _") == "hello _"
+
+
+def test_match_pattern_hyphenated_input_matches_spaced_pattern():
+    result = match_pattern("WHAT IS MIL STD 498", "What is MIL-STD-498?")
+    assert result["matched"] is True
+
+
 """Tests for pattern_to_regex function."""
 
 
@@ -220,12 +232,64 @@ def test_zero_or_more_wildcards_caret_priority_over_hash():
     assert caret_score > hash_score
 
 
-def test_zero_or_more_wildcards_caret_priority_over_underscore():
-    """^ should have higher priority than _."""
+def test_graphmaster_underscore_beats_an_exact_word():
+    """_ is tried before an exact word, and $word is tried before _."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO", "exact")
+    matcher.add_pattern("_", "wide")
+    matcher.add_pattern("$HELLO", "priority")
 
-    _, underscore_score = pattern_to_regex("HELLO _")
-    _, caret_score = pattern_to_regex("HELLO ^")
-    assert caret_score > underscore_score
+    priority = matcher.match("hello")
+    assert priority[4] == "$HELLO"
+    assert priority[0] == "priority"
+
+    matcher.remove_pattern("$HELLO")
+    wide = matcher.match("hello")
+    assert wide[4] == "_"
+    assert wide[0] == "wide"
+
+
+def test_graphmaster_exact_word_beats_lower_wildcards():
+    """An exact continuation beats ^ and *, and _ beats that exact continuation."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO THERE", "exact")
+    matcher.add_pattern("HELLO *", "star")
+    matcher.add_pattern("HELLO ^", "caret")
+
+    exact = matcher.match("hello there")
+    assert exact[4] == "HELLO THERE"
+
+    matcher.add_pattern("HELLO _", "underscore")
+    wide = matcher.match("hello there")
+    assert wide[4] == "HELLO _"
+
+
+def test_graphmaster_topic_partition_beats_a_longer_default():
+    """A matching topic is searched to completion before the default topic."""
+    matcher = PatternMatcher()
+    matcher.add_pattern(
+        "ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN",
+        "long",
+    )
+    matcher.add_pattern("*", "in topic", topic="WEATHER")
+
+    default = matcher.match("one two three four five six seven eight nine ten eleven")
+    assert default[0] == "long"
+
+    in_topic = matcher.match("one two three four five six seven eight nine ten eleven", topic="weather")
+    assert in_topic[0] == "in topic"
+    assert in_topic[4] == "*"
+
+
+def test_graphmaster_exact_pattern_beats_a_that_scoped_star():
+    """that is checked after a pattern path, so it cannot promote a wildcard."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("*", "star", that="DO YOU LIKE PIZZA")
+    matcher.add_pattern("HELLO THERE", "exact")
+
+    result = matcher.match("hello there", that="Do you like pizza?")
+    assert result[4] == "HELLO THERE"
+    assert result[0] == "exact"
 
 
 def test_zero_or_more_wildcards_star_requires_one_word():

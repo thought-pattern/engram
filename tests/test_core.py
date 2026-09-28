@@ -6,7 +6,7 @@ from pytest import MonkeyPatch as pytest_MonkeyPatch, raises as pytest_raises
 
 from engram import eviction, metrics, pipeline, sessions
 from engram.config import engram_config
-from engram.constants import CONFLICTING_FACT_RESPONSES, KNOWN_FACT_RESPONSES, LEARNED_ACKNOWLEDGMENTS, SessionOverflow, Tier
+from engram.constants import SessionOverflow, Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
@@ -888,6 +888,50 @@ def test_engram_context_matching_thatstar_in_template() -> None:
     assert "pizza" in result[2]
 
 
+def test_engram_context_matching_that_expands_contractions() -> None:
+    engram = Engram()
+    session_id = sessions.start_session(engram)
+    engram.store("Yes I am.", pattern="YES", that="I AM *")
+    session = sessions.get_session(engram, session_id)
+    session_update_context(session, "I'm ENGRAM.")
+
+    result = engram.pattern_query("yes", context_id=session_id)
+
+    assert result
+    assert result[2] == "Yes I am."
+
+
+def test_engram_context_matching_redirect_keeps_that() -> None:
+    engram = Engram()
+    session_id = sessions.start_session(engram)
+    engram.store("Pizza follow-up", pattern="YES", that="DO YOU LIKE PIZZA")
+    engram.store("", pattern="SURE", template={"redirect": "YES"})
+    session = sessions.get_session(engram, session_id)
+    session_update_context(session, "Do you like pizza?")
+
+    result = engram.pattern_query("sure", context_id=session_id)
+
+    assert result
+    assert result[2] == "Pizza follow-up"
+
+
+def test_engram_context_matching_set_topic_applies_to_the_next_sentence() -> None:
+    engram = Engram()
+    session_id = sessions.start_session(engram)
+    engram.store(
+        "",
+        pattern="HELLO",
+        template={"sequence": [{"set": {"name": "topic", "value": "WEATHER"}}, {"text": "Hello."}]},
+    )
+    engram.store("Weather info", pattern="WHAT IS IT", topic="WEATHER")
+    engram.store("General info", pattern="WHAT IS IT")
+
+    result = engram.pattern_query("Hello. What is it?", context_id=session_id)
+
+    assert result
+    assert result[2] == "Hello. Weather info"
+
+
 def test_engram_context_matching_context_remains_available_in_process() -> None:
     engram = Engram()
     engram.store("Weather", pattern="INFO", topic="WEATHER", that="ASK ME")
@@ -1017,7 +1061,7 @@ def test_multi_sentence_input_selects_the_final_response() -> None:
 
     result = engram.pattern_query("Hello. Goodbye.")
     assert result
-    assert result[2] == "Goodbye to you!"
+    assert result[2] == "Hello to you! Goodbye to you!"
 
 
 def test_multi_sentence_input_returns_selected_statement() -> None:
@@ -1164,13 +1208,11 @@ def test_decay_statistics_decay_validates_factor() -> None:
 """Integration tests for spelling correction and response polish."""
 
 
-def test_input_output_cleanup_pattern_query_corrects_typo() -> None:
+def test_input_output_cleanup_pattern_query_leaves_typos_unmatched() -> None:
     engram = Engram()
     engram.store("Cats are small felines.", pattern="TELL ME ABOUT CATS")
 
-    result = engram.pattern_query("tell me abotu cats")
-
-    assert result[2] == "Cats are small felines."
+    assert engram.pattern_query("tell me abotu cats") == ()
 
 
 def test_input_output_cleanup_query_corrects_typo() -> None:
@@ -1361,18 +1403,17 @@ def test_soak_regressions_possessive_sentence_not_greeted() -> None:
     assert result[2] != "Hi there!"
 
 
-def test_soak_regressions_learn_acknowledgment_rotates() -> None:
+def test_soak_regressions_learned_facts_keep_the_category() -> None:
 
     engram = Engram(config=engram_config(learn_user_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
-    responses = set()
     for i in range(12):
         result = engram.pattern_query(f"Gadget{i} is a useful tool")
-        responses.add(result[2])
+        assert result[2] == "Go on."
 
-    assert responses <= set(LEARNED_ACKNOWLEDGMENTS)
-    assert len(responses) >= 2
+    learned = [item for item in engram.statements if item["tier"] == Tier.DYNAMIC]
+    assert len(learned) == 12
 
 
 def test_soak_regressions_user_assertions_enter_shared_knowledge() -> None:
@@ -1453,7 +1494,7 @@ def test_external_fact_ingestion_add_fact_validates_input() -> None:
         engram.add_fact("A fact", source_label=())
 
 
-"""Restating or contradicting a known fact surfaces the stored belief."""
+"""A known fact stays stored. The matched category is what is spoken."""
 
 
 def known_fact_responses_taught_engram() -> Engram:
@@ -1463,30 +1504,29 @@ def known_fact_responses_taught_engram() -> Engram:
     return engram
 
 
-def test_known_fact_responses_contradiction_surfaces_stored_fact() -> None:
+def test_known_fact_contradiction_keeps_the_category_and_the_stored_fact() -> None:
 
     engram = known_fact_responses_taught_engram()
     result = engram.pattern_query("The sky is green.")
 
-    expected = {r.replace("{existing}", "The sky is blue.") for r in CONFLICTING_FACT_RESPONSES}
-    assert result[2] in expected
-    # The stored fact is untouched
+    assert result[2] == "Go on."
     assert engram.pattern_query("What is the sky?")[2] == "The sky is blue."
 
 
-def test_known_fact_responses_restatement_confirms_stored_fact() -> None:
+def test_known_fact_restatement_keeps_the_category() -> None:
 
     engram = known_fact_responses_taught_engram()
     result = engram.pattern_query("The sky is blue.")
 
-    expected = {r.replace("{existing}", "The sky is blue.") for r in KNOWN_FACT_RESPONSES}
-    assert result[2] in expected
+    assert result[2] == "Go on."
+    stored = [item for item in engram.statements if item["pattern"] == "SKY"]
+    assert len(stored) == 1
 
 
 """Learned facts are keyword-indexed under their full content."""
 
 
-def test_fact_content_retrieval_yes_no_question_reaches_statement() -> None:
+def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() -> None:
 
     engram = Engram(config=engram_config(learn_user_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
@@ -1494,8 +1534,9 @@ def test_fact_content_retrieval_yes_no_question_reaches_statement() -> None:
 
     result = pipeline.respond(engram, "Is the sky blue?")
 
-    assert result["source"] == "statement"
-    assert result["response"] == "The sky is blue."
+    assert result["source"] == "pattern"
+    assert result["response"] == "Go on."
+    assert engram.pattern_query("What is the sky?")[2] == "The sky is blue."
 
 
 def test_fact_content_retrieval_who_is_pattern_generated() -> None:

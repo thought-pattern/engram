@@ -22,8 +22,6 @@ Usage:
 
 from engram import sessions as sessions_mod
 from engram.constants import QUESTION_WORDS
-from engram.nlp import is_question
-from engram.pattern import is_pure_wildcard
 
 
 def pipeline_result(
@@ -77,32 +75,6 @@ def attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
     return result
 
 
-def retract_response(engram, session_id: str, response: str) -> bool:
-    """Remove a deferred, not-yet-shown response from the session.
-
-    pattern_query records its response into the session before the pipeline
-    decides whether a better tier answers. Left in place, the held response
-    poisons the retrieval tier (previous_response feeds session context
-    expansion) and lingers as a phantom history entry. Retraction restores
-    previous_response to the prior turn's answer; if the held response does
-    end up being shown, the caller re-records it.
-    """
-    if not session_id or not response:
-        return False
-    with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
-        if not session:
-            return False
-        if session["response_history"] and session["response_history"][0] == response:
-            session["response_history"].pop(0)
-            if session["that_history"]:
-                session["that_history"].pop(0)
-        if session["previous_response"] == response:
-            restored = session["response_history"][0] if session["response_history"] else ""
-            session["previous_response"] = restored
-    return True
-
-
 def update_session(engram, session_id: str, response: str) -> bool:
     """Record a response into the session context, creating the session if needed."""
     if not session_id:
@@ -123,23 +95,19 @@ def respond(
 ) -> dict:
     """Answer text through the conversational strategy: pattern, statement, then LLM.
 
-    1. Pattern match -- scripted responses answer deterministically. A match
-       updates the session context itself. The store's configured
+    1. Pattern match -- a matched category answers, including a pure wildcard.
+       The match updates the session context itself. The store's configured
        fallback_response does not count as a pattern answer; it must not
-       preempt conversational retrieval or the LLM. A catch-all (pure-wildcard) match
-       answering a *question* is a shrug, not an answer -- it is held back so
-       retrieval and the LLM get to speak first, and returned only when
-       neither does.
-    2. Confident statement -- when the top calibrated retrieval score reaches
-       high_confidence, the conversational statement answers directly and the hit is
-       recorded (feeding scoring and hit-rate-aware eviction).
+       preempt conversational retrieval or the LLM.
+    2. Confident statement -- when no category matches and the top calibrated
+       retrieval score reaches high_confidence, the conversational statement
+       answers directly and the hit is recorded.
     3. LLM -- llm_fn(text, context_statements) is called with the top
        retrieved statement texts as context. A non-empty response is recorded
        only in the current session.
 
-    When nothing above answers, the held catch-all response (if any) is
-    returned; otherwise source "none" is returned along with the retrieval
-    matches so the caller can decide what to do.
+    When nothing above answers, source "none" is returned along with the
+    retrieval matches so the caller can decide what to do.
 
     Args:
         engram: Engram instance.
@@ -159,13 +127,8 @@ def respond(
     if context_limit < 0:
         raise ValueError("context_limit must be non-negative")
 
-    # Tier 1: scripted pattern. Accept a response backed by a matched
-    # statement or by graph recall, but not the configured fallback text.
-    # A catch-all deflection answering a question is held back: confident
-    # retrieval (or the LLM) should speak before a shrug does.
-    deferred_shrug = ""
-    matched_pattern = ""
-    matched_captured: list = []
+    # Tier 1: a matched category, including a pure wildcard, or graph recall.
+    # The configured fallback text is not a category answer.
     pattern_result = engram.pattern_query(
         text,
         context_id=context_id,
@@ -174,28 +137,19 @@ def respond(
     if pattern_result:
         stmt, captured, response = pattern_result
         matched_pattern = stmt["pattern"] if stmt else ""
-        matched_captured = captured
         is_fallback = not stmt and response == engram.config["fallback_response"]
         if response and not is_fallback:
-            is_catchall_question = bool(stmt) and is_pure_wildcard(stmt["pattern"]) and is_question(text)
-            if is_catchall_question:
-                # Retract immediately: the shrug must not contaminate the
-                # retrieval tier's session context expansion. It is
-                # re-recorded if it actually ends up being shown.
-                deferred_shrug = response
-                retract_response(engram, context_id, deferred_shrug)
-            else:
-                source = "pattern" if stmt else "graph"
-                tier1 = pipeline_result(
-                    response,
-                    source,
-                    score=1.0,
-                    pattern=matched_pattern,
-                    captured=matched_captured,
-                    user_id=context_id,
-                )
-                result = attach_dialogue_state(engram, tier1, context_id)
-                return result
+            source = "pattern" if stmt else "graph"
+            tier1 = pipeline_result(
+                response,
+                source,
+                score=1.0,
+                pattern=matched_pattern,
+                captured=captured,
+                user_id=context_id,
+            )
+            result = attach_dialogue_state(engram, tier1, context_id)
+            return result
 
     # Tier 2: confident conversational statement via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
@@ -236,23 +190,7 @@ def respond(
             result = attach_dialogue_state(engram, tier3, context_id)
             return result
 
-    # Tier 4: nothing confident. A held catch-all response still beats
-    # silence -- re-record it into the session since it is actually shown --
-    # otherwise hand the retrieval back to the caller.
-    if deferred_shrug:
-        update_session(engram, context_id, deferred_shrug)
-        deferred = pipeline_result(
-            deferred_shrug,
-            "pattern",
-            score=1.0,
-            matches=matches,
-            keywords=keywords,
-            pattern=matched_pattern,
-            captured=matched_captured,
-            user_id=context_id,
-        )
-        result = attach_dialogue_state(engram, deferred, context_id)
-        return result
+    # Tier 4: nothing matched and nothing confident.
     top_score = matches[0][1] if matches else 0.0
     tier4 = pipeline_result(
         "",

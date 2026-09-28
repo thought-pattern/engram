@@ -24,7 +24,7 @@ from engram.constants import (
     QUESTION_WORDS,
 )
 from engram.nltk_data import ensure_resource
-from engram.text import is_known_word
+from engram.text import is_known_word, verb_only_word
 
 
 @lru_cache(maxsize=1)
@@ -41,6 +41,37 @@ def ensure_nltk_data() -> None:
     ]
     for path, package in required:
         ensure_resource(path, package)
+
+
+_PROPER_NOUN_TAGS = {"NNP", "NNPS"}
+
+
+def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) -> bool:
+    """Return whether a capitalized span is a name rather than an ordinary verb.
+
+    WordNet verb-only tokens such as ``Continue`` are ordinary words even when
+    a capital makes the tagger call them proper nouns. ``require_tag`` applies
+    the NNP/NNPS gate used for a span that opens the sentence. A capital later
+    in the sentence skips that gate, so a mid-sentence name still counts.
+    """
+    ensure_nltk_data()
+    wanted = surface.split()
+    if not wanted or any(verb_only_word(word) for word in wanted):
+        result = False
+        return result
+    if not require_tag:
+        result = True
+        return result
+    tagged = pos_tag(word_tokenize(text))
+    width = len(wanted)
+    for start in range(0, len(tagged) - width + 1):
+        window = tagged[start : start + width]
+        if [word for word, _pos in window] != wanted:
+            continue
+        result = all(pos in _PROPER_NOUN_TAGS for _word, pos in window)
+        return result
+    result = False
+    return result
 
 
 def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:

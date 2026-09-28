@@ -12,7 +12,6 @@ from re import IGNORECASE as IGNORECASE, findall as re_findall, finditer as re_f
 from engram.constants import (
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_ACKNOWLEDGMENT_RE,
-    DIALOGUE_BROAD_PATTERNS,
     DIALOGUE_CLOSING,
     DIALOGUE_CLOSING_RE,
     DIALOGUE_COMMAND,
@@ -46,10 +45,11 @@ from engram.constants import (
     DIALOGUE_TOPIC_TRAILERS,
     DIALOGUE_TRANSIENT_RE,
     DIALOGUE_VAGUE_FACT_SUBJECTS,
+    DIALOGUE_WH_TOPIC_WORDS,
     KIND_COMMAND,
     KIND_QUESTION,
 )
-from engram.nlp import input_kind
+from engram.nlp import input_kind, span_is_proper_noun
 
 
 def classify_dialogue_act(text: str, fact=()) -> str:
@@ -165,6 +165,8 @@ def infer_active_topic(
                 return candidate
     if previous_topic and DIALOGUE_REFERRING_RE.search(text):
         return previous_topic
+    # No new name and no pronoun. Leave the topic unset so a statement cannot
+    # carry a stale topic into the turns that follow.
     result = ""
     return result
 
@@ -201,12 +203,17 @@ def extract_dialogue_entities(text: str, fact=(), topic: str = "") -> list[dict]
     for match in re_finditer(r"\b[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*\b", text):
         if discourse_prefix and match.start() < discourse_prefix.end():
             continue
-        parts = match.group(0).split()
+        original = match.group(0)
+        opens_sentence = match.start() == 0 or not re_search(r"[A-Za-z0-9]", text[: match.start()])
+        parts = original.split()
         while parts and parts[0].casefold() in DIALOGUE_ENTITY_LEADS:
             parts.pop(0)
         if not parts:
             continue
         value = " ".join(parts)
+        sentence_initial = opens_sentence and value == original
+        if not span_is_proper_noun(text, value, require_tag=sentence_initial):
+            continue
         add(value, "PROPER_NOUN")
     return entities
 
@@ -247,6 +254,9 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
         return result
     if subject_words & DIALOGUE_META_FACT_WORDS:
         result = {"admitted": False, "reason": "meta_subject"}
+        return result
+    if subject_words & DIALOGUE_WH_TOPIC_WORDS:
+        result = {"admitted": False, "reason": "wh_subject"}
         return result
     if subject_words & DIALOGUE_VAGUE_FACT_SUBJECTS:
         result = {"admitted": False, "reason": "vague_subject"}
@@ -324,43 +334,6 @@ def topic_from_statement_pattern(pattern: str, statement_text: str = "") -> str:
     return result
 
 
-def pattern_is_broad(pattern: str) -> bool:
-    """Return whether a pattern expresses little conversational intent."""
-    result = pattern.upper().strip() in DIALOGUE_BROAD_PATTERNS
-    return result
-
-
-def repetition_response_options(dialogue_act: str, topic: str = "") -> tuple[str, ...]:
-    """Alternatives when any authored response repeats recent output."""
-    if dialogue_act == DIALOGUE_ACKNOWLEDGMENT:
-        result = ("Right - I heard you.", "Understood; let's keep moving.")
-        return result
-    if dialogue_act == DIALOGUE_GREETING:
-        result = ("Hello again.",)
-        return result
-    if dialogue_act == DIALOGUE_GRATITUDE:
-        result = ("Glad to help.",)
-        return result
-    if dialogue_act == DIALOGUE_CLOSING:
-        result = ("Take care.",)
-        return result
-    if topic:
-        result = (f"I don't want to repeat myself about {topic}; let's move the conversation forward.",)
-        return result
-    result = ("I don't want to repeat the same line; let's move the conversation forward.",)
-    return result
-
-
-def repeated_input_response_options() -> tuple[str, ...]:
-    """Topic-neutral continuations when an ordinary input is repeated."""
-    result = (
-        "We've returned to that idea. Which part would you like to explore further?",
-        "That thought has come up before. What new angle should we take?",
-        "We're circling back to that. What feels unfinished about it?",
-    )
-    return result
-
-
 def select_turn_candidate(candidates: list[dict]) -> dict:
     """Choose the response-bearing sentence that represents the whole turn.
 
@@ -401,44 +374,3 @@ def select_turn_candidate(candidates: list[dict]) -> dict:
         if candidate["dialogue_act"] in substantive:
             return candidate
     return final
-
-
-def contextual_fallback_options(
-    dialogue_act: str,
-    topic: str = "",
-    fact_text: str = "",
-    had_gratitude: bool = False,
-) -> tuple[str, ...]:
-    """Return ordered, topic-aware alternatives to a generic catch-all."""
-    if dialogue_act == DIALOGUE_CLOSING:
-        if had_gratitude:
-            result = ("You're welcome. We can stop here for today.", "Of course. We can leave it there for now.")
-            return result
-        result = ("Of course. We can stop here for today.", "Understood. We can leave it there for now.")
-        return result
-    if dialogue_act == DIALOGUE_TOPIC_SHIFT and topic:
-        result = (f"Sure - let's talk about {topic}.",)
-        return result
-    if not topic:
-        result = ()
-        return result
-    if dialogue_act == DIALOGUE_QUESTION:
-        result = (f"I don't know enough about {topic} to answer that yet.",)
-        return result
-    if dialogue_act == DIALOGUE_ACKNOWLEDGMENT:
-        result = (f"Right - {topic} is the thread we're following.",)
-        return result
-    if dialogue_act == DIALOGUE_EMOTION:
-        options = [f"That adds a personal angle to what we're saying about {topic}."]
-        if fact_text:
-            options.insert(0, f"That feeling connects with what you said about {topic}: {fact_text}")
-        result = tuple(options)
-        return result
-    if dialogue_act in {DIALOGUE_FACT, DIALOGUE_OPINION, DIALOGUE_STATEMENT}:
-        options = [f"Staying with {topic}, that adds another angle to the conversation."]
-        if fact_text:
-            options.insert(0, f"That connects with what you said about {topic}: {fact_text}")
-        result = tuple(options)
-        return result
-    result = ()
-    return result

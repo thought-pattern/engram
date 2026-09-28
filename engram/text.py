@@ -625,6 +625,32 @@ def ensure_wordnet() -> None:
 
 
 @lru_cache(maxsize=4096)
+def verb_only_word(word: str) -> bool:
+    """Return whether WordNet records this word only as a verb.
+
+    A capitalized verb such as ``Continue`` is an ordinary word. A name with
+    no WordNet entry, and a word that also has a noun sense, returns False.
+    Existing synsets win over morphological reduction, so ``staying`` stays a
+    verb even though ``stay`` also names a visit.
+    """
+    key = word.casefold()
+    if not key:
+        result = False
+        return result
+    ensure_wordnet()
+    with nltk_reader_lock:
+        synsets = wordnet.synsets(key)
+        if not synsets:
+            lemma = wordnet.morphy(key)
+            if lemma and lemma != key:
+                synsets = wordnet.synsets(lemma)
+        senses = [item.pos() for item in synsets if item is not None]
+        ordinary = bool(senses) and all(sense == "v" for sense in senses)
+    result = ordinary
+    return result
+
+
+@lru_cache(maxsize=4096)
 def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     """Get synonyms for a word using WordNet.
 

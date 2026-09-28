@@ -97,11 +97,12 @@ def evict_dynamic(engram) -> bool:
         result = False
         return result
 
-    def lru_key(item: tuple[int, dict]) -> tuple[datetime, int, str]:
-        _, statement = item
+    def lru_key(item: tuple[int, dict]) -> tuple[datetime, int, int]:
+        idx, statement = item
         last_hit = statement.get("last_hit", False)
         last_used = last_hit or statement.get("created_at", False)
-        key = (last_used, 1 if last_hit else 0, str(statement.get("id", "")))
+        # Equal timestamps keep insertion order. The list index is that order.
+        key = (last_used, 1 if last_hit else 0, idx)
         return key
 
     target_idx = min(candidates, key=lru_key)[0]
