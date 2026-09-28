@@ -30,16 +30,10 @@ def catalog_has_definitions(catalog: dict) -> bool:
 def execute_admin_statement(connection, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
     """Execute one explicit standalone administrative statement."""
     try:
-        raw_connection = connection.conn
+        execute_admin = connection.execute_admin
     except AttributeError as error:
-        raise RuntimeError("Memgraph administrative connection is unavailable") from error
-    if not raw_connection:
-        raise RuntimeError("Memgraph administrative connection is unavailable")
-    cursor = raw_connection.cursor()
-    cursor.execute(statement, dict(parameters))
-    columns = [description.name for description in cursor.description] if cursor.description else []
-    rows = cursor.fetchall() if cursor.description else []
-    result = [dict(zip(columns, row, strict=False)) for row in rows]
+        raise RuntimeError("graph database administrative connection is unavailable") from error
+    result = execute_admin(statement, dict(parameters))
     return result
 
 

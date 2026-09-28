@@ -40,8 +40,8 @@ def graph_config(
 ) -> dict:
     """Build a Knowledge Graph connection configuration dict.
 
-    Connects to MemGraph with the pymgclient driver over host/port, matching
-    the Tapestry knowledge-graph connection interface.
+    Connects to a Bolt graph database with the neo4j driver over host/port,
+    matching the Tapestry knowledge-graph connection interface.
     """
     if not isinstance(host, str) or not host.strip():
         raise ValueError("graph host must be a non-empty string")

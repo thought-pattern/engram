@@ -26,11 +26,11 @@ thinc==8.3.13
 weasel==1.0.0
 
 
-# Knowledge graph: MemGraph over the pymgclient driver (imports as `mgclient`).
-# Matches the Tapestry knowledge-graph connection interface. Imported
-# unconditionally like every other dependency (no lazy imports); the graph
-# layer itself stays inert until graph.enabled is set in config.yml.
-pymgclient==1.6.0
+# Knowledge graph: any Bolt graph database (Memgraph, Neo4j) over the neo4j
+# driver. Its async API lets every graph call be cancelled at the timeout.
+# Imported unconditionally like every other dependency (no lazy imports); the
+# graph layer itself stays inert until graph.enabled is set in config.yml.
+neo4j==6.3.1
 
 # Agent/LLM interface. Keep the stable v2 SDK line until MCP v3 is released.
 mcp==2.2.0
@@ -81,6 +81,7 @@ pygments==2.21.0
 pyjwt==2.14.0
 pyopenssl==26.4.0
 python-multipart==0.0.32
+pytz==2024.1
 referencing==0.37.0
 regex==2026.9.10
 requests==2.34.2

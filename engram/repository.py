@@ -380,7 +380,7 @@ class ArtifactRepository:
             for signature in signatures:
                 self.internal_key_owners.setdefault(signature, set()).add(statement_id)
 
-    def key_owner_ids(self, keys: tuple[dict, ...]) -> tuple[str, ...]:
+    def key_owner_ids(self, keys: tuple) -> tuple[str, ...]:
         """Return the statement IDs whose retrieval bindings include any of ``keys``."""
         with self.internal_lock:
             owners: set[str] = set()
@@ -430,8 +430,10 @@ class ArtifactRepository:
         if artifact is None:
             result: dict = {}
             return result
-        result = structural_copy(artifact)
-        return result
+        copied = structural_copy(artifact)
+        if not isinstance(copied, dict):
+            raise InvalidRequestError("repository artifact did not remain an object")
+        return copied
 
     def get_artifact(self, statement_id: str) -> dict:
         if not isinstance(statement_id, str) or not statement_id:
@@ -441,8 +443,10 @@ class ArtifactRepository:
             if statement_id not in artifacts:
                 raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
             artifact = artifacts[statement_id]
-        result = structural_copy(artifact)
-        return result
+        copied = structural_copy(artifact)
+        if not isinstance(copied, dict):
+            raise InvalidRequestError("repository artifact did not remain an object")
+        return copied
 
     def candidate_with_artifact(self, artifact: dict) -> dict:
         try:

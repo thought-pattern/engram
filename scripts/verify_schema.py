@@ -13,6 +13,7 @@ SCHEMA_FILE = REPO_ROOT / "schema.cypher"
 
 
 from engram.config import load_config
+from engram.constants import GRAPH_ADMIN_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
 
@@ -50,10 +51,10 @@ def main() -> None:
     arguments = parser.parse_args()
 
     settings = connection_settings(arguments.config, arguments.host, arguments.port)
-    connection = MemGraphConnection(**settings)
+    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     try:
         if not connection.connect():
-            raise RuntimeError(f"Memgraph is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
+            raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
         report = verify_schema(connection, SCHEMA_FILE, arguments.deployment)
         print(report)
         sys_exit(0 if report.get("valid", False) else 1)

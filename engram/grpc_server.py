@@ -219,6 +219,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
             LOGGER.error("Unhandled Engram gRPC operation failure (%s)", type(error).__name__)
             context.abort(grpc_StatusCode.INTERNAL, "internal Engram failure")
         finally:
+            self.core.reconnect_graph_after_turn()
             self.sync_health()
 
     def StartConversation(self, request: engram_pb2.StartConversationRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:

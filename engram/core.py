@@ -128,7 +128,7 @@ class OwnedRLock:
         result = self.acquire()
         return result
 
-    def __exit__(self, *exc_info) -> None:
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.release()
 
 

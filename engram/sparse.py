@@ -385,7 +385,7 @@ class SparseIndex:
                 self.remove(statement_id)
             self.add(statement_id, artifact, content, include_response_text)
 
-    def query_state(self, scope: dict, terms: object) -> tuple[dict, int]:
+    def query_state(self, scope: dict, terms: set[str]) -> tuple[dict, int]:
         """Return a scorer state holding only ``terms``, and the bytes this request builds for it.
 
         The caller holds ``internal_lock`` until scoring is done, because the

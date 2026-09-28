@@ -124,6 +124,23 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert as_dict(stub.GetStatus(empty_pb2.Empty()))["active_conversations"] == 1
 
 
+def test_every_call_ends_by_letting_a_lost_graph_connection_reconnect() -> None:
+    calls = []
+
+    class ReconnectRecordingCore(GrpcCore):
+        def reconnect_graph_after_turn(self) -> None:
+            calls.append(len(self.active_resolution_request_ids))
+            super().reconnect_graph_after_turn()
+
+    with running_server(ReconnectRecordingCore()) as (_, _, stub):
+        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.AddFact(engram_pb2.AddFactRequest(text="Tokyo is the capital of Japan."))
+        # A chat turn ends its resolution slot, then its call.
+        stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Hello"))
+
+    assert calls == [0, 0, 0, 0]
+
+
 def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
     core = GrpcCore()
     with running_server(core) as (_, _, stub):

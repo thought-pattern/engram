@@ -17,6 +17,7 @@ from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
 from engram.utilities import UTILITY_TZDATA_VERSION
 
+from .bolt_stub import BoltStub
 from .support_fixtures import PROPOSITION_REFERENCE_A
 
 
@@ -507,7 +508,7 @@ def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_conn
 
     with pytest_raises(ValueError, match="read-only"):
         client.execute("CREATE (n)")
-    assert client.conn == ()
+    assert client.driver == ()
 
 
 def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
@@ -524,37 +525,28 @@ def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
 
 
 def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call_stays_refused():
-    client = MemGraphConnection()
-    captured = {}
+    stub = BoltStub()
+    stub.rows = []
+    client = MemGraphConnection(host="127.0.0.1", port=stub.port)
+    try:
+        assert client.connect()
+        rows = client.vector_search_propositions(
+            [0.0, 1.0],
+            index_name="proposition_embeddings",
+            limit=25,
+            min_similarity=0.5,
+        )
 
-    class RecordingCursor:
-        description = ()
-
-        def execute(self, query: str, parameters=()) -> None:
-            captured.update({"query": query, "params": parameters})
-
-        def fetchall(self) -> list:
-            return []
-
-    class RecordingDriverConnection:
-        def cursor(self) -> RecordingCursor:
-            result = RecordingCursor()
-            return result
-
-    client.conn = RecordingDriverConnection()
-
-    rows = client.vector_search_propositions(
-        [0.0, 1.0],
-        index_name="proposition_embeddings",
-        limit=25,
-        min_similarity=0.5,
-    )
-
-    assert rows == []
-    assert "CALL vector_search.search" in captured.get("query", "")
-    assert captured.get("params", {})["limit"] == 25
-    with pytest_raises(ValueError, match="read-only"):
-        client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+        assert rows == []
+        query, params = stub.queries[-1]
+        assert "CALL vector_search.search" in query
+        assert params["limit"] == 25
+        with pytest_raises(ValueError, match="read-only"):
+            client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+        assert len(stub.queries) == 1
+    finally:
+        client.disconnect()
+        stub.close()
 
 
 def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_proposition():

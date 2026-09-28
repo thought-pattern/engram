@@ -32,9 +32,9 @@ DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark-2026-08-19.json")
 PACKAGE_NAMES = (
     "grpcio",
     "grpcio-tools",
+    "neo4j",
     "nltk",
     "protobuf",
-    "pymgclient",
     "sentence-transformers",
     "spacy",
 )

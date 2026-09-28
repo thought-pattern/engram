@@ -1012,17 +1012,10 @@ STRUCTURED_MATCH_FLOOR_V1 = 1.0
 SEMANTIC_SIMILARITY_FLOOR_V1 = 0.60
 SOURCE_AGREEMENT_FLOOR_V1 = 1.0
 MAX_VISIBILITY_GRANTS = 4_096
-RECONNECT_COOLDOWN_SECONDS = 60
-CONNECTION_LOST_MARKERS = (
-    "connection",
-    "socket",
-    "broken pipe",
-    "reset by peer",
-    "closed",
-    "timed out",
-    "refused",
-    "unreachable",
-)
+# Every runtime graph operation, connecting included, must finish within this
+# time. Schema tooling runs outside the request path and gets longer.
+GRAPH_TIMEOUT_SECONDS = 0.5
+GRAPH_ADMIN_TIMEOUT_SECONDS = 30.0
 WRITE_CLAUSE = re_compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
     IGNORECASE,

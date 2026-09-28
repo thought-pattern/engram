@@ -48,7 +48,10 @@ class RecordingConnection:
         self.metadata = dict(metadata)
         self.reads = []
         self.writes = []
-        self.conn = {}
+
+    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
+        self.writes.append({"query": statement, "parameters": dict(parameters)})
+        return []
 
     def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
         self.reads.append({"query": query, "parameters": dict(parameters)})
@@ -121,32 +124,17 @@ class RecordingConnection:
         raise AssertionError(f"unexpected read: {query}")
 
 
-class FailingAdministrativeCursor:
-    """Raise on the third standalone DDL statement."""
-
-    description = []
-
-    def __init__(self, writes: list):
-        self.writes = writes
-
-    def cursor(self):
-        return self
-
-    def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> None:
-        self.writes.append({"query": query, "parameters": dict(parameters)})
-        if len(self.writes) == 3:
-            raise RuntimeError("injected standalone DDL failure")
-
-    def fetchall(self) -> list:
-        return []
-
-
 class FailingAdministrativeConnection(RecordingConnection):
-    """Expose raw cursor failure on the third standalone DDL statement."""
+    """Expose the driver's own failure on the third standalone DDL statement."""
 
     def __init__(self):
         super().__init__({})
-        self.conn = FailingAdministrativeCursor(self.writes)
+
+    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
+        result = super().execute_admin(statement, parameters)
+        if len(self.writes) == 3:
+            raise RuntimeError("injected standalone DDL failure")
+        return result
 
     def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
         if "application_nodes" in query:

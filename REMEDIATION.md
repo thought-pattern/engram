@@ -244,7 +244,7 @@ instructions. That leaves R2 as reliability work:
 | R2.3 Authentication | Document the trusted-caller assumption; nothing to build. |
 | R2.4 Unbounded per-caller state | **Done for the expected scale (2026-09-28).** The per-conversation transcript is removed: responses never read it, and it grew about 2.8 KB per turn for the life of the process. Reports keep exact running counts and inspection shows the latest turn; a chat turn no longer scans every statement. Memory now stays flat across 20,000 turns. Learned facts, learned responses, and sessions already age out by LRU. What remains grows with users, not turns: about 3.7 KB per user for the conversation runtime and session, under 1 MB at the expected hundreds of users. Runtime eviction, applying `session_ttl_seconds` (configured, but the service never calls `expire_sessions`), and constant-time session eviction are not needed at that scale. |
 | R2.5 MCP `config_path` | Document as operator-only; make a missing explicit path an error. |
-| R2.6 Graph connection | **Do timeouts.** TLS optional, off by default. |
+| R2.6 Graph connection | **Timeouts done (2026-09-28).** pymgclient had no timeout setting and held the interpreter lock while waiting on the network, so a hung graph database froze the whole process, not just graph reads. The driver is now the neo4j async driver on a private event-loop thread. Every graph call, connecting included, is bounded at 500 ms; a query that overruns is cancelled and its connection killed, and the turn's later graph reads fail immediately. When the turn ends (a resolution slot, or any gRPC call), the connection is replaced in the background, and a failed reconnect is retried after the next turn. Schema scripts use 30 s. Tested against a stub Bolt 5.2 server (the protocol version the deployed graph database negotiates); not yet run against a live graph database. TLS optional, off by default. |
 | R2.7 Error detail | **Do the logging part** (tracebacks server-side, `RESOURCE_EXHAUSTED` for session limits). |
 
 User IDs are already bounded at the service boundary (`MAX_CALLER_ID_BYTES`).
@@ -339,6 +339,9 @@ User IDs are already bounded at the service boundary (`MAX_CALLER_ID_BYTES`).
   `close()` waits without a bound.
 - **Recommendation.** Add `tls` and `timeout` settings to the `graph` config
   section, pass them to the driver, and bound `close()`.
+- **Status (2026-09-28).** Timeouts done with a fixed 500 ms
+  (`GRAPH_TIMEOUT_SECONDS`), including `close()`; see the R2 table. TLS is not
+  done.
 
 ### R2.7 Error detail (applies everywhere)
 

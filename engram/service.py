@@ -222,7 +222,8 @@ class IsolatedGraphClient:
     def __getattr__(self, name: str):
         client = object.__getattribute__(self, "client")
         value = getattr(client, name)
-        if not callable(value) or name == "disconnect":
+        # Lifecycle calls run outside a turn and do no graph I/O on the caller's thread.
+        if not callable(value) or name in {"disconnect", "reconnect_after_turn"}:
             return value
         operation_context = object.__getattribute__(self, "operation_context")
 
@@ -507,7 +508,11 @@ class EngramCore:
 
     @contextlib_contextmanager
     def resolution_slot(self, request_id: str, user_id: str):
-        """Serialize retry identity and per-user context while permitting unrelated work."""
+        """Serialize retry identity and per-user context while permitting unrelated work.
+
+        A slot spans one turn: a chat exchange or a resolution request. When
+        it ends, a graph connection lost during the turn starts reconnecting.
+        """
         with self.resolution_condition:
             while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
                 self.require_running()
@@ -522,6 +527,26 @@ class EngramCore:
                 self.active_resolution_request_ids.discard(request_id)
                 self.active_resolution_user_ids.discard(user_id)
                 self.resolution_condition.notify_all()
+            self.reconnect_graph_after_turn()
+
+    def reconnect_graph_after_turn(self) -> None:
+        """Let a graph client that lost its connection reconnect now that the turn is over.
+
+        Called when a chat or resolution turn ends, and by the gRPC service
+        after every call. The client reconnects in the background, so the
+        finished turn is not delayed, and its reads fail immediately until the
+        reconnect succeeds. The core lock is not taken, so a response is never
+        held behind other requests.
+        """
+        if self.internal_state != CoreState.RUNNING:
+            return
+        reconnect = getattr(self.engram.graph_client, "reconnect_after_turn", ())
+        if not callable(reconnect):
+            return
+        try:
+            reconnect()
+        except Exception as error:
+            LOGGER.warning("graph reconnect could not start (%s)", type(error).__name__)
 
     @contextlib_contextmanager
     def graph_operation(self):

@@ -59,8 +59,16 @@ graph connection, query, or optional vector-index failure contributes no result 
 local resolvers continue. If no resolver supplies a result, the outward outcome is the
 same `MISS` returned after a successful graph query with no rows, not a separate
 unavailable resolution outcome. Component diagnostics may still report the graph
-failure. Cooperative cancellation is checked around graph calls, but an executing
-driver call continues until the driver returns.
+failure. Cooperative cancellation is checked around graph calls.
+
+Every graph call, connecting included, is bounded at 500 ms
+(`GRAPH_TIMEOUT_SECONDS`); an overrunning query is cancelled and its connection
+closed. After a timeout or a lost connection, the rest of the turn's graph reads fail
+immediately, so an unresponsive database costs a turn at most one timeout. When the
+turn ends (a chat or resolution request, or any gRPC call), the connection is
+replaced in the background without delaying the response, and graph reads resume
+once it succeeds. A failed reconnect is retried after the next turn. The schema
+scripts use a 30-second limit instead (`GRAPH_ADMIN_TIMEOUT_SECONDS`).
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 

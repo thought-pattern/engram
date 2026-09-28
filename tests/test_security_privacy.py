@@ -25,6 +25,8 @@ from engram.graph import MemGraphConnection
 from engram.mcp_server import MCPConversationService
 from engram.service import EngramCore, service_request_signature
 
+from .bolt_stub import BoltStub
+
 
 def test_shared_service_rejects_oversized_request_and_identity_fields_before_state_change() -> None:
     core = EngramCore()
@@ -125,32 +127,29 @@ def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
 
 def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -> None:
     secret = "private-graph-driver-content"
+    stub = BoltStub()
+    stub.mode = "fail"
+    stub.failure_message = secret
+    client = MemGraphConnection(host="127.0.0.1", port=stub.port)
 
-    class FailingCursor:
-        description = ()
+    try:
+        assert client.connect()
+        with (
+            caplog.at_level(ERROR, logger="engram.graph"),
+            pytest_raises(RuntimeError, match=r"Query failed \(DatabaseError\)") as failure,
+        ):
+            client.execute("RETURN 1")
+        # A failed query arrives over a healthy connection, so reads stay available.
+        assert client.available is True
+        assert client.reconnect_needed is False
+    finally:
+        client.disconnect()
+        stub.close()
 
-        def execute(self, internal_query, internal_parameters):
-            del internal_query, internal_parameters
-            raise RuntimeError(secret)
-
-    class FailingConnection:
-        def cursor(self):
-            result = FailingCursor()
-            return result
-
-    client = MemGraphConnection()
-    client.conn = FailingConnection()
-    client.available = True
-
-    with (
-        caplog.at_level(ERROR, logger="engram.graph"),
-        pytest_raises(RuntimeError, match=r"Query failed \(RuntimeError\)") as failure,
-    ):
-        client.execute("RETURN 1")
-
+    assert secret in str(failure.value.__cause__)
     assert secret not in str(failure.value)
     assert secret not in caplog.text
-    assert "RuntimeError" in caplog.text
+    assert "DatabaseError" in caplog.text
 
 
 def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> None:

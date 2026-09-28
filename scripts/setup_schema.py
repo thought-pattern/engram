@@ -13,6 +13,7 @@ SCHEMA_FILE = REPO_ROOT / "schema.cypher"
 
 
 from engram.config import load_config
+from engram.constants import GRAPH_ADMIN_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import install_standalone_schema, verify_schema
 from engram.schema_catalog import cypher_statements, validate_schema_contract
@@ -51,9 +52,9 @@ def connection_settings(config_path: str, host: str, port: int) -> dict:
 def connected_operation(mode: str, settings: dict) -> dict:
     """Run one standalone operation and always disconnect."""
 
-    connection = MemGraphConnection(**settings)
+    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     if not connection.connect():
-        raise RuntimeError(f"Memgraph is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
+        raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
     try:
         if mode == "apply":
             result = install_standalone_schema(connection, SCHEMA_FILE)
