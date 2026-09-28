@@ -655,6 +655,10 @@ RESOLUTION_RESULT_FIELDS = set(
 )
 MAX_RESOLUTION_REASON_CODES = 64
 MAX_REQUEST_BYTES = 16_384
+# A regulated-cache request (resolve, propose, learn) becomes an exact-match
+# lookup key, so the request and its normalized form must both fit the key's
+# limits. Chat builds no key and accepts MAX_REQUEST_BYTES.
+MAX_CACHE_REQUEST_BYTES = min(MAX_CANONICAL_FORM_BYTES, MAX_RETRIEVAL_REPRESENTATION_BYTES)
 MAX_DIAGNOSTIC_ID_BYTES = 256
 MAX_RESOLVER_NAME_BYTES = 96
 EXACT_RESOLVER_NAME = "exact"

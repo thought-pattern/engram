@@ -18,7 +18,7 @@ from pytest import raises as pytest_raises
 
 from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
 from engram.config import engram_config
-from engram.constants import MAX_REQUEST_BYTES, SessionOverflow
+from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
@@ -333,12 +333,13 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
         with pytest_raises(grpc_RpcError) as failure:
             stub.ResolveEvidence(
                 engram_pb2.ResolveEvidenceRequest(
-                    request="x" * (MAX_REQUEST_BYTES + 1),
+                    request="x" * (MAX_CACHE_REQUEST_BYTES + 1),
                     request_id="oversized-evidence-request",
                 )
             )
 
         assert failure.value.code() == grpc_StatusCode.INVALID_ARGUMENT
+        assert failure.value.details() == f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes"
         assert internal_trailing_metadata(failure.value)["engram-error-type"] == "InvalidRequestError"
         assert core.resolution_requests == {}
 

@@ -1048,8 +1048,11 @@ def extract_lexical_terms(request: str) -> tuple[str, ...]:
     """Derive bounded retrieval terms separately from semantic identity fields."""
     normalized = normalize_retrieval_key(request)
     stopwords = DEFAULT_STOPWORDS | IDENTITY_OPERATOR_TOKENS | IDENTITY_AUXILIARIES
+    # A token too long to be a lexical term (a URL or a hash) stays in the
+    # canonical form; it is only left out of the retrieval terms.
+    tokens = [token.strip("'") for token in normalized.split()]
     terms = select_lexical_terms(
-        [token.strip("'") for token in normalized.split()],
+        [token for token in tokens if len(token.encode("utf-8")) <= MAX_LEXICAL_TERM_BYTES],
         set(stopwords),
         allow_technical=True,
         max_terms=MAX_LEXICAL_TERMS,

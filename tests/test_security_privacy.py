@@ -6,6 +6,7 @@ from pytest import raises as pytest_raises
 
 from engram.constants import (
     MAX_ARTIFACT_ID_BYTES,
+    MAX_CACHE_REQUEST_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_FEEDBACK_REASON_BYTES,
     MAX_METADATA_KEY_BYTES,
@@ -32,7 +33,7 @@ def test_shared_service_rejects_oversized_request_and_identity_fields_before_sta
     core = EngramCore()
 
     with pytest_raises(InvalidRequestError, match="request exceeds"):
-        core.resolve_request("x" * (MAX_REQUEST_BYTES + 1), "bounded-request")
+        core.resolve_request("x" * (MAX_CACHE_REQUEST_BYTES + 1), "bounded-request")
     with pytest_raises(InvalidRequestError, match="request_id exceeds"):
         core.resolve_request("bounded request", "r" * (MAX_REQUEST_ID_BYTES + 1))
     with pytest_raises(InvalidRequestError, match="namespace exceeds"):

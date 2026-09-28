@@ -141,6 +141,20 @@ pinned in `pyproject.toml`.
 | --- | --- |
 | `ResolveEvidence` | Run unified resolution and return an `ANSWER`, `EVIDENCE`, or `MISS` result with the bounded Proposition package when available. |
 
+### Request limits
+
+| Text | Limit (UTF-8) |
+| --- | --- |
+| `Chat` text | 16,384 bytes (`MAX_REQUEST_BYTES`) |
+| `request` in `ResolveEvidence`, `Propose`, and `LearnResponse` | 4,096 bytes (`MAX_CACHE_REQUEST_BYTES`) |
+
+A regulated-cache request becomes an exact-match lookup key, so its limit is
+the key's. Normalization lowercases the text and expands contractions and some
+characters, so the normalized form must fit too; a request close to the limit
+can exceed it once normalized. Both checks run before any other work and return
+`INVALID_ARGUMENT` with a message naming the limit. A request that normalizes
+to nothing, such as punctuation only, is rejected the same way.
+
 ## Python client example
 
 ```python
@@ -185,11 +199,15 @@ Core failures map at the transport boundary:
 | `ResourceNotFoundError` | `NOT_FOUND` |
 | `ConflictError` | `ABORTED` |
 | `LifecycleError` | `FAILED_PRECONDITION` |
+| `ResourceExhaustedError` (session limit with `session_overflow: reject`) | `RESOURCE_EXHAUSTED` |
 | Cancellation or expired deadline | `CANCELLED` or `DEADLINE_EXCEEDED` |
-| Unexpected adapter failure | `INTERNAL` with a generic client message |
+| Unexpected failure | `INTERNAL` with the message `internal Engram failure` |
 
-Every typed failure supplies `engram-error-type` in trailing metadata. Detailed
-unexpected exceptions remain in server logs.
+Every typed failure supplies `engram-error-type` in trailing metadata. A typed
+failure's message is written for the caller; exception text from anywhere else
+never reaches the client. Every failure is logged on the server in full, with
+its traceback: internal failures at `ERROR`, cancellations at `INFO`, and other
+rejected requests at `WARNING`.
 
 The server registers `grpc.health.v1.Health` for the aggregate empty service
 name, `engram.EngramService`, and `engram.EngramEvidenceService`. It reports

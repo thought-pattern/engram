@@ -237,6 +237,12 @@ is the receipt lifetime and retry boundary.
 state changes. The four tools below provide speculative proposal and explicit
 Regulator decision handling.
 
+The `request` given to `engram_propose` and `engram_learn_response` is limited
+to 4,096 UTF-8 bytes, both as written and once normalized (normalization
+expands contractions), because it becomes an exact-match lookup key.
+`engram_send` accepts 16,384 bytes. An oversized request fails before any work
+with a message naming the limit.
+
 ### `engram_propose`
 
 Retrieves candidates, records candidacy, and preserves displayed response
@@ -403,6 +409,10 @@ identical resolutions therefore record exactly one accepted hit.
 | `engram_stop` fails | Surface the lifecycle failure. |
 | Regulated-cache call fails | Return the Actor response. |
 | Regulator unavailable | Invoke the Actor. |
+
+A failed tool call returns either an Engram error's own message, written for
+the caller, or `internal Engram failure`. The full exception is in the server
+log.
 
 ## Verification checklist
 

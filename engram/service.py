@@ -25,6 +25,7 @@ from engram.constants import (
     EMPTY_MAPPING,
     EMPTY_METADATA,
     MAX_ARTIFACT_ID_BYTES,
+    MAX_CACHE_REQUEST_BYTES,
     MAX_CALLER_ID_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_FEEDBACK_REASON_BYTES,
@@ -32,7 +33,6 @@ from engram.constants import (
     MAX_METADATA_STRING_BYTES,
     MAX_NAMESPACE_BYTES,
     MAX_REASON_CODE_BYTES,
-    MAX_REQUEST_BYTES,
     MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_SIGNATURE_INPUT_BYTES,
@@ -76,7 +76,13 @@ from engram.feedback import (
     validate_feedback_observation,
 )
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority, fusion_policy, policy_fingerprint
-from engram.identity import build_scoped_retrieval_key, query_identity_to_dict, scope_key, validate_query_identity
+from engram.identity import (
+    build_scoped_retrieval_key,
+    normalize_retrieval_key,
+    query_identity_to_dict,
+    scope_key,
+    validate_query_identity,
+)
 from engram.mutations import mutation_receipt_to_dict
 from engram.repository import tier_admission_policy
 from engram.resolution import (
@@ -149,6 +155,23 @@ def require_service_text(value: str, name: str, maximum_bytes: int) -> None:
         raise InvalidRequestError(f"{name} must contain valid Unicode") from error
     if size > maximum_bytes:
         raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
+
+
+def require_cache_request(request: str) -> None:
+    """Reject a regulated-cache request that cannot become a lookup key, before any other work.
+
+    The request is normalized into an exact-match key. Normalization expands
+    contractions and some characters, so the normalized form is checked too.
+    """
+    require_service_text(request, "request", MAX_CACHE_REQUEST_BYTES)
+    normalized = normalize_retrieval_key(request)
+    if not normalized:
+        raise InvalidRequestError("request must contain searchable text")
+    if len(normalized.encode("utf-8")) > MAX_CACHE_REQUEST_BYTES:
+        raise InvalidRequestError(
+            f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes once normalized; "
+            "normalization expands contractions and some characters"
+        )
 
 
 def require_service_string(value: str, name: str, maximum_bytes: int) -> None:
@@ -872,7 +895,7 @@ class EngramCore:
         cancellation_check: object = (),
     ) -> dict:
         """Run one transport-neutral bounded resolution pipeline."""
-        require_service_text(request, "request", MAX_REQUEST_BYTES)
+        require_cache_request(request)
         require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
         normalized_user_id = normalize_service_user_id(user_id)
         with self.resolution_slot(request_id, normalized_user_id), self.lock:
@@ -1369,7 +1392,7 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(request, "request", MAX_REQUEST_BYTES)
+            require_cache_request(request)
             require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
             require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
             require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
@@ -1677,7 +1700,7 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(request, "request", MAX_REQUEST_BYTES)
+            require_cache_request(request)
             require_service_text(response, "response", MAX_RESPONSE_BYTES)
             require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
             require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)

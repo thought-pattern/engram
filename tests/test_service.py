@@ -5,7 +5,7 @@ from threading import Event as threading_Event, Thread as threading_Thread
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import RESOLUTION_RESULT_FIELDS, Tier
+from engram.constants import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES, RESOLUTION_RESULT_FIELDS, ResolutionOutcome, Tier
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
@@ -567,3 +567,48 @@ def test_close_waits_for_an_active_core_operation() -> None:
         assert close_future.result(timeout=5) is True
 
     assert core.status()["state"] == "closed"
+
+
+def test_cache_requests_that_cannot_become_a_lookup_key_are_rejected_before_any_work(monkeypatch) -> None:
+    core = EngramCore()
+
+    def no_work(*internal_args, **internal_kwargs):
+        raise AssertionError("a rejected request reached the query frame builder")
+
+    monkeypatch.setattr(core.query_frame_builder, "build", no_work)
+    oversized = "x" * (MAX_CACHE_REQUEST_BYTES + 1)
+    limit = f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes"
+    with pytest_raises(InvalidRequestError, match=limit):
+        core.resolve_request(oversized, "oversized-resolve")
+    with pytest_raises(InvalidRequestError, match=limit):
+        core.propose(oversized, "oversized-propose")
+    with pytest_raises(InvalidRequestError, match=limit):
+        core.learn_response(oversized, "An answer.", request_id="oversized-learn")
+
+    # It fits, but normalization expands every contraction past the limit.
+    expanding = ("I'd've " * 600)[:MAX_CACHE_REQUEST_BYTES]
+    with pytest_raises(InvalidRequestError, match="once normalized"):
+        core.resolve_request(expanding, "expanding-resolve")
+    with pytest_raises(InvalidRequestError, match="searchable text"):
+        core.propose("???", "punctuation-propose")
+
+    assert core.resolution_requests == {}
+    assert core.proposals == {}
+    assert core.engram.response_repository.trusted_artifacts() == {}
+    core.close()
+
+
+def test_cache_requests_within_the_limit_resolve_and_chat_accepts_more() -> None:
+    core = EngramCore()
+    at_limit = ("alpha " * 700)[:MAX_CACHE_REQUEST_BYTES]
+    long_url = "What does https://example.com/path?" + "&".join(f"key{i}=value{i}" for i in range(40)) + " return?"
+    one_token = "x" * MAX_CACHE_REQUEST_BYTES
+    for index, request in enumerate((at_limit, long_url, one_token)):
+        assert core.resolve_request(request, f"within-limit-{index}")["outcome"] == ResolutionOutcome.MISS
+    assert core.learn_response(long_url, "It returns the report.", request_id="learn-long-url")["statement_id"]
+
+    core.start_conversation(user_id="alice")
+    long_message = " ".join(f"word{index}" for index in range(1_000))
+    assert MAX_CACHE_REQUEST_BYTES < len(long_message.encode("utf-8")) <= MAX_REQUEST_BYTES
+    assert core.chat("alice", long_message)["turn"] == 1
+    core.close()

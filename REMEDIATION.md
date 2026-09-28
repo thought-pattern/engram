@@ -249,6 +249,9 @@ instructions. That leaves R2 as reliability work:
 
 User IDs are already bounded at the service boundary (`MAX_CALLER_ID_BYTES`).
 
+**R2 closed (2026-09-28).** The remaining items (R2.1, R2.2, the R2.3 and R2.5
+documentation, and R2.5's missing-path error) are not planned.
+
 ### R2.1 Template graph queries substitute text into Cypher (applies everywhere)
 
 - **Problem.** `TemplateProcessor.process_graph_query` substitutes template
@@ -376,6 +379,23 @@ User IDs are already bounded at the service boundary (`MAX_CALLER_ID_BYTES`).
 - **Recommendation.** Option A, subject to D2.
 - **Acceptance.** A 5 KB resolve request is rejected at the boundary with a
   message naming the limit. A 5 KB chat message still works.
+- **Status (2026-09-28): done.**
+  - `propose` and `learn_response` had the same late failure as resolve. All
+    three now check `request` first with one validator. The limit is
+    `MAX_CACHE_REQUEST_BYTES`, the smaller of the two key limits, so it cannot
+    drift from them. Chat keeps 16 KB.
+  - The raw size alone was not enough. The key's 4 KB cap applies to the
+    normalized text, and normalization expands contractions: a 4,096-byte
+    request normalized to 6,436 bytes and still failed late. The validator
+    checks the normalized size too, and rejects text that normalizes to
+    nothing (punctuation only), which also used to fail late.
+  - A second late failure, unrelated to total size: any word over 256 bytes
+    (a long URL or hash) broke key building even in a small request, because
+    it became a lexical term. Such tokens are now left out of the lexical
+    terms but kept in the canonical form. Those requests always failed
+    before, so no stored key changes.
+  - Limits documented in `documentation/grpc-integration.md` and
+    `documentation/mcp-integration.md`.
 
 ---
 
