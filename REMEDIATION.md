@@ -412,6 +412,16 @@ documentation, and R2.5's missing-path error) are not planned.
   newer DYNAMIC fact for the same subject replace the older one and retire it.
 - **Acceptance.** Re-teaching changes the answer, and the store holds one
   statement for the subject.
+- **Status (2026-09-28): done.** Both learning paths replace what they learned
+  before, through a new `store(..., replace_learned=True)`.
+  - Template `<learn>` ("Learn that X is Y") replaces the DYNAMIC statements on
+    the same pattern, that, and topic.
+  - `learn_fact` replaces an existing statement only when it is itself a
+    learned fact about the same subject. A seed (STATIC) or hand-stored
+    statement is never overwritten, and restating a fact changes nothing.
+  - Direct `store()` calls keep their old behaviour.
+  - Verified with the seed file: "Learn that zorblax is green" now answers
+    "Green", leaving one ZORBLAX statement.
 
 ### R4.2 Topic matching order (depends on D3)
 
@@ -422,6 +432,10 @@ documentation, and R2.5's missing-path error) are not planned.
 - **Options.** Match strict AIML order, or keep topic-first and document it.
   No shipped seed data uses topics yet, so either choice is cheap to make now.
 - **Recommendation.** Strict AIML order, unless topic-first is intentional.
+- **Status (2026-09-28): done (D3).** One pattern trie; each pattern leaf leads
+  to its that segment and then its topic segment. A specific pattern outranks
+  a topic's catch-all, and for the same pattern a matching topic beats no
+  topic. The separate topic router and per-topic tries are gone.
 
 ### R4.3 Year heuristic
 
@@ -432,6 +446,13 @@ documentation, and R2.5's missing-path error) are not planned.
 - **Recommendation.** Require a plausible year range, or no unit-like noun
   right after the number, or a date context word; otherwise leave the
   expression unresolved.
+- **Status (2026-09-28): done.** A bare four-digit number is a year only if it
+  is from 1000 to 2999 and no unit or technical count word follows it ("byte",
+  "requests", "years", ...). This applies to every year expression (in/during,
+  before, after, as of, between) and to a lone year. A rejected quantity is not
+  picked up as an unresolved date either, and its number stays a lexical term.
+  Full dates are unaffected. Words that often follow a real year ("people",
+  "users") are deliberately not treated as units.
 
 ### R4.4 `ConversationRuntime` shared state
 
@@ -441,6 +462,10 @@ documentation, and R2.5's missing-path error) are not planned.
   (`engram/conversation.py:216-227`), which affects other threads.
 - **Recommendation.** Cap turns (R2.4). Read statements through a locked
   accessor. Use a per-conversation `random.Random` instance.
+- **Status (2026-09-28): done.** The transcript went with R2.4. `inspect()`
+  reads statements under the statement lock. A seeded turn sets its own
+  `Random(seed + turn)` in a context variable that `<random>` reads, so the
+  process-wide generator is untouched and replays stay deterministic.
 
 ### R4.5 Matching cost and depth on long inputs
 
@@ -451,6 +476,19 @@ documentation, and R2.5's missing-path error) are not planned.
   about 2,000 words raises `RecursionError` on inputs that follow it.
 - **Recommendation.** Carry capture start and end indexes and join once at a
   leaf. Cap input length in `pattern_query`. Cap learned pattern length.
+- **Status (2026-09-28): done.** Reproduced first: an 11 KB "Learn that <2,000
+  words> is purple" stored a 2,000-word pattern, and any later input following
+  it raised `RecursionError`.
+  - Captures are (start, end) spans joined only for the chosen category.
+  - Patterns, thats, and topics are capped at `MAX_PATTERN_WORDS` = 64 (the
+    longest seed pattern has 12). That bounds the walk depth, since it
+    descends one frame per pattern word. Both learning paths skip, and log,
+    anything longer instead of failing the turn.
+  - `pattern_query` accepts the same 16,384 bytes as chat.
+  - Profiling showed most of the remaining time on long input was NLTK
+    tagging for fact extraction, so sentences over `MAX_FACT_SENTENCE_WORDS`
+    (128) are no longer read for facts. A 15 KB input went from 378 ms to
+    27 ms.
 
 ### R4.6 Lemma and stem fallback captures (low)
 
@@ -459,6 +497,10 @@ documentation, and R2.5's missing-path error) are not planned.
   cannot recover the original words.
 - **Recommendation.** Map fallback token positions back to the original input
   and capture original words.
+- **Status (2026-09-28): done.** The lemma and stem walks use word lists that
+  line up with the input by position (converted word by word if whole-text
+  conversion changes the count), and captures are read from the original
+  words: "where dogs were barking" now captures "dogs".
 
 ---
 

@@ -7,6 +7,7 @@ random selection, conditionals, redirects, and more.
 The evaluation context is a plain dict built by ``TemplateContext``.
 """
 
+from contextvars import ContextVar
 from datetime import datetime
 from random import choice as random_choice
 from re import compile as re_compile, match as re_match
@@ -44,6 +45,10 @@ response_pattern = re_compile(TEMPLATE_RESPONSE_EXPRESSION)
 that_pattern = re_compile(TEMPLATE_THAT_EXPRESSION)
 transform_pattern = re_compile(TEMPLATE_TRANSFORM_EXPRESSION)
 date_format_pattern = re_compile(TEMPLATE_DATE_FORMAT_EXPRESSION)
+
+# The generator for <random>. A conversation turn with a fixed seed sets its
+# own here for the length of the turn; everything else uses the shared one.
+TEMPLATE_RANDOM: ContextVar = ContextVar("template_random", default=())
 
 
 def template_context(
@@ -323,7 +328,8 @@ class TemplateProcessor:
         if not choices:
             result = ""
             return result
-        choice = random_choice(choices)
+        generator = TEMPLATE_RANDOM.get()
+        choice = generator.choice(choices) if generator else random_choice(choices)
         result = self.process(choice, context)
         return result
 

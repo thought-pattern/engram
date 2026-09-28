@@ -20,8 +20,11 @@ from engram.constants import (
     GRAPH_ENTITY_FACTS_QUERY,
     GRAPH_KEYWORD_FACTS_QUERY,
     KIND_STATEMENT,
+    MAX_FACT_SENTENCE_WORDS,
+    MAX_PATTERN_WORDS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
+    MAX_REQUEST_BYTES,
     MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
     VERSION,
     Tier,
@@ -63,7 +66,7 @@ from engram.models import (
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.nltk_data import ensure_nltk_data
-from engram.pattern import PatternMatcher, normalize_pattern
+from engram.pattern import PatternMatcher, normalize_pattern, pattern_word_count
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
@@ -1021,6 +1024,7 @@ class Engram:
         keyword_source: str = "",
         introduced_by_user_id: str = "",
         source_label: str = "",
+        replace_learned: bool = False,
     ) -> str:
         """Add a statement to the store.
 
@@ -1038,6 +1042,10 @@ class Engram:
                 keyword score; preferred among equal pattern matches).
             keyword_source: Optional text to index the conversational statement
                 under instead of its pattern or rendered text.
+            replace_learned: When True, a DYNAMIC statement replaces the DYNAMIC
+                statements already filed under the same pattern, that, and
+                topic, so re-teaching changes the answer. Learning uses it;
+                STATIC statements are never replaced.
 
         Returns:
             Assigned statement ID.
@@ -1079,6 +1087,10 @@ class Engram:
             if stmt["id"] in self.statement_by_id:
                 raise ValueError(f"duplicate statement id: {stmt['id']}")
 
+            if replace_learned and pattern and tier == Tier.DYNAMIC:
+                for replaced_id in self.replaceable_statement_ids(pattern, that or "", topic or ""):
+                    eviction_mod.evict_statement_at(self, self.statement_position(replaced_id))
+
             # Register the pattern under the same lock that guards matching,
             # so a concurrent pattern_query never sees a half-updated matcher.
             if pattern:
@@ -1110,6 +1122,21 @@ class Engram:
 
         result = stmt["id"]
         return result
+
+    def replaceable_statement_ids(self, pattern: str, that: str, topic: str) -> list[str]:
+        """Return the learned (DYNAMIC) statements filed under exactly this pattern, that, and topic."""
+        with self.statement_lock:
+            result = []
+            for statement_id in self.pattern_statements.get(pattern, ()):
+                existing = self.statement_by_id[statement_id]
+                if (
+                    existing["tier"] == Tier.DYNAMIC
+                    and existing["pattern"] == pattern
+                    and existing["that"] == that
+                    and existing["topic"] == topic
+                ):
+                    result.append(statement_id)
+            return result
 
     def query_candidates(
         self,
@@ -1612,6 +1639,8 @@ class Engram:
             and the statement is the last one matched. The stored dialogue act
             still comes from the sentence that represents the turn.
         """
+        if len(text.encode("utf-8", "surrogatepass")) > MAX_REQUEST_BYTES:
+            raise InvalidRequestError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
         with self.count_lock:
             self.query_count += 1
 
@@ -1654,7 +1683,7 @@ class Engram:
             # hedged, and conversation-meta assertions can shape the current
             # turn without becoming shared durable knowledge.
             extracted_facts = []
-            if self.config["learn_user_facts"]:
+            if self.config["learn_user_facts"] and len(sentence.split()) <= MAX_FACT_SENTENCE_WORDS:
                 if self.config["use_spacy_facts"]:
                     extracted_facts = extract_facts(sentence)
                 else:
@@ -1934,12 +1963,21 @@ class Engram:
         def learn_fn(learn_data: dict) -> None:
             pattern = learn_data.get("pattern", "")
             template = learn_data.get("template", {})
+            too_long = any(
+                pattern_word_count(value) > MAX_PATTERN_WORDS
+                for value in (pattern, learn_data.get("that", ""), learn_data.get("topic", ""))
+                if value
+            )
+            if too_long:
+                logger.info("Not learning a pattern longer than %d words", MAX_PATTERN_WORDS)
+                return
             if pattern:
                 text = ""
                 if isinstance(template, dict) and "text" in template:
                     text = template["text"]
                 elif isinstance(template, str):
                     text = template
+                # An explicit teaching replaces what was learned before on this path.
                 self.store(
                     text=text,
                     pattern=pattern,
@@ -1947,6 +1985,7 @@ class Engram:
                     that=learn_data.get("that", ""),
                     topic=learn_data.get("topic", ""),
                     tier=Tier.DYNAMIC,
+                    replace_learned=True,
                 )
 
         context["learn_fn"] = learn_fn
@@ -2005,7 +2044,10 @@ class Engram:
             tier: Storage tier for the generated statements.
 
         Returns:
-            True if the fact was learned, False if it was already known.
+            True if the fact was learned. False if it is already known, if the
+            subject's pattern belongs to a seed or hand-stored statement, or if
+            the subject is longer than MAX_PATTERN_WORDS. A new fact about a
+            subject replaces the learned fact already stored for it.
         """
         if not isinstance(introduced_by_user_id, str):
             raise ValueError("introduced_by_user_id must be a string")
@@ -2016,19 +2058,39 @@ class Engram:
         # concurrent speakers cannot admit duplicate copies of the same fact.
         # store() takes them in this order too.
         subject_pattern = fact_subject_upper(fact)
+        if pattern_word_count(subject_pattern) > MAX_PATTERN_WORDS:
+            logger.info("Not learning a fact whose subject is longer than %d words", MAX_PATTERN_WORDS)
+            result = False
+            return result
         with self.mutation_lock, self.statement_lock:
             for statement_id in self.pattern_statements.get(subject_pattern, ()):
-                if self.statement_by_id[statement_id]["pattern"] == subject_pattern:
+                existing = self.statement_by_id[statement_id]
+                if existing["pattern"] != subject_pattern:
+                    continue
+                # Restating a fact changes nothing, and only a learned fact about
+                # this subject is replaced: never a seed or hand-stored statement.
+                if (
+                    existing["tier"] != Tier.DYNAMIC
+                    or existing["text"] == fact.get("original", "")
+                    or subject_pattern not in self.fact_subject_patterns(existing["text"])
+                ):
                     result = False
                     return result
+            replaced_ids = set(self.replaceable_statement_ids(subject_pattern, "", ""))
 
             # Store one fact statement with alternate retrieval patterns.
             # Aliases live in the matcher and map to this one statement, so a
-            # fact does not consume capacity once per query phrasing.
+            # fact does not consume capacity once per query phrasing. The
+            # statement being replaced gives up its aliases to the new one.
             aliases = []
             for query_pattern in fact_query_patterns(fact)[1:]:
                 query_pattern = query_pattern.strip()
-                if query_pattern and query_pattern != subject_pattern and query_pattern not in self.pattern_to_statement:
+                if (
+                    query_pattern
+                    and query_pattern != subject_pattern
+                    and pattern_word_count(query_pattern) <= MAX_PATTERN_WORDS
+                    and self.pattern_to_statement.get(query_pattern, "") in replaced_ids | {""}
+                ):
                     aliases.append(query_pattern)
             aliases = list(dict.fromkeys(aliases))
 
@@ -2043,9 +2105,19 @@ class Engram:
                 keyword_source=fact.get("original", ""),
                 introduced_by_user_id=introduced_by_user_id,
                 source_label=source_label,
+                replace_learned=True,
             )
 
         result = True
+        return result
+
+    def fact_subject_patterns(self, text: str) -> set[str]:
+        """Return the subject patterns of the facts extracted from ``text``, as learning would."""
+        facts = extract_facts(text) if self.config["use_spacy_facts"] else []
+        if not facts:
+            fact = extract_fact(text)
+            facts = [fact] if fact else []
+        result = {fact_subject_upper(fact) for fact in facts}
         return result
 
     def add_fact(

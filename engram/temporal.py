@@ -27,6 +27,28 @@ NOW_RE = re_compile(r"\b(?:now|right\s+now)\b", IGNORECASE)
 BARE_YEAR_RE = re_compile(r"^\s*(\d{4})\s*[?!.]?\s*$")
 SYSTEM_AXIS_RE = re_compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded)|recorded)\b", IGNORECASE)
 WHITESPACE_CONTROL_RE = re_compile(r"[\t\n\r\v\f]")
+# A bare four-digit number is a year only in this range and when no unit or
+# technical count word follows it: "in 1500 byte frames" and "after 2000
+# requests" are quantities. Full dates (YYYY-MM-DD) are always dates. Words
+# that often follow a real year ("in 1969 people...") are not listed.
+PLAUSIBLE_YEARS = range(1_000, 3_000)
+QUANTITY_WORDS = frozenset(
+    {
+        "bit", "byte", "kb", "kib", "mb", "mib", "gb", "gib", "tb", "tib",
+        "ms", "millisecond", "second", "sec", "minute", "min", "hour", "hr",
+        "day", "week", "month", "year", "decade", "century",
+        "hz", "khz", "mhz", "ghz", "rpm", "fps", "px", "pixel", "dpi",
+        "frame", "page", "row", "column", "line", "word", "character", "char",
+        "token", "item", "unit", "record", "request", "query", "step",
+        "iteration", "retry", "attempt", "file", "entry", "message", "packet",
+        "connection", "thread", "node", "copy",
+        "percent", "%", "degree", "volt", "watt", "mah", "calorie",
+        "dollar", "usd", "eur", "euro", "cent",
+        "meter", "metre", "km", "cm", "mm", "mile", "foot", "feet", "ft", "inch",
+        "kg", "gram", "lb", "ton", "liter", "litre", "ml",
+    }
+)  # fmt: skip
+FOLLOWING_WORD_RE = re_compile(r"\s*-?\s*([^\W\d_]+|%)")
 UNRESOLVED_RE = re_compile(
     r"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at)|before|after|between|during|latest|most\s+recent|"
     r"current|currently|presently|right\s+now|now)\b[^?.,;]*",
@@ -227,6 +249,22 @@ def bounded_source(text: str) -> str:
     return result
 
 
+def is_quantity(text: str, match: re_Match[str]) -> bool:
+    """Return whether a bare four-digit number in a match reads as a quantity, not a year."""
+    for group in range(1, match.re.groups + 1):
+        value = match.group(group)
+        if not value or not re_fullmatch(r"\d{4}", value):
+            continue
+        if int(value) not in PLAUSIBLE_YEARS:
+            return True
+        following = FOLLOWING_WORD_RE.match(text, match.end(group))
+        if following:
+            word = following.group(1).casefold()
+            if word in QUANTITY_WORDS or word.removesuffix("s") in QUANTITY_WORDS:
+                return True
+    return False
+
+
 def internal_unresolved(operator: TemporalQueryOperator, axis: TemporalAxis, source: str) -> dict:
     # An unresolved expression runs to the next clause mark and can be long.
     # It is kept for diagnostics, so it is shortened rather than rejected.
@@ -245,6 +283,7 @@ def parse_temporal_query(request: object) -> dict:
     text = internal_text(request, "temporal request", 4_096, allow_empty=False)
     axis = TemporalAxis.SYSTEM_TIME if SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
     candidates: list[tuple[TemporalQueryOperator, re_Match[str]]] = []
+    quantity_starts: set[int] = set()
     for operator, pattern in (
         (TemporalQueryOperator.BETWEEN, BETWEEN_RE),
         (TemporalQueryOperator.AS_OF, AS_OF_RE),
@@ -256,13 +295,19 @@ def parse_temporal_query(request: object) -> dict:
         (TemporalQueryOperator.NOW, NOW_RE),
     ):
         match = pattern.search(text)
-        if match:
+        if match and is_quantity(text, match):
+            quantity_starts.add(match.start())
+        elif match:
             candidates.append((operator, match))
     bare_year = BARE_YEAR_RE.fullmatch(text)
-    if bare_year:
+    if bare_year and not is_quantity(text, bare_year):
         candidates = [(TemporalQueryOperator.IN_YEAR, bare_year)]
     if not candidates:
-        uncertain = UNRESOLVED_RE.search(text)
+        # A phrase already read as a quantity is not an unresolved date either.
+        uncertain = next(
+            (found for found in UNRESOLVED_RE.finditer(text) if found.start() not in quantity_starts),
+            (),
+        )
         if not uncertain:
             result = temporal_query()
             return result

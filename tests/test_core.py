@@ -1527,13 +1527,15 @@ def known_fact_responses_taught_engram() -> Engram:
     return engram
 
 
-def test_known_fact_contradiction_keeps_the_category_and_the_stored_fact() -> None:
+def test_known_fact_contradiction_keeps_the_category_and_replaces_the_stored_fact() -> None:
 
     engram = known_fact_responses_taught_engram()
     result = engram.pattern_query("The sky is green.")
 
     assert result[2] == "Go on."
-    assert engram.pattern_query("What is the sky?")[2] == "The sky is blue."
+    assert engram.pattern_query("What is the sky?")[2] == "The sky is green."
+    stored = [item for item in engram.statements if item["pattern"] == "SKY"]
+    assert len(stored) == 1
 
 
 def test_known_fact_restatement_keeps_the_category() -> None:

@@ -138,6 +138,10 @@ entities, dialogue-act histories, and pronoun context. Facts learned from either
 conversation enter the shared statement store with `introduced_by_user_id` and
 remain globally retrievable. Each learned fact occupies
 one statement, with alternate question phrasings stored as matcher aliases.
+A newer fact about the same subject replaces the learned one, so re-teaching
+changes the answer; seed statements and hand-stored statements are never
+replaced. Patterns are limited to 64 words (`MAX_PATTERN_WORDS`), and a fact
+whose subject is longer is not learned.
 
 Research and tool output enter the same shared store with source provenance:
 
@@ -314,12 +318,12 @@ feedback, lifecycle, and error behavior.
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance |
+| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; `replace_learned` retires DYNAMIC statements on the same pattern, that, and topic |
 | `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
-| `pattern_query(text, context_id, user_id)`                        | AIML-style match with separate turn context and learned-fact attribution; returns `(statement, captured, response)` or `()` |
+| `pattern_query(text, context_id, user_id)`                        | AIML-style match (pattern, then that, then topic) with separate turn context and learned-fact attribution; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
-| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance                                                                     |
+| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance; replaces the learned fact already stored for its subject           |
 | `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve user context                                                  |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |

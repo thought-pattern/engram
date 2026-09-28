@@ -264,21 +264,26 @@ def test_graphmaster_exact_word_beats_lower_wildcards():
     assert wide[4] == "HELLO _"
 
 
-def test_graphmaster_topic_partition_beats_a_longer_default():
-    """A matching topic is searched to completion before the default topic."""
+def test_graphmaster_specific_pattern_beats_a_topic_catch_all():
+    """AIML order: the pattern is matched before the topic, so a topic cannot promote a wildcard."""
     matcher = PatternMatcher()
     matcher.add_pattern(
         "ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN",
         "long",
     )
+    matcher.add_pattern("*", "anything")
     matcher.add_pattern("*", "in topic", topic="WEATHER")
-
-    default = matcher.match("one two three four five six seven eight nine ten eleven")
-    assert default[0] == "long"
+    matcher.add_pattern("HELLO", "hello")
+    matcher.add_pattern("HELLO", "hello about weather", topic="WEATHER")
 
     in_topic = matcher.match("one two three four five six seven eight nine ten eleven", topic="weather")
-    assert in_topic[0] == "in topic"
-    assert in_topic[4] == "*"
+    assert in_topic[0] == "long"
+
+    # For the same pattern, a matching topic wins over no topic.
+    assert matcher.match("something else", topic="weather")[0] == "in topic"
+    assert matcher.match("something else")[0] == "anything"
+    assert matcher.match("hello", topic="weather")[0] == "hello about weather"
+    assert matcher.match("hello", topic="sports")[0] == "hello"
 
 
 def test_graphmaster_exact_pattern_beats_a_that_scoped_star():
@@ -1109,13 +1114,13 @@ def graph_size(node, seen=None) -> int:
         return 0
     seen.add(id(node))
     children = [*node.dollar.values(), *node.atoms.values(), *node.bots.values(), *node.sets.values()]
-    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.subtree) if child]
+    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.topic_root) if child]
     result = 1 + sum(graph_size(child, seen) for child in children)
     return result
 
 
 def matcher_graph_size(pm: PatternMatcher) -> int:
-    result = graph_size(pm.default_trie) + graph_size(pm.topic_router)
+    result = graph_size(pm.default_trie)
     return result
 
 
@@ -1159,4 +1164,4 @@ def test_removal_in_place_matches_a_full_rebuild():
     for pattern, _, that, topic in added:
         plain.remove_pattern(pattern, that=that, topic=topic)
     assert len(plain) == 0
-    assert matcher_graph_size(plain) == 2
+    assert matcher_graph_size(plain) == 1

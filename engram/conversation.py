@@ -7,13 +7,14 @@ generation without writing conversation state to disk.
 from bisect import bisect_left
 from collections import Counter, deque
 from datetime import UTC, datetime
-from random import getstate as random_getstate, seed as random_seed, setstate as random_setstate
+from random import Random
 from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
 from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.errors import InvalidRequestError
+from engram.template import TEMPLATE_RANDOM
 from engram.text import normalize
 
 
@@ -215,10 +216,11 @@ class ConversationRuntime:
             first_new_sequence = self.engram.next_statement_sequence
 
             turn_number = self.turn_count + 1
-            random_state = ()
+            # A seeded turn draws from its own generator, so other threads keep
+            # the shared one. Seeding by turn keeps a replay deterministic.
+            random_token = ()
             if self.random_seed_present:
-                random_state = random_getstate()
-                random_seed(self.random_seed + turn_number)
+                random_token = TEMPLATE_RANDOM.set(Random(self.random_seed + turn_number))
             started = time_perf_counter()
             try:
                 result = pipeline.respond(
@@ -228,8 +230,8 @@ class ConversationRuntime:
                     user_id=self.user_id,
                 )
             finally:
-                if random_state:
-                    random_setstate(random_state)
+                if random_token:
+                    TEMPLATE_RANDOM.reset(random_token)
             elapsed = time_perf_counter() - started
 
             session = self.engram.sessions.get(self.session_id, {})
@@ -272,7 +274,7 @@ class ConversationRuntime:
 
     def inspect(self) -> dict:
         """Return conversation context, learned knowledge, and current metrics."""
-        with self.lock:
+        with self.lock, self.engram.statement_lock:
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements

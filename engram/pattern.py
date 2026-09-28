@@ -12,12 +12,18 @@ backtracks when the rest of the input does not fit:
     7. ``#`` (zero or more words, shortest first)
     8. ``*`` (one or more words, shortest first)
 
-A category with a topic is filed under that topic. Matching topics are tried
-before the empty topic, and a ``that`` pattern is tried at the end of a
-pattern path before the empty ``that``. The first complete path wins.
+Matching follows AIML order: the pattern first, then ``that``, then the
+topic. At the end of a pattern path a matching ``that`` is tried before the
+empty ``that``, and at the end of that a matching topic before the empty
+topic, so a specific pattern outranks any topic's catch-all. The first
+complete path wins.
+
+Captures are kept as positions in the input and joined into text only for the
+chosen category. The walk descends one frame per pattern token, so patterns
+are capped at ``MAX_PATTERN_WORDS`` words to bound its depth.
 
 Stemming and lemmatization remain fallbacks used only when the exact walk
-misses or finds only a pure wildcard.
+misses or finds only a pure wildcard. Their captures are the original words.
 """
 
 from functools import lru_cache
@@ -30,7 +36,7 @@ from re import (
     sub as re_sub,
 )
 
-from engram.constants import WILDCARD_TOKENS
+from engram.constants import MAX_PATTERN_WORDS, WILDCARD_TOKENS
 from engram.substitutions import split_sentences
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
@@ -347,6 +353,12 @@ def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
     return result
 
 
+def pattern_word_count(pattern: str) -> int:
+    """Return how many graph edges a pattern, that, or topic occupies."""
+    result = len(normalize_pattern(pattern).split())
+    return result
+
+
 def is_pure_wildcard(pattern: str) -> bool:
     """Return True if a pattern is only wildcard tokens (e.g. '*' or '* *')."""
     words = pattern.split()
@@ -366,11 +378,11 @@ class _GraphNode:
     """One node in a pattern, that, or topic graphmaster."""
 
     def is_empty(self) -> bool:
-        """Return whether this node holds no category, context root, subtree, or edge."""
+        """Return whether this node holds no category, that or topic segment, or edge."""
         result = (
             self.category is None
             and self.that_root is None
-            and self.subtree is None
+            and self.topic_root is None
             and self.underscore is None
             and self.caret is None
             and self.hash is None
@@ -393,7 +405,7 @@ class _GraphNode:
         self.star: _GraphNode | None = None
         self.category: dict | None = None
         self.that_root: _GraphNode | None = None
-        self.subtree: _GraphNode | None = None
+        self.topic_root: _GraphNode | None = None
         self.lemma_dollar: dict[str, list[_GraphNode]] = {}
         self.stem_dollar: dict[str, list[_GraphNode]] = {}
         self.lemma_atoms: dict[str, list[_GraphNode]] = {}
@@ -430,9 +442,9 @@ class PatternMatcher:
         # Normalized graph path -> ids of the entries filed there, in insertion
         # order. The first one owns the leaf; the next takes over when it goes.
         self.internal_path_claims: dict[tuple[str, str, bool, str], list[int]] = {}
+        # Pattern paths lead to an optional that segment and then an optional
+        # topic segment; a category with neither sits at the pattern leaf.
         self.default_trie = _GraphNode()
-        self.topic_router = _GraphNode()
-        self.topic_tries: dict[str, _GraphNode] = {}
         # Preserve caller-owned dict references, including explicitly empty maps.
         self.internal_sets = sets if isinstance(sets, dict) else {}
         self.internal_bot_properties = bot_properties if isinstance(bot_properties, dict) else {}
@@ -460,7 +472,13 @@ class PatternMatcher:
             response: Response template.
             that: Optional pattern for bot's previous response.
             topic: Optional topic scope.
+
+        Raises:
+            ValueError: If the pattern, that, or topic exceeds MAX_PATTERN_WORDS.
         """
+        for name, value in (("pattern", pattern), ("that", that), ("topic", topic)):
+            if value and pattern_word_count(value) > MAX_PATTERN_WORDS:
+                raise ValueError(f"{name} exceeds the limit of {MAX_PATTERN_WORDS} words")
         entry = {
             "pattern": pattern,
             "response": response,
@@ -507,11 +525,15 @@ class PatternMatcher:
     def _category_leaf(self, key: tuple[str, str, bool, str]) -> _GraphNode:
         """Return the node holding a path's category, creating the path if needed."""
         topic_key, pattern_key, has_that, that_key = key
-        leaf = self._insert_tokens(self._trie_for_topic(topic_key), pattern_key.split())
+        leaf = self._insert_tokens(self.default_trie, pattern_key.split())
         if has_that:
             if leaf.that_root is None:
                 leaf.that_root = _GraphNode()
             leaf = self._insert_tokens(leaf.that_root, that_key.split())
+        if topic_key:
+            if leaf.topic_root is None:
+                leaf.topic_root = _GraphNode()
+            leaf = self._insert_tokens(leaf.topic_root, topic_key.split())
         return leaf
 
     def _unindex_entry(self, entry_id: int, entry: dict) -> None:
@@ -532,32 +554,37 @@ class PatternMatcher:
     def _prune_path(self, key: tuple[str, str, bool, str]) -> None:
         """Clear a path's category and drop the nodes that no longer lead anywhere."""
         topic_key, pattern_key, has_that, that_key = key
-        trie = self.topic_tries.get(topic_key) if topic_key else self.default_trie
-        if trie is None:
-            return
-        pattern_path = self._existing_path(trie, pattern_key.split())
+        pattern_path = self._existing_path(self.default_trie, pattern_key.split())
         if pattern_path is None:
             return
-        leaf = pattern_path[-1][2] if pattern_path else trie
+        leaf = pattern_path[-1][2] if pattern_path else self.default_trie
         if has_that:
             if leaf.that_root is not None:
                 that_path = self._existing_path(leaf.that_root, that_key.split())
                 if that_path is not None:
                     that_leaf = that_path[-1][2] if that_path else leaf.that_root
-                    that_leaf.category = None
+                    self._clear_topic_category(that_leaf, topic_key)
                     self._prune_edges(that_path)
                 if leaf.that_root.is_empty():
                     leaf.that_root = None
         else:
-            leaf.category = None
+            self._clear_topic_category(leaf, topic_key)
         self._prune_edges(pattern_path)
-        if topic_key and trie.is_empty():
-            del self.topic_tries[topic_key]
-            router_path = self._existing_path(self.topic_router, topic_key.split())
-            if router_path is not None:
-                router_leaf = router_path[-1][2] if router_path else self.topic_router
-                router_leaf.subtree = None
-                self._prune_edges(router_path)
+
+    def _clear_topic_category(self, leaf: _GraphNode, topic_key: str) -> None:
+        """Clear the category below a pattern or that leaf, through its topic segment."""
+        if not topic_key:
+            leaf.category = None
+            return
+        if leaf.topic_root is None:
+            return
+        topic_path = self._existing_path(leaf.topic_root, topic_key.split())
+        if topic_path is not None:
+            topic_leaf = topic_path[-1][2] if topic_path else leaf.topic_root
+            topic_leaf.category = None
+            self._prune_edges(topic_path)
+        if leaf.topic_root.is_empty():
+            leaf.topic_root = None
 
     def _existing_path(self, root: _GraphNode, words: list[str]) -> list[tuple[_GraphNode, str, _GraphNode]] | None:
         """Follow existing edges for ``words`` and return (parent, word, child) steps, or None."""
@@ -637,24 +664,6 @@ class PatternMatcher:
             result = ("set", word[5:-1])
             return result
         result = ("atom", word)
-        return result
-
-    def _trie_for_topic(self, topic: str) -> _GraphNode:
-        """Return the category trie for a topic pattern, creating it on first use."""
-        key = normalize_pattern(topic) if topic else ""
-        if not key:
-            result = self.default_trie
-            return result
-        existing = self.topic_tries.get(key)
-        if existing is not None:
-            result = existing
-            return result
-        trie = _GraphNode()
-        self.topic_tries[key] = trie
-        leaf = self._insert_tokens(self.topic_router, key.split())
-        if leaf.subtree is None:
-            leaf.subtree = trie
-        result = trie
         return result
 
     def _insert_tokens(self, root: _GraphNode, words: list[str]) -> _GraphNode:
@@ -757,8 +766,6 @@ class PatternMatcher:
         fallback settings change.
         """
         self.default_trie = _GraphNode()
-        self.topic_router = _GraphNode()
-        self.topic_tries = {}
         self.internal_path_claims = {}
         for entry_id, entry in self.internal_entries.items():
             self._index_entry(entry_id, entry)
@@ -801,7 +808,7 @@ class PatternMatcher:
 
         ``that`` is the previous reply. Only its last sentence is matched,
         and it is prepared with the same hyphen and punctuation rules as the
-        input. Topic categories are tried before the empty topic.
+        input. Matching follows AIML order: pattern, then that, then topic.
 
         Args:
             text: User input text.
@@ -819,7 +826,10 @@ class PatternMatcher:
         that_text = _last_sentence(that)
         that_words = prepare_pattern_text(that_text).split() if that_text else []
         topic_words = prepare_pattern_text(topic).split() if topic else []
-        result = self._match_words(words, that_words, topic_words, "exact")
+        # Captures always come from the prepared words, including in the lemma
+        # and stem walks, whose words line up with these by position.
+        sources = (words, that_words, topic_words)
+        result = self._match_words(words, that_words, topic_words, "exact", sources)
 
         # A pure-wildcard match must not block the flexible fallbacks. Set it
         # aside and try for something more specific. The fallback stages ignore
@@ -835,6 +845,7 @@ class PatternMatcher:
                     self._flexible_words(that_words, "lemma"),
                     self._flexible_words(topic_words, "lemma"),
                     "lemma",
+                    sources,
                 )
             )
 
@@ -845,6 +856,7 @@ class PatternMatcher:
                     self._flexible_words(that_words, "stem"),
                     self._flexible_words(topic_words, "stem"),
                     "stem",
+                    sources,
                 )
             )
 
@@ -852,89 +864,125 @@ class PatternMatcher:
         return final
 
     def _flexible_words(self, words: list[str], mode: str) -> list[str]:
-        """Lemmatize or stem words that were already prepared for an exact walk."""
-        text = " ".join(words)
-        converted = self.internal_lemmatize(text) if mode == "lemma" else stem_text(text)
-        result = converted.split()
+        """Lemmatize or stem prepared words, one output word per input word.
+
+        The whole text is converted at once so the lemmatizer sees context.
+        If that changes the word count, each word is converted alone, so a
+        capture's position still names the original words.
+        """
+        converted = self._convert(" ".join(words), mode).split()
+        if len(converted) == len(words):
+            return converted
+        result = []
+        for word in words:
+            parts = self._convert(word, mode).split()
+            result.append(parts[0] if len(parts) == 1 else word)
         return result
 
-    def _match_words(self, words: list[str], that_words: list[str], topic_words: list[str], mode: str) -> tuple:
-        """Walk eligible topic tries, then the default topic."""
+    def _convert(self, text: str, mode: str) -> str:
+        result = self.internal_lemmatize(text) if mode == "lemma" else stem_text(text)
+        return result
 
-        def on_topic(node: _GraphNode, topicstars: list[str]) -> tuple:
-            if node.subtree is None:
-                result = ()
-                return result
-            found = self._match_categories(node.subtree, words, that_words, topicstars, mode)
-            return found
-
-        routed = self._walk(self.topic_router, topic_words, 0, [], mode, on_topic)
-        if routed:
-            return routed
-        found = self._match_categories(self.default_trie, words, that_words, [], mode)
-        return found
-
-    def _match_categories(
+    def _match_words(
         self,
-        trie: _GraphNode,
         words: list[str],
         that_words: list[str],
-        topicstars: list[str],
+        topic_words: list[str],
         mode: str,
+        sources: tuple[list[str], list[str], list[str]],
     ) -> tuple:
-        """Walk one topic's categories. A matching that wins over an empty that."""
+        """Walk the pattern, then its that segment, then its topic segment.
 
-        def on_leaf(node: _GraphNode, stars: list[str]) -> tuple:
+        ``sources`` are the prepared input, that, and topic words that
+        captures are read from.
+        """
+
+        def on_pattern(node: _GraphNode, stars: list[tuple[int, int]]) -> tuple:
             if node.that_root is not None:
 
-                def on_that(that_node: _GraphNode, thatstars: list[str]) -> tuple:
-                    taken = self._take_category(that_node, stars, thatstars, topicstars)
-                    return taken
+                def on_that(that_node: _GraphNode, thatstars: list[tuple[int, int]]) -> tuple:
+                    found = self._topic_category(that_node, stars, thatstars, topic_words, mode, sources)
+                    return found
 
                 matched_that = self._walk(node.that_root, that_words, 0, [], mode, on_that)
                 if matched_that:
                     return matched_that
-            taken = self._take_category(node, stars, [], topicstars)
-            return taken
+            found = self._topic_category(node, stars, [], topic_words, mode, sources)
+            return found
 
-        found = self._walk(trie, words, 0, [], mode, on_leaf)
+        found = self._walk(self.default_trie, words, 0, [], mode, on_pattern)
         return found
+
+    def _topic_category(
+        self,
+        node: _GraphNode,
+        stars: list[tuple[int, int]],
+        thatstars: list[tuple[int, int]],
+        topic_words: list[str],
+        mode: str,
+        sources: tuple[list[str], list[str], list[str]],
+    ) -> tuple:
+        """Take the category below a pattern or that leaf; a matching topic beats no topic."""
+        if node.topic_root is not None:
+
+            def on_topic(topic_node: _GraphNode, topicstars: list[tuple[int, int]]) -> tuple:
+                taken = self._take_category(topic_node, stars, thatstars, topicstars, sources)
+                return taken
+
+            found = self._walk(node.topic_root, topic_words, 0, [], mode, on_topic)
+            if found:
+                return found
+        taken = self._take_category(node, stars, thatstars, [], sources)
+        return taken
 
     def _take_category(
         self,
         node: _GraphNode,
-        stars: list[str],
-        thatstars: list[str],
-        topicstars: list[str],
+        stars: list[tuple[int, int]],
+        thatstars: list[tuple[int, int]],
+        topicstars: list[tuple[int, int]],
+        sources: tuple[list[str], list[str], list[str]],
     ) -> tuple:
         """Return the match tuple for a leaf category, or empty when the leaf is bare."""
         category = node.category
         if not category:
             result = ()
             return result
+        words, that_words, topic_words = sources
         result = (
             category["response"],
-            list(stars),
-            list(thatstars),
-            list(topicstars),
+            [" ".join(words[start:end]) for start, end in stars],
+            [" ".join(that_words[start:end]) for start, end in thatstars],
+            [" ".join(topic_words[start:end]) for start, end in topicstars],
             category["pattern"],
             category["topic"],
             category["that"],
         )
         return result
 
-    def _walk(self, node: _GraphNode, words: list[str], pos: int, stars: list[str], mode: str, on_leaf) -> tuple:
-        """Try this node's branches in AIML order. The first path that finishes wins."""
+    def _walk(
+        self,
+        node: _GraphNode,
+        words: list[str],
+        pos: int,
+        stars: list[tuple[int, int]],
+        mode: str,
+        on_leaf,
+    ) -> tuple:
+        """Try this node's branches in AIML order. The first path that finishes wins.
+
+        Each capture is a (start, end) span of ``words``.
+        """
         if pos == len(words):
             found = on_leaf(node, stars)
             if found:
                 return found
             if node.caret is not None:
-                found = self._walk(node.caret, words, pos, stars + [""], mode, on_leaf)
+                found = self._walk(node.caret, words, pos, stars + [(pos, pos)], mode, on_leaf)
                 if found:
                     return found
             if node.hash is not None:
-                found = self._walk(node.hash, words, pos, stars + [""], mode, on_leaf)
+                found = self._walk(node.hash, words, pos, stars + [(pos, pos)], mode, on_leaf)
                 if found:
                     return found
             result = ()
@@ -948,8 +996,7 @@ class PatternMatcher:
 
         if node.underscore is not None:
             for end in range(pos + 1, len(words) + 1):
-                captured = " ".join(words[pos:end])
-                found = self._walk(node.underscore, words, end, stars + [captured], mode, on_leaf)
+                found = self._walk(node.underscore, words, end, stars + [(pos, end)], mode, on_leaf)
                 if found:
                     return found
 
@@ -963,8 +1010,7 @@ class PatternMatcher:
             end = self._consume_fixed(words, pos, expected)
             if end < 0:
                 continue
-            captured = " ".join(words[pos:end])
-            found = self._walk(child, words, end, stars + [captured], mode, on_leaf)
+            found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
             if found:
                 return found
 
@@ -979,29 +1025,25 @@ class PatternMatcher:
                 end = self._consume_fixed(words, pos, member_words)
                 if end < 0:
                     continue
-                captured = " ".join(words[pos:end])
-                found = self._walk(child, words, end, stars + [captured], mode, on_leaf)
+                found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
                 if found:
                     return found
 
         if node.caret is not None:
             for end in range(pos, len(words) + 1):
-                captured = " ".join(words[pos:end])
-                found = self._walk(node.caret, words, end, stars + [captured], mode, on_leaf)
+                found = self._walk(node.caret, words, end, stars + [(pos, end)], mode, on_leaf)
                 if found:
                     return found
 
         if node.hash is not None:
             for end in range(pos, len(words) + 1):
-                captured = " ".join(words[pos:end])
-                found = self._walk(node.hash, words, end, stars + [captured], mode, on_leaf)
+                found = self._walk(node.hash, words, end, stars + [(pos, end)], mode, on_leaf)
                 if found:
                     return found
 
         if node.star is not None:
             for end in range(pos + 1, len(words) + 1):
-                captured = " ".join(words[pos:end])
-                found = self._walk(node.star, words, end, stars + [captured], mode, on_leaf)
+                found = self._walk(node.star, words, end, stars + [(pos, end)], mode, on_leaf)
                 if found:
                     return found
 
@@ -1087,8 +1129,6 @@ class PatternMatcher:
         self.internal_entry_ids.clear()
         self.internal_path_claims.clear()
         self.default_trie = _GraphNode()
-        self.topic_router = _GraphNode()
-        self.topic_tries = {}
 
     def __len__(self) -> int:
         """Return number of patterns."""

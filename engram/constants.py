@@ -655,6 +655,12 @@ RESOLUTION_RESULT_FIELDS = set(
 )
 MAX_RESOLUTION_REASON_CODES = 64
 MAX_REQUEST_BYTES = 16_384
+# Words in one pattern, that, or topic. The matcher descends one stack frame
+# per pattern word; the longest shipped seed pattern has 12.
+MAX_PATTERN_WORDS = 64
+# A sentence longer than this is not read for facts: its subject could not
+# become a pattern, and tagging it would hold the engine for hundreds of ms.
+MAX_FACT_SENTENCE_WORDS = 2 * MAX_PATTERN_WORDS
 # A regulated-cache request (resolve, propose, learn) becomes an exact-match
 # lookup key, so the request and its normalized form must both fit the key's
 # limits. Chat builds no key and accepts MAX_REQUEST_BYTES.
