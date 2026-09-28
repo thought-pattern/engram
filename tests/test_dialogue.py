@@ -550,7 +550,12 @@ def test_wildcard_question_follow_up_matches_that() -> None:
     cases = (
         ("I like quiet libraries.", "I like the quiet.", "what do you like about", "Yeah. That's the part that matters."),
         ("I love quiet libraries.", "I love the reading rooms.", "what is it about", "That's a strong one. I heard you."),
-        ("I think the tutorial is enough.", "I think the examples are short.", "what makes you think", "Okay. I'll take that as your read."),
+        (
+            "I think the tutorial is enough.",
+            "I think the examples are short.",
+            "what makes you think",
+            "Okay. I'll take that as your read.",
+        ),
         ("I want a small boat.", "I want a harbor slip.", "what would it take", "Okay. That's the aim."),
         ("I need a quieter keyboard.", "I need a small one.", "what kind of", "Okay. That narrows it."),
     )
