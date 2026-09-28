@@ -115,7 +115,7 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert inspected["session"]["previous_response"] == "Sushi is good."
         assert inspected["core_status"]["active_conversations"] == 2
         assert report["summary"]["exchanges"] == 1
-        assert report["turns"][0]["input"] == "Sushi is good."
+        assert "turns" not in report
         assert status["healthy"] is True
         assert health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 

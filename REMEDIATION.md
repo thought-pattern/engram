@@ -17,7 +17,7 @@ magnitude, not benchmarks. Effort is a rough size: **S** (a day or less),
 | ID | Item | Severity | Effort | Needs a decision |
 |----|------|----------|--------|------------------|
 | R1 | Per-request work grows with the store, under one lock | High | L | **Done** (2026-09-28) |
-| R2 | Service-surface security | High / Medium | M | Yes: deployment model |
+| R2 | Service-surface security | Medium | M | Scoped by D1 (2026-09-28) |
 | R3 | Request-size contract (16 KB accepted, 4 KB identity) | Medium | S | Yes: resolve limit |
 | R4 | Conversation-engine semantics | Medium | M | Yes: topic order |
 | R5 | Resolution sizing after durable accounting | Medium | S | No |
@@ -225,6 +225,29 @@ Left over, outside the acceptance criteria:
 The gRPC and MCP adapters are the trust boundary. Some items below apply to
 every deployment; others depend on who can reach the service
 ([Open decisions](#open-decisions), D1).
+
+**Scope after D1 (2026-09-28).** gRPC is reached only by a larger internal
+application, MCP is an operator's diagnostic tool, and user IDs and message
+text originate in external channels. An LLM in that application considers
+both the input to Engram and its output, so it is the moderation layer:
+Engram's answers are advisory, and cache poisoning or cross-channel reuse of
+taught statements is for that layer to catch. (Third-person statements one
+user teaches are shared with every user by design; first-person ones are
+not.) Taught text can reach the LLM's context on another user's request, so
+the application should present cached text to the LLM as data, not
+instructions. That leaves R2 as reliability work:
+
+| Item | Decision |
+|------|----------|
+| R2.1 Cypher text substitution | Optional guard: only matters if graph-query templates use user-set values. |
+| R2.2 Visibility parameter precedence | Optional: small and always correct. |
+| R2.3 Authentication | Document the trusted-caller assumption; nothing to build. |
+| R2.4 Unbounded per-caller state | **Done for the expected scale (2026-09-28).** The per-conversation transcript is removed: responses never read it, and it grew about 2.8 KB per turn for the life of the process. Reports keep exact running counts and inspection shows the latest turn; a chat turn no longer scans every statement. Memory now stays flat across 20,000 turns. Learned facts, learned responses, and sessions already age out by LRU. What remains grows with users, not turns: about 3.7 KB per user for the conversation runtime and session, under 1 MB at the expected hundreds of users. Runtime eviction, applying `session_ttl_seconds` (configured, but the service never calls `expire_sessions`), and constant-time session eviction are not needed at that scale. |
+| R2.5 MCP `config_path` | Document as operator-only; make a missing explicit path an error. |
+| R2.6 Graph connection | **Do timeouts.** TLS optional, off by default. |
+| R2.7 Error detail | **Do the logging part** (tracebacks server-side, `RESOURCE_EXHAUSTED` for session limits). |
+
+User IDs are already bounded at the service boundary (`MAX_CALLER_ID_BYTES`).
 
 ### R2.1 Template graph queries substitute text into Cypher (applies everywhere)
 
@@ -592,7 +615,7 @@ every deployment; others depend on who can reach the service
 
 | ID | Question | Affects | Recommended default |
 |----|----------|---------|---------------------|
-| D1 | Who calls Engram in production, and can a client present any `user_id`? | R2.3, R2.5 | Trusted caller only (option A), documented and enforced by bind address |
+| D1 | Who calls Engram in production, and can a client present any `user_id`? | R2.3, R2.5 | **Decided 2026-09-28:** gRPC is called only by a larger internal application and is not public; MCP is for operator diagnostics; user IDs are relayed from external channels. Trusted caller (option A). |
 | D2 | What is the largest resolve request? | R3 | 4 KB for resolve, 16 KB for chat |
 | D3 | Strict AIML topic order, or topic-first? | R4.2 | Strict AIML order |
 | D4 | Keep sparse and semantic retrieval request-local, or allow persistent derived state? | R1 step 5 | **Decided 2026-09-28:** persistent per-scope sparse index synced to each search's snapshot (option C); semantic records cached by artifact identity. |

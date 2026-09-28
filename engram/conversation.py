@@ -4,6 +4,7 @@
 generation without writing conversation state to disk.
 """
 
+from bisect import bisect_left
 from collections import Counter, deque
 from datetime import UTC, datetime
 from random import getstate as random_getstate, seed as random_seed, setstate as random_setstate
@@ -180,7 +181,13 @@ class ConversationRuntime:
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
         self.started_at = utc_now()
-        self.turns: list[dict] = []
+        # Past turns are not kept: responses read the session's bounded
+        # history, not a transcript. The report summary uses running counts,
+        # and inspection shows only the latest turn.
+        self.turn_count = 0
+        self.latest_turn: dict = {}
+        self.source_counts: Counter[str] = Counter()
+        self.catch_all_turns = 0
         self.lock = threading_RLock()
 
         sessions.get_session(engram, self.session_id, create_if_missing=True)
@@ -203,13 +210,10 @@ class ConversationRuntime:
             session = self.engram.sessions.get(self.session_id, {})
             predicates_before = dict(session.get("predicates", {}))
             previous_response_before = session.get("previous_response", "")
-            dynamic_ids_before = {
-                statement.get("id", "")
-                for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
-            }
+            # Statements stored during this turn have a sequence at or after this one.
+            first_new_sequence = self.engram.next_statement_sequence
 
-            turn_number = len(self.turns) + 1
+            turn_number = self.turn_count + 1
             random_state = ()
             if self.random_seed_present:
                 random_state = random_getstate()
@@ -228,11 +232,13 @@ class ConversationRuntime:
             elapsed = time_perf_counter() - started
 
             session = self.engram.sessions.get(self.session_id, {})
-            learned = [
-                statement_view(statement)
-                for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC and statement.get("id", "") not in dynamic_ids_before
-            ]
+            with self.engram.statement_lock:
+                first_new = bisect_left(self.engram.statement_sequences, first_new_sequence)
+                learned = [
+                    statement_view(statement)
+                    for statement in self.engram.statements[first_new:]
+                    if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
+                ]
             event = {
                 "turn": turn_number,
                 "input": text,
@@ -256,7 +262,11 @@ class ConversationRuntime:
                 },
                 "learned_statements": learned,
             }
-            self.turns.append(event)
+            self.turn_count = turn_number
+            self.latest_turn = event
+            self.source_counts[event["source"]] += 1
+            if event["pattern"] == "*":
+                self.catch_all_turns += 1
             return event
 
     def inspect(self) -> dict:
@@ -269,13 +279,13 @@ class ConversationRuntime:
             ]
             result = {
                 "user_id": self.user_id,
-                "turn_count": len(self.turns),
+                "turn_count": self.turn_count,
                 "initial_bot_text": self.initial_bot_text,
                 "session": session_view(self.engram.sessions.get(self.session_id, {})),
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
                 "learned_unique_texts": sorted({statement.get("text", "") for statement in learned}),
-                "latest_turn": self.turns[-1] if self.turns else {},
+                "latest_turn": self.latest_turn,
             }
             return result
 
@@ -283,7 +293,6 @@ class ConversationRuntime:
         """Build the complete machine-readable conversation report."""
         with self.lock:
             snapshot = self.inspect()
-            sources = Counter(turn.get("source", "") for turn in self.turns)
             result = {
                 "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
@@ -293,9 +302,9 @@ class ConversationRuntime:
                 "random_seed": self.random_seed,
                 "random_seed_present": self.random_seed_present,
                 "summary": {
-                    "exchanges": len(self.turns),
-                    "sources": dict(sources),
-                    "catch_all_turns": sum(turn.get("pattern", "") == "*" for turn in self.turns),
+                    "exchanges": self.turn_count,
+                    "sources": dict(self.source_counts),
+                    "catch_all_turns": self.catch_all_turns,
                     "learned_statements": len(snapshot.get("learned_dynamic", [])),
                     "learned_unique_texts": len(snapshot.get("learned_unique_texts", [])),
                 },
@@ -303,6 +312,5 @@ class ConversationRuntime:
                 "metrics_final": snapshot.get("metrics", {}),
                 "session": snapshot.get("session", {}),
                 "learned_dynamic": snapshot.get("learned_dynamic", []),
-                "turns": list(self.turns),
             }
             return result
