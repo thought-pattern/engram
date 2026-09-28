@@ -9,6 +9,7 @@ from engram.constants import (
     MAX_RELATION_LABEL_BYTES,
     MAX_RELATION_PLAN_ROWS,
     MAX_RELATION_SURFACES,
+    MAX_REQUEST_BYTES,
     ONE_HOP_QUERY_PLAN_FIELDS,
     RELATION_CONTRACT_SCHEMA_VERSION,
     CanonicalResolutionStatus,
@@ -27,11 +28,17 @@ from engram.spacy_setup import get_nlp
 from engram.temporal import validate_temporal_query
 
 
-def internal_text(value: object, name: str, *, allow_empty: bool = False) -> str:
+def internal_text(
+    value: object,
+    name: str,
+    *,
+    allow_empty: bool = False,
+    maximum_bytes: int = MAX_RELATION_LABEL_BYTES,
+) -> str:
     if not isinstance(value, str) or (not allow_empty and not value):
         raise InvalidRequestError(f"{name} must be a {'possibly empty ' if allow_empty else 'non-empty '}string")
-    if len(value.encode("utf-8")) > MAX_RELATION_LABEL_BYTES:
-        raise InvalidRequestError(f"{name} exceeds {MAX_RELATION_LABEL_BYTES} UTF-8 bytes")
+    if len(value.encode("utf-8")) > maximum_bytes:
+        raise InvalidRequestError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise InvalidRequestError(f"{name} contains a control character")
     return value
@@ -248,8 +255,14 @@ def resolve_canonical_subject(
 
 
 def dependency_predicate_surfaces(text: object) -> tuple[tuple[str, str, float], ...]:
-    """Extract bounded verb-lemma and preposition candidates from the loaded parser."""
-    request = internal_text(text, "predicate request")
+    """Extract bounded verb-lemma and preposition candidates from the loaded parser.
+
+    The request is a whole question, not a label, so it takes the request
+    limit. Tabs and line breaks are whitespace here as in the frame text.
+    """
+    if isinstance(text, str):
+        text = " ".join(text.split())
+    request = internal_text(text, "predicate request", maximum_bytes=MAX_REQUEST_BYTES)
     nlp = get_nlp()
     if not nlp:
         return ()

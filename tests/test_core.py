@@ -915,6 +915,29 @@ def test_engram_context_matching_redirect_keeps_that() -> None:
     assert result[2] == "Pizza follow-up"
 
 
+def test_engram_polish_repairs_spliced_captures_but_keeps_authored_code() -> None:
+    engram = Engram()
+    authored = "Ranges count from zero. s[1:4] takes a slice, and pop() removes the last item."
+    engram.store(authored, pattern="HOW DO I SLICE")
+    engram.store("{star1} is a nice color.", pattern="I LIKE *")
+
+    assert engram.pattern_query("How do I slice?")[2] == authored
+    assert engram.pattern_query("i like blue")[2] == "Blue is a nice color."
+
+
+def test_engram_redirect_reaches_a_learned_fact_alias() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    pipeline.chat(engram, "Sushi is good.", user_id="Robin")
+    engram.store("", pattern="WHAT TASTES GOOD", template={"redirect": "what is good"})
+
+    assert engram.pattern_query("What is good?")[2] == "Sushi is good."
+    result = engram.pattern_query("What tastes good?")
+
+    assert result
+    assert result[2] == "Sushi is good."
+
+
 def test_engram_context_matching_set_topic_applies_to_the_next_sentence() -> None:
     engram = Engram()
     session_id = sessions.start_session(engram)

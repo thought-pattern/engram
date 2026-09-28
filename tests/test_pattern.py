@@ -586,6 +586,15 @@ def test_pattern_matcher_context_matching_that_filter_matches():
     assert result[0] == "Follow-up response"
 
 
+def test_pattern_matcher_that_matches_the_last_sentence_of_a_multi_sentence_reply():
+    pm = PatternMatcher()
+    pm.add_pattern("I LIKE THE *", "Crust follow-up", that="WHAT DO YOU LIKE ABOUT *")
+
+    result = pm.match("I like the crust", that="Hi. What's going on? What do you like about pizza?")
+    assert result[0] == "Crust follow-up"
+    assert not pm.match("I like the crust", that="What do you like about pizza? Hi.")
+
+
 def test_pattern_matcher_context_matching_that_filter_no_match():
     """Pattern with that should not match when last response doesn't match."""
     pm = PatternMatcher()

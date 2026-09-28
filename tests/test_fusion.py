@@ -7,6 +7,7 @@ from json import dumps as json_dumps
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.config import reranker_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -43,6 +44,7 @@ from engram.fusion import (
 )
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
+from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
@@ -653,3 +655,25 @@ def test_explicit_fusion_memory_allowance_is_concrete_and_enforced() -> None:
 def test_policy_reasons_are_closed_content_free_identifiers() -> None:
     assert len(set(FusionPolicyReason)) == len(FusionPolicyReason)
     assert all(reason.value == reason.value.lower() and " " not in reason.value for reason in FusionPolicyReason)
+
+
+@pytest_mark.parametrize("shortlist_size", [1, 2, 8])
+@pytest_mark.parametrize(
+    "scores",
+    [(0.60,), (0.99, 0.93, 0.60)],
+    ids=["one-weak-candidate", "close-leaders"],
+)
+def test_reranker_reorders_but_does_not_change_the_answer_policy(shortlist_size, scores) -> None:
+    candidates = tuple(
+        value for index, score in enumerate(scores) for value in supported_pair(f"s{index}", semantic=score, lexical=score)
+    )
+    selected_frame = frame()
+    baseline = CandidateFusionEngine(authority=permissive_candidate_authority).decide(selected_frame, candidates)
+    reranker = TransparentLogisticReranker(reranker_config(enabled=True, shortlist_size=shortlist_size))
+
+    reranked = CandidateFusionEngine(authority=permissive_candidate_authority, reranker=reranker).decide(selected_frame, candidates)
+
+    assert reranked["report"]["reranker"]["applied"] is True
+    assert baseline["outcome"] == ResolutionOutcome.EVIDENCE
+    assert reranked["outcome"] == baseline["outcome"]
+    assert reranked["confidence"] == baseline["confidence"]

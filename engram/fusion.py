@@ -996,10 +996,8 @@ class EngramCandidateAuthority:
                 return result
             result = candidate_eligibility(True, True, True)
             return result
-        snapshot = self.internal_engram.response_repository.snapshot()
-        artifacts = snapshot["artifacts"]
-        if candidate.get("statement_id", "") in artifacts:
-            artifact = artifacts[candidate.get("statement_id", "")]
+        artifact = self.internal_engram.response_repository.find_artifact(candidate.get("statement_id", ""))
+        if artifact:
             if isinstance(self.internal_feedback_store, FeedbackStore):
                 if self.internal_feedback_store.stale_excluded(artifact["statement_id"], artifact["generation"]):
                     result = candidate_eligibility(False, False, False, (FusionPolicyReason.FEEDBACK_STALE_EXCLUDED,))
@@ -2173,6 +2171,10 @@ class CandidateFusionEngine:
                 )
                 return result
         fused = tuple(fused_values)
+        # The reranker only reorders its shortlist. Thresholds, the ambiguity
+        # margin, and confidence stay on the calibrated fused score, so the
+        # reranker cannot turn EVIDENCE into ANSWER by rescaling scores.
+        reranked_scores: dict[str, float] = {}
         reranker_report: dict = {
             "applied": False,
             "reason": "not_configured",
@@ -2220,7 +2222,6 @@ class CandidateFusionEngine:
                 score_values = reranker_report.get("scores", [])
                 if not isinstance(score_values, list):
                     raise InvalidRequestError("reranker scores must be a list")
-                reranked_scores: dict[str, float] = {}
                 for value in score_values:
                     if not isinstance(value, dict):
                         raise InvalidRequestError("reranker scores must contain mappings")
@@ -2234,7 +2235,7 @@ class CandidateFusionEngine:
                     if statement_id not in reranked_scores:
                         updated_fused.append(item)
                         continue
-                    rerank_score = reranked_scores.get(statement_id, 0.0)
+                    rerank_score = reranked_scores[statement_id]
                     updated_candidate = trusted_candidate_with_changes(
                         item["candidate"],
                         {
@@ -2255,7 +2256,7 @@ class CandidateFusionEngine:
                             updated_candidate,
                             item["contributions"],
                             item["normalized"],
-                            rerank_score,
+                            item["score"],
                             item["score_contributions"],
                             item["eligibility"],
                         )
@@ -2264,12 +2265,19 @@ class CandidateFusionEngine:
         ranked = tuple(
             sorted(
                 (candidate for candidate in fused if candidate["eligibility"]["score_eligible"]),
-                key=lambda item: (-item["score"], item["candidate"]["statement_id"]),
+                key=lambda item: (
+                    item["candidate"]["statement_id"] not in reranked_scores,
+                    -reranked_scores.get(item["candidate"]["statement_id"], 0.0),
+                    -item["score"],
+                    item["candidate"]["statement_id"],
+                ),
             )
         )
         if ranked:
             margin_available = len(ranked) > 1
-            margin = ranked[0]["score"] - ranked[1]["score"] if margin_available else 1.0
+            # A reranked leader with a lower fused score than the runner-up
+            # has no margin, so the disagreement resolves as ambiguous.
+            margin = max(0.0, ranked[0]["score"] - ranked[1]["score"]) if margin_available else 1.0
             top = ranked[0]
             values = dict(top["normalized"]["values"])
             values[FusionFeature.MARGIN] = margin if margin_available else 0.0

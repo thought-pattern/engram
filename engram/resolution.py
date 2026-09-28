@@ -238,10 +238,11 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
             raise InvalidRequestError(f"{name} numbers must be finite")
         return value
     if isinstance(value, dict):
+        # Check key types before sorting: mixed key types cannot be ordered.
+        if not all(isinstance(key, str) for key in value):
+            raise InvalidRequestError(f"{name} keys must be strings")
         frozen = {}
         for key in sorted(value):
-            if not isinstance(key, str):
-                raise InvalidRequestError(f"{name} keys must be strings")
             require_text(key, f"{name} key", 128, allow_empty=False)
             frozen[key] = freeze_json(value[key], name, depth + 1, count)
         result = dict(frozen)

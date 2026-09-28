@@ -88,6 +88,34 @@ def test_bare_year_is_a_bounded_in_year_follow_up() -> None:
     assert result["end"] == "2025-01-01T00:00:00Z"
 
 
+def test_temporal_parser_treats_tabs_and_line_breaks_as_spaces() -> None:
+    result = parse_temporal_query("Who owned Atlas\tin 2024?\n")
+
+    assert result["operator"] == TemporalQueryOperator.IN_YEAR
+    assert internal_frame("What is Engram?\n")["resolved_text"]
+    with pytest_raises(InvalidRequestError, match="control character"):
+        parse_temporal_query("What is\x00Engram?")
+
+
+def test_long_unresolved_expression_is_shortened_not_rejected() -> None:
+    request = "What changed before " + "the long migration window " * 30
+
+    result = parse_temporal_query(request)
+    frame = internal_frame(request)
+
+    assert result["resolved"] is False
+    assert result["operator"] == TemporalQueryOperator.BEFORE
+    assert 0 < len(result["source_text"].encode("utf-8")) <= 512
+    assert frame["temporal_query"]["resolved"] is False
+
+
+def test_a_full_date_after_in_is_not_read_as_its_whole_year() -> None:
+    result = parse_temporal_query("Who owned Atlas in 2024-05-01?")
+
+    assert result["operator"] != TemporalQueryOperator.IN_YEAR
+    assert result["start"] != "2024-01-01T00:00:00Z"
+
+
 def test_temporal_contract_round_trips_and_rejects_inconsistent_bounds() -> None:
     value = parse_temporal_query("between 2023-04-01 and 2023-04-30")
 

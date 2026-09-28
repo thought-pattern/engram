@@ -437,6 +437,37 @@ def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evide
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
+def test_relation_resolver_answers_a_one_hop_question_that_contains_of() -> None:
+    engine = Engram()
+    graph = RelationGraph()
+    engine.internal_graph_client = graph
+    frame = internal_frame(engine, "Where was Ada Lovelace born, in terms of city?")
+    lease = internal_lease(frame)
+
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, lease)
+    plain_frame = internal_frame(engine, "Where was Ada Lovelace born?")
+    plain = StructuredGraphResolver(engine, lambda: START_NS).resolve(plain_frame, internal_lease(plain_frame))
+
+    assert result["reason_code"] == "relation_proposition_candidate"
+    assert result["candidates"][0]["response"] == "Ada Lovelace — birth place: London."
+    # The rows composition spent resolving the subject still count.
+    assert plain["consumption"]["graph_rows"] < result["consumption"]["graph_rows"] <= lease["max_graph_rows"]
+
+
+def test_relation_resolver_accepts_a_request_longer_than_a_predicate_label() -> None:
+    engine = Engram()
+    graph = RelationGraph()
+    engine.internal_graph_client = graph
+    request = "Where was Ada Lovelace born? " + "I am asking for a history report about early computing. " * 6
+    assert len(request.encode("utf-8")) > 256
+    frame = internal_frame(engine, request)
+
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, internal_lease(frame))
+
+    assert result["state"].value == "completed"
+    assert graph.one_hop_calls
+
+
 def test_relation_resolver_requests_history_and_keeps_open_bounds_as_evidence() -> None:
     engine = Engram()
     graph = RelationGraph()

@@ -550,6 +550,39 @@ def memory_exhausted_result(name: str) -> dict:
     return result
 
 
+COMPOSITION_NOT_APPLICABLE_REASONS = frozenset(
+    {
+        CompositionReason.IDENTITY_MISS.value,
+        CompositionReason.UNSUPPORTED_QUERY.value,
+        CompositionReason.UNDERCONSTRAINED.value,
+    }
+)
+
+
+def composition_not_applicable(result: dict) -> bool:
+    """Return whether a composition result only says the request is not two-hop.
+
+    The subject resolved, but no two-predicate plan compiled. A subject miss
+    or ambiguity is a real answer from the graph and is not retried.
+    """
+    diagnostics = result.get("diagnostics", {})
+    selected = diagnostics.get("entity_status", "") == CanonicalResolutionStatus.SELECTED.value
+    outcome = result.get("reason_code", "") in COMPOSITION_NOT_APPLICABLE_REASONS and selected
+    return outcome
+
+
+def with_prior_graph_rows(result: dict, prior_rows: int) -> dict:
+    """Add graph rows spent by an earlier path of the same resolver call."""
+    if not prior_rows:
+        return result
+    consumption = trusted_budget_consumption_with_changes(
+        result["consumption"],
+        {"graph_rows": result["consumption"]["graph_rows"] + prior_rows},
+    )
+    updated = trusted_resolver_result_with_changes(result, {"consumption": consumption})
+    return updated
+
+
 class ExactResolver:
     """Adapter over the Section 3 contextual exact repository."""
 
@@ -1716,14 +1749,24 @@ class StructuredGraphResolver:
             result = exhausted_result(self.name, dimensions)
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
+        composition_rows = 0
         try:
             composition_result = self.internal_composition_result(frame, budget, started, cooperative_check)
-            if composition_result:
+            if composition_result and not composition_not_applicable(composition_result[0]):
                 result = composition_result[0]
                 return result
+            if composition_result:
+                # "of" and "'s" also appear in one-hop questions. When the
+                # subject resolved but no two-hop path compiled, the one-hop
+                # and structured paths answer from the rows still unspent.
+                composition_rows = composition_result[0]["consumption"]["graph_rows"]
+                budget = resolver_budget_with_changes(
+                    budget,
+                    {"max_graph_rows": max(0, budget.get("max_graph_rows", 0) - composition_rows)},
+                )
             relation_result = self.internal_relation_result(frame, budget, started, cooperative_check)
             if relation_result:
-                result = relation_result[0]
+                result = with_prior_graph_rows(relation_result[0], composition_rows)
                 return result
             projections = self.internal_engram.structured_proposition_projections(
                 frame.get("resolved_text", ""),
@@ -1785,7 +1828,7 @@ class StructuredGraphResolver:
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
-                graph_rows=len(projections) + revalidation_rows,
+                graph_rows=composition_rows + len(projections) + revalidation_rows,
                 evidence=len(records),
                 evidence_bytes=evidence_bytes,
                 output_bytes=evidence_bytes,
@@ -2644,8 +2687,8 @@ class ResolutionAccountingFinalizer:
                 for observation in resolver_value.get("accounting", ())
             }
             candidate_ids = tuple(sorted(observations))
-            repository_ids = set(self.internal_engram.response_repository.snapshot().get("artifacts", {}))
-            missing_ids = tuple(statement_id for statement_id in candidate_ids if statement_id not in repository_ids)
+            repository = self.internal_engram.response_repository
+            missing_ids = tuple(statement_id for statement_id in candidate_ids if not repository.has_artifact(statement_id))
             if missing_ids:
                 raise InvalidRequestError("observed accepted response no longer exists")
             if accepted_statement_id and accepted_statement_id not in observations:

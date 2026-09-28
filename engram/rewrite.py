@@ -3,6 +3,7 @@
 from enum import StrEnum
 from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
+from logging import getLogger as logging_getLogger
 from re import (
     IGNORECASE as IGNORECASE,
     UNICODE as UNICODE,
@@ -16,8 +17,10 @@ from time import perf_counter_ns as time_perf_counter_ns
 from unicodedata import normalize as unicodedata_normalize
 
 from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
-from engram.errors import InvalidRequestError, RewriteLimitError
+from engram.errors import InvalidRequestError
 from engram.resolution import query_frame_with_changes, rewrite_trace_step, validate_query_frame
+
+logger = logging_getLogger(__name__)
 
 REWRITE_RULE_SCHEMA_VERSION = 1
 REWRITE_CORPUS_SCHEMA_VERSION = 1
@@ -404,7 +407,13 @@ def apply_rewrites_to_frame(
     engine: RewriteEngine,
     cooperative_check: object = (),
 ) -> dict:
-    """Populate the reserved QueryFrame trace without changing authoritative identity."""
+    """Populate the reserved QueryFrame trace without changing authoritative identity.
+
+    Only a complete fixed point reaches resolver planning. A chain stopped by
+    a depth, expansion, cycle, output, or time limit is discarded and the
+    frame keeps its original representation, so an optional rewrite cannot
+    fail the request.
+    """
     frame = validate_query_frame(value)
     inherited_subject = any(item["field_name"] == "subjects" for item in frame["inheritance"])
     subject = frame["identity"]["entities"][0]["surface"] if frame["identity"]["entities"] else ""
@@ -416,7 +425,9 @@ def apply_rewrites_to_frame(
         cooperative_check=cooperative_check,
     )
     if execution["stop_reason"] != RewriteStopReason.FIXED_POINT:
-        raise RewriteLimitError(f"rewrite stopped at {execution['stop_reason'].value} before reaching a fixed point")
+        logger.info("Rewrite stopped at %s; resolving the original representation", execution["stop_reason"].value)
+        result = frame
+        return result
     trace = tuple(rewrite_trace_step(rule_id, input_text, output_text) for rule_id, input_text, output_text in execution["chain"])
     result = query_frame_with_changes(frame, {"resolved_text": execution["final_text"], "rewrite_chain": trace})
     return result

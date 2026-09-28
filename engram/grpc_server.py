@@ -530,7 +530,9 @@ def main(argv: tuple[str, ...] = ()) -> int:
             tls_certificate=certificate,
             tls_private_key=private_key,
         )
-    except EngramCoreError as error:
+    except (EngramCoreError, RuntimeError) as error:
+        # An enabled graph that is unreachable or fails schema preflight
+        # raises RuntimeError at startup; report it like any startup failure.
         LOGGER.error("Unable to initialize Engram gRPC server (%s)", type(error).__name__)
         result = 1
         return result

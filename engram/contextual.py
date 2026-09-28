@@ -337,7 +337,9 @@ def enrich_query_frame(
     current_topic = internal_text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
     identity = frame["identity"]
     operator = identity["operator"]
-    subjects = identity["entities"][:MAX_CONTEXTUAL_SUBJECTS]
+    # The live request keeps every entity it named. Only the compact frame
+    # carried to the next turn is limited to MAX_CONTEXTUAL_SUBJECTS.
+    subjects = identity["entities"]
     relation = identity["relation"]
     qualifiers = identity["qualifiers"]
     expected = frame["expected_object_type"]

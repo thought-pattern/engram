@@ -49,6 +49,7 @@ from engram.resolution import (
     feature_set_to_dict,
     feature_set_to_json,
     feature_set_with_changes,
+    freeze_mapping,
     inheritance_provenance,
     proposition_evidence_record,
     proposition_evidence_record_to_dict,
@@ -644,3 +645,8 @@ def test_resolution_result_answer_and_miss_package_invariants() -> None:
             available_empty_miss,
             {"evidence_package": build_evidence_package((proposition_record(),))},
         )
+
+
+def test_mixed_key_types_are_a_validation_error_not_a_type_error() -> None:
+    with pytest_raises(InvalidRequestError, match="keys must be strings"):
+        freeze_mapping({1: "a", "b": 2}, "required_metadata")

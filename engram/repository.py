@@ -266,6 +266,26 @@ class ArtifactRepository:
         with self.internal_lock:
             yield
 
+    def has_artifact(self, statement_id: str) -> bool:
+        """Return whether an artifact exists, without validating the repository."""
+        with self.internal_lock:
+            result = statement_id in self.internal_state.get("artifacts", {})
+            return result
+
+    def find_artifact(self, statement_id: str) -> dict:
+        """Return one validated artifact, or {} when it does not exist.
+
+        A single lookup validates only that artifact. ``snapshot`` validates
+        every artifact and is too costly to call once per candidate.
+        """
+        with self.internal_lock:
+            artifacts = self.internal_state.get("artifacts", {})
+            if statement_id not in artifacts:
+                result: dict = {}
+                return result
+            result = validate_cached_response_artifact(artifacts[statement_id])
+            return result
+
     def get_artifact(self, statement_id: str) -> dict:
         if not isinstance(statement_id, str) or not statement_id:
             raise InvalidRequestError("repository statement_id must be a non-empty string")

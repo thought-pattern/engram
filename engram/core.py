@@ -5,7 +5,7 @@ from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
 from os import path as os_path
 from pathlib import Path
-from threading import Lock as threading_Lock, RLock as threading_RLock
+from threading import Lock as threading_Lock, RLock as threading_RLock, get_ident as threading_get_ident
 
 from sentence_transformers import SentenceTransformer
 
@@ -61,7 +61,7 @@ from engram.models import (
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.nltk_data import ensure_nltk_data
-from engram.pattern import PatternMatcher
+from engram.pattern import PatternMatcher, normalize_pattern
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
@@ -88,6 +88,47 @@ from engram.text import (
 from engram.utilities import UtilityRegistry
 
 logger = logging_getLogger(__name__)
+
+
+class OwnedRLock:
+    """Re-entrant lock that can tell whether the calling thread holds it.
+
+    The service releases its core-wide lock around graph I/O. It must not do
+    that while the same thread holds an Engram state lock, or a second thread
+    holding the core lock and waiting for that state lock deadlocks with it.
+    """
+
+    def __init__(self) -> None:
+        self.internal_lock = threading_RLock()
+        self.internal_owner = 0
+        self.internal_depth = 0
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        acquired = self.internal_lock.acquire(blocking, timeout)
+        if acquired:
+            self.internal_owner = threading_get_ident()
+            self.internal_depth += 1
+        result = acquired
+        return result
+
+    def release(self) -> None:
+        if self.internal_owner != threading_get_ident():
+            raise RuntimeError("cannot release un-acquired lock")
+        self.internal_depth -= 1
+        if not self.internal_depth:
+            self.internal_owner = 0
+        self.internal_lock.release()
+
+    def held_by_current_thread(self) -> bool:
+        result = self.internal_owner == threading_get_ident()
+        return result
+
+    def __enter__(self) -> bool:
+        result = self.acquire()
+        return result
+
+    def __exit__(self, *exc_info) -> None:
+        self.release()
 
 
 def run_cooperative_check(check=()) -> None:
@@ -176,12 +217,8 @@ def read_seed_file(path: str) -> list:
 
 
 def load_seed_files(paths: list | tuple, duplicate_policy: str = "error") -> list:
-    """Read seed files in listed order and return one concatenated pair list.
-
-    This does not touch an Engram. ``duplicate_policy`` decides a repeated
-    pattern, that, and topic before any statement is stored. ``error`` raises
-    and names both files. ``last`` keeps the later pair. ``first`` keeps the
-    earlier pair. Different patterns are both kept.
+    """
+    Read seed files in listed order and return one concatenated pair list.
     """
     if isinstance(paths, str) or not isinstance(paths, (list, tuple)):
         raise ValueError("seed files must be a list of paths")
@@ -192,10 +229,11 @@ def load_seed_files(paths: list | tuple, duplicate_policy: str = "error") -> lis
     indexes: dict[tuple[str, str, str], int] = {}
     for path in paths:
         for pair in read_seed_file(path):
-            key = (pair["pattern"], pair["that"], pair["topic"])
+            key = (normalize_pattern(pair["pattern"]), normalize_pattern(pair["that"]), normalize_pattern(pair["topic"]))
             if key in origins:
                 if duplicate_policy == "error":
-                    raise ValueError(f"duplicate seed pattern {pair['pattern']!r} in {origins[key]} and {path}")
+                    earlier = pairs[indexes[key]]["pattern"]
+                    raise ValueError(f"duplicate seed pattern {earlier!r} in {origins[key]} and {pair['pattern']!r} in {path}")
                 if duplicate_policy == "first":
                     continue
                 pairs[indexes[key]] = pair
@@ -380,11 +418,13 @@ class Engram:
         # and pattern_to_statement map (mutated on store/evict, read on match),
         # and thereby the shared template processor, whose recursion counters
         # are only touched while the pattern pipeline holds statement_lock.
+        # Template rendering can <learn>, which stores, so the pattern pipeline
+        # takes mutation_lock before statement_lock as well.
         # count_lock guards the top-level metrics counters.
-        self.mutation_lock = threading_RLock()
-        self.statement_lock = threading_RLock()
-        self.keyword_lock = threading_RLock()
-        self.session_lock = threading_RLock()
+        self.mutation_lock = OwnedRLock()
+        self.statement_lock = OwnedRLock()
+        self.keyword_lock = OwnedRLock()
+        self.session_lock = OwnedRLock()
         self.count_lock = threading_Lock()
         self.response_repository = ArtifactRepository()
         self.semantic_retriever = StandaloneSemanticRetriever(self.config.get("semantic") or {})
@@ -721,6 +761,7 @@ class Engram:
             self.config.get("sparse") or {},
             limit=limit,
             max_working_memory_bytes=max_working_memory_bytes,
+            trusted_artifacts=True,
         )
         return result
 
@@ -1220,16 +1261,7 @@ class Engram:
                 if not matched:
                     continue
                 response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = matched
-                selected: dict = {}
-                for statement_value in self.statements:
-                    carries_pattern = (
-                        statement_value["pattern"] == matched_pattern or matched_pattern in statement_value["pattern_aliases"]
-                    )
-                    triple_match = (
-                        carries_pattern and statement_value["topic"] == matched_topic and statement_value["that"] == matched_that
-                    )
-                    if triple_match and (not selected or statement_value["priority"] > selected.get("priority", 0)):
-                        selected = statement_value
+                selected = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                 if not selected:
                     continue
                 discovery = {
@@ -1486,10 +1518,34 @@ class Engram:
         )
         return result
 
+    def holds_state_lock(self) -> bool:
+        """Return whether the calling thread holds any Engram state lock."""
+        result = any(
+            lock.held_by_current_thread()
+            for lock in (self.mutation_lock, self.statement_lock, self.keyword_lock, self.session_lock)
+        )
+        return result
+
+    def _statement_for_match(self, matched_pattern: str, matched_topic: str, matched_that: str) -> dict:
+        """Return the statement carrying a matched (pattern, topic, that), or {}.
+
+        A statement carries a pattern as its own or as an alias. Among
+        duplicates the highest priority wins, ties going to the earliest
+        stored. The caller holds statement_lock.
+        """
+        selected: dict = {}
+        for stmt in self.statements:
+            carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
+            triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
+            if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
+                selected = stmt
+        result = selected
+        return result
+
     def _expand_for_match(self, text: str) -> str:
         """Expand contractions before the graphmaster sees a sentence, that, or topic.
 
-        Hyphen splitting and the first sentence of ``that`` happen inside the
+        Hyphen splitting and the last sentence of ``that`` happen inside the
         matcher. Spell correction stays on the keyword path.
         """
         if not text or not self.config["expand_contractions"]:
@@ -1649,13 +1705,8 @@ class Engram:
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
                 # the earliest stored.
-                with self.statement_lock:
-                    selected: dict = {}
-                    for stmt in self.statements:
-                        carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
-                        triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
-                        if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
-                            selected = stmt
+                with self.mutation_lock, self.statement_lock:
+                    selected = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                     if selected:
                         # Pattern selection is a query and a hit in one step
                         # (there is no later confirmation on this path), so
@@ -1674,6 +1725,13 @@ class Engram:
                             that=that,
                             topic=topic,
                         )
+                        # Output cleanup: repair casing (sentence starts, the
+                        # pronoun I) that lowercase captures splice into
+                        # authored text. Text that rendered exactly as authored
+                        # is kept, so code such as "s[1:4]" or "pop()" survives.
+                        authored = selected.get("template", {}) or selected.get("text", "")
+                        if self.config["polish_responses"] and final_response != authored:
+                            final_response = polish_response(final_response)
                         responses.append(final_response)
                         candidates.append(
                             {
@@ -1726,11 +1784,6 @@ class Engram:
             recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
             if recalled_topic:
                 active_topic = recalled_topic
-
-        # Output cleanup: repair casing (sentence starts, the pronoun I) that
-        # lowercase wildcard captures splice into authored text.
-        if self.config["polish_responses"]:
-            combined_response = polish_response(combined_response)
 
         if session:
             with self.session_lock:
@@ -1811,14 +1864,8 @@ class Engram:
                     matched_topic,
                     matched_that,
                 ) = result
-                with self.statement_lock:
-                    # Same selection rule as pattern_query: highest priority
-                    # among statements sharing the matched (pattern, topic, that).
-                    redirect_stmt: dict = {}
-                    for s in self.statements:
-                        triple_match = s["pattern"] == matched_pattern and s["topic"] == matched_topic and s["that"] == matched_that
-                        if triple_match and (not redirect_stmt or s["priority"] > redirect_stmt.get("priority", 0)):
-                            redirect_stmt = s
+                with self.mutation_lock, self.statement_lock:
+                    redirect_stmt = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                     if redirect_stmt:
                         new_context = template_context(
                             stars=new_captured,
@@ -1930,10 +1977,11 @@ class Engram:
         if not isinstance(source_label, str):
             raise ValueError("source_label must be a string")
 
-        # Check and store under one re-entrant statement lock so concurrent
-        # speakers cannot admit duplicate copies of the same fact.
+        # Check and store under the re-entrant mutation and statement locks so
+        # concurrent speakers cannot admit duplicate copies of the same fact.
+        # store() takes them in this order too.
         subject_pattern = fact_subject_upper(fact)
-        with self.statement_lock:
+        with self.mutation_lock, self.statement_lock:
             for stmt in self.statements:
                 if stmt["pattern"] == subject_pattern:
                     result = False

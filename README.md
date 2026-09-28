@@ -209,14 +209,14 @@ config = engram_config(
 engram = Engram(config=config)
 ```
 
-A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI, MCP server, and gRPC server do when the list is left empty. List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored.
+A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI, MCP server, and gRPC server do when the list is left empty. List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored. Patterns count as repeated when they match the same path, so `HELLO` and `hello!`, or `MIL-STD-498` and `MIL STD 498`, are the same pattern. Set `conversation.duplicate_policy` to `last` or `first` to keep one of them instead.
 
 ```yaml
 conversation:
   bot_name: "ENGRAM"
   seed_files:
     - data/seed.json
-    - data/social/small-talk.json
+    - data/software_development.json
 ```
 
 Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic

@@ -95,6 +95,51 @@ def test_duplicate_pattern_names_both_files_and_stores_nothing(tmp_path):
         Engram(config=engram_config(conversation=conversation_config(seed_files=[first, second])))
 
 
+def test_duplicate_check_compares_normalized_match_paths(tmp_path):
+    for index, (earlier, later) in enumerate(
+        (
+            ({"pattern": "HELLO"}, {"pattern": "hello!"}),
+            ({"pattern": "WHAT IS MIL-STD-498"}, {"pattern": "WHAT IS MIL STD 498"}),
+            ({"pattern": "YES", "that": "DO YOU LIKE IT"}, {"pattern": "yes", "that": "do you like it?"}),
+            ({"pattern": "TELL ME MORE", "topic": "UNIT-TESTING"}, {"pattern": "TELL ME MORE", "topic": "unit testing"}),
+        )
+    ):
+        first = write_seed(tmp_path / f"a{index}.json", [{**earlier, "response": "From the first file."}])
+        second = write_seed(tmp_path / f"b{index}.json", [{**later, "response": "From the second file."}])
+
+        with pytest_raises(ValueError, match="duplicate seed pattern") as caught:
+            load_seed_files([first, second])
+        message = str(caught.value)
+        assert repr(earlier["pattern"]) in message
+        assert repr(later["pattern"]) in message
+        assert first in message
+        assert second in message
+
+
+def test_duplicate_policy_last_replaces_a_normalized_variant(tmp_path):
+    first = write_seed(tmp_path / "a.json", [{"pattern": "HELLO", "response": "Hi from the first file."}])
+    second = write_seed(tmp_path / "b.json", [{"pattern": "hello!", "response": "Hi from the second file."}])
+
+    engram = Engram(
+        config=engram_config(
+            conversation=conversation_config(seed_files=[first, second], duplicate_policy="last"),
+        )
+    )
+
+    assert [statement["pattern"] for statement in engram.statements] == ["hello!"]
+    result = engram.pattern_query("hello")
+    assert result and "second file" in result[2].lower()
+
+
+def test_duplicate_policy_first_ignores_a_normalized_variant(tmp_path):
+    first = write_seed(tmp_path / "a.json", [{"pattern": "HELLO", "response": "Hi from the first file."}])
+    second = write_seed(tmp_path / "b.json", [{"pattern": "hello!", "response": "Hi from the second file."}])
+
+    pairs = load_seed_files([first, second], duplicate_policy="first")
+
+    assert [pair["pattern"] for pair in pairs] == ["HELLO"]
+
+
 def test_relative_seed_path_resolves_from_the_config_directory(tmp_path, monkeypatch):
     project = tmp_path / "project"
     config_seed = project / "data" / "one.json"
@@ -238,6 +283,27 @@ def test_set_file_and_seed_file_match_a_set_member(tmp_path):
     assert "blue" in result[2].lower()
     assert "nice color" in result[2].lower()
     assert not engram.pattern_query("I like purple")
+
+
+def test_set_and_bot_names_with_capitals_or_underscores_match(tmp_path):
+    sets = write_json(tmp_path / "sets.json", {"Warm_Colors": ["red", "orange"]})
+    properties = write_json(tmp_path / "properties.json", {"Home_City": "Kyoto"})
+    seed = write_seed(
+        tmp_path / "seed.json",
+        [
+            {"pattern": "I LIKE {set:Warm_Colors}", "response": "{star1} is a warm color."},
+            {"pattern": "I LIVE IN {bot:Home_City}", "response": "So do I."},
+        ],
+    )
+    engram = Engram(
+        config=engram_config(
+            conversation=conversation_config(set_files=[sets], properties_file=properties, seed_files=[seed]),
+        )
+    )
+
+    assert "warm color" in engram.pattern_query("I like orange")[2]
+    assert engram.pattern_query("I live in Kyoto")[2] == "So do I."
+    assert not engram.pattern_query("I like blue")
 
 
 def test_later_set_file_replaces_the_same_set_name(tmp_path):

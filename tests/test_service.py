@@ -1,7 +1,7 @@
 """Transport-neutral facade tests shared by CLI, MCP, and future adapters."""
 
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event as threading_Event
+from threading import Event as threading_Event, Thread as threading_Thread
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
@@ -111,6 +111,31 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     assert graph["outcome"].value == "MISS"
     assert same_user["outcome"].value == "MISS"
     assert graph_future.done() is True
+
+
+def test_graph_operation_keeps_the_core_lock_inside_an_engram_state_lock() -> None:
+    core = EngramCore(Engram())
+    acquired_elsewhere: list[bool] = []
+
+    def try_core_lock() -> None:
+        acquired = core.lock.acquire(timeout=0.2)
+        if acquired:
+            core.lock.release()
+        acquired_elsewhere.append(acquired)
+
+    # A template graph query renders under statement_lock. Releasing the core
+    # lock there would let AddFact take it and then wait on statement_lock.
+    with core.lock, core.engram.statement_lock, core.graph_operation():
+        worker = threading_Thread(target=try_core_lock)
+        worker.start()
+        worker.join(timeout=5)
+    with core.lock, core.graph_operation():
+        worker = threading_Thread(target=try_core_lock)
+        worker.start()
+        worker.join(timeout=5)
+
+    assert acquired_elsewhere == [False, True]
+    core.close()
 
 
 def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:

@@ -798,8 +798,13 @@ def search_sparse_artifacts(
     *,
     limit: int,
     max_working_memory_bytes: int,
+    trusted_artifacts: bool = False,
 ) -> dict:
-    """Build request-local sparse structures and discard them after search."""
+    """Build request-local sparse structures and discard them after search.
+
+    ``trusted_artifacts`` skips per-artifact validation for artifacts that a
+    repository snapshot has just validated.
+    """
     validated_settings = internal_validated_settings(settings)
     if not validated_settings.get("enabled", False):
         result = {
@@ -849,6 +854,7 @@ def search_sparse_artifacts(
         scope=validated_scope,
         settings=validated_settings,
         max_working_memory_bytes=max_working_memory_bytes,
+        trusted_artifacts=trusted_artifacts,
     )
     construction_peak_memory = construction.get("working_memory_bytes", 0)
     if not construction.get("complete", False):

@@ -10,6 +10,7 @@ from threading import Thread as threading_Thread
 from engram import pipeline, sessions
 from engram.constants import Tier
 from engram.core import Engram
+from engram.nlp import extract_fact
 
 THREADS = 4
 ITERATIONS = 25
@@ -107,6 +108,53 @@ def test_concurrent_user_chat_contexts_are_isolated() -> None:
         history = engram.sessions[f"user-{n}"]["input_history"]
         assert history
         assert all(entry.startswith(f"hello user-{n} item ") for entry in history)
+
+
+def assert_statement_lock_free_while_mutation_lock_is_held(engram: Engram, target) -> None:
+    """Run ``target`` while this thread holds mutation_lock, as a store in progress would.
+
+    A worker that follows the lock order waits for mutation_lock without
+    holding statement_lock, so this thread can still take statement_lock.
+    A worker that takes statement_lock first would deadlock with a real store.
+    """
+    worker = threading_Thread(target=target)
+    with engram.mutation_lock:
+        worker.start()
+        worker.join(timeout=0.5)
+        acquired = engram.statement_lock.acquire(timeout=2)
+        if acquired:
+            engram.statement_lock.release()
+    worker.join(timeout=10)
+
+    assert acquired
+    assert not worker.is_alive()
+
+
+def test_learning_a_fact_takes_the_mutation_lock_before_the_statement_lock() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    fact = extract_fact("Sushi is good.")
+    assert fact
+
+    assert_statement_lock_free_while_mutation_lock_is_held(engram, lambda: engram.learn_fact(fact))
+    assert engram.pattern_query("What is good?")[2] == "Sushi is good."
+
+
+def test_learn_template_takes_the_mutation_lock_before_the_statement_lock() -> None:
+    engram = Engram()
+    engram.store(
+        "",
+        pattern="REMEMBER * MEANS *",
+        template={
+            "sequence": [
+                {"learn": {"pattern": "{upper:{star1}}", "template": {"text": "{star2}"}}},
+                {"text": "Noted."},
+            ]
+        },
+    )
+
+    assert_statement_lock_free_while_mutation_lock_is_held(engram, lambda: engram.pattern_query("remember zorp means hello"))
+    assert engram.pattern_query("zorp")[2].lower() == "hello"
 
 
 def test_concurrent_speakers_store_one_copy_of_the_same_fact() -> None:

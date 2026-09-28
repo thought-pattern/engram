@@ -71,14 +71,41 @@ def break_intra_word_marks(text: str) -> str:
     return result
 
 
-def _first_sentence(text: str) -> str:
-    """Return the first sentence of a previous reply, or the whole text."""
+def _is_table_name(name: str) -> bool:
+    """Return whether a {set:...} or {bot:...} name is word characters, as normalize_pattern keeps it."""
+    result = bool(name) and name.replace("_", "").isalnum()
+    return result
+
+
+def _named_value(values: dict, name: str, default):
+    """Look up a set or bot property by its pattern name.
+
+    Pattern names are lowercased by ``normalize_pattern``, while set and
+    properties files keep the case they were written in.
+    """
+    if name in values:
+        result = values[name]
+        return result
+    for key, value in values.items():
+        if isinstance(key, str) and key.lower() == name:
+            result = value
+            return result
+    result = default
+    return result
+
+
+def _last_sentence(text: str) -> str:
+    """Return the last sentence of a previous reply, or the whole text.
+
+    As in AIML, ``that`` is the last sentence the bot said, which is where a
+    joined multi-sentence reply ends with its question.
+    """
     if not text or not text.strip():
         result = ""
         return result
     sentences = split_sentences(text)
     if sentences:
-        result = sentences[0]
+        result = sentences[-1]
         return result
     result = text.strip()
     return result
@@ -493,7 +520,7 @@ class PatternMatcher:
                 self._remember_flexible(node.lemma_dollar, node.stem_dollar, key, child)
             result = child
             return result
-        if word.startswith("{bot:") and word.endswith("}") and word[5:-1].isalnum():
+        if word.startswith("{bot:") and word.endswith("}") and _is_table_name(word[5:-1]):
             name = word[5:-1]
             child = node.bots.get(name)
             if child is None:
@@ -501,7 +528,7 @@ class PatternMatcher:
                 node.bots[name] = child
             result = child
             return result
-        if word.startswith("{set:") and word.endswith("}") and word[5:-1].isalnum():
+        if word.startswith("{set:") and word.endswith("}") and _is_table_name(word[5:-1]):
             name = word[5:-1]
             child = node.sets.get(name)
             if child is None:
@@ -578,7 +605,7 @@ class PatternMatcher:
     ) -> tuple:
         """Find the graphmaster path for input with that and topic context.
 
-        ``that`` is the previous reply. Only its first sentence is matched,
+        ``that`` is the previous reply. Only its last sentence is matched,
         and it is prepared with the same hyphen and punctuation rules as the
         input. Topic categories are tried before the empty topic.
 
@@ -595,7 +622,7 @@ class PatternMatcher:
             result = ()
             return result
 
-        that_text = _first_sentence(that)
+        that_text = _last_sentence(that)
         that_words = prepare_pattern_text(that_text).split() if that_text else []
         topic_words = prepare_pattern_text(topic).split() if topic else []
         result = self._match_words(words, that_words, topic_words, "exact")
@@ -738,7 +765,7 @@ class PatternMatcher:
                 return found
 
         for name, child in node.bots.items():
-            expected = self._bound_words(self.internal_bot_properties.get(name, ""), mode)
+            expected = self._bound_words(_named_value(self.internal_bot_properties, name, ""), mode)
             end = self._consume_fixed(words, pos, expected)
             if end < 0:
                 continue
@@ -749,7 +776,7 @@ class PatternMatcher:
 
         for name, child in node.sets.items():
             members = []
-            for raw in self.internal_sets.get(name, ()) or ():
+            for raw in _named_value(self.internal_sets, name, ()) or ():
                 member_words = self._bound_words(raw, mode)
                 if member_words:
                     members.append(member_words)

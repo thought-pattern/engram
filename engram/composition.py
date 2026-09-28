@@ -1,6 +1,6 @@
 """Closed contracts and bounded execution for one- and two-hop graph composition."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from re import compile as re_compile
@@ -577,10 +577,16 @@ def typed_order_value(label: str, object_type: ExpectedObjectType) -> float:
             raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value)
         return value
     if object_type == ExpectedObjectType.DATE:
+        # A date without an offset is UTC, as elsewhere in Engram. Reading it
+        # as host local time made the order host-dependent, and before 1970
+        # it raised OSError on Windows.
         try:
-            result = datetime.fromisoformat(label.replace("Z", "+00:00")).timestamp()
+            parsed = datetime.fromisoformat(label.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            result = parsed.timestamp()
             return result
-        except ValueError as error:
+        except (ValueError, OverflowError) as error:
             raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value) from error
     raise InvalidRequestError(CompositionReason.TYPE_UNAVAILABLE.value)
 

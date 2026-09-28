@@ -525,17 +525,26 @@ class EngramCore:
 
     @contextlib_contextmanager
     def graph_operation(self):
-        """Track optional graph I/O and release an owned core-wide lock."""
+        """Track optional graph I/O and release an owned core-wide lock.
+
+        The core lock stays held when this thread is inside an Engram state
+        lock, such as a template graph query rendered under statement_lock.
+        Releasing it there would let another request take the core lock and
+        then wait on that state lock while this thread waits on the core lock.
+        """
         with self.resolution_condition:
             self.require_running()
             self.active_graph_operations += 1
         released = False
         try:
-            try:
-                self.lock.release()
-                released = True
-            except RuntimeError:
-                LOGGER.debug("graph operation began without an owned core lock")
+            if self.engram.holds_state_lock():
+                LOGGER.debug("graph operation keeps the core lock inside an Engram state lock")
+            else:
+                try:
+                    self.lock.release()
+                    released = True
+                except RuntimeError:
+                    LOGGER.debug("graph operation began without an owned core lock")
             yield
         finally:
             if released:
@@ -1565,7 +1574,13 @@ class EngramCore:
             current_artifact: dict = {}
             if outcome == "accepted":
                 current_artifact = self.engram.response_repository.get_artifact(statement_id)
-                if current_artifact.get("response", "") != candidate_responses.get(statement_id, ""):
+                # The same text survives a retire, supersede, or invalidation,
+                # so an accepted verdict also requires the artifact to be ACTIVE.
+                # Generation is not compared: proposal accounting advances it.
+                if (
+                    current_artifact.get("response", "") != candidate_responses.get(statement_id, "")
+                    or getattr(current_artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
+                ):
                     raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
             observations = record["candidacy_observations"]
             if not isinstance(observations, tuple):

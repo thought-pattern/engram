@@ -185,6 +185,19 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     }
 
 
+def test_live_request_keeps_every_entity_while_the_carried_frame_is_bounded() -> None:
+    core = EngramCore()
+    request = "Compare Ada Lovelace, Charles Babbage, Alan Turing, Grace Hopper, Eve Adams, and the Paris Summit."
+
+    core.resolve_request(request, "many-entities", user_id="Sarah", configured_resolvers=("exact",))
+
+    live = core.resolution_requests["many-entities"]["frame"]["identity"]["entities"]
+    carried = core.engram.sessions["Sarah"]["previous_query_frame"]["subjects"]
+    assert [entity["surface"] for entity in live][-2:] == ["Eve Adams", "Paris Summit"]
+    assert len(live) == 6
+    assert len(carried) == 4
+
+
 def test_self_contained_request_and_other_user_do_not_receive_prior_context() -> None:
     core = EngramCore()
     core.resolve_request(

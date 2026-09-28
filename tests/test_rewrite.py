@@ -10,7 +10,7 @@ from engram.artifacts import LifecycleState, artifact_provenance, artifact_stati
 from engram.config import engram_config
 from engram.constants import CostClass, QueryOperator, Tier
 from engram.core import Engram
-from engram.errors import InvalidRequestError, RewriteLimitError
+from engram.errors import InvalidRequestError
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution import (
@@ -189,11 +189,16 @@ def test_cooperative_cancellation_propagates_without_partial_frame() -> None:
         engine.rewrite("could you tell me where atlas runs?", operator=QueryOperator.WHERE, cooperative_check=cancel)
 
 
-def test_frame_integration_rejects_partial_resource_limited_chain() -> None:
+def test_frame_integration_discards_a_partial_resource_limited_chain() -> None:
     frame = QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build("alpha", diagnostic_seed="bounded")
     engine = RewriteEngine((rewrite_rule(internal_rule("first", "alpha", "bravo")),), max_depth=1)
-    with pytest_raises(RewriteLimitError, match="depth_limit"):
-        apply_rewrites_to_frame(frame, engine)
+
+    assert engine.rewrite("alpha")["stop_reason"] == RewriteStopReason.DEPTH_LIMIT
+    result = apply_rewrites_to_frame(frame, engine)
+
+    assert result == frame
+    assert result["resolved_text"] == "alpha"
+    assert result["rewrite_chain"] == ()
 
 
 def test_frame_trace_preserves_original_identity_and_round_trips() -> None:

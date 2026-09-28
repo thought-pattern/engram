@@ -579,6 +579,21 @@ def test_proposal_path_uses_shared_feedback_owner() -> None:
     assert inspection["statements"][0]["statistics"]["rejected_context"] == 1
 
 
+def test_accepting_a_candidate_retired_after_the_proposal_is_rejected_as_stale() -> None:
+    core = EngramCore(clock=lambda: NOW)
+    learned = core.learn_response("What is cached?", "A regulated answer.", "learn-before-retired-accept", namespace="tenant-a")
+    statement_id = learned["statement_id"]
+    proposal = core.propose("What is cached?", "proposal-before-retired-accept", namespace="tenant-a")
+    core.retire_response(statement_id, "support became stale", "retire-before-accept")
+
+    with pytest_raises(ConflictError, match="no longer current"):
+        core.resolve(proposal["proposal_id"], "accepted", statement_id, "looked right")
+
+    artifact = core.engram.response_repository.get_artifact(statement_id)
+    assert artifact["lifecycle"] == LifecycleState.RETIRED
+    assert artifact["statistics"]["hit_count"] == 0
+
+
 def test_stale_resolution_leaves_dynamic_response_for_explicit_retirement() -> None:
     core = EngramCore(clock=lambda: NOW)
     learned = core.learn_response(

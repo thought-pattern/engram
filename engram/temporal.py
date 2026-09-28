@@ -17,7 +17,8 @@ from engram.errors import InvalidRequestError
 DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
 BETWEEN_RE = re_compile(rf"\bbetween\s+({DATE_TOKEN})\s+(?:and|to)\s+({DATE_TOKEN})\b", IGNORECASE)
 AS_OF_RE = re_compile(rf"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at))\s+({DATE_TOKEN})\b", IGNORECASE)
-IN_YEAR_RE = re_compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b", IGNORECASE)
+# A year followed by -MM or /MM is part of a full date, not the whole year.
+IN_YEAR_RE = re_compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b(?![-/]\d)", IGNORECASE)
 BEFORE_RE = re_compile(rf"\bbefore\s+({DATE_TOKEN})\b", IGNORECASE)
 AFTER_RE = re_compile(rf"\bafter\s+({DATE_TOKEN})\b", IGNORECASE)
 LATEST_RE = re_compile(r"\b(?:latest|most\s+recent)\b", IGNORECASE)
@@ -25,6 +26,7 @@ CURRENT_RE = re_compile(r"\b(?:current|currently|presently|at\s+present)\b", IGN
 NOW_RE = re_compile(r"\b(?:now|right\s+now)\b", IGNORECASE)
 BARE_YEAR_RE = re_compile(r"^\s*(\d{4})\s*[?!.]?\s*$")
 SYSTEM_AXIS_RE = re_compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded)|recorded)\b", IGNORECASE)
+WHITESPACE_CONTROL_RE = re_compile(r"[\t\n\r\v\f]")
 UNRESOLVED_RE = re_compile(
     r"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at)|before|after|between|during|latest|most\s+recent|"
     r"current|currently|presently|right\s+now|now)\b[^?.,;]*",
@@ -216,13 +218,30 @@ def period(value: str) -> tuple[datetime, datetime]:
     return result
 
 
+def bounded_source(text: str) -> str:
+    """Keep an unresolved expression within the source_text limit on a character boundary."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_TEMPORAL_SOURCE_BYTES:
+        return text
+    result = encoded[:MAX_TEMPORAL_SOURCE_BYTES].decode("utf-8", errors="ignore").rstrip()
+    return result
+
+
 def internal_unresolved(operator: TemporalQueryOperator, axis: TemporalAxis, source: str) -> dict:
-    result = temporal_query(operator=operator, axis=axis, source_text=source, confidence=0.0, resolved=False)
+    # An unresolved expression runs to the next clause mark and can be long.
+    # It is kept for diagnostics, so it is shortened rather than rejected.
+    result = temporal_query(operator=operator, axis=axis, source_text=bounded_source(source), confidence=0.0, resolved=False)
     return result
 
 
 def parse_temporal_query(request: object) -> dict:
-    """Parse only explicit supported dates and years; retain uncertain expressions."""
+    """Parse only explicit supported dates and years; retain uncertain expressions.
+
+    Tabs and line breaks are whitespace to the request layers above, so they
+    are folded to spaces here. Other control characters are still rejected.
+    """
+    if isinstance(request, str):
+        request = WHITESPACE_CONTROL_RE.sub(" ", request)
     text = internal_text(request, "temporal request", 4_096, allow_empty=False)
     axis = TemporalAxis.SYSTEM_TIME if SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
     candidates: list[tuple[TemporalQueryOperator, re_Match[str]]] = []

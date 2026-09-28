@@ -15,6 +15,7 @@ from engram.composition import (
     linear_composition_plan,
     phrase_composition_result,
     resolve_composition_predicates,
+    typed_order_value,
 )
 from engram.constants import (
     CanonicalResolutionStatus,
@@ -730,3 +731,12 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     ]
     assert core_result["evidence_package"]["wire_version"] == 2
     assert len(core_result["evidence_package"]["records"][0]["path"]) == 2
+
+
+def test_date_order_values_read_a_missing_offset_as_utc() -> None:
+    before_epoch = typed_order_value("1960-01-01", ExpectedObjectType.DATE)
+
+    assert before_epoch < 0
+    assert typed_order_value("2024-05-01", ExpectedObjectType.DATE) == typed_order_value(
+        "2024-05-01T00:00:00Z", ExpectedObjectType.DATE
+    )
