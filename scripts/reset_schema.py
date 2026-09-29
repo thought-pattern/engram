@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve or apply an exact standalone Engram catalog reset."""
+"""Resolve or apply an exact reset of Engram's schema catalog."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from pathlib import Path
@@ -9,16 +9,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys_path:
     sys_path.insert(0, str(REPO_ROOT))
 
-SCHEMA_FILE = REPO_ROOT / "schema.cypher"
-
-
 from engram.config import load_config
+from engram.constants import GRAPH_ADMIN_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
+from engram.schema_catalog import packaged_schema
 from engram.schema_reset import apply_schema_reset, resolve_schema_reset
+
+SCHEMA_FILE = packaged_schema()
 
 
 def connection_settings(config_path: str, host: str, port: int) -> dict:
-    """Resolve standalone administrative settings."""
+    """Resolve administrative connection settings."""
 
     configured = load_config(config_path).get("graph", {}) or {}
     result = {
@@ -32,7 +33,7 @@ def connection_settings(config_path: str, host: str, port: int) -> dict:
 
 def main() -> None:
     """Dry-run by default; mutate only with explicit --apply."""
-    parser = argparse_ArgumentParser(description="Reset standalone Engram schema")
+    parser = argparse_ArgumentParser(description="Reset the Engram schema on an empty graph")
     parser.add_argument("--apply", action="store_true", help="drop resolved definitions")
     parser.add_argument("--host", default="", help="override Memgraph host")
     parser.add_argument("--port", type=int, default=0, help="override Memgraph port")
@@ -45,10 +46,10 @@ def main() -> None:
     arguments = parser.parse_args()
 
     settings = connection_settings(arguments.config, arguments.host, arguments.port)
-    connection = MemGraphConnection(**settings)
+    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     try:
         if not connection.connect():
-            raise RuntimeError(f"Memgraph is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
+            raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
         if arguments.apply:
             report = apply_schema_reset(connection, SCHEMA_FILE)
         else:

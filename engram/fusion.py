@@ -1,48 +1,31 @@
 """Versioned candidate normalization, fusion, eligibility, and ambiguity policy."""
 
 from hashlib import sha256 as hashlib_sha256
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from json import dumps as json_dumps
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
 from engram.artifacts import LifecycleState
 from engram.constants import (
     CANDIDATE_ELIGIBILITY_FIELDS,
-    CANDIDATE_ELIGIBILITY_SCHEMA_VERSION,
     DEFAULT_FUSION_WEIGHTS,
-    FEATURE_DEFINITION_FIELDS,
-    FUSED_CANDIDATE_FIELDS,
-    FUSED_CANDIDATE_SCHEMA_VERSION,
     FUSION_AMBIGUITY_MARGIN,
     FUSION_ANSWER_THRESHOLD,
     FUSION_CONSERVATIVE_MINIMUM,
-    FUSION_CONTRIBUTION_FIELDS,
-    FUSION_CONTRIBUTION_SCHEMA_VERSION,
-    FUSION_DECISION_FIELDS,
-    FUSION_DECISION_SCHEMA_VERSION,
     FUSION_EVIDENCE_THRESHOLD,
-    FUSION_FEATURE_DEFINITION_SPECS,
-    FUSION_FORMULA_VERSION,
     FUSION_MINIMUM_INDEPENDENT_SOURCES,
     FUSION_POLICY_FIELDS,
-    FUSION_POLICY_SCHEMA_VERSION,
-    FUSION_POLICY_VERSION,
     FUSION_REQUIRE_SUPPORT_FOR_NON_EXACT,
     FUSION_SOURCE_FAMILY,
     FUSION_SOURCE_ORDER,
     MAX_FUSION_CONTRIBUTIONS,
     MAX_FUSION_INDEPENDENT_SOURCES,
-    MAX_FUSION_POLICY_VERSION_BYTES,
-    MAX_FUSION_REASON_CODES,
     MAX_FUSION_REPORT_BYTES,
     MAX_FUSION_REPORT_CANDIDATES,
     MAX_FUSION_REPORT_CONTRIBUTIONS,
     MIN_FUSION_INDEPENDENT_SOURCES,
-    NORMALIZED_FEATURE_SCHEMA_VERSION,
-    NORMALIZED_FEATURE_SET_FIELDS,
-    UTILITY_CONTRACT_VERSION,
-    UTILITY_RESOLVER_VERSION,
+    UTILITY_RESOLVER_PRODUCER,
     FusionFeature,
-    FusionFeatureRole,
     FusionPolicyReason,
     GraphCompositionOperator,
     PredicateCardinality,
@@ -60,11 +43,7 @@ from engram.resolution import (
     EvidenceKind,
     ExpectedObjectType,
     ResolutionOutcome,
-    candidate_from_dict,
-    candidate_to_dict,
     empty_candidate,
-    evidence_reference_from_dict,
-    evidence_reference_to_dict,
     evidence_reference_to_json,
     feature_set,
     trusted_candidate,
@@ -76,95 +55,12 @@ from engram.resolution import (
     validate_evidence_reference,
     validate_query_frame,
 )
-from engram.utilities import UTILITY_PLUGIN_VERSION, evaluate_named_utility
+from engram.utilities import evaluate_named_utility
+from engram.validation import require_bool
+
+logger = logging_getLogger(__name__)
 
 EMPTY_FEATURE_VALUES = {}
-
-
-def feature_definition(
-    feature: object,
-    minimum: object,
-    maximum: object,
-    higher_is_better: object,
-    meaning: object,
-    unavailable_meaning: object,
-    producer: object,
-    owner_section: object,
-    trust_boundary: object,
-    raw_range: object,
-    combination_rule: object,
-    role: object,
-) -> dict:
-    """Build one documentation-bearing normalized policy input definition."""
-    if not isinstance(feature, FusionFeature):
-        raise InvalidRequestError("feature definition feature must be a FusionFeature")
-    if not isinstance(role, FusionFeatureRole):
-        raise InvalidRequestError("feature definition role must be a FusionFeatureRole")
-    if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) or not math_isfinite(float(minimum)):
-        raise InvalidRequestError("feature definition minimum must be a finite number")
-    if isinstance(maximum, bool) or not isinstance(maximum, (int, float)) or not math_isfinite(float(maximum)):
-        raise InvalidRequestError("feature definition maximum must be a finite number")
-    validated_minimum = float(minimum)
-    validated_maximum = float(maximum)
-    if not 0.0 <= validated_minimum <= 1.0 or not 0.0 <= validated_maximum <= 1.0:
-        raise InvalidRequestError("feature definition range must be bounded from zero through one")
-    if validated_minimum > validated_maximum:
-        raise InvalidRequestError("feature definition range is invalid")
-    if not isinstance(higher_is_better, bool):
-        raise InvalidRequestError("feature definition direction must be a boolean")
-    text_values = (meaning, unavailable_meaning, producer, owner_section, trust_boundary, raw_range, combination_rule)
-    if not all(isinstance(value, str) and value for value in text_values):
-        raise InvalidRequestError("feature definition text must be non-empty")
-    normalized_meaning = str(meaning)
-    normalized_unavailable_meaning = str(unavailable_meaning)
-    normalized_producer = str(producer)
-    normalized_owner_section = str(owner_section)
-    normalized_trust_boundary = str(trust_boundary)
-    normalized_raw_range = str(raw_range)
-    normalized_combination_rule = str(combination_rule)
-    result: dict = {
-        "feature": feature,
-        "minimum": validated_minimum,
-        "maximum": validated_maximum,
-        "higher_is_better": higher_is_better,
-        "meaning": normalized_meaning,
-        "unavailable_meaning": normalized_unavailable_meaning,
-        "producer": normalized_producer,
-        "owner_section": normalized_owner_section,
-        "trust_boundary": normalized_trust_boundary,
-        "raw_range": normalized_raw_range,
-        "combination_rule": normalized_combination_rule,
-        "role": role,
-    }
-    return result
-
-
-def validate_feature_definition(value: object) -> dict:
-    data = exact_mapping(value, "FeatureDefinition", FEATURE_DEFINITION_FIELDS)
-    result = feature_definition(
-        data["feature"],
-        data["minimum"],
-        data["maximum"],
-        data["higher_is_better"],
-        data["meaning"],
-        data["unavailable_meaning"],
-        data["producer"],
-        data["owner_section"],
-        data["trust_boundary"],
-        data["raw_range"],
-        data["combination_rule"],
-        data["role"],
-    )
-    return result
-
-
-def feature_definitions() -> dict[FusionFeature, dict]:
-    """Build an isolated validated view of the centralized feature vocabulary."""
-
-    result = {}
-    for feature, specification in FUSION_FEATURE_DEFINITION_SPECS.items():
-        result[feature] = feature_definition(feature, *specification)
-    return result
 
 
 def bounded_unit(value: object) -> float:
@@ -188,59 +84,10 @@ def json_text(value: dict) -> str:
     return result
 
 
-def load_mapping(value: str, name: str) -> dict:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    try:
-        decoded = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError(f"{name} must be valid JSON") from error
-    if not isinstance(decoded, dict):
-        raise InvalidRequestError(f"{name} must contain an object")
-    return decoded
-
-
 def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
     if not isinstance(value, dict) or set(value) != fields or not all(isinstance(key, str) for key in value):
         raise InvalidRequestError(f"{name} has invalid fields")
     return value
-
-
-def enum_feature_mapping(value: object, name: str, *, complete: bool) -> dict[FusionFeature, float]:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        raise InvalidRequestError(f"{name} must contain an object")
-    expected = {feature.value for feature in FusionFeature}
-    if complete and set(value) != expected:
-        raise InvalidRequestError(f"{name} must contain every canonical feature")
-    if not complete and not set(value).issubset(expected):
-        raise InvalidRequestError(f"{name} contains an unsupported feature")
-    try:
-        result = {FusionFeature(key): bounded_unit(item) for key, item in value.items()}
-        return result
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} contains an unsupported feature") from error
-
-
-def feature_tuple(value: object, name: str) -> tuple[FusionFeature, ...]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise InvalidRequestError(f"{name} must contain a list of feature names")
-    try:
-        result = tuple(FusionFeature(item) for item in value)
-        return result
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} contains an unsupported feature") from error
-
-
-def weighted_feature_mapping(value: object, name: str) -> dict[FusionFeature, float]:
-    if not isinstance(value, dict) or set(value) != {feature.value for feature in FusionFeature}:
-        raise InvalidRequestError(f"{name} must contain every canonical feature")
-    weighted: dict[FusionFeature, float] = {}
-    for feature in FusionFeature:
-        item = value[feature.value]
-        if isinstance(item, bool) or not isinstance(item, (int, float)) or not math_isfinite(float(item)) or item < 0:
-            raise InvalidRequestError(f"{name} values must be finite nonnegative numbers")
-        weighted[feature] = float(item)
-    return weighted
 
 
 def contains_none(value: object) -> bool:
@@ -263,59 +110,10 @@ def internal_integer(value: object, name: str) -> int:
     return value
 
 
-def internal_text(value: object, name: str) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    return value
-
-
-def internal_boolean(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
-
-
 def internal_number(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math_isfinite(float(value)):
         raise InvalidRequestError(f"{name} must be a finite number")
     result = float(value)
-    return result
-
-
-def normalized_feature_set(
-    values: object,
-    available: object,
-    schema_version: object = NORMALIZED_FEATURE_SCHEMA_VERSION,
-) -> dict:
-    """Build a concrete-zero feature vector with explicit availability."""
-    version = internal_integer(schema_version, "NormalizedFeatureSet schema_version")
-    if version != NORMALIZED_FEATURE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported normalized feature schema_version: {version}")
-    if not isinstance(values, dict) or set(values) != set(FusionFeature):
-        raise InvalidRequestError("normalized features must contain every canonical feature")
-    normalized = {feature: bounded_unit(values[feature]) for feature in FusionFeature}
-    if not isinstance(available, tuple) or not all(isinstance(value, FusionFeature) for value in available):
-        raise InvalidRequestError("normalized feature availability must be a tuple of FusionFeature values")
-    ordered = tuple(feature for feature in FusionFeature if feature in set(available))
-    if ordered != available:
-        raise InvalidRequestError("normalized feature availability must be unique and canonical-order sorted")
-    result: dict = {
-        "values": dict(normalized),
-        "available": ordered,
-        "schema_version": version,
-    }
-    return result
-
-
-def empty_normalized_feature_set() -> dict:
-    values = dict.fromkeys(FusionFeature, 0.0)
-    result = normalized_feature_set(values, ())
-    return result
-
-
-def validate_normalized_feature_set(value: object) -> dict:
-    data = exact_mapping(value, "NormalizedFeatureSet", NORMALIZED_FEATURE_SET_FIELDS)
-    result = normalized_feature_set(data["values"], data["available"], data["schema_version"])
     return result
 
 
@@ -327,51 +125,20 @@ def trusted_normalized_feature_set(
     result: dict = {
         "values": {feature: values.get(feature, 0.0) for feature in FusionFeature},
         "available": available,
-        "schema_version": NORMALIZED_FEATURE_SCHEMA_VERSION,
     }
-    return result
-
-
-def normalized_feature_set_to_dict(value: object) -> dict:
-    current = validate_normalized_feature_set(value)
-    result = trusted_normalized_feature_set_to_dict(current)
     return result
 
 
 def trusted_normalized_feature_set_to_dict(current: dict) -> dict:
     """Serialize an engine-owned normalized feature set."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "values": {feature.value: current.get("values", {})[feature] for feature in FusionFeature},
         "available": [feature.value for feature in current.get("available", ())],
     }
     return result
 
 
-def normalized_feature_set_to_json(value: object) -> str:
-    data = normalized_feature_set_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def normalized_feature_set_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "NormalizedFeatureSet", NORMALIZED_FEATURE_SET_FIELDS)
-    schema_version = internal_integer(data["schema_version"], "NormalizedFeatureSet schema_version")
-    values = enum_feature_mapping(data["values"], "NormalizedFeatureSet values", complete=True)
-    available = feature_tuple(data["available"], "NormalizedFeatureSet available")
-    result = normalized_feature_set(values, available, schema_version)
-    return result
-
-
-def normalized_feature_set_from_json(value: str) -> dict:
-    data = load_mapping(value, "NormalizedFeatureSet JSON")
-    result = normalized_feature_set_from_dict(data)
-    return result
-
-
 def fusion_policy(
-    policy_version: object = FUSION_POLICY_VERSION,
-    formula_version: object = FUSION_FORMULA_VERSION,
     weights: object = DEFAULT_FUSION_WEIGHTS,
     answer_threshold: object = FUSION_ANSWER_THRESHOLD,
     evidence_threshold: object = FUSION_EVIDENCE_THRESHOLD,
@@ -379,17 +146,8 @@ def fusion_policy(
     minimum_independent_sources: object = FUSION_MINIMUM_INDEPENDENT_SOURCES,
     require_support_for_non_exact: object = FUSION_REQUIRE_SUPPORT_FOR_NON_EXACT,
     max_report_candidates: object = MAX_FUSION_REPORT_CANDIDATES,
-    schema_version: object = FUSION_POLICY_SCHEMA_VERSION,
 ) -> dict:
     """Build the configurable first-generation linear fusion policy."""
-    version = internal_integer(schema_version, "FusionPolicy schema_version")
-    if version != FUSION_POLICY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported fusion policy schema_version: {version}")
-    if not isinstance(policy_version, str) or not policy_version or len(policy_version) > MAX_FUSION_POLICY_VERSION_BYTES:
-        raise InvalidRequestError("fusion policy_version must be a bounded non-empty string")
-    formula = internal_integer(formula_version, "FusionPolicy formula_version")
-    if formula != FUSION_FORMULA_VERSION:
-        raise InvalidRequestError("unsupported fusion formula_version")
     if not isinstance(weights, dict) or set(weights) != set(FusionFeature):
         raise InvalidRequestError("fusion weights must contain every canonical feature")
     normalized_weights = {}
@@ -412,13 +170,11 @@ def fusion_policy(
         raise InvalidRequestError(
             f"minimum_independent_sources must be from {MIN_FUSION_INDEPENDENT_SOURCES} through {MAX_FUSION_INDEPENDENT_SOURCES}"
         )
-    support_required = internal_boolean(require_support_for_non_exact, "require_support_for_non_exact")
+    support_required = require_bool(require_support_for_non_exact, "require_support_for_non_exact")
     report_candidates = internal_integer(max_report_candidates, "max_report_candidates")
     if not 1 <= report_candidates <= MAX_FUSION_REPORT_CANDIDATES:
         raise InvalidRequestError(f"max_report_candidates must be from 1 through {MAX_FUSION_REPORT_CANDIDATES}")
     result: dict = {
-        "policy_version": policy_version,
-        "formula_version": formula,
         "weights": dict(normalized_weights),
         "answer_threshold": answer,
         "evidence_threshold": evidence,
@@ -426,7 +182,6 @@ def fusion_policy(
         "minimum_independent_sources": independent_sources,
         "require_support_for_non_exact": support_required,
         "max_report_candidates": report_candidates,
-        "schema_version": version,
     }
     return result
 
@@ -434,8 +189,6 @@ def fusion_policy(
 def validate_fusion_policy(value: object) -> dict:
     data = exact_mapping(value, "FusionPolicy", FUSION_POLICY_FIELDS)
     result = fusion_policy(
-        data["policy_version"],
-        data["formula_version"],
         data["weights"],
         data["answer_threshold"],
         data["evidence_threshold"],
@@ -443,27 +196,13 @@ def validate_fusion_policy(value: object) -> dict:
         data["minimum_independent_sources"],
         data["require_support_for_non_exact"],
         data["max_report_candidates"],
-        data["schema_version"],
     )
-    return result
-
-
-def fusion_policy_with_changes(value: object, changes: object) -> dict:
-    current = validate_fusion_policy(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(FUSION_POLICY_FIELDS):
-        raise InvalidRequestError("fusion policy changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_fusion_policy(updated)
     return result
 
 
 def fusion_policy_to_dict(value: object) -> dict:
     current = validate_fusion_policy(value)
     result = {
-        "schema_version": current["schema_version"],
-        "policy_version": current["policy_version"],
-        "formula_version": current["formula_version"],
         "weights": {feature.value: current["weights"][feature] for feature in FusionFeature},
         "answer_threshold": current["answer_threshold"],
         "evidence_threshold": current["evidence_threshold"],
@@ -472,12 +211,6 @@ def fusion_policy_to_dict(value: object) -> dict:
         "require_support_for_non_exact": current["require_support_for_non_exact"],
         "max_report_candidates": current["max_report_candidates"],
     }
-    return result
-
-
-def fusion_policy_to_json(value: object) -> str:
-    data = fusion_policy_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -490,8 +223,6 @@ def fusion_policy_from_dict(value: object) -> dict:
         feature: internal_number(raw_weights[feature.value], f"FusionPolicy {feature.value} weight") for feature in FusionFeature
     }
     result = fusion_policy(
-        policy_version=internal_text(data["policy_version"], "FusionPolicy policy_version"),
-        formula_version=internal_integer(data["formula_version"], "FusionPolicy formula_version"),
         weights=weights,
         answer_threshold=internal_number(data["answer_threshold"], "FusionPolicy answer_threshold"),
         evidence_threshold=internal_number(data["evidence_threshold"], "FusionPolicy evidence_threshold"),
@@ -499,18 +230,11 @@ def fusion_policy_from_dict(value: object) -> dict:
         minimum_independent_sources=internal_integer(
             data["minimum_independent_sources"], "FusionPolicy minimum_independent_sources"
         ),
-        require_support_for_non_exact=internal_boolean(
+        require_support_for_non_exact=require_bool(
             data["require_support_for_non_exact"], "FusionPolicy require_support_for_non_exact"
         ),
         max_report_candidates=internal_integer(data["max_report_candidates"], "FusionPolicy max_report_candidates"),
-        schema_version=internal_integer(data["schema_version"], "FusionPolicy schema_version"),
     )
-    return result
-
-
-def fusion_policy_from_json(value: str) -> dict:
-    data = load_mapping(value, "FusionPolicy JSON")
-    result = fusion_policy_from_dict(data)
     return result
 
 
@@ -521,12 +245,8 @@ def candidate_eligibility(
     reason_codes: object = (),
     feature_values: object = {},
     feature_available: object = (),
-    schema_version: object = CANDIDATE_ELIGIBILITY_SCHEMA_VERSION,
 ) -> dict:
     """Build separate score, evidence, and direct-answer eligibility."""
-    version = internal_integer(schema_version, "CandidateEligibility schema_version")
-    if version != CANDIDATE_ELIGIBILITY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported candidate eligibility schema_version: {version}")
     if not isinstance(score_eligible, bool) or not isinstance(evidence_eligible, bool) or not isinstance(answer_eligible, bool):
         raise InvalidRequestError("candidate eligibility flags must be booleans")
     if answer_eligible and not score_eligible:
@@ -568,7 +288,6 @@ def candidate_eligibility(
         "reason_codes": normalized_reasons,
         "feature_values": dict(values),
         "feature_available": ordered,
-        "schema_version": version,
     }
     return result
 
@@ -582,7 +301,6 @@ def validate_candidate_eligibility(value: object) -> dict:
         data["reason_codes"],
         data["feature_values"],
         data["feature_available"],
-        data["schema_version"],
     )
     return result
 
@@ -603,21 +321,13 @@ def trusted_candidate_eligibility(
         "reason_codes": reason_codes,
         "feature_values": dict(dict(feature_values)),
         "feature_available": feature_available,
-        "schema_version": CANDIDATE_ELIGIBILITY_SCHEMA_VERSION,
     }
-    return result
-
-
-def candidate_eligibility_to_dict(value: object) -> dict:
-    current = validate_candidate_eligibility(value)
-    result = trusted_candidate_eligibility_to_dict(current)
     return result
 
 
 def trusted_candidate_eligibility_to_dict(current: dict) -> dict:
     """Serialize engine-owned candidate eligibility."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "score_eligible": current.get("score_eligible", False),
         "evidence_eligible": current.get("evidence_eligible", False),
         "answer_eligible": current.get("answer_eligible", False),
@@ -627,39 +337,6 @@ def trusted_candidate_eligibility_to_dict(current: dict) -> dict:
         },
         "feature_available": [feature.value for feature in current.get("feature_available", ())],
     }
-    return result
-
-
-def candidate_eligibility_to_json(value: object) -> str:
-    data = candidate_eligibility_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def candidate_eligibility_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "CandidateEligibility", CANDIDATE_ELIGIBILITY_FIELDS)
-    raw_reasons = data["reason_codes"]
-    if not isinstance(raw_reasons, list) or not all(isinstance(item, str) for item in raw_reasons):
-        raise InvalidRequestError("CandidateEligibility reason_codes must contain a list of strings")
-    try:
-        reasons = tuple(FusionPolicyReason(item) for item in raw_reasons)
-    except ValueError as error:
-        raise InvalidRequestError("CandidateEligibility contains an unsupported reason code") from error
-    result = candidate_eligibility(
-        score_eligible=internal_boolean(data["score_eligible"], "CandidateEligibility score_eligible"),
-        evidence_eligible=internal_boolean(data["evidence_eligible"], "CandidateEligibility evidence_eligible"),
-        answer_eligible=internal_boolean(data["answer_eligible"], "CandidateEligibility answer_eligible"),
-        reason_codes=reasons,
-        feature_values=enum_feature_mapping(data["feature_values"], "CandidateEligibility feature_values", complete=False),
-        feature_available=feature_tuple(data["feature_available"], "CandidateEligibility feature_available"),
-        schema_version=internal_integer(data["schema_version"], "CandidateEligibility schema_version"),
-    )
-    return result
-
-
-def candidate_eligibility_from_json(value: str) -> dict:
-    data = load_mapping(value, "CandidateEligibility JSON")
-    result = candidate_eligibility_from_dict(data)
     return result
 
 
@@ -729,7 +406,6 @@ class EngramCandidateAuthority:
             "predicate_cardinality",
             "selection_reason",
             "supplied_trust",
-            "supplied_trust_version",
         }
         if set(provenance) != required or provenance.get("producer") != "relation_one_hop_v1":
             result = candidate_eligibility(
@@ -773,11 +449,7 @@ class EngramCandidateAuthority:
             )
             if identity != expected_identity:
                 raise InvalidRequestError("current relation Proposition identity changed")
-            if (
-                not current["supplied_trust_available"]
-                or current["supplied_trust"] != provenance["supplied_trust"]
-                or current["supplied_trust_version"] != provenance["supplied_trust_version"]
-            ):
+            if not current["supplied_trust_available"] or current["supplied_trust"] != provenance["supplied_trust"]:
                 raise InvalidRequestError("current relation Proposition trust changed")
             response = phrase_relation_result(
                 provenance["subject_label"],
@@ -895,10 +567,9 @@ class EngramCandidateAuthority:
                 if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
                     raise InvalidRequestError("composition Proposition was not read by ID")
                 identity_value = identity_chain[index]
-                trust_value = trust_chain[index]
+                trust = trust_chain[index]
                 identity = identity_value if isinstance(identity_value, tuple) else ()
-                trust = trust_value if isinstance(trust_value, tuple) else ()
-                if not isinstance(identity, tuple) or len(identity) != 3 or not isinstance(trust, tuple) or len(trust) != 2:
+                if len(identity) != 3 or isinstance(trust, bool) or not isinstance(trust, (int, float)):
                     raise InvalidRequestError("composition provenance chain is malformed")
                 if (
                     current["subject_entity_id"],
@@ -906,11 +577,7 @@ class EngramCandidateAuthority:
                     current["object_entity_id"],
                 ) != identity:
                     raise InvalidRequestError("composition Proposition identity changed")
-                if (
-                    not current["supplied_trust_available"]
-                    or not current["supplied_trust_version_available"]
-                    or (current["supplied_trust"], current["supplied_trust_version"]) != trust
-                ):
+                if not current["supplied_trust_available"] or current["supplied_trust"] != trust:
                     raise InvalidRequestError("composition Proposition trust changed")
                 if not evaluator.evaluate(current, frame)["eligible"]:
                     raise InvalidRequestError("composition Proposition is no longer eligible")
@@ -965,7 +632,7 @@ class EngramCandidateAuthority:
             return result
         if (
             candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_VERSION
+            and candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_PRODUCER
         ):
             if frame.get("required_source_label", ""):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
@@ -977,17 +644,11 @@ class EngramCandidateAuthority:
             evaluated = evaluate_named_utility(frame.get("original_text", ""), plugin_name)
             if (
                 evaluated["status"] != "resolved"
-                or evaluated["plugin_version"] != UTILITY_PLUGIN_VERSION
-                or evaluated["contract_version"] != UTILITY_CONTRACT_VERSION
-                or candidate.get("provenance", {}).get("plugin_version") != evaluated["plugin_version"]
-                or candidate.get("provenance", {}).get("contract_version") != evaluated["contract_version"]
                 or candidate.get("provenance", {}).get("canonical_input") != evaluated["canonical_input"]
             ):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
-            digest = hashlib_sha256(
-                f"{plugin_name}:{evaluated['plugin_version']}:{evaluated['canonical_input']}".encode()
-            ).hexdigest()
+            digest = hashlib_sha256(f"{plugin_name}:{evaluated['canonical_input']}".encode()).hexdigest()
             if candidate.get("statement_id", "") != f"utility:{plugin_name}:sha256:{digest}":
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
@@ -996,10 +657,8 @@ class EngramCandidateAuthority:
                 return result
             result = candidate_eligibility(True, True, True)
             return result
-        snapshot = self.internal_engram.response_repository.snapshot()
-        artifacts = snapshot["artifacts"]
-        if candidate.get("statement_id", "") in artifacts:
-            artifact = artifacts[candidate.get("statement_id", "")]
+        artifact = self.internal_engram.response_repository.find_artifact(candidate.get("statement_id", ""))
+        if artifact:
             if isinstance(self.internal_feedback_store, FeedbackStore):
                 if self.internal_feedback_store.stale_excluded(artifact["statement_id"], artifact["generation"]):
                     result = candidate_eligibility(False, False, False, (FusionPolicyReason.FEEDBACK_STALE_EXCLUDED,))
@@ -1117,43 +776,6 @@ class EngramCandidateAuthority:
         return result
 
 
-def fusion_contribution(
-    candidate: object,
-    normalized: object,
-    eligibility: object,
-    schema_version: object = FUSION_CONTRIBUTION_SCHEMA_VERSION,
-) -> dict:
-    """Build one retained raw resolver proposal and normalized projection."""
-    version = internal_integer(schema_version, "FusionContribution schema_version")
-    if version != FUSION_CONTRIBUTION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported fusion contribution schema_version: {version}")
-    try:
-        validated_candidate = validate_candidate(candidate)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion contribution candidate must be a Candidate") from error
-    try:
-        validated_normalized = validate_normalized_feature_set(normalized)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion contribution normalized value must be a NormalizedFeatureSet") from error
-    try:
-        validated_eligibility = validate_candidate_eligibility(eligibility)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion contribution eligibility must be a CandidateEligibility") from error
-    result: dict = {
-        "candidate": validated_candidate,
-        "normalized": validated_normalized,
-        "eligibility": validated_eligibility,
-        "schema_version": version,
-    }
-    return result
-
-
-def validate_fusion_contribution(value: object) -> dict:
-    data = exact_mapping(value, "FusionContribution", FUSION_CONTRIBUTION_FIELDS)
-    result = fusion_contribution(data["candidate"], data["normalized"], data["eligibility"], data["schema_version"])
-    return result
-
-
 def trusted_fusion_contribution(
     candidate: dict,
     normalized: dict,
@@ -1164,21 +786,13 @@ def trusted_fusion_contribution(
         "candidate": candidate,
         "normalized": normalized,
         "eligibility": eligibility,
-        "schema_version": FUSION_CONTRIBUTION_SCHEMA_VERSION,
     }
-    return result
-
-
-def fusion_contribution_to_dict(value: object) -> dict:
-    current = validate_fusion_contribution(value)
-    result = trusted_fusion_contribution_to_dict(current)
     return result
 
 
 def trusted_fusion_contribution_to_dict(current: dict) -> dict:
     """Serialize one engine-owned contribution."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "candidate": trusted_candidate_to_dict(current.get("candidate", {})),
         "normalized": trusted_normalized_feature_set_to_dict(current.get("normalized", {})),
         "eligibility": trusted_candidate_eligibility_to_dict(current.get("eligibility", {})),
@@ -1186,20 +800,12 @@ def trusted_fusion_contribution_to_dict(current: dict) -> dict:
     return result
 
 
-def fusion_contribution_to_report_dict(value: object) -> dict:
-    current = validate_fusion_contribution(value)
-    result = trusted_fusion_contribution_to_report_dict(current)
-    return result
-
-
 def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     """Render an engine-owned contribution for bounded diagnostics."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "candidate_id": current.get("candidate", {})["candidate_id"],
         "source": current.get("candidate", {})["source"].value,
         "raw_features": {
-            "schema_version": current.get("candidate", {})["features"]["schema_version"],
             "values": dict(current.get("candidate", {})["features"]["values"]),
             "unavailable": list(current.get("candidate", {})["features"]["unavailable"]),
         },
@@ -1211,108 +817,10 @@ def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     return result
 
 
-def fusion_contribution_to_json(value: object) -> str:
-    data = fusion_contribution_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def trusted_fusion_contribution_to_json(value: dict) -> str:
     """Serialize one engine-owned contribution without redundant revalidation."""
     data = trusted_fusion_contribution_to_dict(value)
     result = json_text(data)
-    return result
-
-
-def fusion_contribution_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "FusionContribution", FUSION_CONTRIBUTION_FIELDS)
-    candidate_value = data["candidate"]
-    normalized_value = data["normalized"]
-    eligibility_value = data["eligibility"]
-    if not isinstance(candidate_value, dict):
-        raise InvalidRequestError("FusionContribution candidate must contain an object")
-    if not isinstance(normalized_value, dict) or not isinstance(eligibility_value, dict):
-        raise InvalidRequestError("FusionContribution nested contracts must contain objects")
-    result = fusion_contribution(
-        candidate_from_dict(candidate_value),
-        normalized_feature_set_from_dict(normalized_value),
-        candidate_eligibility_from_dict(eligibility_value),
-        internal_integer(data["schema_version"], "FusionContribution schema_version"),
-    )
-    return result
-
-
-def fusion_contribution_from_json(value: str) -> dict:
-    data = load_mapping(value, "FusionContribution JSON")
-    result = fusion_contribution_from_dict(data)
-    return result
-
-
-def fused_candidate(
-    candidate: object,
-    contributions: object,
-    normalized: object,
-    score: object,
-    score_contributions: object,
-    eligibility: object,
-    schema_version: object = FUSED_CANDIDATE_SCHEMA_VERSION,
-) -> dict:
-    """Build one deduplicated statement with its contributions and score."""
-    version = internal_integer(schema_version, "FusedCandidate schema_version")
-    if version != FUSED_CANDIDATE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported fused candidate schema_version: {version}")
-    validated_score = bounded_unit(score)
-    try:
-        validated_candidate = validate_candidate(candidate)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fused candidate candidate must be a Candidate") from error
-    if not isinstance(contributions, tuple) or not contributions or len(contributions) > MAX_FUSION_CONTRIBUTIONS:
-        raise InvalidRequestError("fused candidate contribution count is out of bounds")
-    try:
-        validated_contributions = tuple(validate_fusion_contribution(value) for value in contributions)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fused candidate contributions must use FusionContribution") from error
-    if any(value["candidate"]["statement_id"] != validated_candidate["statement_id"] for value in validated_contributions):
-        raise InvalidRequestError("fused candidate contributions must share one statement_id")
-    try:
-        validated_normalized = validate_normalized_feature_set(normalized)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fused candidate normalized value must be a NormalizedFeatureSet") from error
-    try:
-        validated_eligibility = validate_candidate_eligibility(eligibility)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fused candidate eligibility must be a CandidateEligibility") from error
-    if not isinstance(score_contributions, dict) or set(score_contributions) != set(FusionFeature):
-        raise InvalidRequestError("score contributions must contain every canonical feature")
-    if any(
-        isinstance(value, bool) or not isinstance(value, (int, float)) or not math_isfinite(float(value)) or value < 0
-        for value in score_contributions.values()
-    ):
-        raise InvalidRequestError("score contributions must be finite nonnegative numbers")
-    validated_score_contributions = {feature: float(score_contributions[feature]) for feature in FusionFeature}
-    result: dict = {
-        "candidate": validated_candidate,
-        "contributions": validated_contributions,
-        "normalized": validated_normalized,
-        "score": validated_score,
-        "score_contributions": validated_score_contributions,
-        "eligibility": validated_eligibility,
-        "schema_version": version,
-    }
-    return result
-
-
-def validate_fused_candidate(value: object) -> dict:
-    data = exact_mapping(value, "FusedCandidate", FUSED_CANDIDATE_FIELDS)
-    result = fused_candidate(
-        data["candidate"],
-        data["contributions"],
-        data["normalized"],
-        data["score"],
-        data["score_contributions"],
-        data["eligibility"],
-        data["schema_version"],
-    )
     return result
 
 
@@ -1332,24 +840,7 @@ def trusted_fused_candidate(
         "score": score,
         "score_contributions": dict(dict(score_contributions)),
         "eligibility": eligibility,
-        "schema_version": FUSED_CANDIDATE_SCHEMA_VERSION,
     }
-    return result
-
-
-def fused_candidate_with_changes(value: object, changes: object) -> dict:
-    current = validate_fused_candidate(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(FUSED_CANDIDATE_FIELDS):
-        raise InvalidRequestError("fused candidate changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_fused_candidate(updated)
-    return result
-
-
-def fused_candidate_sources(value: object) -> tuple[CandidateSource, ...]:
-    current = validate_fused_candidate(value)
-    result = trusted_fused_candidate_sources(current)
     return result
 
 
@@ -1365,16 +856,9 @@ def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...
     return sources
 
 
-def fused_candidate_to_dict(value: object) -> dict:
-    current = validate_fused_candidate(value)
-    result = trusted_fused_candidate_to_dict(current)
-    return result
-
-
 def trusted_fused_candidate_to_dict(current: dict) -> dict:
     """Serialize one engine-owned fused candidate."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "candidate": trusted_candidate_to_dict(current.get("candidate", {})),
         "contributions": [trusted_fusion_contribution_to_dict(contribution) for contribution in current.get("contributions", ())],
         "normalized": trusted_normalized_feature_set_to_dict(current.get("normalized", {})),
@@ -1382,12 +866,6 @@ def trusted_fused_candidate_to_dict(current: dict) -> dict:
         "score_contributions": {feature.value: current.get("score_contributions", {})[feature] for feature in FusionFeature},
         "eligibility": trusted_candidate_eligibility_to_dict(current.get("eligibility", {})),
     }
-    return result
-
-
-def fused_candidate_to_report_dict(value: object) -> dict:
-    current = validate_fused_candidate(value)
-    result = trusted_fused_candidate_to_report_dict(current)
     return result
 
 
@@ -1414,145 +892,10 @@ def trusted_fused_candidate_to_report_dict(current: dict) -> dict:
     return result
 
 
-def fused_candidate_to_json(value: object) -> str:
-    data = fused_candidate_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def trusted_fused_candidate_to_json(value: dict) -> str:
     """Serialize one engine-owned fused candidate without redundant revalidation."""
     data = trusted_fused_candidate_to_dict(value)
     result = json_text(data)
-    return result
-
-
-def fused_candidate_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "FusedCandidate", FUSED_CANDIDATE_FIELDS)
-    candidate_value = data["candidate"]
-    normalized_value = data["normalized"]
-    eligibility_value = data["eligibility"]
-    contribution_values = data["contributions"]
-    if not isinstance(candidate_value, dict):
-        raise InvalidRequestError("FusedCandidate candidate must contain an object")
-    if not isinstance(normalized_value, dict) or not isinstance(eligibility_value, dict):
-        raise InvalidRequestError("FusedCandidate nested contracts must contain objects")
-    if not isinstance(contribution_values, list) or not all(isinstance(item, dict) for item in contribution_values):
-        raise InvalidRequestError("FusedCandidate contributions must contain a list of objects")
-    result = fused_candidate(
-        candidate=candidate_from_dict(candidate_value),
-        contributions=tuple(fusion_contribution_from_dict(item) for item in contribution_values),
-        normalized=normalized_feature_set_from_dict(normalized_value),
-        score=internal_number(data["score"], "FusedCandidate score"),
-        score_contributions=weighted_feature_mapping(data["score_contributions"], "FusedCandidate score_contributions"),
-        eligibility=candidate_eligibility_from_dict(eligibility_value),
-        schema_version=internal_integer(data["schema_version"], "FusedCandidate schema_version"),
-    )
-    return result
-
-
-def fused_candidate_from_json(value: str) -> dict:
-    data = load_mapping(value, "FusedCandidate JSON")
-    result = fused_candidate_from_dict(data)
-    return result
-
-
-def fusion_decision(
-    outcome: object,
-    selected_candidate: object = {},
-    selected_candidate_available: object = False,
-    response_candidates: object = (),
-    evidence: object = (),
-    confidence: object = 0.0,
-    confidence_available: object = False,
-    reason_codes: object = (),
-    report: object = {},
-    working_memory_bytes: object = 0,
-    schema_version: object = FUSION_DECISION_SCHEMA_VERSION,
-) -> dict:
-    """Build the fusion policy result consumed by resolution orchestration."""
-    version = internal_integer(schema_version, "FusionDecision schema_version")
-    if version != FUSION_DECISION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported fusion decision schema_version: {version}")
-    if not isinstance(outcome, ResolutionOutcome):
-        raise InvalidRequestError("fusion decision outcome must be a ResolutionOutcome")
-    if not isinstance(selected_candidate, dict):
-        raise InvalidRequestError("fusion selected_candidate must be a Candidate")
-    try:
-        validated_selected_candidate = empty_candidate() if not selected_candidate else validate_candidate(selected_candidate)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion selected_candidate must be a Candidate") from error
-    selected_available = internal_boolean(selected_candidate_available, "fusion selected_candidate_available")
-    if not isinstance(response_candidates, tuple):
-        raise InvalidRequestError("fusion response_candidates must be a tuple of Candidate values")
-    try:
-        validated_response_candidates = tuple(validate_candidate(value) for value in response_candidates)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion response_candidates must be a tuple of Candidate values") from error
-    if len(validated_response_candidates) > MAX_FUSION_CONTRIBUTIONS:
-        raise InvalidRequestError("fusion response_candidates exceed the candidate limit")
-    if not isinstance(evidence, tuple):
-        raise InvalidRequestError("fusion evidence must be a tuple of EvidenceReference values")
-    try:
-        validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("fusion evidence must be a tuple of EvidenceReference values") from error
-    if len(validated_evidence) > MAX_FUSION_CONTRIBUTIONS:
-        raise InvalidRequestError("fusion evidence exceeds the evidence limit")
-    validated_confidence = bounded_unit(confidence)
-    confidence_is_available = internal_boolean(confidence_available, "fusion confidence_available")
-    if not isinstance(reason_codes, tuple) or not 1 <= len(reason_codes) <= MAX_FUSION_REASON_CODES:
-        raise InvalidRequestError("fusion reason_codes must be a bounded non-empty tuple")
-    if tuple(dict.fromkeys(reason_codes)) != reason_codes:
-        raise InvalidRequestError("fusion reason_codes must be unique and ordered")
-    try:
-        tuple(FusionPolicyReason(value) for value in reason_codes)
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("fusion decision contains an unsupported reason code") from error
-    if not isinstance(report, dict) or contains_none(report):
-        raise InvalidRequestError("fusion report must be a concrete no-null object")
-    try:
-        encoded_report = json_text(dict(report))
-        copied_report = json_loads(encoded_report)
-    except (TypeError, ValueError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("fusion report must contain deterministic JSON values") from error
-    report_size = len(encoded_report.encode("utf-8"))
-    if report_size > MAX_FUSION_REPORT_BYTES:
-        raise InvalidRequestError("fusion report exceeds its byte limit")
-    if not isinstance(copied_report, dict):
-        raise InvalidRequestError("fusion report must contain an object")
-    working_bytes = internal_integer(working_memory_bytes, "fusion working_memory_bytes")
-    if working_bytes < 0:
-        raise InvalidRequestError("fusion working_memory_bytes must be a nonnegative integer")
-    if outcome == ResolutionOutcome.ANSWER:
-        if not selected_available or validated_response_candidates != (validated_selected_candidate,):
-            raise InvalidRequestError("fusion ANSWER requires exactly one selected response candidate")
-        if validated_evidence:
-            raise InvalidRequestError("fusion ANSWER cannot retain top-level evidence")
-        if not confidence_is_available or validated_confidence <= 0.0:
-            raise InvalidRequestError("fusion ANSWER requires positive available confidence")
-    else:
-        if selected_available or validated_selected_candidate != empty_candidate():
-            raise InvalidRequestError("non-ANSWER fusion decisions cannot select a candidate")
-        if confidence_is_available or validated_confidence != 0.0:
-            raise InvalidRequestError("non-ANSWER fusion confidence must be unavailable and zero")
-    if outcome == ResolutionOutcome.EVIDENCE and not (validated_response_candidates or validated_evidence):
-        raise InvalidRequestError("fusion EVIDENCE requires response candidates or evidence references")
-    if outcome == ResolutionOutcome.MISS and (validated_response_candidates or validated_evidence):
-        raise InvalidRequestError("fusion MISS cannot retain candidates or evidence")
-    result: dict = {
-        "outcome": outcome,
-        "selected_candidate": validated_selected_candidate,
-        "selected_candidate_available": selected_available,
-        "response_candidates": validated_response_candidates,
-        "evidence": validated_evidence,
-        "confidence": validated_confidence,
-        "confidence_available": confidence_is_available,
-        "reason_codes": reason_codes,
-        "report": dict(copied_report),
-        "working_memory_bytes": working_bytes,
-        "schema_version": version,
-    }
     return result
 
 
@@ -1581,106 +924,7 @@ def trusted_fusion_decision(
         "reason_codes": reason_codes,
         "report": dict(dict(report)),
         "working_memory_bytes": working_memory_bytes,
-        "schema_version": FUSION_DECISION_SCHEMA_VERSION,
     }
-    return result
-
-
-def validate_fusion_decision(value: object) -> dict:
-    data = exact_mapping(value, "FusionDecision", FUSION_DECISION_FIELDS)
-    result = fusion_decision(
-        data["outcome"],
-        data["selected_candidate"],
-        data["selected_candidate_available"],
-        data["response_candidates"],
-        data["evidence"],
-        data["confidence"],
-        data["confidence_available"],
-        data["reason_codes"],
-        data["report"],
-        data["working_memory_bytes"],
-        data["schema_version"],
-    )
-    return result
-
-
-def fusion_decision_to_dict(value: object) -> dict:
-    current = validate_fusion_decision(value)
-    selected = candidate_to_dict(current["selected_candidate"]) if current["selected_candidate_available"] else {}
-    report = json_loads(json_text(dict(current["report"])))
-    result = {
-        "schema_version": current["schema_version"],
-        "outcome": current["outcome"].value,
-        "selected_candidate": selected,
-        "selected_candidate_available": current["selected_candidate_available"],
-        "response_candidates": [candidate_to_dict(candidate_value) for candidate_value in current["response_candidates"]],
-        "evidence": [evidence_reference_to_dict(reference) for reference in current["evidence"]],
-        "confidence": current["confidence"],
-        "confidence_available": current["confidence_available"],
-        "reason_codes": list(current["reason_codes"]),
-        "report": report,
-        "working_memory_bytes": current["working_memory_bytes"],
-    }
-    return result
-
-
-def fusion_decision_to_json(value: object) -> str:
-    data = fusion_decision_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def fusion_decision_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "FusionDecision", FUSION_DECISION_FIELDS)
-    outcome_value = data["outcome"]
-    if not isinstance(outcome_value, str):
-        raise InvalidRequestError("FusionDecision outcome must be a string")
-    try:
-        outcome = ResolutionOutcome(outcome_value)
-    except ValueError as error:
-        raise InvalidRequestError("FusionDecision outcome is unsupported") from error
-    selected_available = internal_boolean(data["selected_candidate_available"], "FusionDecision selected_candidate_available")
-    confidence_available = internal_boolean(data["confidence_available"], "FusionDecision confidence_available")
-    selected_value = data["selected_candidate"]
-    response_values = data["response_candidates"]
-    evidence_values = data["evidence"]
-    reason_values = data["reason_codes"]
-    report_value = data["report"]
-    if not isinstance(selected_value, dict) or not isinstance(report_value, dict):
-        raise InvalidRequestError("FusionDecision selected_candidate and report must contain objects")
-    if not isinstance(response_values, list) or not all(isinstance(item, dict) for item in response_values):
-        raise InvalidRequestError("FusionDecision response_candidates must contain objects")
-    if not isinstance(evidence_values, list) or not all(isinstance(item, dict) for item in evidence_values):
-        raise InvalidRequestError("FusionDecision evidence must contain objects")
-    if not isinstance(reason_values, list) or not all(isinstance(item, str) for item in reason_values):
-        raise InvalidRequestError("FusionDecision reason_codes must contain strings")
-    selected = candidate_from_dict(selected_value) if selected_available else empty_candidate()
-    result = fusion_decision(
-        outcome=outcome,
-        selected_candidate=selected,
-        selected_candidate_available=selected_available,
-        response_candidates=tuple(candidate_from_dict(item) for item in response_values),
-        evidence=tuple(evidence_reference_from_dict(item) for item in evidence_values),
-        confidence=internal_number(data["confidence"], "FusionDecision confidence"),
-        confidence_available=confidence_available,
-        reason_codes=tuple(reason_values),
-        report=report_value,
-        working_memory_bytes=internal_integer(data["working_memory_bytes"], "FusionDecision working_memory_bytes"),
-        schema_version=internal_integer(data["schema_version"], "FusionDecision schema_version"),
-    )
-    return result
-
-
-def fusion_decision_from_json(value: str) -> dict:
-    data = load_mapping(value, "FusionDecision JSON")
-    result = fusion_decision_from_dict(data)
-    return result
-
-
-def normalize_candidate_features(candidate: dict) -> dict:
-    """Transform resolver-specific observations into comparable policy inputs."""
-    validated_candidate = validate_candidate(candidate)
-    result = normalize_validated_candidate_features(validated_candidate)
     return result
 
 
@@ -1698,7 +942,7 @@ def normalize_validated_candidate_features(validated_candidate: dict) -> dict:
         assign(FusionFeature.EXACT, raw["exact_match"])
     if (
         validated_candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-        and validated_candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_VERSION
+        and validated_candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_PRODUCER
         and "utility_match" in raw
     ):
         assign(FusionFeature.EXACT, raw["utility_match"])
@@ -1731,14 +975,6 @@ def normalize_validated_candidate_features(validated_candidate: dict) -> dict:
     return result
 
 
-def merge_candidate_eligibility(first: dict, second: dict) -> dict:
-    """Merge structural and authoritative candidate eligibility."""
-    validated_first = validate_candidate_eligibility(first)
-    validated_second = validate_candidate_eligibility(second)
-    result = merge_validated_candidate_eligibility(validated_first, validated_second)
-    return result
-
-
 def merge_validated_candidate_eligibility(
     validated_first: dict,
     validated_second: dict,
@@ -1760,13 +996,6 @@ def merge_validated_candidate_eligibility(
         values,
         available,
     )
-    return result
-
-
-def canonical_candidate_key(candidate: dict) -> tuple[int, str, str]:
-    """Return the deterministic ordering key for one candidate."""
-    candidate = validate_candidate(candidate)
-    result = trusted_canonical_candidate_key(candidate)
     return result
 
 
@@ -1799,17 +1028,6 @@ def dedupe_evidence(
             continue
         retained.append(variants[sorted(variants)[0]])
     result = tuple(retained), conflict_count
-    return result
-
-
-def apply_authoritative_features(
-    normalized: dict,
-    eligibility: dict,
-) -> dict:
-    """Overlay authoritative feature values on normalized producer features."""
-    normalized = validate_normalized_feature_set(normalized)
-    eligibility = validate_candidate_eligibility(eligibility)
-    result = apply_validated_authoritative_features(normalized, eligibility)
     return result
 
 
@@ -1847,6 +1065,7 @@ class CandidateFusionEngine:
         if reranker != () and not isinstance(reranker, TransparentLogisticReranker):
             raise InvalidRequestError("fusion reranker must be a TransparentLogisticReranker")
         self.policy = validated_policy
+        self.policy_fingerprint = policy_fingerprint(validated_policy)
         self.internal_authority = authority
         self.internal_reranker = reranker
 
@@ -1980,7 +1199,7 @@ class CandidateFusionEngine:
         utility_present = (
             any(
                 contribution["candidate"]["source"] == CandidateSource.UTILITY
-                and contribution["candidate"]["provenance"].get("producer") == UTILITY_RESOLVER_VERSION
+                and contribution["candidate"]["provenance"].get("producer") == UTILITY_RESOLVER_PRODUCER
                 for contribution in active
             )
             and values[FusionFeature.EXACT] == 1.0
@@ -2017,9 +1236,7 @@ class CandidateFusionEngine:
         )
         normalized = trusted_normalized_feature_set(values, tuple(feature for feature in FusionFeature if feature in available))
         score, score_contributions = self.internal_score(normalized)
-        digest = hashlib_sha256(
-            f"{self.policy['policy_version']}:{frame.get('diagnostic_id', '')}:{statement_id}".encode()
-        ).hexdigest()
+        digest = hashlib_sha256(f"{self.policy_fingerprint}:{frame.get('diagnostic_id', '')}:{statement_id}".encode()).hexdigest()
         fused = trusted_candidate(
             candidate_id=f"fused:sha256:{digest}",
             statement_id=statement_id,
@@ -2034,7 +1251,6 @@ class CandidateFusionEngine:
             lifecycle=representative["lifecycle"],
             provenance={
                 **dict(representative["provenance"]),
-                "fusion_policy_version": self.policy["policy_version"],
                 "resolver_sources": [source.value for source in sources],
                 "resolver_families": list(families),
             },
@@ -2054,7 +1270,6 @@ class CandidateFusionEngine:
         retained_evidence, evidence_conflicts = dedupe_evidence(evidence, frame.get("scope", {}))
         outcome = ResolutionOutcome.EVIDENCE if retained_evidence else ResolutionOutcome.MISS
         report = {
-            "policy_version": self.policy["policy_version"],
             "policy_fingerprint": policy_fingerprint(self.policy),
             "input_candidate_count": len(candidates),
             "candidate_count": 0,
@@ -2173,6 +1388,10 @@ class CandidateFusionEngine:
                 )
                 return result
         fused = tuple(fused_values)
+        # The reranker only reorders its shortlist. Thresholds, the ambiguity
+        # margin, and confidence stay on the calibrated fused score, so the
+        # reranker cannot turn EVIDENCE into ANSWER by rescaling scores.
+        reranked_scores: dict[str, float] = {}
         reranker_report: dict = {
             "applied": False,
             "reason": "not_configured",
@@ -2205,6 +1424,7 @@ class CandidateFusionEngine:
             except ResolutionCancelledError:
                 raise
             except Exception as error:
+                logger.warning("Reranker failed; using the baseline order", exc_info=error)
                 self.internal_reranker.record_fallback("reranker_exception")
                 reranker_report = {
                     "applied": False,
@@ -2220,7 +1440,6 @@ class CandidateFusionEngine:
                 score_values = reranker_report.get("scores", [])
                 if not isinstance(score_values, list):
                     raise InvalidRequestError("reranker scores must be a list")
-                reranked_scores: dict[str, float] = {}
                 for value in score_values:
                     if not isinstance(value, dict):
                         raise InvalidRequestError("reranker scores must contain mappings")
@@ -2234,7 +1453,7 @@ class CandidateFusionEngine:
                     if statement_id not in reranked_scores:
                         updated_fused.append(item)
                         continue
-                    rerank_score = reranked_scores.get(statement_id, 0.0)
+                    rerank_score = reranked_scores[statement_id]
                     updated_candidate = trusted_candidate_with_changes(
                         item["candidate"],
                         {
@@ -2255,7 +1474,7 @@ class CandidateFusionEngine:
                             updated_candidate,
                             item["contributions"],
                             item["normalized"],
-                            rerank_score,
+                            item["score"],
                             item["score_contributions"],
                             item["eligibility"],
                         )
@@ -2264,12 +1483,19 @@ class CandidateFusionEngine:
         ranked = tuple(
             sorted(
                 (candidate for candidate in fused if candidate["eligibility"]["score_eligible"]),
-                key=lambda item: (-item["score"], item["candidate"]["statement_id"]),
+                key=lambda item: (
+                    item["candidate"]["statement_id"] not in reranked_scores,
+                    -reranked_scores.get(item["candidate"]["statement_id"], 0.0),
+                    -item["score"],
+                    item["candidate"]["statement_id"],
+                ),
             )
         )
         if ranked:
             margin_available = len(ranked) > 1
-            margin = ranked[0]["score"] - ranked[1]["score"] if margin_available else 1.0
+            # A reranked leader with a lower fused score than the runner-up
+            # has no margin, so the disagreement resolves as ambiguous.
+            margin = max(0.0, ranked[0]["score"] - ranked[1]["score"]) if margin_available else 1.0
             top = ranked[0]
             values = dict(top["normalized"]["values"])
             values[FusionFeature.MARGIN] = margin if margin_available else 0.0
@@ -2387,7 +1613,6 @@ class CandidateFusionEngine:
             report["omitted_candidate_count"] = len(report_values) - len(candidate_reports)
         if len(json_text(report).encode("utf-8")) > report_limit:
             report = {
-                "policy_version": self.policy["policy_version"],
                 "policy_fingerprint": policy_fingerprint(self.policy),
                 "input_candidate_count": len(candidates),
                 "candidate_count": len(fused),

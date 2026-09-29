@@ -30,7 +30,7 @@ from engram.resolution import (
 )
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="fusion-benchmark")
@@ -163,8 +163,7 @@ def measure_fusion(samples: int) -> dict[str, object]:
         "acceptance_scenarios_correct": all(value.get("outcome", "") == value.get("expected", "") for value in acceptance),
     }
     result = {
-        "schema_version": 1,
-        "benchmark_version": "fusion-benchmark-current-1",
+        "benchmark_id": "fusion-benchmark",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
         "environment": {"python": platform_python_version(), "platform": platform_platform()},

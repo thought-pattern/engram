@@ -1,6 +1,5 @@
 {
   "artifact_schema_version": 1,
-  "normalization_version": 1,
   "description": "Golden, synthetic retrieval normalization and identity-contrast fixtures.",
   "normalization_cases": [
     {

@@ -65,9 +65,10 @@ constants remain in reproducible generated files.
 
 Python modules, tests, scripts, and evaluation tools must not read from, write
 to, or otherwise depend on the `documentation/` directory. Store test-owned
-inputs under `tests/fixtures/` and generated evaluation results under
-`eval/results/`. Documentation may describe those resources, but it is never a
-runtime or test data source.
+inputs under `tests/fixtures/`. `eval/` holds local evaluation corpora and
+generated results; it is git-ignored, so nothing tracked may depend on it.
+Documentation may describe those resources, but it is never a runtime or test
+data source.
 
 ## Return statements
 

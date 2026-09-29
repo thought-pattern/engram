@@ -1,18 +1,15 @@
 """Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
-from datetime import datetime
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
-from unicodedata import category as unicodedata_category
 
 from engram.constants import (
     ARTIFACT_GENERATION_CHANGE_FIELDS,
     MAX_AFFECTED_GENERATIONS,
     MAX_RECEIPT_JSON_BYTES,
     MAX_RECEIPT_STATEMENT_ID_BYTES,
-    MAX_RECEIPT_TIMESTAMP_BYTES,
     MAX_RECEIPTS,
     MAX_REQUEST_ID_BYTES,
     MAX_RESULT_BYTES,
@@ -22,9 +19,7 @@ from engram.constants import (
     MAX_RESULT_STRING_BYTES,
     MAX_SIGNATURE_INPUT_BYTES,
     MAX_TOMBSTONES,
-    MUTATION_LEDGER_SCHEMA_VERSION,
     MUTATION_RECEIPT_FIELDS,
-    MUTATION_RECEIPT_SCHEMA_VERSION,
     RECEIPT_LOOKUP_FIELDS,
     RECEIPT_TOMBSTONE_FIELDS,
     MutationOperation,
@@ -33,18 +28,7 @@ from engram.constants import (
     ReceiptLookupOutcome,
 )
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
-
-
-def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(unicodedata_category(character) in {"Cc", "Cs"} for character in value):
-        raise InvalidRequestError(f"{name} contains a control or surrogate character")
-    return value
+from engram.validation import require_text, require_utc_timestamp
 
 
 def positive_int(value: object, name: str, maximum: int = 9_223_372_036_854_775_807) -> int:
@@ -66,19 +50,6 @@ def exact_mapping(value: object, name: str, keys: set[str]) -> dict:
     if actual != keys:
         raise InvalidRequestError(f"{name} has invalid fields: missing={sorted(keys - actual)}, extra={sorted(actual - keys)}")
     return value
-
-
-def internal_timestamp(value: object, name: str) -> str:
-    text = require_text(value, name, MAX_RECEIPT_TIMESTAMP_BYTES, allow_empty=False)
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return text
 
 
 def freeze_json(value: object, name: str, depth: int, count: list[int]) -> object:
@@ -238,11 +209,8 @@ def mutation_receipt(
     result: dict,
     completion_state: ReceiptCompletionState,
     created_at: str,
-    schema_version: int = MUTATION_RECEIPT_SCHEMA_VERSION,
 ) -> dict:
     """Build one validated mutation-receipt dictionary."""
-    if schema_version != MUTATION_RECEIPT_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported mutation receipt schema_version: {schema_version}")
     normalized_sequence = positive_int(sequence, "mutation receipt sequence")
     normalized_request_id = require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
     if not isinstance(operation, MutationOperation):
@@ -254,13 +222,12 @@ def mutation_receipt(
     frozen_result = freeze_result(result)
     if not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
-    normalized_created_at = internal_timestamp(created_at, "mutation receipt created_at")
+    normalized_created_at = require_utc_timestamp(created_at, "mutation receipt created_at")
     if completion_state == ReceiptCompletionState.PREPARED and (
         ordered_generations or frozen_result or result_code != MutationResultCode.REJECTED_CAPACITY
     ):
         raise InvalidRequestError("a PREPARED receipt must carry empty effects and the concrete placeholder result code")
     receipt: dict = {
-        "schema_version": schema_version,
         "sequence": normalized_sequence,
         "request_id": normalized_request_id,
         "operation": operation,
@@ -286,7 +253,6 @@ def validate_mutation_receipt(value: object) -> dict:
     result = data.get("result", ())
     completion_state = data.get("completion_state", ())
     created_at = data.get("created_at", ())
-    schema_version = data.get("schema_version", ())
     if not isinstance(sequence, int) or not isinstance(request_id, str):
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
@@ -295,7 +261,7 @@ def validate_mutation_receipt(value: object) -> dict:
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(result, dict) or not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("mutation receipt fields are malformed")
-    if not isinstance(created_at, str) or not isinstance(schema_version, int):
+    if not isinstance(created_at, str):
         raise InvalidRequestError("mutation receipt fields are malformed")
     receipt = mutation_receipt(
         sequence=sequence,
@@ -307,7 +273,6 @@ def validate_mutation_receipt(value: object) -> dict:
         result=result,
         completion_state=completion_state,
         created_at=created_at,
-        schema_version=schema_version,
     )
     return receipt
 
@@ -324,7 +289,6 @@ def trusted_mutation_receipt_to_dict(receipt: dict) -> dict:
     affected = [artifact_generation_change_to_dict(change) for change in receipt.get("affected_generations", ())]
     result_value = thaw_json(receipt.get("result", {}))
     result = {
-        "schema_version": receipt.get("schema_version", 0),
         "sequence": receipt.get("sequence", 0),
         "request_id": receipt.get("request_id", ""),
         "operation": receipt.get("operation", MutationOperation.COMMIT_RESPONSE).value,
@@ -361,7 +325,6 @@ def mutation_receipt_from_dict(value: object) -> dict:
     if not isinstance(result, dict):
         raise InvalidRequestError("mutation receipt result must be an object")
     receipt = mutation_receipt(
-        schema_version=positive_int(data["schema_version"], "mutation receipt schema_version"),
         sequence=positive_int(data["sequence"], "mutation receipt sequence"),
         request_id=require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
         operation=operation,
@@ -370,7 +333,7 @@ def mutation_receipt_from_dict(value: object) -> dict:
         affected_generations=tuple(artifact_generation_change_from_dict(change) for change in affected),
         result=result,
         completion_state=completion_state,
-        created_at=internal_timestamp(data["created_at"], "mutation receipt created_at"),
+        created_at=require_utc_timestamp(data["created_at"], "mutation receipt created_at"),
     )
     return receipt
 
@@ -552,14 +515,53 @@ class MutationReceiptLedger:
         if all_sequences and self.internal_next_sequence <= max(all_sequences):
             raise InvalidRequestError("next receipt sequence must exceed every retained sequence")
         self.internal_lock = threading_RLock()
-        self.internal_receipts = {receipt["request_id"]: receipt for receipt in validated_receipts}
-        self.internal_tombstones = {tombstone["request_id"]: tombstone for tombstone in validated_tombstones}
+        # Dict order is sequence order, so the oldest entry is always first.
+        self.internal_receipts = {
+            receipt["request_id"]: receipt for receipt in sorted(validated_receipts, key=lambda item: item["sequence"])
+        }
+        self.internal_tombstones = {
+            tombstone["request_id"]: tombstone for tombstone in sorted(validated_tombstones, key=lambda item: item["sequence"])
+        }
+        # Advances on every change, so a clone taken earlier can tell it is stale.
+        self.internal_revision = 0
 
     @property
     def next_sequence(self) -> int:
         with self.internal_lock:
             sequence = self.internal_next_sequence
             return sequence
+
+    @property
+    def revision(self) -> int:
+        with self.internal_lock:
+            result = self.internal_revision
+            return result
+
+    def clone(self) -> "MutationReceiptLedger":
+        """Return an independent copy without revalidating its already validated entries."""
+        with self.internal_lock:
+            result = MutationReceiptLedger.__new__(MutationReceiptLedger)
+            result.max_receipts = self.max_receipts
+            result.max_tombstones = self.max_tombstones
+            result.internal_next_sequence = self.internal_next_sequence
+            result.internal_lock = threading_RLock()
+            result.internal_receipts = dict(self.internal_receipts)
+            result.internal_tombstones = dict(self.internal_tombstones)
+            result.internal_revision = self.internal_revision
+            return result
+
+    def adopt(self, other: "MutationReceiptLedger") -> None:
+        """Publish another in-process ledger's state without changing owner identity."""
+        if not isinstance(other, MutationReceiptLedger):
+            raise InvalidRequestError("adopted ledger must be a MutationReceiptLedger")
+        replacement = other.clone()
+        with self.internal_lock:
+            self.max_receipts = replacement.max_receipts
+            self.max_tombstones = replacement.max_tombstones
+            self.internal_next_sequence = replacement.internal_next_sequence
+            self.internal_receipts = replacement.internal_receipts
+            self.internal_tombstones = replacement.internal_tombstones
+            self.internal_revision = replacement.internal_revision
 
     def lookup(self, request_id: str, operation: MutationOperation, payload_signature: str) -> dict:
         normalized_id = require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
@@ -616,6 +618,7 @@ class MutationReceiptLedger:
                 ):
                     raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {request_id}")
                 self.internal_receipts[request_id] = validated_receipt
+                self.internal_revision += 1
                 return validated_receipt
             if validated_receipt["sequence"] != self.internal_next_sequence:
                 received_sequence = validated_receipt["sequence"]
@@ -624,12 +627,13 @@ class MutationReceiptLedger:
                 )
             self.internal_receipts[request_id] = validated_receipt
             self.internal_next_sequence += 1
+            self.internal_revision += 1
             self.prune()
             return validated_receipt
 
     def prune(self) -> None:
         while len(self.internal_receipts) > self.max_receipts:
-            oldest = min(self.internal_receipts.values(), key=lambda receipt: receipt["sequence"])
+            oldest = next(iter(self.internal_receipts.values()))
             oldest_request_id = oldest["request_id"]
             del self.internal_receipts[oldest_request_id]
             tombstone = receipt_tombstone(
@@ -640,13 +644,12 @@ class MutationReceiptLedger:
             )
             self.internal_tombstones[oldest_request_id] = tombstone
         while len(self.internal_tombstones) > self.max_tombstones:
-            oldest = min(self.internal_tombstones.values(), key=lambda tombstone: tombstone["sequence"])
+            oldest = next(iter(self.internal_tombstones.values()))
             del self.internal_tombstones[oldest["request_id"]]
 
     def snapshot(self) -> dict:
         with self.internal_lock:
             result = {
-                "schema_version": MUTATION_LEDGER_SCHEMA_VERSION,
                 "max_receipts": self.max_receipts,
                 "max_tombstones": self.max_tombstones,
                 "next_sequence": self.internal_next_sequence,
@@ -661,9 +664,16 @@ class MutationReceiptLedger:
             }
             return result
 
-    def replace_from_snapshot(self, value: dict) -> None:
-        """Atomically publish validated in-process ledger state without changing owner identity."""
+    def replace_from_snapshot(self, value: object) -> None:
+        """Atomically publish validated in-process ledger state without changing owner identity.
 
+        A ``MutationReceiptLedger`` is adopted as is; a snapshot dictionary is
+        validated first.
+        """
+
+        if isinstance(value, MutationReceiptLedger):
+            self.adopt(value)
+            return
         replacement = MutationReceiptLedger(state=value)
         with self.internal_lock:
             self.max_receipts = replacement.max_receipts
@@ -671,6 +681,7 @@ class MutationReceiptLedger:
             self.internal_next_sequence = replacement.internal_next_sequence
             self.internal_receipts = dict(replacement.internal_receipts)
             self.internal_tombstones = dict(replacement.internal_tombstones)
+            self.internal_revision += 1
 
 
 def mutation_receipt_ledger_state(
@@ -708,7 +719,6 @@ def validate_mutation_receipt_ledger_state(value: object) -> dict:
         "MutationReceiptLedger",
         set(
             {
-                "schema_version",
                 "max_receipts",
                 "max_tombstones",
                 "next_sequence",
@@ -717,8 +727,6 @@ def validate_mutation_receipt_ledger_state(value: object) -> dict:
             }
         ),
     )
-    if data["schema_version"] != MUTATION_LEDGER_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported mutation ledger schema_version: {data['schema_version']}")
     receipts = data["receipts"]
     tombstones = data["tombstones"]
     if not isinstance(receipts, list) or not isinstance(tombstones, list):

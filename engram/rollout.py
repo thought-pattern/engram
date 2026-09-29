@@ -25,7 +25,6 @@ def select_rollout(config: dict, namespace: str) -> dict:
     if not isinstance(namespaces, dict):
         raise InvalidRequestError("rollout namespaces must be an object")
     result = {
-        "policy_version": policy.get("policy_version", ""),
         "mode": namespaces.get(namespace, policy.get("default_mode", RolloutMode.DISABLED)),
         "namespace_override": namespace in namespaces,
     }
@@ -43,7 +42,6 @@ def rollout_status(config: dict) -> dict:
         raise InvalidRequestError("rollout policy fields are invalid")
     counts = Counter(namespaces.values())
     result = {
-        "policy_version": policy.get("policy_version", ""),
         "default_mode": default_mode.value,
         "namespace_override_count": len(namespaces),
         "namespace_modes": {mode.value: counts[mode] for mode in RolloutMode},
@@ -62,7 +60,6 @@ def apply_rollout(result: dict, selection: dict) -> dict:
 
     reason = f"rollout_{mode.value}"
     diagnostics = {
-        "policy_version": selection.get("policy_version", ""),
         "mode": mode.value,
         "namespace_override": selection.get("namespace_override", False),
     }

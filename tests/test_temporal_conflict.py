@@ -15,7 +15,6 @@ def internal_item(
     cardinality: str = "SINGLE",
     trust: float = 0.8,
     trust_available: bool = True,
-    trust_version: int = 1,
     valid_from: str = "2020-01-01T00:00:00Z",
     valid_to: str = "2030-01-01T00:00:00Z",
     system_from: str = "2020-01-01T00:00:00Z",
@@ -42,8 +41,6 @@ def internal_item(
         "trust_category_available": trust_available,
         "supplied_trust": trust if trust_available else 0.0,
         "supplied_trust_available": trust_available,
-        "supplied_trust_version": trust_version if trust_available else 0,
-        "supplied_trust_version_available": trust_available,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -82,18 +79,6 @@ def test_same_object_propositions_use_only_comparable_supplied_trust_for_ranking
     assert selection["selected_proposition_id"] == "proposition:higher"
     assert selection["ranking_proposition_ids"] == ("proposition:higher", "proposition:lower")
     assert selection["reason"] == RelationSelectionReason.SELECTED_TRUST_RANKED
-    assert selection["trust_version"] == 1
-
-
-def test_trust_versions_are_not_silently_compared() -> None:
-    first = internal_item("proposition:first", "entity:active", trust=0.6, trust_version=1)
-    second = internal_item("proposition:second", "entity:active", trust=0.9, trust_version=2)
-
-    selection = select_relation_propositions((first, second), parse_temporal_query("What is the status?"))
-
-    assert selection["direct_answer"] is False
-    assert selection["reason"] == RelationSelectionReason.TRUST_VERSION_INCOMPARABLE
-    assert selection["trust_version_available"] is False
 
 
 @pytest_mark.parametrize(

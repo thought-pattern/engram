@@ -16,7 +16,6 @@ from engram.contextual import (
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.identity import entity_reference, identity_qualifier, relation_reference
-from engram.models import session_from_dict, session_to_dict
 from engram.service import EngramCore
 
 
@@ -52,33 +51,6 @@ def test_compact_query_frame_codec_is_exact_bounded_and_deterministic() -> None:
         compact_query_frame_from_dict(malformed)
     with pytest_raises(InvalidRequestError, match="subjects exceed"):
         compact_frame(subjects=tuple(entity_reference(f"Entity {index}") for index in range(5)))
-
-
-def test_session_codec_preserves_compact_frame_and_concrete_absence() -> None:
-    engine = Engram()
-    session_id = sessions.start_session(engine, session_id="Sarah")
-    engine.sessions[session_id]["previous_query_frame"] = compact_frame()
-    engine.sessions[session_id]["query_frame_turn"] = 3
-
-    restored_session = session_from_dict(session_to_dict(engine.sessions.get(session_id, {})))
-
-    assert restored_session["previous_query_frame"] == compact_frame()
-    assert restored_session["query_frame_turn"] == 3
-
-    serialized = session_to_dict(engine.sessions.get(session_id, {}))
-    invalid_frame = dict(serialized)
-    invalid_frame["previous_query_frame"] = False
-    with pytest_raises(ValueError, match="previous_query_frame must be an object"):
-        session_from_dict(invalid_frame)
-
-    invalid_turn = dict(serialized)
-    invalid_turn["query_frame_turn"] = False
-    with pytest_raises(ValueError, match="query_frame_turn"):
-        session_from_dict(invalid_turn)
-
-    engine.sessions[session_id]["query_frame_turn"] = 2
-    with pytest_raises(ValueError, match="source_turn must match"):
-        session_to_dict(engine.sessions.get(session_id, {}))
 
 
 def test_resolve_request_keeps_contextual_frame_in_process_memory() -> None:
@@ -185,6 +157,19 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     }
 
 
+def test_live_request_keeps_every_entity_while_the_carried_frame_is_bounded() -> None:
+    core = EngramCore()
+    request = "Compare Ada Lovelace, Charles Babbage, Alan Turing, Grace Hopper, Eve Adams, and the Paris Summit."
+
+    core.resolve_request(request, "many-entities", user_id="Sarah", configured_resolvers=("exact",))
+
+    live = core.resolution_requests["many-entities"]["frame"]["identity"]["entities"]
+    carried = core.engram.sessions["Sarah"]["previous_query_frame"]["subjects"]
+    assert [entity["surface"] for entity in live][-2:] == ["Eve Adams", "Paris Summit"]
+    assert len(live) == 6
+    assert len(carried) == 4
+
+
 def test_self_contained_request_and_other_user_do_not_receive_prior_context() -> None:
     core = EngramCore()
     core.resolve_request(
@@ -276,5 +261,3 @@ def test_compact_frame_rejects_duplicate_or_malformed_identity_values() -> None:
         compact_frame(confidence=float("nan"))
     with pytest_raises(InvalidRequestError, match="qualifiers must be unique"):
         compact_frame(qualifiers=(duplicate_qualifier,) * 2)
-    with pytest_raises(InvalidRequestError, match="schema_version"):
-        compact_frame(schema_version=True)

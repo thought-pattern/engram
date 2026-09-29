@@ -7,6 +7,7 @@ from json import dumps as json_dumps
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.config import reranker_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -14,35 +15,18 @@ from engram.fusion import (
     CandidateFusionEngine,
     EngramCandidateAuthority,
     FusionFeature,
-    FusionFeatureRole,
     FusionPolicyReason,
-    candidate_eligibility,
-    candidate_eligibility_from_json,
-    candidate_eligibility_to_json,
-    empty_normalized_feature_set,
-    feature_definitions,
-    fused_candidate,
-    fused_candidate_from_json,
-    fused_candidate_to_json,
-    fusion_contribution,
-    fusion_contribution_from_json,
-    fusion_contribution_to_json,
-    fusion_decision_from_json,
-    fusion_decision_to_json,
     fusion_policy,
     fusion_policy_from_dict,
-    fusion_policy_from_json,
     fusion_policy_to_dict,
-    fusion_policy_to_json,
-    fusion_policy_with_changes,
-    normalize_candidate_features,
-    normalized_feature_set_from_json,
-    normalized_feature_set_to_json,
+    normalize_validated_candidate_features,
     permissive_candidate_authority,
     policy_fingerprint,
+    validate_fusion_policy,
 )
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.repository import ArtifactRepository
+from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
@@ -50,13 +34,13 @@ from engram.resolution import (
     QueryFrameBuilder,
     ResolutionOutcome,
     candidate as resolution_candidate,
-    candidate_with_changes,
     capture_resolution_budget,
     evidence_reference,
-    evidence_reference_with_changes,
     feature_set,
     query_frame_with_changes,
-    resolution_budget_with_changes,
+    validate_candidate,
+    validate_evidence_reference,
+    validate_resolution_budget,
 )
 
 from .support_fixtures import PROPOSITION_REFERENCE_A
@@ -180,24 +164,11 @@ def report_reason_codes(decision, index: int = 0) -> tuple[str, ...]:
     return result
 
 
-def test_feature_specification_is_closed_bounded_and_concrete() -> None:
-    definitions = feature_definitions()
-    assert set(definitions) == set(FusionFeature)
-    assert len(FusionFeature) == 12
-    assert all(definition["minimum"] == 0.0 and definition["maximum"] == 1.0 for definition in definitions.values())
-    assert all(definition["meaning"] and definition["unavailable_meaning"] for definition in definitions.values())
-    empty = empty_normalized_feature_set()
-    assert set(empty["values"]) == set(FusionFeature)
-    assert set(empty["values"].values()) == {0.0}
-    assert empty["available"] == ()
-    assert "null" not in normalized_feature_set_to_json(empty)
-
-
-def test_policy_codec_is_closed_versioned_and_fingerprinted() -> None:
+def test_policy_is_closed_and_fingerprinted() -> None:
     policy = fusion_policy()
 
-    assert fusion_policy_from_json(fusion_policy_to_json(policy)) == policy
-    assert policy_fingerprint(policy) == "f1c09a8f7e87cca3ac7b1bcf5712b0c7c622ac2988c1a97f41f4dbe400dce72d"
+    assert policy_fingerprint(policy) == policy_fingerprint(fusion_policy())
+    assert policy_fingerprint(policy) != policy_fingerprint({**policy, "answer_threshold": 0.79})
     assert policy["answer_threshold"] == 0.78
     assert policy["evidence_threshold"] == 0.35
     assert policy["ambiguity_margin"] == 0.12
@@ -221,16 +192,20 @@ def test_policy_codec_is_closed_versioned_and_fingerprinted() -> None:
     invalid["unknown"] = True
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         fusion_policy_from_dict(invalid)
-    with pytest_raises(InvalidRequestError, match="unsupported"):
-        fusion_policy_with_changes(policy, {"formula_version": 2})
     with pytest_raises(InvalidRequestError, match="between 0 and 1"):
-        fusion_policy_with_changes(policy, {"answer_threshold": 1.1})
+        validate_fusion_policy({**policy, "answer_threshold": 1.1})
 
 
 def test_resolver_scores_use_source_specific_normalization() -> None:
-    exact = normalize_candidate_features(candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}))
-    lexical = normalize_candidate_features(candidate("sparse", CandidateSource.SPARSE, {"sparse_score": 0.7}))
-    semantic = normalize_candidate_features(candidate("semantic", CandidateSource.SUPPORT_SEMANTIC, {"semantic_score": 0.8}))
+    exact = normalize_validated_candidate_features(
+        validate_candidate(candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}))
+    )
+    lexical = normalize_validated_candidate_features(
+        validate_candidate(candidate("sparse", CandidateSource.SPARSE, {"sparse_score": 0.7}))
+    )
+    semantic = normalize_validated_candidate_features(
+        validate_candidate(candidate("semantic", CandidateSource.SUPPORT_SEMANTIC, {"semantic_score": 0.8}))
+    )
 
     assert exact["values"][FusionFeature.EXACT] == 1.0
     assert lexical["values"][FusionFeature.LEXICAL] == 0.7
@@ -240,7 +215,7 @@ def test_resolver_scores_use_source_specific_normalization() -> None:
 
 def test_deduplication_retains_contributions_diagnostics_and_evidence() -> None:
     values = supported_pair()
-    duplicate_evidence = candidate_with_changes(values[0], {"evidence": (support_reference("proposition:stmt-1"),)})
+    duplicate_evidence = validate_candidate({**values[0], "evidence": (support_reference("proposition:stmt-1"),)})
 
     decision = conformance_fusion().decide(frame(), (duplicate_evidence, values[1]))
 
@@ -260,7 +235,6 @@ def test_deduplication_retains_contributions_diagnostics_and_evidence() -> None:
     assert fields == {("lexical_trace",), ("semantic_trace",)}
     assert "sensitive-value" not in json_dumps(dict(decision["report"]))
     assert decision["working_memory_bytes"] > 0
-    assert fusion_decision_from_json(fusion_decision_to_json(decision)) == decision
 
 
 def test_transparent_fusion_answers_only_supported_independent_agreement() -> None:
@@ -315,10 +289,7 @@ def test_missing_authority_abstains_by_default() -> None:
 def test_single_source_or_incomplete_support_cannot_answer() -> None:
     lexical, semantic = supported_pair()
     single = conformance_fusion().decide(frame(), (semantic,))
-    no_support = candidate_with_changes(
-        semantic,
-        {"features": feature_set(values={"semantic_score": 0.99}), "evidence": ()},
-    )
+    no_support = validate_candidate({**semantic, "features": feature_set(values={"semantic_score": 0.99}), "evidence": ()})
     unsupported = conformance_fusion().decide(frame(), (lexical, no_support))
 
     assert single["outcome"] == ResolutionOutcome.EVIDENCE
@@ -352,7 +323,7 @@ def test_close_distinct_candidates_abstain_even_above_answer_threshold() -> None
 def test_central_structural_eligibility_filters_before_scoring(changed, expected_reason) -> None:
     value = candidate("stmt", CandidateSource.EXACT, {"exact_match": 1.0})
 
-    decision = conformance_fusion().decide(frame(), (candidate_with_changes(value, changed),))
+    decision = conformance_fusion().decide(frame(), (validate_candidate({**value, **changed}),))
 
     assert decision["outcome"] == ResolutionOutcome.MISS
     eligibility = report_candidates(decision)[0]["eligibility"]
@@ -366,7 +337,7 @@ def test_conflicting_responses_for_one_statement_are_not_selectable() -> None:
 
     decision = conformance_fusion().decide(
         frame(),
-        (first, candidate_with_changes(second, {"response": "Conflicting response"})),
+        (first, validate_candidate({**second, "response": "Conflicting response"})),
     )
 
     assert decision["outcome"] == ResolutionOutcome.MISS
@@ -375,13 +346,11 @@ def test_conflicting_responses_for_one_statement_are_not_selectable() -> None:
 
 def test_identity_and_object_type_mismatches_block_direct_selection() -> None:
     lexical, semantic = supported_pair()
-    lexical = candidate_with_changes(
-        lexical,
-        {"features": feature_set(values={**dict(lexical["features"]["values"]), "entity_match": 0.0})},
+    lexical = validate_candidate(
+        {**lexical, "features": feature_set(values={**dict(lexical["features"]["values"]), "entity_match": 0.0})}
     )
-    semantic = candidate_with_changes(
-        semantic,
-        {"features": feature_set(values={**dict(semantic["features"]["values"]), "object_type_match": 0.0})},
+    semantic = validate_candidate(
+        {**semantic, "features": feature_set(values={**dict(semantic["features"]["values"]), "object_type_match": 0.0})}
     )
     selected_frame = query_frame_with_changes(frame(), {"expected_object_type": ExpectedObjectType.PERSON})
 
@@ -457,54 +426,29 @@ def test_authoritative_features_use_explicit_support_history_and_authority() -> 
     assert values["authority"] == 0.85
 
 
-def test_feature_roles_and_internal_contract_codecs_are_complete() -> None:
-    assert all(
-        definition["producer"]
-        and definition["owner_section"]
-        and definition["trust_boundary"]
-        and definition["raw_range"]
-        and definition["combination_rule"]
-        and isinstance(definition["role"], FusionFeatureRole)
-        for definition in feature_definitions().values()
-    )
-    raw = candidate("codec", CandidateSource.SPARSE, {"sparse_score": 0.7})
-    normalized = normalize_candidate_features(raw)
-    eligibility = candidate_eligibility(
-        feature_values={FusionFeature.HISTORY: 0.5},
-        feature_available=(FusionFeature.HISTORY,),
-    )
-    contribution = fusion_contribution(raw, normalized, eligibility)
-    score_contributions = dict.fromkeys(FusionFeature, 0.0)
-    fused = fused_candidate(raw, (contribution,), normalized, 0.7, score_contributions, eligibility)
-    decision = conformance_fusion().decide(frame(), supported_pair())
-
-    assert normalized_feature_set_from_json(normalized_feature_set_to_json(normalized)) == normalized
-    assert candidate_eligibility_from_json(candidate_eligibility_to_json(eligibility)) == eligibility
-    assert fusion_contribution_from_json(fusion_contribution_to_json(contribution)) == contribution
-    assert fused_candidate_from_json(fused_candidate_to_json(fused)) == fused
-    assert fusion_decision_from_json(fusion_decision_to_json(decision)) == decision
-    assert "null" not in fusion_decision_to_json(decision)
-
-
 def test_normalization_rejects_cross_source_spoofing_and_keeps_priority_distinct() -> None:
-    sparse = normalize_candidate_features(
-        candidate(
-            "sparse-spoof",
-            CandidateSource.SPARSE,
-            {
-                "sparse_score": 0.4,
-                "exact_match": 1.0,
-                "semantic_score": 1.0,
-                "priority": 999.0,
-                "hit_rate": 1.0,
-            },
+    sparse = normalize_validated_candidate_features(
+        validate_candidate(
+            candidate(
+                "sparse-spoof",
+                CandidateSource.SPARSE,
+                {
+                    "sparse_score": 0.4,
+                    "exact_match": 1.0,
+                    "semantic_score": 1.0,
+                    "priority": 999.0,
+                    "hit_rate": 1.0,
+                },
+            )
         )
     )
-    semantic = normalize_candidate_features(
-        candidate(
-            "semantic-spoof",
-            CandidateSource.SUPPORT_SEMANTIC,
-            {"semantic_score": 0.8, "sparse_score": 1.0, "vector_weight": 99.0},
+    semantic = normalize_validated_candidate_features(
+        validate_candidate(
+            candidate(
+                "semantic-spoof",
+                CandidateSource.SUPPORT_SEMANTIC,
+                {"semantic_score": 0.8, "sparse_score": 1.0, "vector_weight": 99.0},
+            )
         )
     )
 
@@ -517,13 +461,11 @@ def test_normalization_rejects_cross_source_spoofing_and_keeps_priority_distinct
 
 def test_explicit_mismatch_uses_conservative_aggregation() -> None:
     lexical, semantic = supported_pair()
-    lexical = candidate_with_changes(
-        lexical,
-        {"features": feature_set(values={**dict(lexical["features"]["values"]), "entity_match": 1.0})},
+    lexical = validate_candidate(
+        {**lexical, "features": feature_set(values={**dict(lexical["features"]["values"]), "entity_match": 1.0})}
     )
-    semantic = candidate_with_changes(
-        semantic,
-        {"features": feature_set(values={**dict(semantic["features"]["values"]), "entity_match": 0.0})},
+    semantic = validate_candidate(
+        {**semantic, "features": feature_set(values={**dict(semantic["features"]["values"]), "entity_match": 0.0})}
     )
 
     decision = conformance_fusion().decide(frame(), (lexical, semantic))
@@ -540,13 +482,13 @@ def test_explicit_mismatch_uses_conservative_aggregation() -> None:
 def test_order_invariance_canonicalizes_candidates_and_evidence() -> None:
     lexical, semantic = supported_pair()
     extra = support_reference("proposition-extra")
-    semantic = candidate_with_changes(semantic, {"evidence": (*semantic["evidence"], extra)})
+    semantic = validate_candidate({**semantic, "evidence": (*semantic["evidence"], extra)})
     engine = conformance_fusion()
 
     first = engine.decide(frame(), (lexical, semantic))
     second = engine.decide(frame(), (semantic, lexical))
 
-    assert fusion_decision_to_json(first) == fusion_decision_to_json(second)
+    assert first == second
 
 
 def test_per_candidate_filtering_preserves_valid_independent_group() -> None:
@@ -568,11 +510,11 @@ def test_per_candidate_filtering_preserves_valid_independent_group() -> None:
 
 def test_candidate_and_evidence_identity_conflicts_abstain_deterministically() -> None:
     lexical, semantic = supported_pair()
-    conflicting_id = candidate_with_changes(semantic, {"candidate_id": lexical["candidate_id"]})
+    conflicting_id = validate_candidate({**semantic, "candidate_id": lexical["candidate_id"]})
     candidate_conflict = conformance_fusion().decide(frame(), (lexical, conflicting_id))
     reference = support_reference("proposition-conflict")
-    reference_variant = evidence_reference_with_changes(reference, {"resolver": "different-resolver"})
-    semantic = candidate_with_changes(semantic, {"evidence": (reference, reference_variant)})
+    reference_variant = validate_evidence_reference({**reference, "resolver": "different-resolver"})
+    semantic = validate_candidate({**semantic, "evidence": (reference, reference_variant)})
     evidence_conflict = conformance_fusion().decide(frame(), (lexical, semantic))
 
     assert candidate_conflict["outcome"] == ResolutionOutcome.MISS
@@ -611,15 +553,14 @@ def test_authority_revalidates_artifact_generation_and_support() -> None:
 
 def test_explicit_conflict_and_fusion_memory_exhaustion_are_typed() -> None:
     lexical, semantic = supported_pair()
-    lexical = candidate_with_changes(
-        lexical,
-        {"features": feature_set(values={**dict(lexical["features"]["values"]), "explicit_conflict": 1.0})},
+    lexical = validate_candidate(
+        {**lexical, "features": feature_set(values={**dict(lexical["features"]["values"]), "explicit_conflict": 1.0})}
     )
     conflict = conformance_fusion().decide(frame(), (lexical, semantic))
     selected_frame = frame()
     memory_frame = query_frame_with_changes(
         selected_frame,
-        {"budget": resolution_budget_with_changes(selected_frame["budget"], {"max_working_memory_bytes": 1})},
+        {"budget": validate_resolution_budget({**selected_frame["budget"], "max_working_memory_bytes": 1})},
     )
     memory = conformance_fusion().decide(memory_frame, supported_pair())
 
@@ -653,3 +594,25 @@ def test_explicit_fusion_memory_allowance_is_concrete_and_enforced() -> None:
 def test_policy_reasons_are_closed_content_free_identifiers() -> None:
     assert len(set(FusionPolicyReason)) == len(FusionPolicyReason)
     assert all(reason.value == reason.value.lower() and " " not in reason.value for reason in FusionPolicyReason)
+
+
+@pytest_mark.parametrize("shortlist_size", [1, 2, 8])
+@pytest_mark.parametrize(
+    "scores",
+    [(0.60,), (0.99, 0.93, 0.60)],
+    ids=["one-weak-candidate", "close-leaders"],
+)
+def test_reranker_reorders_but_does_not_change_the_answer_policy(shortlist_size, scores) -> None:
+    candidates = tuple(
+        value for index, score in enumerate(scores) for value in supported_pair(f"s{index}", semantic=score, lexical=score)
+    )
+    selected_frame = frame()
+    baseline = CandidateFusionEngine(authority=permissive_candidate_authority).decide(selected_frame, candidates)
+    reranker = TransparentLogisticReranker(reranker_config(enabled=True, shortlist_size=shortlist_size))
+
+    reranked = CandidateFusionEngine(authority=permissive_candidate_authority, reranker=reranker).decide(selected_frame, candidates)
+
+    assert reranked["report"]["reranker"]["applied"] is True
+    assert baseline["outcome"] == ResolutionOutcome.EVIDENCE
+    assert reranked["outcome"] == baseline["outcome"]
+    assert reranked["confidence"] == baseline["confidence"]

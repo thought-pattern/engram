@@ -1,8 +1,8 @@
-"""Exact, data-preserving standalone Engram catalog reset."""
+"""Exact, data-preserving reset of Engram's schema catalog."""
 
-from pathlib import Path
+from importlib.resources.abc import Traversable
 
-from engram.schema_admin import execute_admin_statement
+from engram.schema_admin import execute_admin_statement, read_graph_shape
 from engram.schema_catalog import (
     catalog_keys,
     read_live_catalog,
@@ -12,21 +12,14 @@ from engram.schema_catalog import (
 
 def prove_empty_graph(connection) -> dict:
     """Require zero nodes and relationships before catalog removal."""
-    node_rows = connection.execute("MATCH (n) RETURN count(n) AS nodes")
-    relationship_rows = connection.execute("MATCH ()-[r]->() RETURN count(r) AS relationships")
-    if not node_rows or not relationship_rows:
-        raise RuntimeError("Memgraph graph-count inspection returned no receipt")
-    shape = {
-        "nodes": int(node_rows[0].get("nodes", -1)),
-        "relationships": int(relationship_rows[0].get("relationships", -1)),
-    }
+    shape = read_graph_shape(connection)
     if shape.get("nodes", -1) != 0 or shape.get("relationships", -1) != 0:
-        raise RuntimeError(f"standalone schema reset requires an empty graph: {shape}")
+        raise RuntimeError(f"schema reset requires an empty graph: {shape}")
     return shape
 
 
-def allowed_catalog_keys(schema_path: Path) -> dict:
-    """Return the exact current standalone definitions."""
+def allowed_catalog_keys(schema_path: Traversable) -> dict:
+    """Return the exact definitions in Engram's schema."""
     corrected = validate_schema_contract(schema_path.read_text(encoding="utf-8"))
     result = {
         "ordinary_indexes": catalog_keys(corrected, "ordinary_indexes"),
@@ -66,7 +59,7 @@ def catalog_drop_statements(catalog: dict) -> list[str]:
     return statements
 
 
-def resolve_schema_reset(connection, schema_path: Path) -> dict:
+def resolve_schema_reset(connection, schema_path: Traversable) -> dict:
     """Resolve reset targets only when every live definition is recognized."""
     shape = prove_empty_graph(connection)
     catalog = read_live_catalog(connection)
@@ -77,12 +70,12 @@ def resolve_schema_reset(connection, schema_path: Path) -> dict:
         if values:
             unrecognized[group] = sorted(values)
     if unrecognized:
-        raise RuntimeError(f"standalone reset found unrecognized definitions: {unrecognized}")
+        raise RuntimeError(f"schema reset found unrecognized definitions: {unrecognized}")
     result = {"valid": True, "graph": shape, "statements": catalog_drop_statements(catalog)}
     return result
 
 
-def apply_schema_reset(connection, schema_path: Path) -> dict:
+def apply_schema_reset(connection, schema_path: Traversable) -> dict:
     """Apply exact drops and prove the complete catalog is empty."""
     report = resolve_schema_reset(connection, schema_path)
     for statement in report.get("statements", []):
@@ -94,6 +87,6 @@ def apply_schema_reset(connection, schema_path: Path) -> dict:
         if catalog_keys(remaining, group)
     }
     if residual:
-        raise RuntimeError(f"standalone reset left residual definitions: {residual}")
+        raise RuntimeError(f"schema reset left residual definitions: {residual}")
     report["applied"] = True
     return report

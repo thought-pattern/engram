@@ -154,29 +154,30 @@ def test_user_aware_chat_user_labels_are_case_sensitive_and_caller_owned() -> No
     assert "alice" in engram.sessions
 
 
-"""A question that only hits the catch-all consults retrieval before shrugging."""
+"""A question that hits the catch-all is answered by that category."""
 
 
-def test_question_routing_question_hitting_catchall_consults_retrieval() -> None:
+def test_question_routing_question_hitting_catchall_keeps_the_category() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
     engram.store("Python is a versatile programming language.")
 
     result = pipeline.respond(engram, "python programming language?")
 
-    assert result["source"] == "statement"
-    assert result["response"] == "Python is a versatile programming language."
+    assert result["source"] == "pattern"
+    assert result["response"] == "Tell me more."
 
 
-def test_question_routing_question_prefers_llm_over_shrug() -> None:
+def test_question_routing_wildcard_category_answers_before_the_model() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
     llm_fn, calls = counting_llm("A deep answer.")
 
     result = pipeline.respond(engram, "What is the meaning of life?", llm_fn=llm_fn)
 
-    assert result["source"] == "llm"
-    assert len(calls) == 1
+    assert result["source"] == "pattern"
+    assert result["response"] == "Tell me more."
+    assert calls == []
 
 
 def test_question_routing_question_without_answer_gets_deferred_shrug() -> None:
@@ -244,28 +245,29 @@ def test_pipeline_result_detail_statement_tier_has_empty_pattern_fields() -> Non
     assert result["captured"] == []
 
 
-def test_conversational_composition_chat_uses_final_matched_sentence_instead_of_concatenating() -> None:
+def test_conversational_composition_chat_says_every_matched_sentence() -> None:
     engram = Engram()
     engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
     engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
 
     result = pipeline.chat(engram, "First. Second.", user_id="speaker")
 
-    assert result["response"] == "Second reply."
+    assert result["response"] == "First reply. Second reply."
     assert result["pattern"] == "SECOND"
 
 
-def test_conversational_composition_pattern_query_selects_one_turn_candidate() -> None:
+def test_conversational_composition_pattern_query_joins_matched_sentences() -> None:
     engram = Engram()
     engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
     engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
 
     result = engram.pattern_query("First. Second.")
 
-    assert result[2] == "Second reply."
+    assert result[2] == "First reply. Second reply."
+    assert result[0]["pattern"] == "SECOND"
 
 
-def test_conversational_composition_repetition_feedback_gets_an_acknowledgment_not_another_probe() -> None:
+def test_conversational_composition_repetition_feedback_keeps_the_category() -> None:
     engram = Engram()
     engram.store("Why do you say that?", pattern="*", tier=Tier.STATIC)
 
@@ -276,32 +278,21 @@ def test_conversational_composition_repetition_feedback_gets_an_acknowledgment_n
         user_id="speaker",
     )
 
-    assert "repeating myself" in result["response"]
-    assert result["response"] != "Why do you say that?"
+    assert result["response"] == "Why do you say that? Why do you say that?"
 
 
-def test_deferred_shrug_retraction_phantom_shrug_removed_when_statement_answers() -> None:
+def test_wildcard_category_is_what_the_session_records() -> None:
     engram = Engram()
     engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
     engram.store("Python is a versatile programming language.")
 
     result = pipeline.respond(engram, "python programming language?", context_id="s1")
 
-    assert result["source"] == "statement"
-    session = engram.sessions["s1"]
-    # Only the answer the user actually saw is in the history
-    assert session["response_history"] == ["Python is a versatile programming language."]
-    assert session["previous_response"] == "Python is a versatile programming language."
-
-
-def test_deferred_shrug_retraction_shrug_stays_in_history_when_actually_shown() -> None:
-    engram = Engram()
-    engram.store("Tell me more.", pattern="*", tier=Tier.STATIC)
-
-    result = pipeline.respond(engram, "What is the meaning of life?", context_id="s2")
-
     assert result["source"] == "pattern"
-    assert engram.sessions["s2"]["response_history"] == ["Tell me more."]
+    assert result["response"] == "Tell me more."
+    session = engram.sessions["s1"]
+    assert session["response_history"] == ["Tell me more."]
+    assert session["previous_response"] == "Tell me more."
 
 
 def test_content_keyword_gate_question_words_alone_are_no_evidence() -> None:

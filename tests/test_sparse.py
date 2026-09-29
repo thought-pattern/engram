@@ -66,7 +66,6 @@ def test_sparse_document_uses_request_fields_without_response_text_by_default() 
 
     document = sparse_document_from_artifact(accepted)
 
-    assert document["schema_version"] == 1
     assert document["fields"]["response_text"] == ()
     assert document["fields"]["aliases"] == ("libfoo connection reset",)
     assert {"err_conn_reset", "v2.4.1", "api/client.py"}.issubset(document["technical_identifiers"])
@@ -121,27 +120,40 @@ def test_sparse_search_abstains_when_request_budget_is_exhausted() -> None:
     assert result["reason"] == "posting_visit_budget"
 
 
-def test_sparse_search_stops_construction_at_the_working_memory_budget(monkeypatch) -> None:
+def test_sparse_search_abstains_when_its_query_state_exceeds_the_budget() -> None:
     accepted = tuple(
         artifact(f"artifact-{index}", f"technical request {index} with repeated searchable terms", "A") for index in range(20)
     )
     engine = sparse_engine(*accepted)
-    observed_statement_ids = []
+
+    result = search(engine, "technical request", max_working_memory_bytes=1_000)
+
+    assert result.get("complete", True) is False
+    assert result.get("reason", "") == "working_memory_budget"
+    assert result.get("working_memory_bytes", 0) <= 1_000
+
+
+def test_sparse_documents_are_derived_once_and_statistics_changes_do_not_rederive(monkeypatch) -> None:
+    accepted = tuple(artifact(f"artifact-{index}", f"technical request {index}", "A") for index in range(5))
+    engine = sparse_engine(*accepted)
+    derived = []
     original = sparse_module.sparse_document_from_validated_artifact
 
     def observe(artifact_value: dict, include_response_text: bool) -> dict:
-        observed_statement_ids.append(artifact_value.get("statement_id", ""))
+        derived.append(artifact_value.get("statement_id", ""))
         result = original(artifact_value, include_response_text)
         return result
 
     monkeypatch.setattr(sparse_module, "sparse_document_from_validated_artifact", observe)
+    search(engine, "technical request")
+    search(engine, "technical request 3")
+    assert sorted(derived) == sorted(value["statement_id"] for value in accepted)
 
-    result = search(engine, "technical request", max_working_memory_bytes=10_000)
-
-    assert result.get("complete", True) is False
-    assert result.get("reason", "") == "working_memory_budget"
-    assert result.get("working_memory_bytes", 0) <= 10_000
-    assert len(observed_statement_ids) < len(accepted)
+    # A resolve replaces an artifact to update its statistics; its document is unchanged.
+    counted = {**accepted[0], "generation": 2, "statistics": artifact_statistics(1, 1, "2026-08-22T12:00:00Z", True)}
+    engine.response_repository = ArtifactRepository((counted, *accepted[1:]))
+    search(engine, "technical request")
+    assert len(derived) == len(accepted)
 
 
 def test_sparse_construction_does_not_charge_other_scopes() -> None:
@@ -160,7 +172,7 @@ def test_sparse_construction_does_not_charge_other_scopes() -> None:
     assert result.get("working_memory_bytes", 100_001) <= 100_000
 
 
-def test_sparse_search_uses_each_current_artifact_snapshot_without_synchronization() -> None:
+def test_sparse_search_uses_each_current_artifact_snapshot() -> None:
     engine = sparse_engine(artifact("first", "first unique request", "A"))
     before = search(engine, "first unique request")
     engine.response_repository = ArtifactRepository((artifact("second", "second unique request", "B"),))
@@ -168,8 +180,73 @@ def test_sparse_search_uses_each_current_artifact_snapshot_without_synchronizati
 
     assert [match["statement_id"] for match in before["matches"]] == ["first"]
     assert [match["statement_id"] for match in after["matches"]] == ["second"]
-    assert not hasattr(engine, "sparse_index_snapshot")
-    assert not hasattr(engine, "synchronize_sparse_index")
+    # The index is synced to the snapshot being searched, so nothing is left from the first.
+    assert set(engine.sparse_index.internal_entries) == {"second"}
+
+
+def test_sparse_index_matches_a_full_rebuild_through_random_changes() -> None:
+    from random import Random
+
+    random = Random(20260928)
+    words = ["alpha", "beta", "gamma", "ERR_CONN_RESET", "v2.4.1", "api/client.py", "libfoo", "reset", "timeout", "k8s"]
+    queries = ("connection reset", "ERR_CONN_RESET libfoo", "api/client.py v2.4.1", "gamma timeout", "alpha")
+    lifecycles = (LifecycleState.ACTIVE, LifecycleState.ACTIVE, LifecycleState.ACTIVE, LifecycleState.RETIRED)
+    namespaces = ("tenant-a", "tenant-a", "tenant-b")
+
+    def random_artifact(statement_id: str) -> dict:
+        result = artifact(
+            statement_id,
+            " ".join(random.choice(words) for _ in range(random.randint(1, 5))),
+            "Response " + random.choice(words),
+            aliases=tuple(random.choice(words) for _ in range(random.randint(0, 2))),
+            namespace=random.choice(namespaces),
+            lifecycle=random.choice(lifecycles),
+        )
+        return result
+
+    for include_response_text in (False, True):
+        settings = sparse_config(enabled=True, include_response_text=include_response_text)
+        index = sparse_module.SparseIndex()
+        current: dict[str, dict] = {}
+        for step in range(60):
+            action = random.random()
+            if action < 0.45 or not current:
+                statement_id = f"s-{step}"
+                current[statement_id] = random_artifact(statement_id)
+            elif action < 0.6:
+                del current[random.choice(sorted(current))]
+            elif action < 0.8:
+                statement_id = random.choice(sorted(current))
+                current[statement_id] = {**current[statement_id], "statistics": artifact_statistics(step, step)}
+            else:
+                statement_id = random.choice(sorted(current))
+                current[statement_id] = random_artifact(statement_id)
+            snapshot = tuple(current.values())
+            for query in queries:
+                for namespace in ("tenant-a", "tenant-b"):
+                    options = {"limit": 10, "max_working_memory_bytes": 50_000_000, "trusted_artifacts": True}
+                    indexed = sparse_module.search_sparse_artifacts(
+                        snapshot, query, scope_key(namespace=namespace), settings, index=index, **options
+                    )
+                    rebuilt = sparse_module.search_sparse_artifacts(
+                        snapshot, query, scope_key(namespace=namespace), settings, **options
+                    )
+                    assert indexed["matches"] == rebuilt["matches"], (step, query, namespace)
+                    assert (indexed["complete"], indexed["reason"]) == (rebuilt["complete"], rebuilt["reason"])
+
+
+def test_sparse_budget_charges_request_structures_so_large_stores_still_match() -> None:
+    noise = tuple(artifact(f"noise-{index}", f"archive entry {index} synthetic noise token {index}", "N") for index in range(200))
+    target = artifact("target", "What are the baseline support hours?", "Nine to five.")
+    engine = sparse_engine(*noise, target)
+
+    # Charging every document's full size needs about 12 KB per artifact,
+    # which is over this budget; the request's own structures fit well within it.
+    result = search(engine, "baseline support hours schedule", max_working_memory_bytes=1_000_000)
+
+    assert result["complete"] is True
+    assert [match["statement_id"] for match in result["matches"]][:1] == ["target"]
+    assert result["working_memory_bytes"] <= 1_000_000
 
 
 def test_disabled_sparse_retrieval_derives_no_artifact_state() -> None:

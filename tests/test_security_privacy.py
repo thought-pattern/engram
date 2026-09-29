@@ -1,11 +1,12 @@
 """Section 15 security and privacy boundary tests."""
 
-from logging import DEBUG, ERROR
+from logging import DEBUG, ERROR, WARNING
 
 from pytest import raises as pytest_raises
 
 from engram.constants import (
     MAX_ARTIFACT_ID_BYTES,
+    MAX_CACHE_REQUEST_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_FEEDBACK_REASON_BYTES,
     MAX_METADATA_KEY_BYTES,
@@ -16,6 +17,8 @@ from engram.constants import (
     MAX_RESPONSE_BYTES,
     MAX_SIGNATURE_INPUT_BYTES,
     MAX_SOURCE_LABEL_BYTES,
+    ResolutionOutcome,
+    ResolverState,
 )
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -23,12 +26,14 @@ from engram.graph import MemGraphConnection
 from engram.mcp_server import MCPConversationService
 from engram.service import EngramCore, service_request_signature
 
+from .bolt_stub import BoltStub
+
 
 def test_shared_service_rejects_oversized_request_and_identity_fields_before_state_change() -> None:
     core = EngramCore()
 
     with pytest_raises(InvalidRequestError, match="request exceeds"):
-        core.resolve_request("x" * (MAX_REQUEST_BYTES + 1), "bounded-request")
+        core.resolve_request("x" * (MAX_CACHE_REQUEST_BYTES + 1), "bounded-request")
     with pytest_raises(InvalidRequestError, match="request_id exceeds"):
         core.resolve_request("bounded request", "r" * (MAX_REQUEST_ID_BYTES + 1))
     with pytest_raises(InvalidRequestError, match="namespace exceeds"):
@@ -101,7 +106,7 @@ def test_initial_context_and_service_signatures_are_bounded() -> None:
     core.close()
 
 
-def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
+def test_core_graph_failure_is_logged_in_full_and_returns_no_rows(caplog) -> None:
     secret = "private-request-and-proposition-content"
 
     class FailingGraph:
@@ -118,34 +123,88 @@ def test_core_graph_failure_log_omits_exception_content(caplog) -> None:
         assert engine.graph_query("RETURN 1") == []
 
     assert "RuntimeError" in caplog.text
-    assert secret not in caplog.text
+    assert secret in caplog.text
 
 
-def test_memgraph_query_failure_log_and_wrapper_omit_exception_content(caplog) -> None:
+def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_type(caplog) -> None:
     secret = "private-graph-driver-content"
+    stub = BoltStub()
+    stub.mode = "fail"
+    stub.failure_message = secret
+    client = MemGraphConnection(host="127.0.0.1", port=stub.port)
 
-    class FailingCursor:
-        description = ()
+    try:
+        assert client.connect()
+        with (
+            caplog.at_level(ERROR, logger="engram.graph"),
+            pytest_raises(RuntimeError, match=r"Query failed \(DatabaseError\)") as failure,
+        ):
+            client.execute("RETURN 1")
+        # A failed query arrives over a healthy connection, so reads stay available.
+        assert client.available is True
+        assert client.reconnect_needed is False
+    finally:
+        client.disconnect()
+        stub.close()
 
-        def execute(self, internal_query, internal_parameters):
+    assert secret in str(failure.value.__cause__)
+    assert secret not in str(failure.value)
+    assert secret in caplog.text
+    assert "DatabaseError" in caplog.text
+
+
+def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> None:
+    secret = "private-database-outage-detail"
+
+    class FailingGraph:
+        available = True
+
+        def execute(self, internal_query, internal_parameters=()):
             del internal_query, internal_parameters
             raise RuntimeError(secret)
 
-    class FailingConnection:
-        def cursor(self):
-            result = FailingCursor()
-            return result
+        def structured_proposition_projections(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
 
-    client = MemGraphConnection()
-    client.conn = FailingConnection()
-    client.available = True
+        def canonical_entity_matches(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
 
-    with (
-        caplog.at_level(ERROR, logger="engram.graph"),
-        pytest_raises(RuntimeError, match=r"Query failed \(RuntimeError\)") as failure,
-    ):
-        client.execute("RETURN 1")
+        def canonical_predicate_matches(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
 
-    assert secret not in str(failure.value)
-    assert secret not in caplog.text
+        def relation_one_hop_proposition_projections(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+        def proposition_projection_by_id(self, *internal_args, **internal_kwargs):
+            del internal_args, internal_kwargs
+            raise RuntimeError(secret)
+
+    engine = Engram()
+    engine.internal_graph_client = FailingGraph()
+    engine.config["graph"]["enabled"] = True
+    core = EngramCore(engine)
+    engine = core.engram
+
+    with caplog.at_level(WARNING, logger="engram.core"):
+        assert engine.canonical_entity_matches("France") == []
+        assert engine.canonical_predicate_matches("capital") == []
+        assert engine.relation_one_hop_proposition_projections("entity:france", "predicate:capital") == []
+        assert engine.current_proposition_projection("proposition:paris") == ()
+        assert engine.structured_proposition_projections("France") == []
+        resolved = core.resolve_request("What is the capital of France?", "database-failure")
+        started = core.start_conversation(user_id="alice")
+        turn = core.chat(started["user_id"], "What is the capital of France?")
+
+    visible = f"{resolved}{turn}"
+    assert secret not in visible
+    assert secret in caplog.text
+    assert "Graph read failed" in caplog.text
     assert "RuntimeError" in caplog.text
+    assert resolved["outcome"] == ResolutionOutcome.MISS
+    assert all(item["state"] != ResolverState.FAILED for item in resolved["resolver_results"])
+    assert turn["response"] == ""
+    core.close()

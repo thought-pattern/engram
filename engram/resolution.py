@@ -1,6 +1,5 @@
 """Transport-neutral contracts for the bounded unified resolution pipeline."""
 
-from datetime import datetime
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -9,13 +8,9 @@ from threading import RLock as threading_RLock
 from engram.artifacts import LifecycleState
 from engram.constants import (
     ACCOUNTING_OBSERVATION_FIELDS,
-    ACCOUNTING_OBSERVATION_SCHEMA_VERSION,
     BUDGET_CONSUMPTION_FIELDS,
-    BUDGET_CONSUMPTION_SCHEMA_VERSION,
     CANDIDATE_FIELDS,
-    CANDIDATE_SCHEMA_VERSION,
     CANONICAL_PROPOSITION_REFERENCES_FIELDS,
-    CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION,
     DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
     DEFAULT_RESOLUTION_MAX_CANDIDATES,
     DEFAULT_RESOLUTION_MAX_DIAGNOSTIC_BYTES,
@@ -27,15 +22,11 @@ from engram.constants import (
     DEFAULT_RESOLUTION_MAX_VECTOR_RESULTS,
     DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES,
     DISCLOSURE_DECISION_FIELDS,
-    DISCLOSURE_DECISION_SCHEMA_VERSION,
     EMPTY_MAPPING,
     EMPTY_SCOPE_KEY,
     EVIDENCE_PACKAGE_FIELDS,
-    EVIDENCE_PACKAGE_WIRE_VERSION,
     EVIDENCE_REFERENCE_FIELDS,
-    EVIDENCE_REFERENCE_SCHEMA_VERSION,
     FEATURE_SET_FIELDS,
-    FEATURE_SET_SCHEMA_VERSION,
     INHERITANCE_PROVENANCE_FIELDS,
     MAX_ACCOUNTING_KEYWORD_BYTES,
     MAX_ACCOUNTING_KEYWORDS,
@@ -59,7 +50,6 @@ from engram.constants import (
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
-    MAX_PROPOSITION_TIMESTAMP_BYTES,
     MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     MAX_REASON_CODE_BYTES,
     MAX_REQUEST_BYTES,
@@ -83,22 +73,14 @@ from engram.constants import (
     MIN_RESOLUTION_CANDIDATES,
     MIN_RESOLUTION_OUTPUT_BYTES,
     MIN_RESOLUTION_RESOLVERS,
-    PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
     PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
     PROPOSITION_EVIDENCE_RECORD_FIELDS,
-    PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
     PROPOSITION_TRUST_INPUTS_FIELDS,
-    PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
     PROPOSITION_VALIDITY_INPUTS_FIELDS,
-    PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     QUERY_FRAME_FIELDS,
-    QUERY_FRAME_SCHEMA_VERSION,
     RESOLUTION_BUDGET_FIELDS,
-    RESOLUTION_BUDGET_SCHEMA_VERSION,
     RESOLUTION_RESULT_FIELDS,
-    RESOLUTION_RESULT_SCHEMA_VERSION,
     RESOLVER_RESULT_FIELDS,
-    RESOLVER_RESULT_SCHEMA_VERSION,
     REWRITE_TRACE_STEP_FIELDS,
     CandidateSource,
     CostClass,
@@ -140,16 +122,13 @@ from engram.temporal import (
     temporal_query_to_dict,
     validate_temporal_query,
 )
-
-
-def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
-    return value
+from engram.validation import (
+    require_any_text,
+    require_available_utc_timestamp,
+    require_bool,
+    require_identifier,
+    utc_datetime,
+)
 
 
 def require_int(value: object, name: str, minimum: int, maximum: int) -> int:
@@ -166,39 +145,6 @@ def require_float(value: object, name: str, minimum: float, maximum: float) -> f
     result = float(value)
     if not math_isfinite(result) or not minimum <= result <= maximum:
         raise InvalidRequestError(f"{name} must be finite and from {minimum} through {maximum}")
-    return result
-
-
-def require_bool(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
-
-
-def require_identifier(value: object, name: str, maximum_bytes: int = MAX_PROPOSITION_IDENTIFIER_BYTES) -> str:
-    identifier = require_text(value, name, maximum_bytes, allow_empty=False)
-    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in identifier):
-        raise InvalidRequestError(f"{name} must not contain whitespace or control characters")
-    return identifier
-
-
-def require_proposition_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
-    presence = require_bool(available, f"{name}_available")
-    text = require_text(value, name, MAX_PROPOSITION_TIMESTAMP_BYTES, allow_empty=not presence)
-    if not presence:
-        if text:
-            raise InvalidRequestError(f"{name} must be empty when unavailable")
-        result = text, presence
-        return result
-    if not text or not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    result = text, presence
     return result
 
 
@@ -229,7 +175,7 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        result = require_text(value, name, MAX_JSON_STRING_BYTES, allow_empty=True)
+        result = require_any_text(value, name, MAX_JSON_STRING_BYTES, allow_empty=True)
         return result
     if isinstance(value, int) and not isinstance(value, bool):
         return value
@@ -238,11 +184,12 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
             raise InvalidRequestError(f"{name} numbers must be finite")
         return value
     if isinstance(value, dict):
+        # Check key types before sorting: mixed key types cannot be ordered.
+        if not all(isinstance(key, str) for key in value):
+            raise InvalidRequestError(f"{name} keys must be strings")
         frozen = {}
         for key in sorted(value):
-            if not isinstance(key, str):
-                raise InvalidRequestError(f"{name} keys must be strings")
-            require_text(key, f"{name} key", 128, allow_empty=False)
+            require_any_text(key, f"{name} key", 128, allow_empty=False)
             frozen[key] = freeze_json(value[key], name, depth + 1, count)
         result = dict(frozen)
         return result
@@ -313,18 +260,13 @@ def resolution_budget(
     max_working_memory_bytes: object = DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES,
     allowed_cost_classes: object = DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
     started_ns: object = 0,
-    schema_version: object = RESOLUTION_BUDGET_SCHEMA_VERSION,
 ) -> dict:
     """Build immutable non-time resource limits and a measurement start."""
-    version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if version != RESOLUTION_BUDGET_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolution budget schema_version: {version}")
     normalized_costs = enum_tuple(allowed_cost_classes, CostClass, "allowed_cost_classes", len(CostClass))
     if not normalized_costs:
         raise InvalidRequestError("allowed_cost_classes must not be empty")
     normalized_started = require_int(started_ns, "started_ns", 0, MAX_RESOURCE_COUNTER)
     result: dict = {
-        "schema_version": version,
         "max_resolvers": require_int(max_resolvers, "max_resolvers", MIN_RESOLUTION_RESOLVERS, MAX_RESOLUTION_RESOLVERS),
         "max_candidates": require_int(
             max_candidates,
@@ -374,20 +316,7 @@ def validate_resolution_budget(value: object) -> dict:
         max_working_memory_bytes=data["max_working_memory_bytes"],
         allowed_cost_classes=data["allowed_cost_classes"],
         started_ns=data["started_ns"],
-        schema_version=data["schema_version"],
     )
-    return result
-
-
-def resolution_budget_with_changes(value: object, changes: object) -> dict:
-    budget = validate_resolution_budget(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("resolution budget changes must be an object")
-    if not set(changes).issubset(RESOLUTION_BUDGET_FIELDS):
-        raise InvalidRequestError("resolution budget changes contain an unknown field")
-    updated: dict[str, object] = dict(budget)
-    updated.update(changes)
-    result = validate_resolution_budget(updated)
     return result
 
 
@@ -420,7 +349,6 @@ def recapture_resolution_budget(value: object, clock_ns: object) -> dict:
         max_diagnostic_bytes=budget["max_diagnostic_bytes"],
         max_working_memory_bytes=budget["max_working_memory_bytes"],
         allowed_cost_classes=budget["allowed_cost_classes"],
-        schema_version=budget["schema_version"],
     )
     return result
 
@@ -428,7 +356,6 @@ def recapture_resolution_budget(value: object, clock_ns: object) -> dict:
 def resolution_budget_to_dict(value: object) -> dict[str, object]:
     budget = validate_resolution_budget(value)
     result = {
-        "schema_version": budget["schema_version"],
         "max_resolvers": budget["max_resolvers"],
         "max_candidates": budget["max_candidates"],
         "max_graph_rows": budget["max_graph_rows"],
@@ -448,11 +375,10 @@ def resolution_budget_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
     raw_costs = require_list(data["allowed_cost_classes"], "allowed_cost_classes")
     try:
-        costs = tuple(CostClass(require_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
+        costs = tuple(CostClass(require_any_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
     except ValueError as error:
         raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from error
     result = resolution_budget(
-        schema_version=data["schema_version"],
         max_resolvers=data["max_resolvers"],
         max_candidates=data["max_candidates"],
         max_graph_rows=data["max_graph_rows"],
@@ -465,18 +391,6 @@ def resolution_budget_from_dict(value: object) -> dict:
         allowed_cost_classes=costs,
         started_ns=data["started_ns"],
     )
-    return result
-
-
-def resolution_budget_to_json(value: object) -> str:
-    payload = resolution_budget_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def resolution_budget_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "ResolutionBudget JSON")
-    result = resolution_budget_from_dict(data)
     return result
 
 
@@ -493,12 +407,8 @@ def budget_consumption(
     working_memory_bytes: object = 0,
     exhausted_dimensions: object = (),
     measurement_available: object = True,
-    schema_version: object = BUDGET_CONSUMPTION_SCHEMA_VERSION,
 ) -> dict:
     """Build concrete resource use for a resolver or complete resolution."""
-    version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if version != BUDGET_CONSUMPTION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported budget consumption schema_version: {version}")
     numeric_values = {
         "elapsed_ns": elapsed_ns,
         "resolvers": resolvers,
@@ -519,7 +429,7 @@ def budget_consumption(
     if len(exhausted_dimensions) > MAX_EXHAUSTED_DIMENSIONS:
         raise InvalidRequestError(f"exhausted_dimensions exceeds the limit of {MAX_EXHAUSTED_DIMENSIONS}")
     normalized_exhausted = tuple(
-        require_text(value, "exhausted dimension", MAX_EXHAUSTED_DIMENSION_BYTES, allow_empty=False)
+        require_any_text(value, "exhausted dimension", MAX_EXHAUSTED_DIMENSION_BYTES, allow_empty=False)
         for value in exhausted_dimensions
     )
     if normalized_exhausted != tuple(sorted(set(normalized_exhausted))):
@@ -527,7 +437,6 @@ def budget_consumption(
     if not isinstance(measurement_available, bool):
         raise InvalidRequestError("measurement_available must be a boolean")
     result: dict = {
-        "schema_version": version,
         "elapsed_ns": normalized_numbers["elapsed_ns"],
         "resolvers": normalized_numbers["resolvers"],
         "candidates": normalized_numbers["candidates"],
@@ -547,7 +456,6 @@ def budget_consumption(
 def validate_budget_consumption(value: object) -> dict:
     data = exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
     result = budget_consumption(
-        schema_version=data["schema_version"],
         elapsed_ns=data["elapsed_ns"],
         resolvers=data["resolvers"],
         candidates=data["candidates"],
@@ -590,7 +498,6 @@ def trusted_budget_consumption_with_changes(
 def budget_consumption_to_dict(value: object) -> dict[str, object]:
     consumption = validate_budget_consumption(value)
     result = {
-        "schema_version": consumption["schema_version"],
         "elapsed_ns": consumption["elapsed_ns"],
         "resolvers": consumption["resolvers"],
         "candidates": consumption["candidates"],
@@ -611,7 +518,6 @@ def budget_consumption_from_dict(value: object) -> dict:
     data = exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
     exhausted = require_list(data["exhausted_dimensions"], "exhausted_dimensions")
     result = budget_consumption(
-        schema_version=data["schema_version"],
         elapsed_ns=data["elapsed_ns"],
         resolvers=data["resolvers"],
         candidates=data["candidates"],
@@ -628,22 +534,10 @@ def budget_consumption_from_dict(value: object) -> dict:
     return result
 
 
-def budget_consumption_to_json(value: object) -> str:
-    payload = budget_consumption_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def budget_consumption_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "BudgetConsumption JSON")
-    result = budget_consumption_from_dict(data)
-    return result
-
-
 def inheritance_provenance(field_name: object, source_turn: object) -> dict:
     """Build concrete empty-capable contextual field provenance owned by Section 8."""
     result: dict = {
-        "field_name": require_text(field_name, "inheritance field_name", 64, allow_empty=False),
+        "field_name": require_any_text(field_name, "inheritance field_name", 64, allow_empty=False),
         "source_turn": require_int(source_turn, "inheritance source_turn", 1, 1_000_000),
     }
     return result
@@ -675,9 +569,9 @@ def inheritance_provenance_from_dict(value: object) -> dict:
 def rewrite_trace_step(rule_id: object, input_text: object, output_text: object) -> dict:
     """Build an empty-capable rewrite trace whose rule semantics belong to Section 11."""
     result: dict = {
-        "rule_id": require_text(rule_id, "rewrite rule_id", 128, allow_empty=False),
-        "input_text": require_text(input_text, "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False),
-        "output_text": require_text(output_text, "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False),
+        "rule_id": require_any_text(rule_id, "rewrite rule_id", 128, allow_empty=False),
+        "input_text": require_any_text(input_text, "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False),
+        "output_text": require_any_text(output_text, "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False),
     }
     return result
 
@@ -713,14 +607,10 @@ def query_frame(
     eligibility_context: object,
     diagnostic_id: object,
     temporal_query_value: object = (),
-    schema_version: object = QUERY_FRAME_SCHEMA_VERSION,
 ) -> dict:
     """Build the immutable base interpretation passed to every resolver."""
-    validated_schema_version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if validated_schema_version != QUERY_FRAME_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported query frame schema_version: {validated_schema_version}")
-    original = require_text(original_text, "frame original_text", MAX_REQUEST_BYTES, allow_empty=False)
-    resolved = require_text(resolved_text, "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False)
+    original = require_any_text(original_text, "frame original_text", MAX_REQUEST_BYTES, allow_empty=False)
+    resolved = require_any_text(resolved_text, "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False)
     try:
         validated_identity = validate_query_identity(identity)
     except IdentityValidationError as error:
@@ -755,7 +645,7 @@ def query_frame(
     if validated_identity["scope"] != validated_scope:
         raise InvalidRequestError("frame scope must match identity scope")
     frozen_metadata = freeze_mapping(required_metadata, "frame required_metadata")
-    source_label = require_text(
+    source_label = require_any_text(
         required_source_label,
         "frame required_source_label",
         MAX_REQUIRED_SOURCE_LABEL_BYTES,
@@ -771,7 +661,7 @@ def query_frame(
         raise InvalidRequestError("frame eligibility_context must be an EligibilityContext") from error
     if validated_context["namespace"] != validated_scope["namespace"]:
         raise InvalidRequestError("frame eligibility context namespace must match scope")
-    validated_diagnostic_id = require_text(
+    validated_diagnostic_id = require_any_text(
         diagnostic_id,
         "frame diagnostic_id",
         MAX_DIAGNOSTIC_ID_BYTES,
@@ -791,7 +681,6 @@ def query_frame(
         "budget": validated_budget,
         "eligibility_context": validated_context,
         "diagnostic_id": validated_diagnostic_id,
-        "schema_version": validated_schema_version,
     }
     return result
 
@@ -812,7 +701,6 @@ def validate_query_frame(value: object) -> dict:
         data["eligibility_context"],
         data["diagnostic_id"],
         data["temporal_query"],
-        data["schema_version"],
     )
     return result
 
@@ -830,7 +718,6 @@ def query_frame_with_changes(value: object, changes: object) -> dict:
 def query_frame_to_dict(value: object) -> dict[str, object]:
     frame = validate_query_frame(value)
     result = {
-        "schema_version": frame["schema_version"],
         "original_text": frame["original_text"],
         "resolved_text": frame["resolved_text"],
         "identity": query_identity_to_dict(frame["identity"]),
@@ -848,28 +735,19 @@ def query_frame_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def query_frame_to_json(value: object) -> str:
-    payload = query_frame_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
 def query_frame_from_dict(value: object) -> dict:
     data = exact_mapping(value, "QueryFrame", QUERY_FRAME_FIELDS)
     inheritance = require_list(data["inheritance"], "frame inheritance")
     rewrites = require_list(data["rewrite_chain"], "frame rewrite_chain")
     try:
         expected_type = ExpectedObjectType(
-            require_text(data["expected_object_type"], "expected_object_type", 32, allow_empty=False)
+            require_any_text(data["expected_object_type"], "expected_object_type", 32, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("unsupported expected_object_type") from error
     result = query_frame(
-        schema_version=require_int(
-            data["schema_version"], "schema_version", QUERY_FRAME_SCHEMA_VERSION, QUERY_FRAME_SCHEMA_VERSION
-        ),
-        original_text=require_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
-        resolved_text=require_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
+        original_text=require_any_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
+        resolved_text=require_any_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
         identity=query_identity_from_dict(thaw_json(freeze_mapping(data["identity"], "frame identity"))),
         expected_object_type=expected_type,
         temporal_query_value=temporal_query_from_dict(freeze_mapping(data["temporal_query"], "frame temporal_query")),
@@ -877,7 +755,7 @@ def query_frame_from_dict(value: object) -> dict:
         rewrite_chain=tuple(rewrite_trace_step_from_dict(freeze_mapping(item, "rewrite item")) for item in rewrites),
         scope=scope_key_from_dict(freeze_mapping(data["scope"], "frame scope")),
         required_metadata=freeze_mapping(data["required_metadata"], "frame required_metadata"),
-        required_source_label=require_text(
+        required_source_label=require_any_text(
             data["required_source_label"],
             "frame required_source_label",
             MAX_REQUIRED_SOURCE_LABEL_BYTES,
@@ -885,7 +763,7 @@ def query_frame_from_dict(value: object) -> dict:
         ),
         budget=resolution_budget_from_dict(freeze_mapping(data["budget"], "frame budget")),
         eligibility_context=eligibility_context_from_dict(freeze_mapping(data["eligibility_context"], "frame eligibility_context")),
-        diagnostic_id=require_text(
+        diagnostic_id=require_any_text(
             data["diagnostic_id"],
             "frame diagnostic_id",
             MAX_DIAGNOSTIC_ID_BYTES,
@@ -895,32 +773,22 @@ def query_frame_from_dict(value: object) -> dict:
     return result
 
 
-def query_frame_from_json(value: str) -> dict:
-    decoded = load_json_mapping(value, "QueryFrame JSON")
-    result = query_frame_from_dict(decoded)
-    return result
-
-
 def feature_set(
     values: object = EMPTY_MAPPING,
     unavailable: object = (),
-    schema_version: object = FEATURE_SET_SCHEMA_VERSION,
 ) -> dict:
     """Build a generic feature value/availability dictionary; Section 5 owns semantics."""
-    version = require_int(schema_version, "schema_version", 0, 2_147_483_647)
-    if version != FEATURE_SET_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feature set schema_version: {version}")
     if not isinstance(values, dict):
         raise InvalidRequestError("feature values must be an object")
     validated_values = {}
     for name in sorted(values):
-        key = require_text(name, "feature name", 96, allow_empty=False)
+        key = require_any_text(name, "feature name", 96, allow_empty=False)
         validated_values[key] = require_float(values[name], f"feature {key}", -1_000_000.0, 1_000_000.0)
     if len(validated_values) > MAX_FEATURES:
         raise InvalidRequestError(f"feature values exceed the limit of {MAX_FEATURES}")
     if not isinstance(unavailable, tuple):
         raise InvalidRequestError("unavailable features must be a tuple")
-    normalized_unavailable = tuple(require_text(name, "unavailable feature", 96, allow_empty=False) for name in unavailable)
+    normalized_unavailable = tuple(require_any_text(name, "unavailable feature", 96, allow_empty=False) for name in unavailable)
     if normalized_unavailable != tuple(sorted(set(normalized_unavailable))):
         raise InvalidRequestError("unavailable features must be unique and sorted")
     if set(validated_values).intersection(normalized_unavailable):
@@ -928,7 +796,6 @@ def feature_set(
     if len(validated_values) + len(normalized_unavailable) > MAX_FEATURES:
         raise InvalidRequestError(f"features exceed the limit of {MAX_FEATURES}")
     result: dict = {
-        "schema_version": version,
         "values": dict(validated_values),
         "unavailable": normalized_unavailable,
     }
@@ -938,30 +805,16 @@ def feature_set(
 def validate_feature_set(value: object) -> dict:
     """Revalidate and defensively copy one feature-set dictionary."""
     data = exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
-    result = feature_set(data["values"], data["unavailable"], data["schema_version"])
+    result = feature_set(data["values"], data["unavailable"])
     return result
 
 
 def trusted_feature_set(values: dict[str, float], unavailable: tuple[str, ...]) -> dict:
     """Build features whose bounds and ordering the resolution engine established."""
     result: dict = {
-        "schema_version": FEATURE_SET_SCHEMA_VERSION,
         "values": dict(dict(values)),
         "unavailable": unavailable,
     }
-    return result
-
-
-def feature_set_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate one feature-set dictionary."""
-    features = validate_feature_set(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("feature set changes must be an object")
-    if not set(changes).issubset(FEATURE_SET_FIELDS):
-        raise InvalidRequestError("feature set changes contain an unknown field")
-    updated: dict[str, object] = dict(features)
-    updated.update(changes)
-    result = validate_feature_set(updated)
     return result
 
 
@@ -969,7 +822,6 @@ def feature_set_to_dict(value: object) -> dict[str, object]:
     """Serialize one feature set."""
     features = validate_feature_set(value)
     result = {
-        "schema_version": features["schema_version"],
         "values": dict(features["values"]),
         "unavailable": list(features["unavailable"]),
     }
@@ -982,22 +834,8 @@ def feature_set_from_dict(value: object) -> dict:
     unavailable = require_list(data["unavailable"], "unavailable features")
     raw_values = freeze_mapping(data["values"], "feature values")
     values = {name: require_float(item, f"feature {name}", -1_000_000.0, 1_000_000.0) for name, item in raw_values.items()}
-    normalized_unavailable = tuple(require_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable)
-    result = feature_set(values, normalized_unavailable, data["schema_version"])
-    return result
-
-
-def feature_set_to_json(value: object) -> str:
-    """Serialize one feature set deterministically."""
-    payload = feature_set_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def feature_set_from_json(value: str) -> dict:
-    """Decode one feature set from deterministic JSON."""
-    data = load_json_mapping(value, "FeatureSet JSON")
-    result = feature_set_from_dict(data)
+    normalized_unavailable = tuple(require_any_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable)
+    result = feature_set(values, normalized_unavailable)
     return result
 
 
@@ -1005,15 +843,18 @@ def canonical_proposition_references(
     subject_entity_id: object,
     predicate_id: object,
     object_entity_id: object,
-    schema_version: object = CANONICAL_PROPOSITION_REFERENCES_SCHEMA_VERSION,
 ) -> dict:
     """Build canonical graph identifiers for one full Proposition record."""
-    version = require_int(schema_version, "schema_version", 1, 1)
     result: dict = {
-        "schema_version": version,
-        "subject_entity_id": require_identifier(subject_entity_id, "Proposition subject_entity_id"),
-        "predicate_id": require_identifier(predicate_id, "Proposition predicate_id"),
-        "object_entity_id": require_identifier(object_entity_id, "Proposition object_entity_id"),
+        "subject_entity_id": require_identifier(
+            subject_entity_id, "Proposition subject_entity_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
+        "predicate_id": require_identifier(
+            predicate_id, "Proposition predicate_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
+        "object_entity_id": require_identifier(
+            object_entity_id, "Proposition object_entity_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
     }
     return result
 
@@ -1025,28 +866,7 @@ def validate_canonical_proposition_references(value: object) -> dict:
         data["subject_entity_id"],
         data["predicate_id"],
         data["object_entity_id"],
-        data["schema_version"],
     )
-    return result
-
-
-def canonical_proposition_references_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate canonical Proposition references."""
-    references = validate_canonical_proposition_references(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("canonical Proposition reference changes must be an object")
-    if not set(changes).issubset(CANONICAL_PROPOSITION_REFERENCES_FIELDS):
-        raise InvalidRequestError("canonical Proposition reference changes contain an unknown field")
-    updated: dict[str, object] = dict(references)
-    updated.update(changes)
-    result = validate_canonical_proposition_references(updated)
-    return result
-
-
-def canonical_proposition_references_to_dict(value: object) -> dict[str, object]:
-    """Serialize canonical Proposition references."""
-    references = validate_canonical_proposition_references(value)
-    result: dict[str, object] = dict(references)
     return result
 
 
@@ -1065,7 +885,6 @@ def proposition_validity_inputs(
     valid_from_available: object = False,
     valid_to: object = "",
     valid_to_available: object = False,
-    schema_version: object = PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
     temporal_operator: object = TemporalQueryOperator.UNSPECIFIED,
     temporal_axis: object = TemporalAxis.VALID_TIME,
     requested_start: object = "",
@@ -1084,13 +903,7 @@ def proposition_validity_inputs(
     valid_time_match_available: object = True,
 ) -> dict:
     """Build inspectable temporal inputs for one eligible Proposition."""
-    version = require_int(
-        schema_version,
-        "schema_version",
-        PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
-        PROPOSITION_VALIDITY_INPUTS_SCHEMA_VERSION,
-    )
-    evaluation, evaluation_available = require_proposition_timestamp(evaluation_time, True, "Proposition evaluation_time")
+    evaluation, evaluation_available = require_available_utc_timestamp(evaluation_time, True, "Proposition evaluation_time")
     normalized_active = require_bool(active, "Proposition active")
     normalized_system_current = require_bool(system_current, "Proposition system_current")
     normalized_valid_time_current = require_bool(valid_time_current, "Proposition valid_time_current")
@@ -1098,35 +911,35 @@ def proposition_validity_inputs(
         raise InvalidRequestError("Proposition temporal_operator is unsupported")
     if not isinstance(temporal_axis, TemporalAxis):
         raise InvalidRequestError("Proposition temporal_axis is unsupported")
-    requested_lower, requested_lower_available = require_proposition_timestamp(
+    requested_lower, requested_lower_available = require_available_utc_timestamp(
         requested_start,
         requested_start_available,
         "Proposition requested_start",
     )
-    requested_upper, requested_upper_available = require_proposition_timestamp(
+    requested_upper, requested_upper_available = require_available_utc_timestamp(
         requested_end,
         requested_end_available,
         "Proposition requested_end",
     )
-    system_lower, system_lower_available = require_proposition_timestamp(
+    system_lower, system_lower_available = require_available_utc_timestamp(
         system_from, system_from_available, "Proposition system_from"
     )
-    system_upper, system_upper_available = require_proposition_timestamp(system_to, system_to_available, "Proposition system_to")
-    invalidated, invalidated_available = require_proposition_timestamp(
+    system_upper, system_upper_available = require_available_utc_timestamp(system_to, system_to_available, "Proposition system_to")
+    invalidated, invalidated_available = require_available_utc_timestamp(
         invalidated_at,
         invalidated_at_available,
         "Proposition invalidated_at",
     )
-    lower, lower_available = require_proposition_timestamp(valid_from, valid_from_available, "Proposition valid_from")
-    upper, upper_available = require_proposition_timestamp(valid_to, valid_to_available, "Proposition valid_to")
+    lower, lower_available = require_available_utc_timestamp(valid_from, valid_from_available, "Proposition valid_from")
+    upper, upper_available = require_available_utc_timestamp(valid_to, valid_to_available, "Proposition valid_to")
     for name, interval_lower, interval_lower_available, interval_upper, interval_upper_available in (
         ("requested_start", requested_lower, requested_lower_available, requested_upper, requested_upper_available),
         ("system_from", system_lower, system_lower_available, system_upper, system_upper_available),
         ("valid_from", lower, lower_available, upper, upper_available),
     ):
         if interval_lower_available and interval_upper_available:
-            lower_time = datetime.fromisoformat(interval_lower[:-1] + "+00:00")
-            upper_time = datetime.fromisoformat(interval_upper[:-1] + "+00:00")
+            lower_time = utc_datetime(interval_lower)
+            upper_time = utc_datetime(interval_upper)
             if lower_time >= upper_time:
                 raise InvalidRequestError(f"Proposition {name} must be earlier than its upper bound")
     expected_request_bounds = {
@@ -1142,21 +955,20 @@ def proposition_validity_inputs(
     }
     if (requested_lower_available, requested_upper_available) != expected_request_bounds.get(temporal_operator, ()):
         raise InvalidRequestError("Proposition requested temporal bounds conflict with temporal_operator")
-    evaluated_at = datetime.fromisoformat(evaluation[:-1] + "+00:00")
+    evaluated_at = utc_datetime(evaluation)
     effective_system_upper = system_upper
     effective_system_upper_available = system_upper_available
     if invalidated_available and (
-        not effective_system_upper_available
-        or datetime.fromisoformat(invalidated[:-1] + "+00:00") < datetime.fromisoformat(effective_system_upper[:-1] + "+00:00")
+        not effective_system_upper_available or utc_datetime(invalidated) < utc_datetime(effective_system_upper)
     ):
         effective_system_upper = invalidated
         effective_system_upper_available = True
     observed_active = not invalidated_available
-    observed_system_current = (
-        not system_lower_available or evaluated_at >= datetime.fromisoformat(system_lower[:-1] + "+00:00")
-    ) and (not effective_system_upper_available or evaluated_at < datetime.fromisoformat(effective_system_upper[:-1] + "+00:00"))
-    observed_valid_current = (not lower_available or evaluated_at >= datetime.fromisoformat(lower[:-1] + "+00:00")) and (
-        not upper_available or evaluated_at < datetime.fromisoformat(upper[:-1] + "+00:00")
+    observed_system_current = (not system_lower_available or evaluated_at >= utc_datetime(system_lower)) and (
+        not effective_system_upper_available or evaluated_at < utc_datetime(effective_system_upper)
+    )
+    observed_valid_current = (not lower_available or evaluated_at >= utc_datetime(lower)) and (
+        not upper_available or evaluated_at < utc_datetime(upper)
     )
     if normalized_active != observed_active:
         raise InvalidRequestError("Proposition active conflicts with the disclosed invalidation boundary")
@@ -1178,7 +990,6 @@ def proposition_validity_inputs(
     if normalized_valid_match_available != normalized_valid_match:
         raise InvalidRequestError("available Proposition valid_time_match must be true and unavailable match must be false")
     result: dict = {
-        "schema_version": version,
         "evaluation_time": evaluation,
         "active": normalized_active,
         "system_current": normalized_system_current,
@@ -1219,7 +1030,6 @@ def validate_proposition_validity_inputs(value: object) -> dict:
         data["valid_from_available"],
         data["valid_to"],
         data["valid_to_available"],
-        data["schema_version"],
         data["temporal_operator"],
         data["temporal_axis"],
         data["requested_start"],
@@ -1240,22 +1050,8 @@ def validate_proposition_validity_inputs(value: object) -> dict:
     return result
 
 
-def proposition_validity_inputs_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate complete Proposition-validity inputs."""
-    validity = validate_proposition_validity_inputs(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("Proposition validity changes must be an object")
-    if not set(changes).issubset(PROPOSITION_VALIDITY_INPUTS_FIELDS):
-        raise InvalidRequestError("Proposition validity changes contain an unknown field")
-    updated: dict[str, object] = dict(validity)
-    updated.update(changes)
-    result = validate_proposition_validity_inputs(updated)
-    return result
-
-
-def proposition_validity_inputs_to_dict(value: object) -> dict[str, object]:
-    """Serialize Proposition-validity inputs."""
-    validity = validate_proposition_validity_inputs(value)
+def trusted_proposition_validity_inputs_to_dict(validity: dict) -> dict[str, object]:
+    """Serialize Proposition-validity inputs already validated inside a trusted record."""
     result: dict[str, object] = dict(validity)
     result["temporal_operator"] = validity["temporal_operator"].value
     result["temporal_axis"] = validity["temporal_axis"].value
@@ -1281,14 +1077,10 @@ def proposition_trust_inputs(
     trust_category_available: object = False,
     supplied_trust: object = 0.0,
     supplied_trust_available: object = False,
-    supplied_trust_version: object = 0,
-    supplied_trust_version_available: object = False,
-    schema_version: object = PROPOSITION_TRUST_INPUTS_SCHEMA_VERSION,
 ) -> dict:
     """Build supplied Proposition trust values with concrete availability."""
-    version = require_int(schema_version, "schema_version", 1, 1)
     category_available = require_bool(trust_category_available, "Proposition trust_category_available")
-    category = require_text(
+    category = require_any_text(
         trust_category,
         "Proposition trust_category",
         MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
@@ -1300,22 +1092,11 @@ def proposition_trust_inputs(
     supplied = require_float(supplied_trust, "Proposition supplied_trust", 0.0, 1.0)
     if not supplied_available and supplied != 0.0:
         raise InvalidRequestError("Proposition supplied_trust must be zero when unavailable")
-    version_available = require_bool(supplied_trust_version_available, "Proposition supplied_trust_version_available")
-    trust_version = require_int(supplied_trust_version, "Proposition supplied_trust_version", 0, 2_147_483_647)
-    if not version_available and trust_version != 0:
-        raise InvalidRequestError("Proposition supplied_trust_version must be zero when unavailable")
-    if supplied_available != version_available:
-        raise InvalidRequestError("Proposition supplied trust value and version availability must match")
-    if version_available and trust_version == 0:
-        raise InvalidRequestError("Proposition supplied_trust_version must be positive when available")
     result: dict = {
-        "schema_version": version,
         "trust_category": category,
         "trust_category_available": category_available,
         "supplied_trust": supplied,
         "supplied_trust_available": supplied_available,
-        "supplied_trust_version": trust_version,
-        "supplied_trust_version_available": version_available,
     }
     return result
 
@@ -1328,30 +1109,7 @@ def validate_proposition_trust_inputs(value: object) -> dict:
         data["trust_category_available"],
         data["supplied_trust"],
         data["supplied_trust_available"],
-        data["supplied_trust_version"],
-        data["supplied_trust_version_available"],
-        data["schema_version"],
     )
-    return result
-
-
-def proposition_trust_inputs_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate complete Proposition-trust inputs."""
-    trust = validate_proposition_trust_inputs(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("Proposition trust changes must be an object")
-    if not set(changes).issubset(PROPOSITION_TRUST_INPUTS_FIELDS):
-        raise InvalidRequestError("Proposition trust changes contain an unknown field")
-    updated: dict[str, object] = dict(trust)
-    updated.update(changes)
-    result = validate_proposition_trust_inputs(updated)
-    return result
-
-
-def proposition_trust_inputs_to_dict(value: object) -> dict[str, object]:
-    """Serialize Proposition-trust inputs."""
-    trust = validate_proposition_trust_inputs(value)
-    result: dict[str, object] = dict(trust)
     return result
 
 
@@ -1365,13 +1123,10 @@ def disclosure_decision(
     ownership: object,
     basis: object,
     scope: object,
-    policy_version: object,
     authority: object = "",
     authority_available: object = False,
-    schema_version: object = DISCLOSURE_DECISION_SCHEMA_VERSION,
 ) -> dict:
     """Build an exact scoped Proposition-disclosure decision."""
-    version = require_int(schema_version, "schema_version", 1, 1)
     if not isinstance(ownership, PropositionOwnership):
         raise InvalidRequestError("disclosure ownership must be a PropositionOwnership")
     if not isinstance(basis, DisclosureBasis):
@@ -1380,12 +1135,11 @@ def disclosure_decision(
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise InvalidRequestError("disclosure scope must be a ScopeKey") from error
-    normalized_policy_version = require_identifier(policy_version, "disclosure policy_version")
     normalized_authority_available = require_bool(authority_available, "disclosure authority_available")
     if normalized_authority_available:
-        normalized_authority = require_identifier(authority, "disclosure authority")
+        normalized_authority = require_identifier(authority, "disclosure authority", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
     else:
-        normalized_authority = require_text(
+        normalized_authority = require_any_text(
             authority,
             "disclosure authority",
             MAX_DISCLOSURE_AUTHORITY_BYTES,
@@ -1399,11 +1153,9 @@ def disclosure_decision(
     elif basis != DisclosureBasis.TRUSTED_SCOPE_AUTHORITY or not normalized_authority_available:
         raise InvalidRequestError("non-PUBLIC Proposition disclosure requires an available trusted scope authority")
     result: dict = {
-        "schema_version": version,
         "ownership": ownership,
         "basis": basis,
         "scope": validated_scope,
-        "policy_version": normalized_policy_version,
         "authority": normalized_authority,
         "authority_available": normalized_authority_available,
     }
@@ -1417,39 +1169,9 @@ def validate_disclosure_decision(value: object) -> dict:
         data["ownership"],
         data["basis"],
         data["scope"],
-        data["policy_version"],
         data["authority"],
         data["authority_available"],
-        data["schema_version"],
     )
-    return result
-
-
-def disclosure_decision_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate one disclosure decision."""
-    decision = validate_disclosure_decision(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("disclosure decision changes must be an object")
-    if not set(changes).issubset(DISCLOSURE_DECISION_FIELDS):
-        raise InvalidRequestError("disclosure decision changes contain an unknown field")
-    updated: dict[str, object] = dict(decision)
-    updated.update(changes)
-    result = validate_disclosure_decision(updated)
-    return result
-
-
-def disclosure_decision_to_dict(value: object) -> dict[str, object]:
-    """Serialize one disclosure decision."""
-    decision = validate_disclosure_decision(value)
-    result = {
-        "schema_version": decision["schema_version"],
-        "ownership": decision["ownership"].value,
-        "basis": decision["basis"].value,
-        "scope": scope_key_to_dict(decision["scope"]),
-        "policy_version": decision["policy_version"],
-        "authority": decision["authority"],
-        "authority_available": decision["authority_available"],
-    }
     return result
 
 
@@ -1458,19 +1180,17 @@ def disclosure_decision_from_dict(value: object) -> dict:
     data = exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
     try:
         ownership = PropositionOwnership(
-            require_text(data["ownership"], "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
+            require_any_text(data["ownership"], "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
         )
-        basis = DisclosureBasis(require_text(data["basis"], "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False))
+        basis = DisclosureBasis(require_any_text(data["basis"], "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported disclosure ownership or basis") from error
     result = disclosure_decision(
         ownership,
         basis,
         scope_key_from_dict(freeze_mapping(data["scope"], "disclosure scope")),
-        data["policy_version"],
         data["authority"],
         data["authority_available"],
-        data["schema_version"],
     )
     return result
 
@@ -1502,16 +1222,17 @@ def proposition_evidence_path_step(
     output_binding: object,
     filters: object,
     aggregation_inputs: object = (),
-    schema_version: object = PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION,
 ) -> dict:
     """Build one closed Proposition-path step without unrestricted graph content."""
-    version = require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_PATH_SCHEMA_VERSION)
     normalized_position = require_int(position, "Proposition evidence path position", 0, MAX_COMPOSITION_PATH_PROPOSITIONS - 1)
     if not isinstance(operator, GraphCompositionOperator):
         raise InvalidRequestError("Proposition evidence path operator is unsupported")
     if not isinstance(filters, tuple):
         raise InvalidRequestError("Proposition evidence path filters must be a tuple")
-    normalized_filters = tuple(require_identifier(value, "Proposition evidence path filter") for value in filters)
+    normalized_filters = tuple(
+        require_identifier(value, "Proposition evidence path filter", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
+        for value in filters
+    )
     if not normalized_filters or normalized_filters != tuple(sorted(set(normalized_filters))):
         raise InvalidRequestError("Proposition evidence path filters must be non-empty, unique, and sorted")
     if not set(normalized_filters).issubset(PROPOSITION_PATH_FILTERS):
@@ -1524,12 +1245,19 @@ def proposition_evidence_path_step(
     if normalized_aggregation != tuple(sorted(set(normalized_aggregation))):
         raise InvalidRequestError("Proposition evidence path aggregation_inputs must be unique and sorted")
     result: dict = {
-        "schema_version": version,
         "position": normalized_position,
-        "proposition_id": require_identifier(proposition_id, "Proposition evidence path proposition_id"),
-        "subject_entity_id": require_identifier(subject_entity_id, "Proposition evidence path subject_entity_id"),
-        "predicate_id": require_identifier(predicate_id, "Proposition evidence path predicate_id"),
-        "object_entity_id": require_identifier(object_entity_id, "Proposition evidence path object_entity_id"),
+        "proposition_id": require_identifier(
+            proposition_id, "Proposition evidence path proposition_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
+        "subject_entity_id": require_identifier(
+            subject_entity_id, "Proposition evidence path subject_entity_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
+        "predicate_id": require_identifier(
+            predicate_id, "Proposition evidence path predicate_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
+        "object_entity_id": require_identifier(
+            object_entity_id, "Proposition evidence path object_entity_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        ),
         "operator": operator,
         "input_binding": path_binding(input_binding, "Proposition evidence path input_binding"),
         "output_binding": path_binding(output_binding, "Proposition evidence path output_binding"),
@@ -1554,7 +1282,6 @@ def validate_proposition_evidence_path_step(value: object) -> dict:
         data["output_binding"],
         data["filters"],
         data["aggregation_inputs"],
-        data["schema_version"],
     )
     return result
 
@@ -1562,7 +1289,6 @@ def validate_proposition_evidence_path_step(value: object) -> dict:
 def proposition_evidence_path_step_to_dict(value: object) -> dict[str, object]:
     step = validate_proposition_evidence_path_step(value)
     result = {
-        "schema_version": step["schema_version"],
         "position": step["position"],
         "proposition_id": step["proposition_id"],
         "subject_entity_id": step["subject_entity_id"],
@@ -1581,7 +1307,7 @@ def proposition_evidence_path_step_from_dict(value: object) -> dict:
     data = exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     try:
         operator = GraphCompositionOperator(
-            require_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False)
+            require_any_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("Proposition evidence path operator is unsupported") from error
@@ -1598,7 +1324,6 @@ def proposition_evidence_path_step_from_dict(value: object) -> dict:
         data["output_binding"],
         tuple(raw_filters),
         tuple(raw_aggregation),
-        data["schema_version"],
     )
     return result
 
@@ -1614,11 +1339,19 @@ def proposition_evidence_record(
     disclosure: object,
     path: object,
     selection_reasons: object,
-    schema_version: object = 1,
+    *,
+    trusted_components: bool = False,
 ) -> dict:
-    """Build strict wire-safe full-Proposition evidence without unrestricted graph content."""
-    version = require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
-    normalized_proposition_id = require_identifier(proposition_id, "Proposition evidence proposition_id")
+    """Build strict wire-safe full-Proposition evidence without unrestricted graph content.
+
+    ``trusted_components`` is for a caller that has just built ``features``,
+    ``canonical_references``, ``validity``, ``trust``, and ``disclosure`` with
+    their validating constructors; they are not validated again. Identifiers,
+    ordering, and path checks always run.
+    """
+    normalized_proposition_id = require_identifier(
+        proposition_id, "Proposition evidence proposition_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+    )
     source = require_identifier(source_resolver, "Proposition evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
     if not isinstance(source_contributions, tuple):
         raise InvalidRequestError("Proposition evidence source_contributions must be a tuple")
@@ -1634,31 +1367,40 @@ def proposition_evidence_record(
         raise InvalidRequestError("Proposition evidence source_contributions must be unique and sorted")
     if source not in contributions:
         raise InvalidRequestError("Proposition evidence source_resolver must be present in source_contributions")
-    try:
-        validated_features = validate_feature_set(features)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
-    try:
-        validated_references = validate_canonical_proposition_references(canonical_references)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
-    try:
-        validated_validity = validate_proposition_validity_inputs(validity)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
-    try:
-        validated_trust = validate_proposition_trust_inputs(trust)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
-    try:
-        validated_disclosure = validate_disclosure_decision(disclosure)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
+    if trusted_components:
+        validated_features = features
+        validated_references = canonical_references
+        validated_validity = validity
+        validated_trust = trust
+        validated_disclosure = disclosure
+    else:
+        try:
+            validated_features = validate_feature_set(features)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
+        try:
+            validated_references = validate_canonical_proposition_references(canonical_references)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
+        try:
+            validated_validity = validate_proposition_validity_inputs(validity)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
+        try:
+            validated_trust = validate_proposition_trust_inputs(trust)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
+        try:
+            validated_disclosure = validate_disclosure_decision(disclosure)
+        except InvalidRequestError as error:
+            raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
-    if version == 1:
+    # A direct record's path is its own Proposition ID; a composed record's path is its steps.
+    if all(isinstance(value, str) for value in path):
         normalized_path: tuple[object, ...] = tuple(
-            require_identifier(value, "Proposition evidence path identifier") for value in path
+            require_identifier(value, "Proposition evidence path identifier", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
+            for value in path
         )
         if normalized_path != (normalized_proposition_id,):
             raise InvalidRequestError("Section 7 Proposition evidence path must be the singleton proposition_id")
@@ -1698,7 +1440,6 @@ def proposition_evidence_record(
     if reasons != tuple(sorted(set(reasons))):
         raise InvalidRequestError("Proposition evidence selection_reasons must be unique and sorted")
     result: dict = {
-        "schema_version": version,
         "proposition_id": normalized_proposition_id,
         "source_resolver": source,
         "source_contributions": contributions,
@@ -1727,7 +1468,6 @@ def validate_proposition_evidence_record(value: object) -> dict:
         data["disclosure"],
         data["path"],
         data["selection_reasons"],
-        data["schema_version"],
     )
     return result
 
@@ -1755,30 +1495,26 @@ def proposition_evidence_record_to_dict(value: object) -> dict[str, object]:
 def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, object]:
     """Serialize a Proposition-evidence record already validated at a public boundary."""
     result = {
-        "schema_version": record.get("schema_version", 0),
         "proposition_id": record.get("proposition_id", ""),
         "source_resolver": record.get("source_resolver", ""),
         "source_contributions": list(record.get("source_contributions", ())),
         "features": {
-            "schema_version": record.get("features", {})["schema_version"],
             "values": dict(record.get("features", {})["values"]),
             "unavailable": list(record.get("features", {})["unavailable"]),
         },
         "canonical_references": dict(record.get("canonical_references", {})),
-        "validity": proposition_validity_inputs_to_dict(record.get("validity", {})),
+        "validity": trusted_proposition_validity_inputs_to_dict(record.get("validity", {})),
         "trust": dict(record.get("trust", {})),
         "disclosure": {
-            "schema_version": record.get("disclosure", {})["schema_version"],
             "ownership": record.get("disclosure", {})["ownership"].value,
             "basis": record.get("disclosure", {})["basis"].value,
             "scope": dict(record.get("disclosure", {})["scope"]),
-            "policy_version": record.get("disclosure", {})["policy_version"],
             "authority": record.get("disclosure", {})["authority"],
             "authority_available": record.get("disclosure", {})["authority_available"],
         },
         "path": (
             list(record.get("path", ()))
-            if record.get("schema_version", 0) == 1
+            if all(isinstance(step, str) for step in record.get("path", ()))
             else [proposition_evidence_path_step_to_dict(step) for step in record.get("path", ())]
         ),
         "selection_reasons": list(record.get("selection_reasons", ())),
@@ -1795,10 +1531,12 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
     normalized_contributions = tuple(
         require_identifier(item, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
     )
-    version = require_int(data["schema_version"], "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
     normalized_path: tuple[object, ...]
-    if version == 1:
-        normalized_path = tuple(require_identifier(item, "Proposition evidence path identifier") for item in path)
+    if all(isinstance(item, str) for item in path):
+        normalized_path = tuple(
+            require_identifier(item, "Proposition evidence path identifier", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
+            for item in path
+        )
     else:
         normalized_path = tuple(
             proposition_evidence_path_step_from_dict(freeze_mapping(item, "Proposition evidence path step")) for item in path
@@ -1824,7 +1562,6 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
         validated_disclosure,
         normalized_path,
         normalized_reasons,
-        version,
     )
     return result
 
@@ -1847,7 +1584,6 @@ def proposition_evidence_record_from_json(value: object) -> dict:
 
 def evidence_package_payload(value: dict) -> dict[str, object]:
     result = {
-        "wire_version": value.get("wire_version", 0),
         "records": [trusted_proposition_evidence_record_to_dict(record) for record in value.get("records", ())],
         "retained_count": value.get("retained_count", 0),
         "omitted_count": value.get("omitted_count", 0),
@@ -1863,18 +1599,14 @@ def evidence_package(
     omitted_count: object,
     truncated: object,
     truncation_reasons: object,
-    wire_version: object = EVIDENCE_PACKAGE_WIRE_VERSION,
 ) -> dict:
     """Build one canonical, count- and byte-bounded full-Proposition package."""
-    version = require_int(wire_version, "wire_version", 1, EVIDENCE_PACKAGE_WIRE_VERSION)
     if not isinstance(records, tuple):
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values")
     try:
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
-    if version == 1 and any(record["schema_version"] != 1 for record in validated_records):
-        raise InvalidRequestError("evidence package wire_version 1 cannot contain composed Proposition paths")
     if len(validated_records) > MAX_EVIDENCE_PACKAGE_RECORDS:
         raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
     identifiers = tuple(record["proposition_id"] for record in validated_records)
@@ -1904,7 +1636,6 @@ def evidence_package(
     if normalized_truncated != bool(normalized_reasons):
         raise InvalidRequestError("evidence package truncation_reasons must be present exactly when truncated")
     result: dict = {
-        "wire_version": version,
         "records": validated_records,
         "retained_count": retained,
         "omitted_count": omitted,
@@ -1930,7 +1661,6 @@ def trusted_evidence_package(
 ) -> dict:
     """Build a package from canonical, validated, byte-bounded records."""
     result: dict = {
-        "wire_version": EVIDENCE_PACKAGE_WIRE_VERSION,
         "records": records,
         "retained_count": len(records),
         "omitted_count": omitted_count,
@@ -1949,21 +1679,7 @@ def validate_evidence_package(value: object) -> dict:
         data["omitted_count"],
         data["truncated"],
         data["truncation_reasons"],
-        data["wire_version"],
     )
-    return result
-
-
-def evidence_package_with_changes(value: object, changes: object) -> dict:
-    """Apply named fields and revalidate one evidence-package dictionary."""
-    package = validate_evidence_package(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("evidence package changes must be an object")
-    if not set(changes).issubset(EVIDENCE_PACKAGE_FIELDS):
-        raise InvalidRequestError("evidence package changes contain an unknown field")
-    updated: dict[str, object] = dict(package)
-    updated.update(changes)
-    result = validate_evidence_package(updated)
     return result
 
 
@@ -2014,7 +1730,6 @@ def build_evidence_package(
     while True:
         ordered_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
         candidate: dict = {
-            "wire_version": EVIDENCE_PACKAGE_WIRE_VERSION,
             "records": retained,
             "retained_count": len(retained),
             "omitted_count": omitted,
@@ -2051,7 +1766,7 @@ def evidence_package_from_dict(value: object) -> dict:
     for reason_value in raw_reasons:
         try:
             reason = EvidencePackageTruncationReason(
-                require_text(
+                require_any_text(
                     reason_value,
                     "evidence package truncation reason",
                     MAX_REASON_CODE_BYTES,
@@ -2070,7 +1785,6 @@ def evidence_package_from_dict(value: object) -> dict:
         data["omitted_count"],
         data["truncated"],
         tuple(reasons),
-        data["wire_version"],
     )
     return result
 
@@ -2107,14 +1821,10 @@ def evidence_reference(
     scope: object,
     provenance: object = EMPTY_MAPPING,
     diagnostics: object = EMPTY_MAPPING,
-    schema_version: object = EVIDENCE_REFERENCE_SCHEMA_VERSION,
 ) -> dict:
     """Build one minimal stable evidence reference safe for Section 4 results."""
-    version = require_int(schema_version, "schema_version", 0, 2_147_483_647)
-    if version != EVIDENCE_REFERENCE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported evidence reference schema_version: {version}")
-    normalized_id = require_text(evidence_id, "evidence_id", 256, allow_empty=False)
-    normalized_resolver = require_text(resolver, "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
+    normalized_id = require_any_text(evidence_id, "evidence_id", 256, allow_empty=False)
+    normalized_resolver = require_any_text(resolver, "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
     if not isinstance(kind, EvidenceKind):
         raise InvalidRequestError("evidence kind must be an EvidenceKind")
     try:
@@ -2122,7 +1832,6 @@ def evidence_reference(
     except IdentityValidationError as error:
         raise InvalidRequestError("evidence scope must be a ScopeKey") from error
     result: dict = {
-        "schema_version": version,
         "evidence_id": normalized_id,
         "resolver": normalized_resolver,
         "kind": kind,
@@ -2143,20 +1852,7 @@ def validate_evidence_reference(value: object) -> dict:
         data["scope"],
         data["provenance"],
         data["diagnostics"],
-        data["schema_version"],
     )
-    return result
-
-
-def evidence_reference_with_changes(value: object, changes: object) -> dict:
-    reference = validate_evidence_reference(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("evidence reference changes must be an object")
-    if not set(changes).issubset(EVIDENCE_REFERENCE_FIELDS):
-        raise InvalidRequestError("evidence reference changes contain an unknown field")
-    updated: dict[str, object] = dict(reference)
-    updated.update(changes)
-    result = validate_evidence_reference(updated)
     return result
 
 
@@ -2170,7 +1866,6 @@ def evidence_reference_to_dict(value: object) -> dict[str, object]:
 def trusted_evidence_reference_to_dict(reference: dict) -> dict[str, object]:
     """Serialize an evidence reference already validated at a public boundary."""
     result = {
-        "schema_version": reference.get("schema_version", 0),
         "evidence_id": reference.get("evidence_id", ""),
         "resolver": reference.get("resolver", {}),
         "kind": reference.get("kind", EvidenceKind.PROPOSITION).value,
@@ -2185,7 +1880,7 @@ def evidence_reference_from_dict(value: object) -> dict:
     """Decode one evidence reference from its exact serialized form."""
     data = exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
     try:
-        kind = EvidenceKind(require_text(data["kind"], "evidence kind", 32, allow_empty=False))
+        kind = EvidenceKind(require_any_text(data["kind"], "evidence kind", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported evidence kind") from error
     result = evidence_reference(
@@ -2195,7 +1890,6 @@ def evidence_reference_from_dict(value: object) -> dict:
         scope_key_from_dict(freeze_mapping(data["scope"], "evidence scope")),
         freeze_mapping(data["provenance"], "evidence provenance"),
         freeze_mapping(data["diagnostics"], "evidence diagnostics"),
-        data["schema_version"],
     )
     return result
 
@@ -2203,12 +1897,6 @@ def evidence_reference_from_dict(value: object) -> dict:
 def evidence_reference_to_json(value: object) -> str:
     payload = evidence_reference_to_dict(value)
     result = json_text(payload)
-    return result
-
-
-def evidence_reference_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "EvidenceReference JSON")
-    result = evidence_reference_from_dict(data)
     return result
 
 
@@ -2223,12 +1911,8 @@ def candidate(
     lifecycle: object,
     provenance: object = EMPTY_MAPPING,
     diagnostics: object = EMPTY_MAPPING,
-    schema_version: object = CANDIDATE_SCHEMA_VERSION,
 ) -> dict:
     """Build one response candidate emitted by a resolver without selecting it."""
-    version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if version != CANDIDATE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported candidate schema_version: {version}")
     if not isinstance(source, CandidateSource):
         raise InvalidRequestError("candidate source must be a CandidateSource")
     try:
@@ -2250,15 +1934,14 @@ def candidate(
     if not isinstance(lifecycle, LifecycleState):
         raise InvalidRequestError("candidate lifecycle must be a LifecycleState")
     result: dict = {
-        "schema_version": version,
-        "candidate_id": require_text(candidate_id, "candidate_id", MAX_CANDIDATE_ID_BYTES, allow_empty=False),
-        "statement_id": require_text(
+        "candidate_id": require_any_text(candidate_id, "candidate_id", MAX_CANDIDATE_ID_BYTES, allow_empty=False),
+        "statement_id": require_any_text(
             statement_id,
             "candidate statement_id",
             MAX_STATEMENT_ID_BYTES,
             allow_empty=False,
         ),
-        "response": require_text(response, "candidate response", MAX_RESPONSE_BYTES, allow_empty=False),
+        "response": require_any_text(response, "candidate response", MAX_RESPONSE_BYTES, allow_empty=False),
         "source": source,
         "features": validated_features,
         "evidence": validated_evidence,
@@ -2283,7 +1966,6 @@ def validate_candidate(value: object) -> dict:
         lifecycle=data["lifecycle"],
         provenance=data["provenance"],
         diagnostics=data["diagnostics"],
-        schema_version=data["schema_version"],
     )
     return result
 
@@ -2302,7 +1984,6 @@ def trusted_candidate(
 ) -> dict:
     """Build a candidate from values established inside the resolution engine."""
     result: dict = {
-        "schema_version": CANDIDATE_SCHEMA_VERSION,
         "candidate_id": candidate_id,
         "statement_id": statement_id,
         "response": response,
@@ -2314,18 +1995,6 @@ def trusted_candidate(
         "provenance": freeze_mapping(provenance, "candidate provenance"),
         "diagnostics": freeze_mapping(diagnostics, "candidate diagnostics"),
     }
-    return result
-
-
-def candidate_with_changes(value: object, changes: object) -> dict:
-    current = validate_candidate(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("candidate changes must be an object")
-    if not set(changes).issubset(CANDIDATE_FIELDS):
-        raise InvalidRequestError("candidate changes contain an unknown field")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_candidate(updated)
     return result
 
 
@@ -2346,13 +2015,11 @@ def candidate_to_dict(value: object) -> dict[str, object]:
 def trusted_candidate_to_dict(current: dict) -> dict[str, object]:
     """Serialize a candidate already validated at a public boundary."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "candidate_id": current.get("candidate_id", ""),
         "statement_id": current.get("statement_id", ""),
         "response": current.get("response", ""),
         "source": current.get("source", CandidateSource.EXACT).value,
         "features": {
-            "schema_version": current.get("features", {})["schema_version"],
             "values": dict(current.get("features", {})["values"]),
             "unavailable": list(current.get("features", {})["unavailable"]),
         },
@@ -2368,13 +2035,12 @@ def trusted_candidate_to_dict(current: dict) -> dict[str, object]:
 def candidate_from_dict(value: object) -> dict:
     data = exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
     try:
-        source = CandidateSource(require_text(data["source"], "candidate source", 32, allow_empty=False))
-        lifecycle = LifecycleState(require_text(data["lifecycle"], "candidate lifecycle", 32, allow_empty=False))
+        source = CandidateSource(require_any_text(data["source"], "candidate source", 32, allow_empty=False))
+        lifecycle = LifecycleState(require_any_text(data["lifecycle"], "candidate lifecycle", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("candidate source or lifecycle is unsupported") from error
     evidence = require_list(data["evidence"], "candidate evidence")
     result = candidate(
-        schema_version=data["schema_version"],
         candidate_id=data["candidate_id"],
         statement_id=data["statement_id"],
         response=data["response"],
@@ -2389,22 +2055,10 @@ def candidate_from_dict(value: object) -> dict:
     return result
 
 
-def candidate_to_json(value: object) -> str:
-    payload = candidate_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
 def trusted_candidate_to_json(value: dict) -> str:
     """Serialize a candidate already validated at a public boundary."""
     payload = trusted_candidate_to_dict(value)
     result = json_text(payload)
-    return result
-
-
-def candidate_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "Candidate JSON")
-    result = candidate_from_dict(data)
     return result
 
 
@@ -2425,24 +2079,19 @@ def empty_candidate() -> dict:
 def accounting_observation(
     statement_id: object,
     keywords: object = (),
-    schema_version: object = ACCOUNTING_OBSERVATION_SCHEMA_VERSION,
 ) -> dict:
     """Build one pure resolver observation applied only by the finalizer."""
-    version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if version != ACCOUNTING_OBSERVATION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported accounting observation schema_version: {version}")
     if not isinstance(keywords, tuple):
         raise InvalidRequestError("accounting keywords must be a tuple")
     if len(keywords) > MAX_ACCOUNTING_KEYWORDS:
         raise InvalidRequestError(f"accounting keywords exceeds the limit of {MAX_ACCOUNTING_KEYWORDS}")
     normalized_keywords = tuple(
-        require_text(keyword, "accounting keyword", MAX_ACCOUNTING_KEYWORD_BYTES, allow_empty=False) for keyword in keywords
+        require_any_text(keyword, "accounting keyword", MAX_ACCOUNTING_KEYWORD_BYTES, allow_empty=False) for keyword in keywords
     )
     if len(set(normalized_keywords)) != len(normalized_keywords):
         raise InvalidRequestError("accounting keywords must be unique")
     result: dict = {
-        "schema_version": version,
-        "statement_id": require_text(
+        "statement_id": require_any_text(
             statement_id,
             "accounting statement_id",
             MAX_STATEMENT_ID_BYTES,
@@ -2455,26 +2104,13 @@ def accounting_observation(
 
 def validate_accounting_observation(value: object) -> dict:
     data = exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
-    result = accounting_observation(data["statement_id"], data["keywords"], data["schema_version"])
-    return result
-
-
-def accounting_observation_with_changes(value: object, changes: object) -> dict:
-    observation = validate_accounting_observation(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("accounting observation changes must be an object")
-    if not set(changes).issubset(ACCOUNTING_OBSERVATION_FIELDS):
-        raise InvalidRequestError("accounting observation changes contain an unknown field")
-    updated: dict[str, object] = dict(observation)
-    updated.update(changes)
-    result = validate_accounting_observation(updated)
+    result = accounting_observation(data["statement_id"], data["keywords"])
     return result
 
 
 def accounting_observation_to_dict(value: object) -> dict[str, object]:
     observation = validate_accounting_observation(value)
     result = {
-        "schema_version": observation["schema_version"],
         "statement_id": observation["statement_id"],
         "keywords": list(observation["keywords"]),
     }
@@ -2484,7 +2120,7 @@ def accounting_observation_to_dict(value: object) -> dict[str, object]:
 def accounting_observation_from_dict(value: object) -> dict:
     data = exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
     keywords = require_list(data["keywords"], "accounting keywords")
-    result = accounting_observation(data["statement_id"], tuple(keywords), data["schema_version"])
+    result = accounting_observation(data["statement_id"], tuple(keywords))
     return result
 
 
@@ -2498,16 +2134,12 @@ def resolver_result(
     accounting: object = (),
     diagnostics: object = EMPTY_MAPPING,
     consumption: object = EMPTY_MAPPING,
-    schema_version: object = RESOLVER_RESULT_SCHEMA_VERSION,
 ) -> dict:
     """Build the bounded output from one side-effect-free resolver invocation."""
-    validated_schema_version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if validated_schema_version != RESOLVER_RESULT_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolver result schema_version: {validated_schema_version}")
-    resolver_name = require_text(resolver, "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
+    resolver_name = require_any_text(resolver, "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
     if not isinstance(state, ResolverState):
         raise InvalidRequestError("resolver result state must be a ResolverState")
-    validated_reason_code = require_text(
+    validated_reason_code = require_any_text(
         reason_code,
         "resolver result reason_code",
         MAX_REASON_CODE_BYTES,
@@ -2572,7 +2204,6 @@ def resolver_result(
         "accounting": validated_accounting,
         "diagnostics": frozen_diagnostics,
         "consumption": validated_consumption,
-        "schema_version": validated_schema_version,
     }
     return result
 
@@ -2589,18 +2220,7 @@ def validate_resolver_result(value: object) -> dict:
         data["accounting"],
         data["diagnostics"],
         data["consumption"],
-        data["schema_version"],
     )
-    return result
-
-
-def resolver_result_with_changes(value: object, changes: object) -> dict:
-    current = validate_resolver_result(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_RESULT_FIELDS):
-        raise InvalidRequestError("resolver result changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_resolver_result(updated)
     return result
 
 
@@ -2624,7 +2244,6 @@ def resolver_result_to_dict(value: object) -> dict[str, object]:
 def trusted_resolver_result_to_dict(current: dict) -> dict[str, object]:
     """Serialize a resolver result already validated by the executor."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "resolver": current.get("resolver", {}),
         "state": current.get("state", ResolverState.FAILED).value,
         "reason_code": current.get("reason_code", ""),
@@ -2649,7 +2268,7 @@ def resolver_result_to_json(value: object) -> str:
 def resolver_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
     try:
-        state = ResolverState(require_text(data["state"], "resolver state", 32, allow_empty=False))
+        state = ResolverState(require_any_text(data["state"], "resolver state", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported resolver state") from error
     candidates = require_list(data["candidates"], "resolver candidates")
@@ -2657,10 +2276,9 @@ def resolver_result_from_dict(value: object) -> dict:
     proposition_evidence = require_list(data["proposition_evidence"], "resolver Proposition evidence")
     accounting = require_list(data["accounting"], "resolver accounting")
     result = resolver_result(
-        schema_version=require_int(data["schema_version"], "schema_version", 1, 1),
-        resolver=require_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
+        resolver=require_any_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
         state=state,
-        reason_code=require_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
+        reason_code=require_any_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
         candidates=tuple(candidate_from_dict(freeze_mapping(item, "resolver candidate")) for item in candidates),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolver evidence item")) for item in evidence),
         proposition_evidence=tuple(
@@ -2694,12 +2312,8 @@ def resolution_result(
     budget: object,
     evidence_package_available: object = False,
     evidence_package: object = EMPTY_MAPPING,
-    schema_version: object = RESOLUTION_RESULT_SCHEMA_VERSION,
 ) -> dict:
     """Build a strict unified result with concrete ANSWER/EVIDENCE/MISS invariants."""
-    validated_schema_version = require_int(schema_version, "schema_version", 0, MAX_RESOURCE_COUNTER)
-    if validated_schema_version != RESOLUTION_RESULT_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolution result schema_version: {validated_schema_version}")
     if not isinstance(outcome, ResolutionOutcome):
         raise InvalidRequestError("resolution outcome must be a ResolutionOutcome")
     try:
@@ -2730,7 +2344,7 @@ def resolution_result(
     if len(reason_codes) > MAX_RESOLUTION_REASON_CODES:
         raise InvalidRequestError(f"reason_codes exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
     validated_reason_codes = tuple(
-        require_text(value, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for value in reason_codes
+        require_any_text(value, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for value in reason_codes
     )
     if validated_reason_codes != tuple(dict.fromkeys(validated_reason_codes)):
         raise InvalidRequestError("reason_codes must be unique and ordered")
@@ -2799,7 +2413,6 @@ def resolution_result(
         "budget": validated_budget,
         "evidence_package_available": evidence_package_available,
         "evidence_package": validated_evidence_package,
-        "schema_version": validated_schema_version,
     }
     return result
 
@@ -2834,7 +2447,6 @@ def trusted_resolution_result(
         "budget": budget,
         "evidence_package_available": evidence_package_available,
         "evidence_package": evidence_package,
-        "schema_version": RESOLUTION_RESULT_SCHEMA_VERSION,
     }
     return result
 
@@ -2855,7 +2467,6 @@ def validate_resolution_result(value: object) -> dict:
         data["budget"],
         data["evidence_package_available"],
         data["evidence_package"],
-        data["schema_version"],
     )
     return result
 
@@ -2884,7 +2495,6 @@ def trusted_resolution_result_to_dict(current: dict) -> dict:
         else {}
     )
     result = {
-        "schema_version": current.get("schema_version", 0),
         "outcome": current.get("outcome", ResolutionOutcome.MISS).value,
         "selected_candidate": selected,
         "selected_candidate_available": current.get("selected_candidate_available", False),
@@ -2918,7 +2528,7 @@ def trusted_resolution_result_to_json(value: dict) -> str:
 def resolution_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
     try:
-        outcome = ResolutionOutcome(require_text(data["outcome"], "resolution outcome", 32, allow_empty=False))
+        outcome = ResolutionOutcome(require_any_text(data["outcome"], "resolution outcome", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported resolution outcome") from error
     if not isinstance(data["selected_candidate_available"], bool):
@@ -2937,7 +2547,6 @@ def resolution_result_from_dict(value: object) -> dict:
     if not isinstance(data["evidence_package_available"], bool):
         raise InvalidRequestError("evidence_package_available must be a boolean")
     result = resolution_result(
-        schema_version=require_int(data["schema_version"], "schema_version", 1, 1),
         outcome=outcome,
         selected_candidate=selected,
         selected_candidate_available=selected_available,
@@ -2945,19 +2554,13 @@ def resolution_result_from_dict(value: object) -> dict:
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolution evidence item")) for item in evidence),
         confidence=require_float(data["confidence"], "resolution confidence", 0.0, 1.0),
         confidence_available=data["confidence_available"],
-        reason_codes=tuple(require_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
+        reason_codes=tuple(require_any_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
         frame_diagnostics=freeze_mapping(data["frame_diagnostics"], "frame diagnostics"),
         resolver_results=tuple(resolver_result_from_dict(freeze_mapping(item, "resolver result")) for item in resolver_results),
         budget=budget_consumption_from_dict(freeze_mapping(data["budget"], "resolution budget")),
         evidence_package_available=data["evidence_package_available"],
         evidence_package=evidence_package_from_dict(freeze_mapping(data["evidence_package"], "evidence package")),
     )
-    return result
-
-
-def resolution_result_from_json(value: str) -> dict:
-    decoded = load_json_mapping(value, "ResolutionResult JSON")
-    result = resolution_result_from_dict(decoded)
     return result
 
 
@@ -2981,7 +2584,7 @@ class QueryFrameBuilder:
         diagnostic_seed: str = "",
         budget: dict[str, object] = EMPTY_MAPPING,
     ) -> dict:
-        original = require_text(request, "request", MAX_REQUEST_BYTES, allow_empty=False)
+        original = require_any_text(request, "request", MAX_REQUEST_BYTES, allow_empty=False)
         try:
             scope = validate_scope_key(scope)
         except IdentityValidationError as error:
@@ -3012,7 +2615,7 @@ class QueryFrameBuilder:
             resolved = expand_contractions(original, self.internal_engram.substitution_maps["contractions"])
         eligibility = EligibilityContextCapture(self.internal_utc_clock).capture_standalone(scope, True)
         seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
-        require_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
+        require_any_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
         diagnostic_id = f"resolution:sha256:{hashlib_sha256(seed.encode('utf-8')).hexdigest()}"
         result = query_frame(
             original_text=original,

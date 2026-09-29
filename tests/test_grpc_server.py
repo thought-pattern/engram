@@ -17,7 +17,8 @@ from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pytest import raises as pytest_raises
 
 from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
-from engram.constants import MAX_REQUEST_BYTES
+from engram.config import engram_config
+from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
@@ -115,13 +116,30 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert inspected["session"]["previous_response"] == "Sushi is good."
         assert inspected["core_status"]["active_conversations"] == 2
         assert report["summary"]["exchanges"] == 1
-        assert report["turns"][0]["input"] == "Sushi is good."
+        assert "turns" not in report
         assert status["healthy"] is True
         assert health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 
         stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="Alice")))
         assert stopped["stopped"] is True
         assert as_dict(stub.GetStatus(empty_pb2.Empty()))["active_conversations"] == 1
+
+
+def test_every_call_ends_by_letting_a_lost_graph_connection_reconnect() -> None:
+    calls = []
+
+    class ReconnectRecordingCore(GrpcCore):
+        def reconnect_graph_after_turn(self) -> None:
+            calls.append(len(self.active_resolution_request_ids))
+            super().reconnect_graph_after_turn()
+
+    with running_server(ReconnectRecordingCore()) as (_, _, stub):
+        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.AddFact(engram_pb2.AddFactRequest(text="Tokyo is the capital of Japan."))
+        # A chat turn ends its resolution slot, then its call.
+        stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Hello"))
+
+    assert calls == [0, 0, 0, 0]
 
 
 def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
@@ -276,13 +294,11 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
             )
         )
 
-        assert result.schema_version == 1
         assert result.outcome == "ANSWER"
         assert result.selected_candidate_available is True
         assert as_dict(result.selected_candidate)["response"] == "The transport-neutral result."
         assert len(result.response_candidates) == 1
         assert result.evidence_package_available is False
-        assert result.evidence_package.wire_version == 2
         assert result.evidence_package.retained_count == 0
         assert result.evidence_package.records == []
 
@@ -315,17 +331,18 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
         with pytest_raises(grpc_RpcError) as failure:
             stub.ResolveEvidence(
                 engram_pb2.ResolveEvidenceRequest(
-                    request="x" * (MAX_REQUEST_BYTES + 1),
+                    request="x" * (MAX_CACHE_REQUEST_BYTES + 1),
                     request_id="oversized-evidence-request",
                 )
             )
 
         assert failure.value.code() == grpc_StatusCode.INVALID_ARGUMENT
+        assert failure.value.details() == f"request exceeds the limit of {MAX_CACHE_REQUEST_BYTES} UTF-8 bytes"
         assert internal_trailing_metadata(failure.value)["engram-error-type"] == "InvalidRequestError"
         assert core.resolution_requests == {}
 
 
-def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -> None:
+def test_unhandled_grpc_failure_is_logged_in_full_and_redacted_for_the_client(caplog, monkeypatch) -> None:
     secret = "private-request-and-credential-content"
     core = GrpcCore()
 
@@ -342,8 +359,43 @@ def test_unhandled_grpc_failure_redacts_exception_content(caplog, monkeypatch) -
 
     assert failure.value.code() == grpc_StatusCode.INTERNAL
     assert failure.value.details() == "internal Engram failure"
-    assert secret not in caplog.text
-    assert "RuntimeError" in caplog.text
+    assert secret in caplog.text
+    assert "Traceback" in caplog.text
+
+
+def test_session_limit_is_resource_exhausted() -> None:
+    class LimitedCore(EngramCore):
+        def __init__(self) -> None:
+            super().__init__(Engram(config=engram_config(max_sessions=1, session_overflow=SessionOverflow.REJECT)))
+
+    with running_server(LimitedCore()) as (_, _, stub):
+        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        with pytest_raises(grpc_RpcError) as failure:
+            stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Bob"))
+
+    assert failure.value.code() == grpc_StatusCode.RESOURCE_EXHAUSTED
+    assert failure.value.details() == "Maximum sessions reached"
+
+
+def test_chat_validation_is_invalid_argument_but_an_internal_value_error_is_internal(caplog, monkeypatch) -> None:
+    secret = "private-chat-pipeline-detail"
+
+    def fail(*internal_args, **internal_kwargs):
+        raise ValueError(secret)
+
+    with caplog.at_level(ERROR, logger="engram.grpc_server"), running_server(GrpcCore()) as (_, _, stub):
+        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        with pytest_raises(grpc_RpcError) as invalid:
+            stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text=" "))
+        monkeypatch.setattr("engram.conversation.pipeline.respond", fail)
+        with pytest_raises(grpc_RpcError) as internal:
+            stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Hello"))
+
+    assert invalid.value.code() == grpc_StatusCode.INVALID_ARGUMENT
+    assert invalid.value.details() == "text must be one non-empty string"
+    assert internal.value.code() == grpc_StatusCode.INTERNAL
+    assert internal.value.details() == "internal Engram failure"
+    assert secret in caplog.text
 
 
 def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and_grpc() -> None:

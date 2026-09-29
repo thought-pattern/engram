@@ -1,5 +1,7 @@
 """Atomic process-memory accepted-response mutation coordination tests."""
 
+from logging import ERROR
+
 from pytest import raises as pytest_raises
 
 from engram.coordination import (
@@ -89,7 +91,7 @@ def test_publication_hook_observes_one_complete_process_state() -> None:
     assert observed[0][1] == candidate.get("after")
 
 
-def test_failed_projection_publication_rolls_back_repository_and_receipt() -> None:
+def test_failed_projection_publication_rolls_back_repository_and_receipt(caplog) -> None:
     repository = ArtifactRepository()
     ledger = MutationReceiptLedger()
 
@@ -100,9 +102,15 @@ def test_failed_projection_publication_rolls_back_repository_and_receipt() -> No
     coordinator = AtomicMutationCoordinator(repository, ledger, publication_hook=reject)
     candidate = candidate_for(coordinator, "stmt-1")
 
-    with pytest_raises(MutationCoordinationError, match="was rolled back") as failure:
+    with (
+        caplog.at_level(ERROR, logger="engram.coordination"),
+        pytest_raises(MutationCoordinationError, match="was rolled back") as failure,
+    ):
         coordinator.execute(candidate)
 
+    # The caller-facing message is fixed; the cause is in the log.
+    assert "projection rejected" not in str(failure.value)
+    assert "projection rejected" in caplog.text
     assert failure.value.live_state_changed is False
     assert repository.snapshot().get("artifacts") == {}
     assert ledger.next_sequence == 1

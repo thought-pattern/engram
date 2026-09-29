@@ -1,0 +1,118 @@
+{
+  "pairs": [
+    {
+      "pattern": "WHAT IS AN OPERATIONAL CONCEPT",
+      "response": "An operational concept says how people will use the system, who those people are, and in what situations. Write it from the user's side, before you design anything. It is the story the requirements have to fit."
+    },
+    {
+      "pattern": "HOW WILL PEOPLE USE THE SYSTEM",
+      "response": "An operational concept says how people will use the system, who those people are, and in what situations. Write it from the user's side, before you design anything. It is the story the requirements have to fit."
+    },
+    {
+      "pattern": "WHAT IS A CONCEPT OF OPERATIONS",
+      "response": "An operational concept says how people will use the system, who those people are, and in what situations. Write it from the user's side, before you design anything. It is the story the requirements have to fit."
+    },
+    {
+      "pattern": "HOW DO I LEARN WHAT USERS NEED",
+      "response": "Start from what the users and the customer have said the system must do. Sort that into situations, results they care about, and constraints they already know. Then write requirements. Do not skip straight from a meeting note to a design."
+    },
+    {
+      "pattern": "WHAT IS USER INPUT TO REQUIREMENTS",
+      "response": "Start from what the users and the customer have said the system must do. Sort that into situations, results they care about, and constraints they already know. Then write requirements. Do not skip straight from a meeting note to a design."
+    },
+    {
+      "pattern": "WHAT ARE SYSTEM REQUIREMENTS",
+      "response": "System requirements say what the whole system must do, software and hardware together, and how you will show that each requirement was met. Later, testing of the whole system is judged against this list, not against a single program's list."
+    },
+    {
+      "pattern": "WHAT IS A SYSTEM REQUIREMENTS SPECIFICATION",
+      "response": "System requirements say what the whole system must do, software and hardware together, and how you will show that each requirement was met. Later, testing of the whole system is judged against this list, not against a single program's list."
+    },
+    {
+      "pattern": "WHAT MUST THE WHOLE SYSTEM DO",
+      "response": "System requirements say what the whole system must do, software and hardware together, and how you will show that each requirement was met. Later, testing of the whole system is judged against this list, not against a single program's list."
+    },
+    {
+      "pattern": "WHAT ARE SOFTWARE REQUIREMENTS",
+      "response": "Software requirements say what one software product must do. They are the system needs that landed on that product, written so each one can be checked. For every requirement, say how you will show it was met: by looking, by analysis, by a demonstration, or by a test. Testing that product later is judged against this list."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE REQUIREMENTS SPECIFICATION",
+      "response": "Software requirements say what one software product must do. They are the system needs that landed on that product, written so each one can be checked. For every requirement, say how you will show it was met: by looking, by analysis, by a demonstration, or by a test. Testing that product later is judged against this list."
+    },
+    {
+      "pattern": "WHAT IS SOFTWARE REQUIREMENTS ANALYSIS",
+      "response": "Software requirements say what one software product must do. They are the system needs that landed on that product, written so each one can be checked. For every requirement, say how you will show it was met: by looking, by analysis, by a demonstration, or by a test. Testing that product later is judged against this list."
+    },
+    {
+      "pattern": "WHAT ARE INTERFACE REQUIREMENTS",
+      "response": "Interface requirements say what must pass between parts: between systems, between programs, between hardware and software, or between a person and the system. They say what the boundary must do. How the boundary is built belongs in the design, not here."
+    },
+    {
+      "pattern": "WHAT IS AN INTERFACE REQUIREMENT",
+      "response": "Interface requirements say what must pass between parts: between systems, between programs, between hardware and software, or between a person and the system. They say what the boundary must do. How the boundary is built belongs in the design, not here."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN SYSTEM REQUIREMENTS AND SOFTWARE REQUIREMENTS",
+      "response": "System requirements describe the whole system. Software requirements describe the share that one software product must carry. You test the whole system against the first list. You test that software product against the second."
+    },
+    {
+      "pattern": "HOW DO I WRITE SOFTWARE REQUIREMENTS",
+      "response": "Write one list for one software product. Make each requirement something you can check, and name the check: inspection, analysis, demonstration, or test. Point each requirement back to the system need it came from. If a need is shared across a boundary, put that part with the interface requirements."
+    },
+    {
+      "pattern": "HOW DO I WRITE A SOFTWARE REQUIREMENTS SPECIFICATION",
+      "response": "Write one list for one software product. Make each requirement something you can check, and name the check: inspection, analysis, demonstration, or test. Point each requirement back to the system need it came from. If a need is shared across a boundary, put that part with the interface requirements."
+    },
+    {
+      "pattern": "HOW IS A REQUIREMENT SHOWN TO BE MET",
+      "response": "Each requirement names its own evidence. Inspection means you look at something and see that it is so. Analysis means you reason or calculate. Demonstration means you show it working in a realistic way. Test means you run a prepared procedure and compare the result. The requirements list records which one you will use. The tests carry out the ones that are tests."
+    },
+    {
+      "pattern": "WHAT DOES IT MEAN TO QUALIFY A REQUIREMENT",
+      "response": "Each requirement names its own evidence. Inspection means you look at something and see that it is so. Analysis means you reason or calculate. Demonstration means you show it working in a realistic way. Test means you run a prepared procedure and compare the result. The requirements list records which one you will use. The tests carry out the ones that are tests."
+    },
+    {
+      "pattern": "WHAT SHOULD THE REQUIREMENTS SAY",
+      "response": "State behavior a person can observe. What goes in, what comes out, and which failures matter. Keep each sentence small enough that you could try it and say whether the software did that."
+    },
+    {
+      "pattern": "WHAT SHOULD REQUIREMENTS SAY",
+      "response": "State behavior a person can observe. What goes in, what comes out, and which failures matter. Keep each sentence small enough that you could try it and say whether the software did that."
+    },
+    {
+      "pattern": "WHAT GOES IN THE REQUIREMENTS",
+      "response": "State behavior a person can observe. What goes in, what comes out, and which failures matter. Keep each sentence small enough that you could try it and say whether the software did that."
+    },
+    {
+      "pattern": "IT SHOULD READ *",
+      "response": "Write that down as something you can check. Name the success case and the failure case.",
+      "template": {
+        "text": "Write that down as something you can check: it should read {star1}. Name the success case and the failure case."
+      }
+    },
+    {
+      "pattern": "HOW DO I DO REQUIREMENTS FOR A PYTHON SCRIPT",
+      "response": "One script is one product, so one list is enough. Write the inputs, the printed result, and the failures that matter. The script is what has to meet that list."
+    },
+    {
+      "pattern": "HOW DO I WRITE REQUIREMENTS FOR A PYTHON SCRIPT",
+      "response": "One script is one product, so one list is enough. Write the inputs, the printed result, and the failures that matter. The script is what has to meet that list."
+    },
+    {
+      "pattern": "HOW DO I DO REQUIREMENTS FOR A PYTHON PROGRAM",
+      "response": "One script is one product, so one list is enough. Write the inputs, the printed result, and the failures that matter. The script is what has to meet that list."
+    },
+    {
+      "pattern": "HOW DO I WRITE REQUIREMENTS FOR A PYTHON PROGRAM",
+      "response": "One script is one product, so one list is enough. Write the inputs, the printed result, and the failures that matter. The script is what has to meet that list."
+    },
+    {
+      "pattern": "HOW DO I DO REQUIREMENTS FOR *",
+      "response": "Write one list for that product. Inputs, outputs, and the failures that matter.",
+      "template": {
+        "text": "For {star1}, write one list. Inputs, outputs, and the failures that matter. That list is what the program has to meet."
+      }
+    }
+  ]
+}

@@ -5,14 +5,12 @@ from pathlib import Path
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.errors import IdentityValidationError, UnsupportedIdentityVersionError
+from engram.errors import IdentityValidationError
 from engram.identity import (
-    IDENTITY_SCHEMA_VERSION,
     MAX_CANONICAL_FORM_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_RETRIEVAL_ALIASES,
     MAX_RETRIEVAL_REPRESENTATION_BYTES,
-    RETRIEVAL_NORMALIZATION_VERSION,
     QualifierKind,
     QueryOperator,
     RetrievalOrigin,
@@ -26,27 +24,21 @@ from engram.identity import (
     extract_qualifiers,
     extract_relation_surface,
     identity_qualifier,
-    load_authoritative_identity,
     normalize_retrieval_key,
     query_identity,
     query_identity_from_dict,
-    query_identity_from_json,
     query_identity_to_dict,
     query_identity_to_json,
     relation_reference,
     retrieval_representation,
     retrieval_representation_bindings,
-    retrieval_representation_from_json,
+    retrieval_representation_from_dict,
     retrieval_representation_to_dict,
-    retrieval_representation_to_json,
     scope_key,
     scope_key_from_dict,
-    scope_key_from_json,
     scope_key_signature,
     scope_key_to_dict,
-    scope_key_to_json,
-    scoped_retrieval_key_from_json,
-    scoped_retrieval_key_signature,
+    scoped_retrieval_key_from_dict,
     scoped_retrieval_key_to_dict,
     scoped_retrieval_key_to_json,
     validate_authoritative_identity,
@@ -56,7 +48,7 @@ from engram.identity import (
     validate_scoped_retrieval_key,
 )
 
-NORMALIZATION_FIXTURE = Path(__file__).parent / "fixtures" / "identity" / "normalization-v1.json"
+NORMALIZATION_FIXTURE = Path(__file__).parent / "fixtures" / "identity" / "normalization.json"
 
 
 def fixture() -> dict:
@@ -81,12 +73,10 @@ def none_paths(value, path: str = "root") -> list[str]:
 def test_scope_key_codec_equality_and_order_are_deterministic() -> None:
     empty = scope_key()
     support = scope_key(namespace="support", context_fingerprint="account-tier:pro")
-    restored = scope_key_from_json(scope_key_to_json(support))
+    restored = scope_key_from_dict(scope_key_to_dict(support))
 
     assert restored == support
-    assert type(restored) is dict
     assert scope_key_to_dict(restored) == {
-        "schema_version": 1,
         "namespace": "support",
         "context_fingerprint": "account-tier:pro",
     }
@@ -94,15 +84,13 @@ def test_scope_key_codec_equality_and_order_are_deterministic() -> None:
         scope_key_signature(empty),
         scope_key_signature(support),
     ]
-    assert scope_key_to_json(support) == scope_key_to_json(restored)
 
 
 @pytest_mark.parametrize(
     ("value", "message"),
     [
-        ({"schema_version": 2, "namespace": "", "context_fingerprint": ""}, "unsupported scope schema_version"),
-        ({"schema_version": 1, "namespace": "", "context_fingerprint": "", "extra": ""}, "unsupported fields"),
-        ({"schema_version": 1, "namespace": [], "context_fingerprint": ""}, "namespace must be a string"),
+        ({"namespace": "", "context_fingerprint": "", "extra": ""}, "unsupported fields"),
+        ({"namespace": [], "context_fingerprint": ""}, "namespace must be a string"),
     ],
 )
 def test_scope_key_invalid_scope_payloads_fail_explicitly(value: dict, message: str) -> None:
@@ -140,7 +128,7 @@ def test_identity_contracts_component_and_query_identity_codecs_round_trip() -> 
         scope=scope_key("biography", ""),
     )
 
-    restored = query_identity_from_json(query_identity_to_json(query))
+    restored = query_identity_from_dict(query_identity_to_dict(query))
 
     assert restored == query
     assert query_identity_to_json(restored) == query_identity_to_json(query)
@@ -159,12 +147,7 @@ def test_identity_contracts_unknown_operator_and_empty_relation_are_concrete() -
     assert query["scope"] == scope_key()
 
 
-def test_identity_contracts_unsupported_versions_and_unknown_fields_are_rejected() -> None:
-    payload = query_identity_to_dict(build_standalone_identity("Who created Python?"))
-    payload["schema_version"] = IDENTITY_SCHEMA_VERSION + 1
-    with pytest_raises(UnsupportedIdentityVersionError, match="identity schema_version"):
-        query_identity_from_dict(payload)
-
+def test_identity_contracts_reject_unknown_fields() -> None:
     payload = query_identity_to_dict(build_standalone_identity("Who created Python?"))
     payload["unexpected"] = "value"
     with pytest_raises(IdentityValidationError, match="unsupported fields"):
@@ -205,7 +188,7 @@ def test_identity_contracts_leaf_records_are_exact_revalidated_dictionaries() ->
 
     malformed_qualifier = dict(query["qualifiers"][0])
     malformed_qualifier["value"] = "Not Normalized"
-    with pytest_raises(IdentityValidationError, match="already use retrieval normalization"):
+    with pytest_raises(IdentityValidationError, match="already be normalized"):
         validate_identity_qualifier(malformed_qualifier)
 
 
@@ -223,11 +206,6 @@ def test_retrieval_normalization_normalization_is_idempotent(case: dict) -> None
 def test_retrieval_normalization_empty_and_punctuation_only_inputs_are_concrete() -> None:
     assert normalize_retrieval_key("") == ""
     assert normalize_retrieval_key("?!…") == ""
-
-
-def test_retrieval_normalization_normalization_version_is_explicit() -> None:
-    with pytest_raises(UnsupportedIdentityVersionError, match="normalization_version"):
-        normalize_retrieval_key("request", RETRIEVAL_NORMALIZATION_VERSION + 1)
 
 
 def test_retrieval_normalization_generated_normalization_corpus_is_idempotent() -> None:
@@ -252,7 +230,7 @@ def test_scoped_retrieval_and_representations_scoped_key_codec_and_scope_separat
     assert type(support) is dict
     assert support["normalized_key"] == "what is the port"
     assert support != billing
-    assert scoped_retrieval_key_from_json(scoped_retrieval_key_to_json(support)) == support
+    assert scoped_retrieval_key_from_dict(scoped_retrieval_key_to_dict(support)) == support
 
     validated = validate_scoped_retrieval_key(support)
     assert validated is not support
@@ -281,8 +259,8 @@ def test_scoped_retrieval_and_representations_representation_deduplicates_by_nor
         "What's the default PostgreSQL port?",
         "Postgres default port",
     ]
-    assert len({scoped_retrieval_key_signature(binding["key"]) for binding in bindings}) == 2
-    assert retrieval_representation_from_json(retrieval_representation_to_json(retrieval)) == retrieval
+    assert len({scoped_retrieval_key_to_json(binding["key"]) for binding in bindings}) == 2
+    assert retrieval_representation_from_dict(retrieval_representation_to_dict(retrieval)) == retrieval
     assert "pattern_aliases" not in retrieval_representation_to_dict(retrieval)
     assert "response" not in retrieval_representation_to_dict(retrieval)
 
@@ -299,14 +277,14 @@ def test_scoped_retrieval_and_representations_representation_enforces_bounds_and
         build_retrieval_representation("   ")
 
 
-def test_scoped_retrieval_and_representations_maximum_alias_payload_round_trips_through_json_codec() -> None:
+def test_scoped_retrieval_and_representations_maximum_alias_payload_round_trips() -> None:
     aliases = tuple(
         f"alias-{index}-" + "x" * (MAX_RETRIEVAL_REPRESENTATION_BYTES - len(f"alias-{index}-"))
         for index in range(MAX_RETRIEVAL_ALIASES)
     )
     retrieval = retrieval_representation("canonical request", aliases)
 
-    assert retrieval_representation_from_json(retrieval_representation_to_json(retrieval)) == retrieval
+    assert retrieval_representation_from_dict(retrieval_representation_to_dict(retrieval)) == retrieval
 
 
 @pytest_mark.parametrize(
@@ -420,10 +398,9 @@ def test_authoritative_identity_valid_authoritative_identity_is_preserved_exactl
     )
 
     validated = validate_authoritative_identity(authoritative, retrieval)
-    decoded_identity, decoded_retrieval = load_authoritative_identity(
-        query_identity_to_dict(authoritative),
-        retrieval_representation_to_dict(retrieval),
-    )
+    decoded_identity = query_identity_from_dict(query_identity_to_dict(authoritative))
+    decoded_retrieval = retrieval_representation_from_dict(retrieval_representation_to_dict(retrieval))
+    validate_authoritative_identity(decoded_identity, decoded_retrieval)
 
     assert validated is authoritative
     assert decoded_identity == authoritative
@@ -438,7 +415,7 @@ def test_authoritative_identity_authoritative_contract_rejects_null_malformed_an
 
     identity["relation"] = json_loads("null")
     with pytest_raises(IdentityValidationError, match="identity relation must be an object"):
-        load_authoritative_identity(identity, retrieval)
+        validate_authoritative_identity(query_identity_from_dict(identity), retrieval_representation_from_dict(retrieval))
 
     with pytest_raises(IdentityValidationError, match="exceeds"):
         query_identity(canonical_form="x" * (MAX_CANONICAL_FORM_BYTES + 1))
@@ -475,9 +452,9 @@ def test_identity_conformance_corpus_generated_scoped_key_properties() -> None:
 
     for request in requests:
         keys = tuple(build_scoped_retrieval_key(scope, request) for scope in scopes)
-        assert len({scoped_retrieval_key_signature(key) for key in keys}) == len(scopes)
+        assert len({scoped_retrieval_key_to_json(key) for key in keys}) == len(scopes)
         for key in keys:
-            assert scoped_retrieval_key_from_json(scoped_retrieval_key_to_json(key)) == key
+            assert scoped_retrieval_key_from_dict(scoped_retrieval_key_to_dict(key)) == key
             assert build_scoped_retrieval_key(key["scope"], key["normalized_key"]) == key
 
 

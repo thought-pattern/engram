@@ -1,4 +1,4 @@
-# Query identity and retrieval contracts, version 1
+# Query identity and retrieval contracts
 
 ## Status and boundary
 
@@ -18,7 +18,6 @@ opaque caller values.
 
 ```json
 {
-  "schema_version": 1,
   "namespace": "support",
   "context_fingerprint": "account-tier:pro"
 }
@@ -32,14 +31,12 @@ Two otherwise identical requests in different scopes produce different `ScopedRe
 
 An `EntityReference` carries a required surface and a concrete canonical ID string. Standalone extraction leaves the ID as `""`; authoritative IDs use URI-like syntax such as `entity:alan-turing`. `RelationReference` follows the same shape, but both fields may be empty when relation extraction abstains.
 
-`IdentityQualifier` uses a closed kind (`negation`, `quantity`, `comparison`, `temporal`, `location`, `current`, or `historical`) and a required version-1-normalized value.
+`IdentityQualifier` uses a closed kind (`negation`, `quantity`, `comparison`, `temporal`, `location`, `current`, or `historical`) and a required normalized value.
 
 ### `QueryIdentity`
 
 ```json
 {
-  "schema_version": 1,
-  "normalization_version": 1,
   "canonical_form": "birth date of alan turing",
   "operator": "when",
   "entities": [
@@ -59,7 +56,6 @@ An `EntityReference` carries a required surface and a concrete canonical ID stri
     "born"
   ],
   "scope": {
-    "schema_version": 1,
     "namespace": "biography",
     "context_fingerprint": ""
   }
@@ -73,10 +69,10 @@ Standalone construction uses the normalized request as its canonical form. This 
 The logical key is:
 
 ```text
-(ScopeKey, normalization_version, normalized representation)
+(ScopeKey, normalized representation)
 ```
 
-Its schema-versioned JSON codec supports external transport, fixtures, and
+Its JSON codec supports external transport, fixtures, and
 diagnostics. Exact retrieval derives its request-local comparison signature
 from this value.
 
@@ -84,8 +80,6 @@ from this value.
 
 ```json
 {
-  "schema_version": 1,
-  "normalization_version": 1,
   "canonical": "What's the default PostgreSQL port?",
   "aliases": [
     "Postgres default port"
@@ -120,14 +114,14 @@ Limits are measured in UTF-8 bytes unless the row names a count.
 | Aliases | 32 |
 | Serialized identity-contract JSON | 262,144 bytes |
 
-Scope and contract fields reject control and surrogate characters. Raw request and retrieval strings permit tab and line separators only so versioned whitespace normalization can collapse them. Unsupported schema and normalization versions fail explicitly.
+Scope and contract fields reject control and surrogate characters. Raw request and retrieval strings permit tab and line separators only so whitespace normalization can collapse them.
 
-## Retrieval normalization version 1
+## Retrieval normalization
 
-`normalize_retrieval_key` and `engram.text.normalize` have separate versioned
+`normalize_retrieval_key` and `engram.text.normalize` have separate
 behavior because identity keys and conversational matcher text have different owners.
 
-Version 1 performs these ordered operations:
+It performs these ordered operations:
 
 1. validate type, UTF-8 size, and control characters;
 2. apply Unicode NFKC;
@@ -139,8 +133,8 @@ Version 1 performs these ordered operations:
 8. collapse whitespace.
 
 The function is deterministic and idempotent. Its golden fixture is
-[normalization-v1.json](../../tests/fixtures/identity/normalization-v1.json). Key-changing behavior requires a
-new normalization version and fixtures.
+[normalization.json](../../tests/fixtures/identity/normalization.json). Key-changing behavior requires
+updated fixtures.
 
 ## Standalone extraction
 
@@ -158,8 +152,7 @@ Contextual resolution owns graph identity, ambiguous predicates, and conversatio
 ## Authoritative input
 
 `query_identity_from_dict` and `retrieval_representation_from_dict` strictly
-decode JSON-compatible mappings. `validate_authoritative_identity` verifies the
-current schema and normalization versions and requires the canonical
+decode JSON-compatible mappings. `validate_authoritative_identity` requires the canonical
 representation to produce a non-empty key in the supplied scope. It returns the
 supplied identity unchanged after validation.
 

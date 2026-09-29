@@ -39,8 +39,6 @@ def internal_row(*, semantic: bool = False) -> dict[str, object]:
         "trust_category_available": True,
         "supplied_trust": 0.84,
         "supplied_trust_available": True,
-        "supplied_trust_version": 3,
-        "supplied_trust_version_available": True,
         "structured_match": 0.0 if semantic else 1.0,
         "structured_match_available": not semantic,
         "semantic_similarity": 0.81 if semantic else 0.0,
@@ -83,17 +81,6 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
     assert "c.object AS object" not in captured.get("query", "")
     assert "properties(" not in captured.get("query", "").lower()
     assert "null" not in json_dumps(proposition_projection_to_dict(projection), sort_keys=True)
-
-
-def test_projection_accepts_available_zero_trust_revision() -> None:
-    """Tapestry trust revisions are non-negative and begin at zero."""
-    row = internal_row()
-    row["supplied_trust_version"] = 0
-
-    projection = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
-
-    assert projection["supplied_trust_version"] == 0
-    assert projection["supplied_trust_version_available"] is True
 
 
 def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
@@ -148,10 +135,6 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
             "valid_from must be earlier",
         ),
         (lambda row: row.update({"supplied_trust": float("nan")}), "finite"),
-        (
-            lambda row: row.update({"supplied_trust_version": 0, "supplied_trust_version_available": False}),
-            "availability must match",
-        ),
         (lambda row: row.update({"structured_match": 0.0, "structured_match_available": False}), "measurements"),
     ],
 )
@@ -174,8 +157,6 @@ def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
             "trust_category_available": False,
             "supplied_trust": external_null,
             "supplied_trust_available": False,
-            "supplied_trust_version": external_null,
-            "supplied_trust_version_available": False,
         }
     )
 
@@ -184,7 +165,6 @@ def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
     assert projection["invalidated_at"] == projection["system_to"] == projection["valid_to"] == ""
     assert projection["trust_category"] == ""
     assert projection["supplied_trust"] == 0.0
-    assert projection["supplied_trust_version"] == 0
     assert "null" not in json_dumps(proposition_projection_to_dict(projection), sort_keys=True)
 
 
@@ -290,7 +270,7 @@ def test_transport_neutral_structured_projection_caps_zero_row_query_attempts(mo
     )
 
 
-def test_transport_neutral_vector_projection_fails_soft_without_logging_proposition_content(monkeypatch, caplog) -> None:
+def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_full(monkeypatch, caplog) -> None:
     sensitive_proposition_id = "proposition:sensitive-customer-identifier"
     calls = 0
 
@@ -316,8 +296,9 @@ def test_transport_neutral_vector_projection_fails_soft_without_logging_proposit
 
     assert engine.graph_vector_proposition_projections("query", limit=3) == []
     assert calls == 1
+    # The operator log has the whole exception; the caller only sees no rows.
     assert "InvalidRequestError" in caplog.text
-    assert sensitive_proposition_id not in caplog.text
+    assert sensitive_proposition_id in caplog.text
 
     projection = proposition_projection_from_graph_row(
         internal_row(semantic=True),

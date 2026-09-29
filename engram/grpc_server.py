@@ -3,8 +3,11 @@
 from argparse import ArgumentParser as argparse_ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from gc import collect as gc_collect, freeze as gc_freeze
 from logging import (
+    ERROR,
     INFO,
+    WARNING,
     basicConfig,
     getLevelNamesMapping,
     getLogger,
@@ -33,6 +36,7 @@ from engram.errors import (
     InvalidRequestError,
     LifecycleError,
     ResolutionCancelledError,
+    ResourceExhaustedError,
     ResourceNotFoundError,
 )
 from engram.identity import query_identity_from_dict
@@ -40,6 +44,13 @@ from engram.resolution import resolution_budget_from_dict, resolution_result_to_
 from engram.service import EngramCore
 
 LOGGER = getLogger(__name__)
+# Log levels for errors returned to a client: internal failures are errors,
+# cancellations are routine, and anything else the caller caused is a warning.
+REQUEST_ERROR_LOG_LEVELS = {
+    grpc_StatusCode.INTERNAL: ERROR,
+    grpc_StatusCode.CANCELLED: INFO,
+    grpc_StatusCode.DEADLINE_EXCEEDED: INFO,
+}
 SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramService"].full_name
 EVIDENCE_SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramEvidenceService"].full_name
 
@@ -101,7 +112,6 @@ def to_evidence_resolution(value: dict) -> engram_pb2.ResolutionResult:
     if not isinstance(package, dict):
         raise InvalidRequestError("resolution evidence package must be an object")
     result = engram_pb2.ResolutionResult(
-        schema_version=current.get("schema_version", 0),
         outcome=current.get("outcome", ""),
         selected_candidate=current.get("selected_candidate", {}),
         selected_candidate_available=current.get("selected_candidate_available", False),
@@ -115,7 +125,6 @@ def to_evidence_resolution(value: dict) -> engram_pb2.ResolutionResult:
         budget=current.get("budget", {}),
         evidence_package_available=current.get("evidence_package_available", False),
         evidence_package={
-            "wire_version": package.get("wire_version", 0),
             "records": package.get("records", []),
             "retained_count": package.get("retained_count", 0),
             "omitted_count": package.get("omitted_count", 0),
@@ -146,6 +155,9 @@ def status_code(error: EngramCoreError, context: grpc_ServicerContext) -> grpc_S
         return result
     if isinstance(error, LifecycleError):
         result = grpc_StatusCode.FAILED_PRECONDITION
+        return result
+    if isinstance(error, ResourceExhaustedError):
+        result = grpc_StatusCode.RESOURCE_EXHAUSTED
         return result
     result = grpc_StatusCode.INTERNAL
     return result
@@ -211,13 +223,18 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
         except EngramCoreError as error:
+            # The client gets the error's own message, written for callers;
+            # the log gets the full exception.
+            code = status_code(error, context)
+            LOGGER.log(REQUEST_ERROR_LOG_LEVELS.get(code, WARNING), "Engram gRPC request ended with %s", code.name, exc_info=error)
             metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
             context.set_trailing_metadata(tuple(metadata))
-            context.abort(status_code(error, context), str(error))
+            context.abort(code, str(error))
         except Exception as error:
-            LOGGER.error("Unhandled Engram gRPC operation failure (%s)", type(error).__name__)
+            LOGGER.error("Unhandled Engram gRPC operation failure", exc_info=error)
             context.abort(grpc_StatusCode.INTERNAL, "internal Engram failure")
         finally:
+            self.core.reconnect_graph_after_turn()
             self.sync_health()
 
     def StartConversation(self, request: engram_pb2.StartConversationRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
@@ -319,7 +336,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def LearnResponse(self, request: engram_pb2.LearnResponseRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        source_label = request.source_label or "tapestry:actor"
+        source_label = request.source_label or "unknown"
         message = self.invoke(
             context,
             lambda: to_struct(
@@ -530,8 +547,10 @@ def main(argv: tuple[str, ...] = ()) -> int:
             tls_certificate=certificate,
             tls_private_key=private_key,
         )
-    except EngramCoreError as error:
-        LOGGER.error("Unable to initialize Engram gRPC server (%s)", type(error).__name__)
+    except (EngramCoreError, RuntimeError) as error:
+        # An enabled graph that is unreachable or fails schema preflight
+        # raises RuntimeError at startup; report it like any startup failure.
+        LOGGER.error("Unable to initialize Engram gRPC server", exc_info=error)
         result = 1
         return result
 
@@ -544,6 +563,12 @@ def main(argv: tuple[str, ...] = ()) -> int:
     signal(SIGINT, request_shutdown)
     signal(SIGTERM, request_shutdown)
 
+    # Models, seed data, and the stored state live for the whole process.
+    # Freezing them after startup keeps full garbage collections from
+    # rescanning them, which otherwise pauses requests for hundreds of
+    # milliseconds on a large store.
+    gc_collect()
+    gc_freeze()
     server.start()
     LOGGER.info("Engram gRPC server listening on %s", server.target)
     with suppress(KeyboardInterrupt):
@@ -552,7 +577,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
     try:
         server.stop(args.grace_period)
     except EngramCoreError as error:
-        LOGGER.error("Engram gRPC shutdown failed (%s)", type(error).__name__)
+        LOGGER.error("Engram gRPC shutdown failed", exc_info=error)
         result = 1
         return result
     LOGGER.info("Engram gRPC server stopped")

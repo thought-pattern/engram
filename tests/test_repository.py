@@ -13,7 +13,6 @@ from engram.repository import (
     AdmissionOutcome,
     ArtifactRepository,
     RepositoryRemovalReason,
-    admission_plan_to_dict,
     normalize_repository_state,
     repository_state,
     tier_admission_policy,
@@ -238,14 +237,12 @@ def test_dynamic_admission_below_capacity_changes_no_existing_residency() -> Non
     repository = ArtifactRepository((existing,))
     plan = repository.plan_admission(incoming, tier_admission_policy(2))
 
-    assert admission_plan_to_dict(plan) == {
-        "outcome": "ADMITTED",
-        "candidate_state_generation": 2,
-        "admitted_statement_id": "stmt-incoming",
-        "evicted_statement_ids": [],
-        "residency_changed": True,
-        "lifecycle_changed": False,
-    }
+    assert plan["outcome"] == AdmissionOutcome.ADMITTED
+    assert plan["candidate"]["state_generation"] == 2
+    assert plan["admitted_statement_id"] == "stmt-incoming"
+    assert plan["evicted_statement_ids"] == ()
+    assert plan["residency_changed"] is True
+    assert plan["lifecycle_changed"] is False
     assert set(plan["candidate"]["artifacts"]) == {"stmt-existing", "stmt-incoming"}
     assert existing["lifecycle"] == LifecycleState.ACTIVE
 
@@ -384,3 +381,40 @@ def test_admission_rejects_collision_and_wrong_policy_type(policy, message) -> N
 def test_tier_admission_policy_rejects_invalid_bounds(args, message) -> None:
     with pytest_raises(InvalidRequestError, match=message):
         tier_admission_policy(*args)
+
+
+def test_exact_key_index_follows_every_state_change_and_matches_a_full_scan() -> None:
+    from engram.eligibility import ContextualExactLookup
+
+    shared = "Shared question?"
+    repository = ArtifactRepository(
+        (
+            accepted_artifact("stmt-1"),
+            accepted_artifact("stmt-2", request=shared),
+            accepted_artifact("stmt-3"),
+        )
+    )
+    before = repository.snapshot()
+    added = repository.candidate_with_artifact(accepted_artifact("stmt-4", request=shared))
+    repository.atomic_replace(added, before["state_generation"])
+    updated = accepted_artifact("stmt-1", request="Question for stmt-1 changed?", generation=2)
+    repository.atomic_replace(repository.candidate_with_artifacts((updated,)), before["state_generation"] + 1)
+    removed = repository.candidate_without_artifact("stmt-3", 1, RepositoryRemovalReason.EXPLICIT_DELETE)
+    repository.atomic_replace(removed, before["state_generation"] + 2)
+    rolled_back_to = repository.snapshot()
+    repository.atomic_replace(
+        repository.candidate_without_artifact("stmt-2", 1, RepositoryRemovalReason.EXPLICIT_DELETE),
+        rolled_back_to["state_generation"],
+    )
+    repository.restore_state(rolled_back_to)
+
+    rebuilt = ArtifactRepository(tuple(repository.snapshot()["artifacts"].values()))
+    assert repository.internal_key_owners == rebuilt.internal_key_owners
+    assert repository.internal_dynamic_ids == rebuilt.internal_dynamic_ids
+    requests = (shared, "Question for stmt-1?", "Question for stmt-1 changed?", "Question for stmt-3?", "Alias for stmt-4")
+    for request in requests:
+        key = build_scoped_retrieval_key(scope_key(namespace="tenant-a"), request)
+        scanned = ContextualExactLookup(repository.trusted_artifacts(), trusted_artifacts=True).exact_lookup(key, context())
+        assert repository.exact_lookup(key, context()) == scanned
+    shared_key = build_scoped_retrieval_key(scope_key(namespace="tenant-a"), shared)
+    assert repository.exact_lookup(shared_key, context())["lookup"]["outcome"] == ExactLookupOutcome.COLLISION

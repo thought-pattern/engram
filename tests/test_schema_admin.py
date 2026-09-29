@@ -1,68 +1,46 @@
-"""Standalone and Tapestry-managed Engram schema contract tests."""
-
-from pathlib import Path
+"""Engram schema installation and graph compatibility tests."""
 
 from pytest import raises
 
-from engram.schema_admin import install_standalone_schema, verify_schema
-from engram.schema_catalog import (
-    schema_catalog,
-    schema_ddl_digest,
-    validate_schema_contract,
-)
+from engram.schema_admin import install_schema, verify_schema
+from engram.schema_catalog import packaged_schema, schema_catalog, validate_schema_contract
 
-ENGRAM_ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_FILE = ENGRAM_ROOT / "schema.cypher"
+SCHEMA_FILE = packaged_schema()
 CATALOG = schema_catalog(SCHEMA_FILE.read_text(encoding="utf-8"))
 DEFAULT_PARAMETERS = {}
-STANDALONE_METADATA = {
-    "component": "engram",
-    "deployment_owner": "engram",
-    "representation_contract": "tapestry-ke-representation-v1",
-    "proof_scratch_contract": {},
-    "engram_support_contract": "tapestry-engram-support-v1",
-    "schema_digest": schema_ddl_digest(SCHEMA_FILE),
-    "graph_state_name": "engram_graph",
-    "graph_deployment_owner": "engram",
-    "installation_state": "schema_installed",
-    "graph_revision": 0,
-}
-TAPESTRY_METADATA = {
-    "component": "tapestry",
-    "deployment_owner": "tapestry",
-    "representation_contract": "tapestry-ke-representation-v1",
-    "proof_scratch_contract": "tapestry-proof-scratch-v1",
-    "engram_support_contract": "tapestry-engram-support-v1",
-    "schema_digest": "root-schema-digest",
-    "graph_state_name": "tapestry_knowledge_graph",
-    "graph_deployment_owner": "tapestry",
-    "installation_state": "accepted",
-    "graph_revision": 42,
-}
+WRITE_PREFIXES = ("CREATE ", "DROP ", "DELETE ", "SET ", "MERGE ")
 
 
 class RecordingConnection:
-    """Serve one fixed catalog and record all graph operations."""
+    """Serve Engram's catalog, optionally altered, and record all graph operations."""
 
-    def __init__(self, metadata: dict):
-        self.metadata = dict(metadata)
+    def __init__(self, nodes: int = 0, extra_index: bool = False, missing_index: bool = False):
+        self.nodes = nodes
+        self.extra_index = extra_index
+        self.missing_index = missing_index
         self.reads = []
         self.writes = []
-        self.conn = {}
+
+    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
+        self.writes.append({"query": statement, "parameters": dict(parameters)})
+        return []
 
     def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
         self.reads.append({"query": query, "parameters": dict(parameters)})
         if query == "RETURN 1 AS ready":
             return [{"ready": 1}]
         if query == "SHOW INDEX INFO":
+            ordinary = CATALOG.get("ordinary_indexes", [])[1:] if self.missing_index else CATALOG.get("ordinary_indexes", [])
             rows = [
                 {
                     "index type": "label+property",
                     "label": value.get("label", ""),
                     "property": [value.get("property", "")],
                 }
-                for value in CATALOG.get("ordinary_indexes", [])
+                for value in ordinary
             ]
+            if self.extra_index:
+                rows.append({"index type": "label+property", "label": "Unrelated", "property": ["name"]})
             rows.extend(
                 {
                     "index type": f"label_text (name: {value.get('name', '')})",
@@ -106,70 +84,25 @@ class RecordingConnection:
                 for value in CATALOG.get("vector_indexes", [])
             ]
             return result
-        if "application_nodes" in query:
-            return [{"application_nodes": 0}]
-        if "metadata_nodes" in query:
-            return [{"metadata_nodes": 2}]
-        if "count(r) AS relationships" in query:
+        if query == "MATCH (n) RETURN count(n) AS nodes":
+            return [{"nodes": self.nodes}]
+        if query == "MATCH ()-[r]->() RETURN count(r) AS relationships":
             return [{"relationships": 0}]
-        if query.startswith("MATCH (s:SchemaRevision)"):
-            result = [dict(self.metadata)]
-            return result
-        if query.startswith("MATCH (g:GraphState)"):
-            result = [dict(self.metadata)]
-            return result
         raise AssertionError(f"unexpected read: {query}")
-
-
-class FailingAdministrativeCursor:
-    """Raise on the third standalone DDL statement."""
-
-    description = []
-
-    def __init__(self, writes: list):
-        self.writes = writes
-
-    def cursor(self):
-        return self
-
-    def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> None:
-        self.writes.append({"query": query, "parameters": dict(parameters)})
-        if len(self.writes) == 3:
-            raise RuntimeError("injected standalone DDL failure")
-
-    def fetchall(self) -> list:
-        return []
 
 
 class FailingAdministrativeConnection(RecordingConnection):
-    """Expose raw cursor failure on the third standalone DDL statement."""
+    """Expose the driver's own failure on the third DDL statement of a fresh install."""
 
-    def __init__(self):
-        super().__init__({})
-        self.conn = FailingAdministrativeCursor(self.writes)
+    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
+        result = super().execute_admin(statement, parameters)
+        if len(self.writes) == 3:
+            raise RuntimeError("injected DDL failure")
+        return result
 
     def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
-        if "application_nodes" in query:
-            return [{"application_nodes": 0}]
-        if "metadata_nodes" in query:
-            return [{"metadata_nodes": 0}]
-        if "count(r) AS relationships" in query:
-            return [{"relationships": 0}]
-        if query == "RETURN 1 AS ready":
-            return [{"ready": 1}]
         if query in {"SHOW INDEX INFO", "SHOW CONSTRAINT INFO", "SHOW VECTOR INDEX INFO"}:
             return []
-        raise AssertionError(f"unexpected read: {query}")
-
-
-class MixedMetadataConnection(RecordingConnection):
-    """Expose two schema owners while keeping the catalog otherwise valid."""
-
-    def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
-        if query.startswith("MATCH (s:SchemaRevision)"):
-            engram = dict(STANDALONE_METADATA)
-            tapestry = dict(TAPESTRY_METADATA)
-            return [engram, tapestry]
         result = super().execute(query, parameters)
         return result
 
@@ -184,11 +117,37 @@ class InvalidVectorConnection(RecordingConnection):
         return rows
 
 
-def test_standalone_install_is_exact_idempotent_and_read_only() -> None:
-    connection = RecordingConnection(STANDALONE_METADATA)
-    report = install_standalone_schema(connection, SCHEMA_FILE)
+class ResizedVectorConnection(RecordingConnection):
+    """Return the vector index with different storage sizing."""
+
+    def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
+        rows = super().execute(query, parameters)
+        if query == "SHOW VECTOR INDEX INFO":
+            rows[0].update({"capacity": 16_777_216, "scalar_kind": "f16"})
+        return rows
+
+
+def test_install_on_a_compatible_graph_is_idempotent_and_read_only() -> None:
+    connection = RecordingConnection()
+    report = install_schema(connection, SCHEMA_FILE)
     assert report.get("valid", False) is True
     assert report.get("idempotent", False) is True
+    assert connection.writes == []
+
+
+def test_a_graph_with_a_larger_schema_is_compatible() -> None:
+    connection = RecordingConnection(nodes=12, extra_index=True)
+    report = verify_schema(connection, SCHEMA_FILE)
+    assert report.get("valid", False) is True
+    assert connection.writes == []
+    assert all(not record.get("query", "").lstrip().upper().startswith(WRITE_PREFIXES) for record in connection.reads)
+
+
+def test_a_graph_missing_a_needed_definition_is_incompatible() -> None:
+    connection = RecordingConnection(missing_index=True)
+    report = verify_schema(connection, SCHEMA_FILE)
+    assert report.get("valid", True) is False
+    assert "ordinary_indexes" in report.get("catalog", {}).get("missing", {})
     assert connection.writes == []
 
 
@@ -207,58 +166,37 @@ def test_static_contract_rejects_required_relationship_and_vector_drift() -> Non
         validate_schema_contract(wrong_vector_shape)
 
 
-def test_tapestry_managed_verification_requires_accepted_tapestry_owner() -> None:
-    connection = RecordingConnection(TAPESTRY_METADATA)
-    report = verify_schema(connection, SCHEMA_FILE, "tapestry_managed")
-    assert report.get("valid", False) is True
-    assert connection.writes == []
-    assert all(
-        not record.get("query", "").lstrip().upper().startswith(("CREATE ", "DROP ", "DELETE ", "SET ", "MERGE "))
-        for record in connection.reads
-    )
-
-
-def test_mode_owner_mismatch_fails_closed() -> None:
-    connection = RecordingConnection(STANDALONE_METADATA)
-    report = verify_schema(connection, SCHEMA_FILE, "tapestry_managed")
-    assert report.get("valid", True) is False
-    assert "deployment_owner" in report.get("metadata", {}).get("mismatched", {})
+def test_installer_requires_an_empty_graph() -> None:
+    connection = RecordingConnection(nodes=1)
+    with raises(RuntimeError, match="requires an empty graph"):
+        install_schema(connection, SCHEMA_FILE)
     assert connection.writes == []
 
 
-def test_standalone_installer_rejects_tapestry_owner() -> None:
-    connection = RecordingConnection(TAPESTRY_METADATA)
-    try:
-        install_standalone_schema(connection, SCHEMA_FILE)
-    except RuntimeError as err:
-        assert "partial, foreign, or invalid for this release" in str(err)
-    else:
-        raise AssertionError("standalone installer accepted Tapestry ownership")
+def test_installer_refuses_a_partial_catalog_without_writes() -> None:
+    connection = RecordingConnection(missing_index=True)
+    with raises(RuntimeError, match="lacks definitions Engram needs"):
+        install_schema(connection, SCHEMA_FILE)
     assert connection.writes == []
 
 
-def test_standalone_installer_stops_on_first_ddl_failure() -> None:
+def test_installer_stops_on_first_ddl_failure() -> None:
     connection = FailingAdministrativeConnection()
-    try:
-        install_standalone_schema(connection, SCHEMA_FILE)
-    except RuntimeError as err:
-        assert "injected standalone DDL failure" in str(err)
-    else:
-        raise AssertionError("standalone installer continued after DDL failure")
+    with raises(RuntimeError, match="injected DDL failure"):
+        install_schema(connection, SCHEMA_FILE)
     assert len(connection.writes) == 3
 
 
-def test_mixed_schema_owners_fail_closed_without_writes() -> None:
-    connection = MixedMetadataConnection(STANDALONE_METADATA)
-    report = verify_schema(connection, SCHEMA_FILE, "standalone")
-    assert report.get("valid", True) is False
-    assert "schema_revision_count" in report.get("metadata", {}).get("mismatched", {})
+def test_vector_index_storage_sizing_does_not_affect_compatibility() -> None:
+    connection = ResizedVectorConnection()
+    report = verify_schema(connection, SCHEMA_FILE)
+    assert report.get("valid", False) is True
     assert connection.writes == []
 
 
 def test_invalid_vector_shape_fails_closed_without_writes() -> None:
-    connection = InvalidVectorConnection(STANDALONE_METADATA)
-    report = verify_schema(connection, SCHEMA_FILE, "standalone")
+    connection = InvalidVectorConnection()
+    report = verify_schema(connection, SCHEMA_FILE)
     assert report.get("valid", True) is False
     assert "vector_indexes" in report.get("catalog", {}).get("missing", {})
     assert connection.writes == []

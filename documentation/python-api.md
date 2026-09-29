@@ -1,8 +1,7 @@
-# Engram Python API v1
+# Engram Python API
 
 **Status:** Current transport-neutral mapping contract
 **Owner:** Engram project
-**Result schema:** `ResolutionResult` schema version 1
 
 ## Boundary
 
@@ -57,12 +56,12 @@ until the driver returns. Graph I/O isolation keeps unrelated local requests and
 status available during that call.
 
 `resolve_request` also applies the process configuration's exact namespace rollout
-selection. The policy version and selected mode participate in retry identity.
+selection. The selected mode participates in retry identity.
 `disabled` returns a resolver-free `MISS`; `shadow` suppresses candidate output and
 accepted-success credit; `evidence_only` downgrades an answer to `EVIDENCE`;
 `rollback` executes exact-only retrieval and returns evidence or `MISS`; and
 `regulated_direct_answer` preserves the behavior described by `accept_exact`.
-`core.status()["rollout"]` reports the policy version, default mode, override count,
+`core.status()["rollout"]` reports the default mode, override count,
 and fixed per-mode counts aggregated across namespaces.
 
 ## Result access
@@ -88,8 +87,8 @@ proposition_records = result["evidence_package"]["records"]
 ```
 
 `resolution_result_to_dict`, `resolution_result_to_json`, and their strict
-decoders preserve schema version 1, concrete absence, exact accepted text,
-bounded evidence, and unsupported-version rejection. Full Proposition records occur
+decoders preserve concrete absence, exact accepted text, and
+bounded evidence. Full Proposition records occur
 inside `evidence_package`; fusion authorizes an Engram answer.
 
 The compact previous query frame supplies session context; the repository owns

@@ -39,6 +39,7 @@ from engram.mutations import (
 )
 from engram.repository import AdmissionOutcome, repository_state_with_artifact_updates, validate_tier_admission_policy
 from engram.support import validate_support_reference
+from engram.validation import require_text
 
 
 def utc_receipt_clock() -> str:
@@ -113,33 +114,21 @@ def validate_base_response_artifact(artifact: dict) -> dict:
     return validated_artifact
 
 
-def response_audit_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    """Validate one bounded response-mutation audit string."""
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    result = value
-    return result
-
-
 def response_collision_owner_ids(
     artifact: dict,
     coordinator: AtomicMutationCoordinator,
 ) -> tuple[str, ...]:
     """Return current owners that collide with an artifact's retrieval keys."""
-    artifacts = coordinator.snapshot()["repository"]["artifacts"]
+    artifacts = coordinator.repository.trusted_artifacts()
     target_keys = tuple(
         binding.get("key")
         for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
     )
+    # The key index narrows the check to artifacts that carry one of the keys.
+    candidates = coordinator.repository.key_owner_ids(target_keys)
     owners = {
         statement_id
-        for statement_id, current in artifacts.items()
+        for statement_id, current in ((statement_id, artifacts[statement_id]) for statement_id in candidates)
         if any(
             any(binding.get("key") == target_key for target_key in target_keys)
             for binding in retrieval_representation_bindings(current["retrieval"], current["scope"])
@@ -219,7 +208,7 @@ class AcceptedResponseService:
         payload_signature: str,
         created_at: str,
     ) -> dict:
-        current = self.internal_coordinator.snapshot()["repository"]
+        current = self.internal_coordinator.repository.trusted_state()
         current_artifacts = current["artifacts"]
         if artifact.get("statement_id", "") in current_artifacts:
             raise ConflictError(f"artifact statement_id already exists: {artifact.get('statement_id', '')}")
@@ -405,7 +394,7 @@ class AcceptedResponseService:
     def record_response_hit(self, statement_id: str, request_id: str) -> dict:
         """Increment one authoritative accepted-hit statistic and last-hit time."""
 
-        normalized_id = response_audit_text(statement_id, "response hit statement_id", 256, allow_empty=False)
+        normalized_id = require_text(statement_id, "response hit statement_id", 256, allow_empty=False)
         payload_signature = canonical_payload_signature({"statement_id": normalized_id})
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.RECORD_RESPONSE_HIT, payload_signature)
@@ -458,7 +447,7 @@ class AcceptedResponseService:
         normalized_ids = tuple(sorted(set(statement_ids)))
         if normalized_ids != statement_ids:
             raise InvalidRequestError("resolution statement_ids must be sorted and unique")
-        normalized_accepted = response_audit_text(
+        normalized_accepted = require_text(
             accepted_statement_id,
             "resolution accepted_statement_id",
             256,
@@ -531,13 +520,13 @@ class AcceptedResponseService:
         target: LifecycleState,
         result_code: MutationResultCode,
     ) -> dict:
-        normalized_statement_id = response_audit_text(statement_id, "lifecycle statement_id", 256, allow_empty=False)
+        normalized_statement_id = require_text(statement_id, "lifecycle statement_id", 256, allow_empty=False)
         if isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
             raise InvalidRequestError("expected_generation must be a positive integer")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("lifecycle reason must be a LifecycleMutationReason")
-        normalized_caller_id = response_audit_text(caller_id, "lifecycle caller_id", 256, allow_empty=False)
-        normalized_detail = response_audit_text(audit_detail, "lifecycle audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "lifecycle caller_id", 256, allow_empty=False)
+        normalized_detail = require_text(audit_detail, "lifecycle audit_detail", 1_024, allow_empty=True)
         payload_signature = canonical_payload_signature(
             {
                 "statement_id": normalized_statement_id,
@@ -682,7 +671,7 @@ class AcceptedResponseService:
     ) -> dict:
         """Atomically supersede one expected ACTIVE artifact with one new artifact."""
 
-        normalized_statement_id = response_audit_text(
+        normalized_statement_id = require_text(
             expected_statement_id,
             "supersession expected_statement_id",
             256,
@@ -695,8 +684,8 @@ class AcceptedResponseService:
             raise InvalidRequestError("supersession replacement must have a new statement_id")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("supersession reason must be a LifecycleMutationReason")
-        normalized_caller_id = response_audit_text(caller_id, "supersession caller_id", 256, allow_empty=False)
-        normalized_detail = response_audit_text(audit_detail, "supersession audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "supersession caller_id", 256, allow_empty=False)
+        normalized_detail = require_text(audit_detail, "supersession audit_detail", 1_024, allow_empty=True)
         payload_signature = canonical_payload_signature(
             {
                 "expected_statement_id": normalized_statement_id,
@@ -722,7 +711,7 @@ class AcceptedResponseService:
             if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
 
-            before = self.internal_coordinator.snapshot()["repository"]
+            before = self.internal_coordinator.repository.trusted_state()
             current = self.internal_coordinator.repository.get_artifact(normalized_statement_id)
             if current["generation"] != expected_generation:
                 raise ConflictError(

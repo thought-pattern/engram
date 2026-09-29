@@ -1,32 +1,40 @@
 """Knowledge Graph integration for ENGRAM.
 
-Connects to a MemGraph instance using the pymgclient driver. Runtime access is
-strictly read-only: every public execution path rejects mutating Cypher before
-opening a connection.
+Connects to a Bolt graph database (Memgraph, Neo4j, or another Bolt/Cypher
+store) through the neo4j driver. Runtime access is strictly read-only: every
+public execution path rejects mutating Cypher before reaching the database.
 
 Graph unavailability and query failure remain explicit; an empty row list means
-only that a successful read matched no records. A backend swap
-(e.g. to a different Bolt-speaking store) is a sibling module with the same
-method names — duck typing is the contract, so there is no abstract base class.
+only that a successful read matched no records. Every operation is bounded by
+``GRAPH_TIMEOUT_SECONDS``; see ``MemGraphConnection``.
 """
 
+from asyncio import (
+    all_tasks as asyncio_all_tasks,
+    current_task as asyncio_current_task,
+    get_running_loop as asyncio_get_running_loop,
+    new_event_loop as asyncio_new_event_loop,
+    run_coroutine_threadsafe as asyncio_run_coroutine_threadsafe,
+    wait as asyncio_wait,
+    wait_for as asyncio_wait_for,
+)
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
-from pathlib import Path
-from threading import RLock as threading_RLock
-from time import monotonic as time_monotonic
+from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
-from mgclient import connect as mgclient_connect
+from neo4j import AsyncGraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
+from neo4j.time import Date as neo4j_Date, DateTime as neo4j_DateTime, Time as neo4j_Time
 
 from engram.constants import (
     CANONICAL_ENTITY_MATCH_FIELDS,
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_FIELDS,
     CANONICAL_PREDICATE_MATCH_QUERY,
-    CONNECTION_LOST_MARKERS,
+    GRAPH_TIMEOUT_SECONDS,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
@@ -39,7 +47,6 @@ from engram.constants import (
     PROPOSITION_PROJECTION_BY_ID_QUERY,
     PROPOSITION_PROJECTION_FIELDS,
     PROPOSITION_PROJECTION_RECORD_FIELDS,
-    RECONNECT_COOLDOWN_SECONDS,
     RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY,
     RELATION_ONE_HOP_RESULT_FIELDS,
     STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY,
@@ -53,7 +60,9 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 from engram.schema_admin import verify_schema
+from engram.schema_catalog import packaged_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
+from engram.validation import parse_utc_timestamp, require_bool, require_identifier, require_text, utc_datetime
 
 logger = logging_getLogger(__name__)
 
@@ -98,48 +107,43 @@ FIXED_READ_PROCEDURE_QUERIES = (
 )
 
 
-def is_connection_error(err: Exception) -> bool:
-    """Distinguish socket-level failures from query-level failures.
+def is_connection_error(err: BaseException) -> bool:
+    """Distinguish a lost or unresponsive connection from a failed query.
 
-    Returns True only when the exception indicates the TCP connection is dead.
-    Query-level errors (storage timeouts, lock contention, syntax errors) return
-    False -- the socket is still usable and the reconnect cooldown does not apply.
+    True means the connection cannot be trusted and is replaced after the
+    turn; this includes timeouts. Query-level errors (syntax, missing
+    procedure, constraint) arrive over a healthy connection and return False.
     """
-    error_name = type(err).__name__
-    if isinstance(err, (ConnectionError, BrokenPipeError, OSError)) or error_name == "InterfaceError":
-        result = True
-        return result
-    if error_name == "OperationalError":
-        err_str = str(err).lower()
-        result = any(marker in err_str for marker in CONNECTION_LOST_MARKERS)
-        return result
-    result = False
+    result = isinstance(err, (ServiceUnavailable, SessionExpired, OSError))
     return result
 
 
-def projection_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
+def native_value(value: object) -> object:
+    """Return driver temporal values as Python ``datetime``, ``date``, and ``time``.
+
+    Projection decoding expects Python types; the driver returns its own
+    nanosecond-precision classes.
+    """
+    if isinstance(value, list):
+        result = [native_value(item) for item in value]
+        return result
+    if isinstance(value, dict):
+        result = {key: native_value(item) for key, item in value.items()}
+        return result
+    if isinstance(value, (neo4j_DateTime, neo4j_Date, neo4j_Time)):
+        result = value.to_native()
+        return result
     return value
 
 
-def projection_identifier(value: object, name: str) -> str:
-    identifier = projection_text(value, name, MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES, allow_empty=False)
-    if any(character.isspace() for character in identifier):
-        raise InvalidRequestError(f"{name} must not contain whitespace")
-    return identifier
-
-
-def projection_bool(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
+async def read_rows(driver, statement: str, parameters: dict) -> list[dict]:
+    """Run one auto-commit statement and return its rows as column -> value dicts."""
+    async with driver.session() as session:
+        result = await session.run(statement, parameters)
+        columns = list(result.keys())
+        values = await result.values()
+    rows = [dict(zip(columns, (native_value(value) for value in row), strict=False)) for row in values]
+    return rows
 
 
 def projection_int(value: object, name: str, minimum: int, maximum: int) -> int:
@@ -173,15 +177,8 @@ def projection_timestamp(value: object, available: bool, name: str) -> str:
             raise InvalidRequestError(f"{name} must be timezone-aware UTC")
         text = value.isoformat().replace("+00:00", "Z")
     else:
-        text = projection_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
+        text = require_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
+    parse_utc_timestamp(text, name)
     return text
 
 
@@ -191,21 +188,21 @@ def optional_projection_text(value: object, available: bool, name: str, maximum_
             result = ""
             return result
         raise InvalidRequestError(f"{name} must be empty when unavailable")
-    result = projection_text(value, name, maximum_bytes, allow_empty=False)
+    result = require_text(value, name, maximum_bytes, allow_empty=False)
     return result
 
 
 def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
         raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")
-    normalized = tuple(projection_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
+    normalized = tuple(require_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
     if normalized != tuple(dict.fromkeys(normalized)):
         raise InvalidRequestError(f"{name} must contain unique values")
     return normalized
 
 
 def projection_object_type(value: object, name: str) -> ExpectedObjectType:
-    raw = projection_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, 32, allow_empty=False).upper()
     try:
         result = ExpectedObjectType(raw)
     except ValueError as error:
@@ -214,7 +211,7 @@ def projection_object_type(value: object, name: str) -> ExpectedObjectType:
 
 
 def projection_cardinality(value: object, name: str) -> PredicateCardinality:
-    raw = projection_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, 32, allow_empty=False).upper()
     try:
         result = PredicateCardinality(raw)
     except ValueError as error:
@@ -227,8 +224,10 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != CANONICAL_ENTITY_MATCH_FIELDS:
         raise InvalidRequestError("canonical entity match row has invalid fields")
     result: dict = {
-        "canonical_id": projection_identifier(value["canonical_id"], "canonical entity ID"),
-        "primary_label": projection_text(
+        "canonical_id": require_identifier(
+            value["canonical_id"], "canonical entity ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        ),
+        "primary_label": require_text(
             value["primary_label"], "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
@@ -243,8 +242,10 @@ def canonical_predicate_match_from_graph_row(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
         raise InvalidRequestError("canonical Predicate match row has invalid fields")
     result: dict = {
-        "canonical_id": projection_identifier(value["canonical_id"], "canonical Predicate ID"),
-        "primary_label": projection_text(
+        "canonical_id": require_identifier(
+            value["canonical_id"], "canonical Predicate ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        ),
+        "primary_label": require_text(
             value["primary_label"], "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "synonyms": projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
@@ -275,8 +276,6 @@ def proposition_projection(
     trust_category_available: object,
     supplied_trust: object,
     supplied_trust_available: object,
-    supplied_trust_version: object,
-    supplied_trust_version_available: object,
     structured_match: object,
     structured_match_available: object,
     semantic_similarity: object,
@@ -286,15 +285,23 @@ def proposition_projection(
     vector_index_id_available: object,
 ) -> dict:
     """Build one validated strict Proposition projection dictionary."""
-    normalized_proposition_id = projection_identifier(proposition_id, "Proposition projection proposition_id")
-    normalized_subject_id = projection_identifier(subject_entity_id, "Proposition projection subject_entity_id")
-    normalized_predicate_id = projection_identifier(predicate_id, "Proposition projection predicate_id")
-    normalized_object_id = projection_identifier(object_entity_id, "Proposition projection object_entity_id")
-    normalized_invalidated_available = projection_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
-    normalized_system_from_available = projection_bool(system_from_available, "Proposition projection system_from_available")
-    normalized_system_to_available = projection_bool(system_to_available, "Proposition projection system_to_available")
-    normalized_valid_from_available = projection_bool(valid_from_available, "Proposition projection valid_from_available")
-    normalized_valid_to_available = projection_bool(valid_to_available, "Proposition projection valid_to_available")
+    normalized_proposition_id = require_identifier(
+        proposition_id, "Proposition projection proposition_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_subject_id = require_identifier(
+        subject_entity_id, "Proposition projection subject_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_predicate_id = require_identifier(
+        predicate_id, "Proposition projection predicate_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_object_id = require_identifier(
+        object_entity_id, "Proposition projection object_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_invalidated_available = require_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
+    normalized_system_from_available = require_bool(system_from_available, "Proposition projection system_from_available")
+    normalized_system_to_available = require_bool(system_to_available, "Proposition projection system_to_available")
+    normalized_valid_from_available = require_bool(valid_from_available, "Proposition projection valid_from_available")
+    normalized_valid_to_available = require_bool(valid_to_available, "Proposition projection valid_to_available")
     normalized_invalidated_at = projection_timestamp(
         invalidated_at, normalized_invalidated_available, "Proposition projection invalidated_at"
     )
@@ -307,47 +314,33 @@ def proposition_projection(
     if (
         normalized_system_from_available
         and normalized_system_to_available
-        and datetime.fromisoformat(normalized_system_from[:-1] + "+00:00")
-        >= datetime.fromisoformat(normalized_system_to[:-1] + "+00:00")
+        and utc_datetime(normalized_system_from) >= utc_datetime(normalized_system_to)
     ):
         raise InvalidRequestError("Proposition projection system_from must be earlier than system_to")
     if (
         normalized_valid_from_available
         and normalized_valid_to_available
-        and datetime.fromisoformat(normalized_valid_from[:-1] + "+00:00")
-        >= datetime.fromisoformat(normalized_valid_to[:-1] + "+00:00")
+        and utc_datetime(normalized_valid_from) >= utc_datetime(normalized_valid_to)
     ):
         raise InvalidRequestError("Proposition projection valid_from must be earlier than valid_to")
-    normalized_predicate_canonical = projection_bool(predicate_canonical, "Proposition projection predicate_canonical")
-    normalized_ownership = projection_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
+    normalized_predicate_canonical = require_bool(predicate_canonical, "Proposition projection predicate_canonical")
+    normalized_ownership = require_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
     if normalized_ownership not in {"PUBLIC", "COMPANY", "CUSTOMER"}:
         raise InvalidRequestError("Proposition projection ownership_category is unsupported")
-    normalized_trust_category_available = projection_bool(
-        trust_category_available, "Proposition projection trust_category_available"
-    )
+    normalized_trust_category_available = require_bool(trust_category_available, "Proposition projection trust_category_available")
     normalized_trust_category = optional_projection_text(
         trust_category,
         normalized_trust_category_available,
         "Proposition projection trust_category",
         96,
     )
-    normalized_trust_available = projection_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
+    normalized_trust_available = require_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
     normalized_trust = projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
-    normalized_version_available = projection_bool(
-        supplied_trust_version_available, "Proposition projection supplied_trust_version_available"
-    )
-    normalized_version = projection_int(supplied_trust_version, "Proposition projection supplied_trust_version", 0, 2_147_483_647)
-    if not normalized_version_available and normalized_version != 0:
-        raise InvalidRequestError("Proposition projection supplied_trust_version must be zero when unavailable")
-    if normalized_trust_available != normalized_version_available:
-        raise InvalidRequestError("Proposition projection supplied trust value and version availability must match")
-    normalized_structured_available = projection_bool(
-        structured_match_available, "Proposition projection structured_match_available"
-    )
+    normalized_structured_available = require_bool(structured_match_available, "Proposition projection structured_match_available")
     normalized_structured = projection_score(
         structured_match, normalized_structured_available, "Proposition projection structured_match"
     )
-    normalized_semantic_available = projection_bool(
+    normalized_semantic_available = require_bool(
         semantic_similarity_available, "Proposition projection semantic_similarity_available"
     )
     normalized_semantic = projection_score(
@@ -355,8 +348,8 @@ def proposition_projection(
     )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection projection_id must be a PropositionProjectionQuery")
-    normalized_vector_available = projection_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
-    normalized_vector_id = projection_text(
+    normalized_vector_available = require_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
+    normalized_vector_id = require_text(
         vector_index_id, "Proposition projection vector_index_id", 128, allow_empty=not normalized_vector_available
     )
     if normalized_vector_available and not VECTOR_INDEX_NAME.fullmatch(normalized_vector_id):
@@ -392,8 +385,6 @@ def proposition_projection(
         "trust_category_available": normalized_trust_category_available,
         "supplied_trust": normalized_trust,
         "supplied_trust_available": normalized_trust_available,
-        "supplied_trust_version": normalized_version,
-        "supplied_trust_version_available": normalized_version_available,
         "structured_match": normalized_structured,
         "structured_match_available": normalized_structured_available,
         "semantic_similarity": normalized_semantic,
@@ -405,10 +396,30 @@ def proposition_projection(
     return result
 
 
+# Validated projections by exact input: every field, value, and value type.
+# A projection is a flat map of scalars and validation is a pure function of
+# them, so an equal input always validates to an equal result. Including the
+# type keeps True apart from 1 and an enum apart from its string value.
+VALIDATED_PROJECTIONS: dict[tuple, dict] = {}
+MAX_VALIDATED_PROJECTIONS = 4_096
+
+
 def validate_proposition_projection(value: object) -> dict:
-    """Revalidate and copy one in-memory Proposition projection."""
+    """Revalidate and copy one in-memory Proposition projection.
+
+    Evidence handling validates the same projection several times per record,
+    so results are remembered by exact input; each call still returns its own copy.
+    """
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection must be an object")
+    try:
+        key: tuple | None = (tuple(value), tuple(value.values()), tuple(map(type, value.values())))
+        cached = VALIDATED_PROJECTIONS.get(key)
+    except TypeError:
+        key, cached = None, None
+    if cached is not None:
+        result = dict(cached)
+        return result
     observed = set(value)
     if observed != PROPOSITION_PROJECTION_RECORD_FIELDS:
         raise InvalidRequestError(
@@ -417,6 +428,10 @@ def validate_proposition_projection(value: object) -> dict:
             f"extra={sorted(observed - PROPOSITION_PROJECTION_RECORD_FIELDS)}"
         )
     result = proposition_projection(**value)
+    if key is not None:
+        if len(VALIDATED_PROJECTIONS) >= MAX_VALIDATED_PROJECTIONS:
+            VALIDATED_PROJECTIONS.pop(next(iter(VALIDATED_PROJECTIONS)))
+        VALIDATED_PROJECTIONS[key] = dict(result)
     return result
 
 
@@ -437,21 +452,15 @@ def proposition_projection_from_graph_row(
         )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection query identifier is unsupported")
-    invalidated_available = projection_bool(value["invalidated_at_available"], "invalidated_at_available")
-    system_from_available = projection_bool(value["system_from_available"], "system_from_available")
-    system_to_available = projection_bool(value["system_to_available"], "system_to_available")
-    valid_from_available = projection_bool(value["valid_from_available"], "valid_from_available")
-    valid_to_available = projection_bool(value["valid_to_available"], "valid_to_available")
-    trust_category_available = projection_bool(value["trust_category_available"], "trust_category_available")
-    trust_available = projection_bool(value["supplied_trust_available"], "supplied_trust_available")
-    version_available = projection_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
-    structured_available = projection_bool(value["structured_match_available"], "structured_match_available")
-    semantic_available = projection_bool(value["semantic_similarity_available"], "semantic_similarity_available")
-    raw_version = value["supplied_trust_version"]
-    if not version_available and raw_version is None:
-        supplied_version = 0
-    else:
-        supplied_version = projection_int(raw_version, "supplied_trust_version", 0, 2_147_483_647)
+    invalidated_available = require_bool(value["invalidated_at_available"], "invalidated_at_available")
+    system_from_available = require_bool(value["system_from_available"], "system_from_available")
+    system_to_available = require_bool(value["system_to_available"], "system_to_available")
+    valid_from_available = require_bool(value["valid_from_available"], "valid_from_available")
+    valid_to_available = require_bool(value["valid_to_available"], "valid_to_available")
+    trust_category_available = require_bool(value["trust_category_available"], "trust_category_available")
+    trust_available = require_bool(value["supplied_trust_available"], "supplied_trust_available")
+    structured_available = require_bool(value["structured_match_available"], "structured_match_available")
+    semantic_available = require_bool(value["semantic_similarity_available"], "semantic_similarity_available")
     result = proposition_projection(
         proposition_id=value["proposition_id"],
         subject_entity_id=value["subject_entity_id"],
@@ -473,8 +482,6 @@ def proposition_projection_from_graph_row(
         trust_category_available=trust_category_available,
         supplied_trust=value["supplied_trust"],
         supplied_trust_available=trust_available,
-        supplied_trust_version=supplied_version,
-        supplied_trust_version_available=version_available,
         structured_match=value["structured_match"],
         structured_match_available=structured_available,
         semantic_similarity=value["semantic_similarity"],
@@ -522,9 +529,7 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
     projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
     result: dict = {
         "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP_V1),
-        "object_label": projection_text(
-            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
-        ),
+        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
         "object_type": projection_object_type(value["object_type"], "relation object type"),
         "predicate_cardinality": projection_cardinality(
             value["predicate_cardinality"],
@@ -551,9 +556,7 @@ def validate_relation_proposition_projection(value: object) -> dict:
         raise InvalidRequestError("relation result predicate_cardinality must be a PredicateCardinality")
     result: dict = {
         "projection": validate_proposition_projection(value["projection"]),
-        "object_label": projection_text(
-            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
-        ),
+        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
@@ -591,12 +594,12 @@ def is_write_cypher(cypher: str) -> bool:
 
 
 def coerce_params(parameters):
-    """Coerce values that mgclient cannot accept as Cypher parameters.
+    """Coerce values that the driver cannot send as Cypher parameters.
 
-    UUID objects fail with "value of type 'UUID' can't be used as query
-    parameter". This is the single chokepoint where every query hits the driver,
-    so coerce here defensively. Recurses into dicts, lists, and tuples so UUIDs
-    nested inside batch payloads are coerced too.
+    The Bolt protocol has no UUID type. This is the single chokepoint where
+    every query hits the driver, so coerce here defensively. Recurses into
+    dicts, lists, and tuples so UUIDs nested inside batch payloads are coerced
+    too.
     """
     if isinstance(parameters, UUID):
         result = str(parameters)
@@ -626,11 +629,15 @@ def graph_single(records: list) -> dict:
 
 
 class MemGraphConnection:
-    """Manages a connection to MemGraph using pymgclient.
+    """Manages a connection to a Bolt graph database through the neo4j async driver.
 
-    Retains explicit unavailable state when MemGraph cannot be reached. During
-    the reconnect cooldown, reads fail immediately rather than retrying the TCP
-    connection or misreporting the outage as an empty graph.
+    The driver runs on a private event-loop thread, and every operation,
+    connecting included, is bounded by ``timeout_seconds`` from the caller's
+    side: a caller never waits longer, and an overrunning query is cancelled,
+    which kills its connection. After a timeout or a lost connection, reads
+    fail immediately (``available`` is False) until ``reconnect_after_turn``
+    opens a new driver. The service calls it once the current turn is
+    complete, so an unresponsive database costs a turn at most one timeout.
     """
 
     def __init__(
@@ -640,150 +647,257 @@ class MemGraphConnection:
         username: str = "",
         password: str = "",
         visibility_scope=(),
+        timeout_seconds: float = GRAPH_TIMEOUT_SECONDS,
     ):
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not timeout_seconds > 0:
+            raise ValueError("graph timeout must be a positive number of seconds")
         self.host = host
         self.port = port
         self.username = username
         self.password = password
+        self.timeout_seconds = float(timeout_seconds)
         self.visibility_scope = validate_visibility_scope(dict(visibility_scope) if isinstance(visibility_scope, dict) else {})
         self.schema_report = {}
-        self.conn = ()
+        self.driver = ()
         self.available = False
-        self.connection_attempted = False
-        self.last_connect_attempt = 0.0
-        # pymgclient connections may be shared between threads but not used
-        # concurrently. Serialize all connection and cursor access.
+        self.reconnect_needed = False
+        self.reconnect_failures = 0
+        self.reconnect_future = ()
+        self.loop = ()
+        self.loop_thread = ()
+        # Guards the fields above. It is never held while waiting on the loop.
         self.internal_lock = threading_RLock()
+        # Serializes connect() so concurrent callers cannot open two drivers.
+        self.connect_lock = threading_Lock()
+
+    def driver_uri(self) -> str:
+        """Return the direct (non-routing) Bolt URI for the configured host."""
+        host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        result = f"bolt://{host}:{self.port}"
+        return result
+
+    async def open_driver(self):
+        """Create a driver and prove it can reach the database."""
+        driver = AsyncGraphDatabase.driver(
+            self.driver_uri(),
+            auth=(self.username, self.password),
+            connection_timeout=self.timeout_seconds,
+            connection_acquisition_timeout=self.timeout_seconds,
+            connection_write_timeout=self.timeout_seconds,
+        )
+        try:
+            await driver.verify_connectivity()
+        except BaseException:
+            await driver.close()
+            raise
+        return driver
+
+    def start_loop(self):
+        """Start the private event loop that runs every driver call; the caller holds the lock."""
+        if not self.loop:
+            loop = asyncio_new_event_loop()
+            thread = threading_Thread(target=loop.run_forever, name="engram-graph", daemon=True)
+            thread.start()
+            self.loop = loop
+            self.loop_thread = thread
+        return self.loop
 
     def connect(self):
-        """Establish a connection to MemGraph.
+        """Connect within the timeout.
 
-        Returns the connection on success, or an empty tuple on failure. Sets
-        ``available`` so callers can distinguish readiness before a read.
+        Returns the driver on success, or an empty tuple when the database
+        cannot be reached in time. Sets ``available`` so callers can
+        distinguish readiness before a read.
         """
-        with self.internal_lock:
-            result = self.connect_unlocked()
-            return result
-
-    def connect_unlocked(self):
-        """Establish a connection while the caller holds the connection lock."""
-        if self.conn:
-            result = self.conn
-            return result
-
-        # Respect cooldown after a failed attempt
-        if self.connection_attempted and not self.available:
-            elapsed = time_monotonic() - self.last_connect_attempt
-            if elapsed < RECONNECT_COOLDOWN_SECONDS:
+        with self.connect_lock:
+            with self.internal_lock:
+                if self.driver:
+                    result = self.driver
+                    return result
+                loop = self.start_loop()
+            future = asyncio_run_coroutine_threadsafe(self.open_driver(), loop)
+            try:
+                driver = future.result(timeout=self.timeout_seconds)
+            except Exception as err:
+                self.abandon_open(future, loop)
+                with self.internal_lock:
+                    self.available = False
+                    self.reconnect_needed = True
+                logger.warning("Graph database unavailable at %s:%d", self.host, self.port, exc_info=err)
                 result = ()
                 return result
+            with self.internal_lock:
+                self.driver = driver
+                self.available = True
+                self.reconnect_needed = False
+            logger.debug("Connected to graph database at %s:%d", self.host, self.port)
+            return driver
 
-        self.last_connect_attempt = time_monotonic()
-        self.connection_attempted = True
+    def abandon_open(self, future, loop) -> None:
+        """Cancel a driver open that overran; close its driver if it finished anyway."""
+        if future.cancel() or future.cancelled() or future.exception() is not None:
+            return
+        asyncio_run_coroutine_threadsafe(future.result().close(), loop)
 
+    def reconnect_after_turn(self) -> bool:
+        """Start replacing a lost connection; return whether an attempt started.
+
+        The service calls this when a turn completes. The attempt runs on the
+        driver's loop, so the finished turn is not delayed. Reads keep failing
+        immediately until it succeeds, and a failed attempt is retried after
+        the next turn.
+        """
+        with self.internal_lock:
+            in_progress = bool(self.reconnect_future) and not self.reconnect_future.done()
+            if not self.reconnect_needed or not self.loop or in_progress:
+                result = False
+                return result
+            lost_driver = self.driver
+            self.driver = ()
+            self.reconnect_future = asyncio_run_coroutine_threadsafe(self.replace_driver(lost_driver), self.loop)
+            result = True
+            return result
+
+    async def replace_driver(self, lost_driver) -> bool:
+        """Close the lost driver and open a new one, each within the timeout."""
+        if lost_driver:
+            try:
+                await asyncio_wait_for(lost_driver.close(), self.timeout_seconds)
+            except Exception as err:
+                logger.warning("Closing the lost graph driver failed", exc_info=err)
         try:
-            connect_params = {
-                "host": self.host,
-                "port": self.port,
-            }
-            if self.username:
-                connect_params["username"] = self.username
-            if self.password:
-                connect_params["password"] = self.password
-
-            self.conn = mgclient_connect(**connect_params)
-            self.conn.autocommit = True
-            self.available = True
-            logger.debug("Connected to MemGraph at %s:%d", self.host, self.port)
-            result = self.conn
-            return result
-        except ConnectionRefusedError:
-            self.available = False
-            logger.warning(
-                "MemGraph connection refused at %s:%d",
-                self.host,
-                self.port,
-            )
-            result = ()
-            return result
+            driver = await asyncio_wait_for(self.open_driver(), self.timeout_seconds)
         except Exception as err:
-            self.available = False
-            logger.warning(
-                "MemGraph unavailable at %s:%d (%s)",
-                self.host,
-                self.port,
-                type(err).__name__,
-            )
-            result = ()
+            with self.internal_lock:
+                self.reconnect_failures += 1
+                first_failure = self.reconnect_failures == 1
+            # Warn once per outage; the retry after every turn would flood the log.
+            log = logger.warning if first_failure else logger.debug
+            log("Graph database reconnect failed at %s:%d", self.host, self.port, exc_info=err)
+            result = False
             return result
+        with self.internal_lock:
+            disconnected = self.loop is not asyncio_get_running_loop()
+            if not disconnected:
+                self.driver = driver
+                self.available = True
+                self.reconnect_needed = False
+                self.reconnect_failures = 0
+        if disconnected:
+            await driver.close()
+            result = False
+            return result
+        logger.info("Reconnected to graph database at %s:%d", self.host, self.port)
+        result = True
+        return result
 
     def disconnect(self):
-        """Close the connection to MemGraph."""
+        """Close the driver and stop its event loop."""
         with self.internal_lock:
-            if self.conn:
-                self.conn.close()
-                self.conn = ()
-                self.available = False
-                self.connection_attempted = False
-                logger.info("Disconnected from MemGraph")
+            loop, thread = self.loop, self.loop_thread
+            self.loop = ()
+            self.loop_thread = ()
+            self.reconnect_future = ()
+            self.available = False
+            self.reconnect_needed = False
+        if not loop or not thread:
+            return
+        future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
+        try:
+            future.result(timeout=2 * self.timeout_seconds)
+        except Exception as err:
+            future.cancel()
+            logger.warning("Graph driver shutdown did not finish", exc_info=err)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(self.timeout_seconds)
+        if not thread.is_alive():
+            loop.close()
+        logger.info("Disconnected from graph database")
 
-    def is_connected(self) -> bool:
-        """Check if the connection is active."""
+    async def shutdown(self) -> None:
+        """Cancel outstanding work on the loop, then close the driver."""
+        current = asyncio_current_task()
+        pending = [task for task in asyncio_all_tasks() if task is not current]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio_wait(pending, timeout=self.timeout_seconds)
         with self.internal_lock:
-            if not self.conn:
-                result = False
-                return result
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute("RETURN 1")
-                cursor.fetchall()
-                result = True
-                return result
-            except Exception:
-                self.conn = ()
-                self.available = False
-                result = False
-                return result
+            driver = self.driver
+            self.driver = ()
+        if driver:
+            await driver.close()
+
+    def current_driver(self) -> tuple:
+        """Return (loop, driver) for a statement, or raise when reads must fail fast."""
+        with self.internal_lock:
+            if not self.available or not self.driver:
+                raise RuntimeError(f"graph database is unavailable at {self.host}:{self.port}")
+            result = (self.loop, self.driver)
+            return result
+
+    def run_on(self, loop, driver, statement: str, parameters: dict) -> list:
+        """Run one statement within the timeout and return its rows.
+
+        A timeout or connection-level failure marks the connection lost, so
+        later reads fail immediately until the after-turn reconnect.
+        """
+        sendable = {key: coerce_params(value) for key, value in parameters.items()}
+        future = asyncio_run_coroutine_threadsafe(read_rows(driver, statement, sendable), loop)
+        try:
+            result = future.result(timeout=self.timeout_seconds)
+            return result
+        except Exception as err:
+            # Cancelling kills the query's connection instead of leaving it
+            # waiting on the database.
+            future.cancel()
+            if is_connection_error(err):
+                with self.internal_lock:
+                    if self.driver is driver:
+                        self.available = False
+                        self.reconnect_needed = True
+            raise
 
     def execute(self, query: str, parameters=()) -> list:
         """Execute a Cypher query and return results as a list of dicts.
 
-        Raises if MemGraph is unreachable or a query fails so graph absence and
-        service unavailability are never conflated.
-        Mutating or ambiguous Cypher is rejected before connecting.
+        Raises if the database is unavailable, times out, or a query fails so
+        graph absence and service unavailability are never conflated.
+        Mutating or ambiguous Cypher is rejected before reaching the database.
         """
         if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
             raise ValueError("ENGRAM graph access is read-only")
 
-        with self.internal_lock:
-            connection = self.conn
-            if not connection:
-                connection = self.connect_unlocked()
-                if not connection:
-                    raise RuntimeError(f"MemGraph is unavailable at {self.host}:{self.port}")
+        loop, driver = self.current_driver()
+        try:
+            merged_parameters = self.visibility_parameters()
+            if isinstance(parameters, Mapping):
+                merged_parameters.update(parameters)
+            elif parameters:
+                raise ValueError("graph query parameters must be an object")
+            result = self.run_on(loop, driver, query, merged_parameters)
+            return result
+        except Exception as err:
+            err_str = str(err).lower()
+            if isinstance(err, TimeoutError):
+                logger.error("Query timed out after %.0f ms", self.timeout_seconds * 1000, exc_info=err)
+            elif "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
+                logger.debug("Query failed as expected", exc_info=err)
+            else:
+                logger.error("Query failed", exc_info=err)
+            # Only the exception type crosses this boundary; the log has the rest.
+            raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
-            try:
-                cursor = connection.cursor()
-                merged_parameters = self.visibility_parameters()
-                if isinstance(parameters, Mapping):
-                    merged_parameters.update(parameters)
-                elif parameters:
-                    raise ValueError("graph query parameters must be an object")
-                cursor.execute(query, coerce_params(merged_parameters))
-                columns = [desc.name for desc in cursor.description] if cursor.description else []
-                rows = cursor.fetchall()
-                result = [dict(zip(columns, row, strict=False)) for row in rows]
-                return result
-            except Exception as err:
-                err_str = str(err).lower()
-                if "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                    logger.debug("Query failed as expected (%s)", type(err).__name__)
-                else:
-                    logger.error("Query failed (%s)", type(err).__name__)
-                    if is_connection_error(err):
-                        self.conn = ()
-                        self.available = False
-                raise RuntimeError(f"Query failed ({type(err).__name__})") from err
+    def execute_admin(self, statement: str, parameters=()) -> list:
+        """Run one schema administration statement for the schema tooling.
+
+        Unlike ``execute`` it permits DDL and raises the
+        driver's own error, so an operator sees why a statement failed.
+        Runtime reads never use it.
+        """
+        loop, driver = self.current_driver()
+        result = self.run_on(loop, driver, statement, dict(parameters) if parameters else {})
+        return result
 
     def visibility_parameters(self) -> dict:
         """Return exact non-user visibility parameters for every graph read."""
@@ -835,9 +949,7 @@ class MemGraphConnection:
         limit: int = 10,
     ) -> list[dict]:
         """Run one allow-listed structured Proposition projection and strictly decode its rows."""
-        term = projection_text(
-            value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False
-        )
+        term = require_text(value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False)
         if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY_V1:
             query = STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY
         elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD_V1:
@@ -851,7 +963,7 @@ class MemGraphConnection:
 
     def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve an entity surface through one fixed, read-only query."""
-        term = projection_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        term = require_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
         row_limit = projection_int(limit, "canonical entity match limit", 1, MAX_RELATION_CANDIDATES)
         rows = self.execute(CANONICAL_ENTITY_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
@@ -864,7 +976,7 @@ class MemGraphConnection:
 
     def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve a Predicate surface through one fixed, read-only query."""
-        term = projection_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        term = require_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
         row_limit = projection_int(limit, "canonical Predicate match limit", 1, MAX_RELATION_CANDIDATES)
         rows = self.execute(CANONICAL_PREDICATE_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
@@ -884,8 +996,12 @@ class MemGraphConnection:
         include_historical: bool = False,
     ) -> list[dict]:
         """Execute only the allow-listed parameterized one-hop Proposition template."""
-        subject = projection_identifier(subject_entity_id, "relation subject_entity_id")
-        predicate = projection_identifier(predicate_id, "relation predicate_id")
+        subject = require_identifier(
+            subject_entity_id, "relation subject_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        )
+        predicate = require_identifier(
+            predicate_id, "relation predicate_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        )
         if not isinstance(include_historical, bool):
             raise InvalidRequestError("relation include_historical must be a boolean")
         row_limit = projection_int(limit, "relation one-hop limit", 1, MAX_RELATION_PLAN_ROWS)
@@ -938,7 +1054,11 @@ class MemGraphConnection:
 
     def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
         """Re-read one Proposition through the fixed canonical projection for publication revalidation."""
-        identifier = projection_identifier(proposition_id, "Proposition projection revalidation proposition_id")
+        identifier = require_identifier(
+            proposition_id,
+            "Proposition projection revalidation proposition_id",
+            maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
+        )
         rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
         result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
         return result
@@ -949,17 +1069,14 @@ def connect_graph(
     port: int = 7687,
     username: str = "",
     password: str = "",
-    deployment_mode: str = "",
     visibility_scope=(),
 ) -> MemGraphConnection:
-    """Connect to Memgraph and verify its deployment schema.
+    """Connect to the graph database and check that its schema is compatible.
 
-    The connection and deployment-specific schema preflight are attempted
-    immediately. An unreachable or invalid graph fails startup rather
-    than presenting an empty query result as graph readiness.
+    The connection and schema check are attempted immediately. An
+    unreachable or incompatible graph fails startup rather than presenting
+    an empty query result as graph readiness.
     """
-    if deployment_mode not in {"standalone", "tapestry_managed"}:
-        raise ValueError("enabled graph requires an explicit deployment mode")
     client = MemGraphConnection(
         host=host,
         port=port,
@@ -968,11 +1085,11 @@ def connect_graph(
         visibility_scope=visibility_scope,
     )
     if not client.connect():
-        raise RuntimeError(f"Memgraph is unavailable at {host}:{port}")
-    schema_path = Path(__file__).resolve().parents[1] / "schema.cypher"
-    report = verify_schema(client, schema_path, deployment_mode)
+        client.disconnect()
+        raise RuntimeError(f"graph database is unavailable at {host}:{port}")
+    report = verify_schema(client, packaged_schema())
     if not report.get("valid", False):
         client.disconnect()
-        raise RuntimeError(f"Memgraph schema preflight failed: {report}")
+        raise RuntimeError(f"graph database schema preflight failed: {report}")
     client.schema_report = report
     return client

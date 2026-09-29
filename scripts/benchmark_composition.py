@@ -68,8 +68,6 @@ def internal_relation(raw: list[object]):
             "trust_category_available": True,
             "supplied_trust": 0.8,
             "supplied_trust_available": True,
-            "supplied_trust_version": 1,
-            "supplied_trust_version_available": True,
             "structured_match": 1.0,
             "structured_match_available": True,
             "semantic_similarity": 0.0,
@@ -100,9 +98,7 @@ def internal_current(item):
 
 
 def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
-    raw = case.get("branches", [])
-    if raw is None:
-        raw = [case.get("predicates", {})]
+    raw = case.get("branches", []) or ([case["predicates"]] if "predicates" in case else [])
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []
@@ -158,7 +154,7 @@ def internal_plan(case: dict[str, object]):
 def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEvaluator) -> dict[str, object]:
     started = time_perf_counter_ns()
     plan = internal_plan(case)
-    raw_propositions = case.get("propositions", [])
+    raw_propositions = case["propositions"]
     if not isinstance(raw_propositions, list):
         raise ValueError("composition corpus propositions must be a list")
     propositions = tuple(internal_relation(value) for value in raw_propositions if isinstance(value, list))
@@ -263,7 +259,6 @@ def run(corpus_path: Path) -> dict[str, object]:
     held_out = [case for case in results if case["split"] == "held_out"]
     abstentions = [case for case in results if not case["observed"]["direct"]]
     result = {
-        "schema_version": 1,
         "corpus": corpus["name"],
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": benchmark_source_state(),
@@ -286,7 +281,7 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition-v1.json"))
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition.json"))
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     report = run(arguments.corpus)

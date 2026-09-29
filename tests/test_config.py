@@ -2,7 +2,7 @@
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.config import config_from_dict, engram_config, graph_config
+from engram.config import engram_config, graph_config
 from engram.constants import SessionOverflow
 
 """Tests for configuration."""
@@ -82,8 +82,6 @@ def test_engram_config_graph_config_validation() -> None:
         graph_config(vector_weight=-0.1)
     with pytest_raises(ValueError, match="requires graph enabled"):
         graph_config(vector_enabled=True)
-    with pytest_raises(ValueError, match="explicit deployment_mode"):
-        graph_config(enabled=True)
     with pytest_raises(ValueError, match="proposition_embeddings"):
         graph_config(vector_index_name="other_embeddings")
     with pytest_raises(ValueError, match="invalid shape"):
@@ -103,14 +101,10 @@ def test_engram_config_engram_config_rejects_falsey_non_object_graph_config(inva
     with pytest_raises(ValueError, match="graph config must be an object"):
         engram_config(graph=invalid)
 
-    with pytest_raises(ValueError, match="serialized graph config must be an object"):
-        config_from_dict({"graph": invalid})
-
 
 def test_engram_config_graph_vector_config() -> None:
     config = graph_config(
         enabled=True,
-        deployment_mode="tapestry_managed",
         vector_enabled=True,
         vector_index_name="proposition_embeddings",
         vector_model_path="/models/minilm",
@@ -121,7 +115,6 @@ def test_engram_config_graph_vector_config() -> None:
     )
 
     assert config["vector_enabled"] is True
-    assert config["deployment_mode"] == "tapestry_managed"
     assert config["visibility_scope"] == {
         "kind": "global",
         "company_id": {},

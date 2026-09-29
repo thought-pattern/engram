@@ -22,7 +22,9 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn() -> None:
     assert event["response"] == "Hello!"
     assert event["context_changes"]["previous_response"]["before"] == "."
     assert runtime.inspect()["session"]["response_history"] == ["Hello!", "."]
-    assert runtime.report()["turns"] == [event]
+    assert runtime.inspect()["latest_turn"] == event
+    # No transcript is kept: responses use the session's bounded history.
+    assert "turns" not in runtime.report()
 
 
 def test_runtime_rejects_empty_or_batch_input() -> None:

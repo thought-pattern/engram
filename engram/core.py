@@ -1,60 +1,45 @@
 """Core ENGRAM implementation."""
 
-from difflib import SequenceMatcher
+from bisect import bisect_left
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
+from os import path as os_path
 from pathlib import Path
-from random import choice as random_choice
-from threading import Lock as threading_Lock, RLock as threading_RLock
+from threading import Lock as threading_Lock, RLock as threading_RLock, get_ident as threading_get_ident
 
 from sentence_transformers import SentenceTransformer
 
 from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import (
-    CONFLICTING_FACT_RESPONSES,
     DIALOGUE_ACKNOWLEDGMENT,
-    DIALOGUE_CLOSING,
-    DIALOGUE_COMMAND,
     DIALOGUE_EMOTION,
-    DIALOGUE_FACT,
-    DIALOGUE_GRATITUDE,
-    DIALOGUE_GREETING,
     DIALOGUE_OPINION,
-    DIALOGUE_QUESTION,
-    DIALOGUE_SELF_INTRODUCTION,
-    DIALOGUE_TOPIC_SHIFT,
     EMPTY_CONFIG,
     GRAPH_ENTITY_FACTS_QUERY,
     GRAPH_KEYWORD_FACTS_QUERY,
     KIND_STATEMENT,
-    KNOWN_FACT_RESPONSES,
-    LEARNED_ACKNOWLEDGMENTS,
+    MAX_FACT_SENTENCE_WORDS,
+    MAX_PATTERN_WORDS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
+    MAX_REQUEST_BYTES,
     MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
-    REPETITION_ESCAPE_RESPONSE,
-    REPETITION_FEEDBACK_MARKERS,
-    REPETITION_HISTORY_SIZE,
-    RESPONSE_SIMILARITY_THRESHOLD,
     VERSION,
-    WILDCARD_TOKENS,
     Tier,
 )
 from engram.dialogue import (
     classify_dialogue_act,
-    contextual_fallback_options,
     conversational_fact_admission,
     dialogue_act_clears_unreferenced_topic,
     extract_dialogue_entities,
     infer_active_topic,
-    pattern_is_broad,
-    repeated_input_response_options,
-    repetition_response_options,
     select_turn_candidate,
     topic_from_statement_pattern,
     topic_is_referenced,
 )
+from engram.errors import InvalidRequestError
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
 from engram.graph import (
@@ -81,7 +66,7 @@ from engram.models import (
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
 from engram.nltk_data import ensure_nltk_data
-from engram.pattern import PatternMatcher, is_pure_wildcard
+from engram.pattern import PatternMatcher, normalize_pattern, pattern_word_count
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
 from engram.repository import ArtifactRepository
@@ -90,8 +75,8 @@ from engram.resources import estimate_working_bytes, require_working_memory
 from engram.scoring import score_statement_components
 from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
-from engram.sparse import search_sparse_artifacts
-from engram.substitutions import expand_contractions, split_sentences, substitution_maps
+from engram.sparse import SparseIndex, search_sparse_artifacts
+from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences, substitution_maps
 from engram.telemetry import operational_telemetry, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
@@ -110,50 +95,53 @@ from engram.utilities import UtilityRegistry
 logger = logging_getLogger(__name__)
 
 
+class OwnedRLock:
+    """Re-entrant lock that can tell whether the calling thread holds it.
+
+    The service releases its core-wide lock around graph I/O. It must not do
+    that while the same thread holds an Engram state lock, or a second thread
+    holding the core lock and waiting for that state lock deadlocks with it.
+    """
+
+    def __init__(self) -> None:
+        self.internal_lock = threading_RLock()
+        self.internal_owner = 0
+        self.internal_depth = 0
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        acquired = self.internal_lock.acquire(blocking, timeout)
+        if acquired:
+            self.internal_owner = threading_get_ident()
+            self.internal_depth += 1
+        result = acquired
+        return result
+
+    def release(self) -> None:
+        if self.internal_owner != threading_get_ident():
+            raise RuntimeError("cannot release un-acquired lock")
+        self.internal_depth -= 1
+        if not self.internal_depth:
+            self.internal_owner = 0
+        self.internal_lock.release()
+
+    def held_by_current_thread(self) -> bool:
+        result = self.internal_owner == threading_get_ident()
+        return result
+
+    def __enter__(self) -> bool:
+        result = self.acquire()
+        return result
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.release()
+
+
 def run_cooperative_check(check=()) -> None:
     """Run an optional resolver-owned cooperative callback."""
     if check:
         if not callable(check):
             raise ValueError("cooperative_check must be callable")
         check()
-
-
-def reports_repetition(text: str) -> bool:
-    normalized_text = normalize(text)
-    result = any(marker in normalized_text for marker in REPETITION_FEEDBACK_MARKERS)
-    return result
-
-
-def response_repeats(candidate: str, recent_responses: list[str], *, allow_similarity: bool = True) -> bool:
-    normalized_candidate = normalize(candidate)
-    if not normalized_candidate:
-        result = False
-        return result
-    for recent in recent_responses:
-        normalized_recent = normalize(recent)
-        if normalized_recent and (
-            normalized_candidate == normalized_recent
-            or (
-                allow_similarity
-                and SequenceMatcher(lambda _: False, normalized_candidate, normalized_recent).ratio()
-                >= RESPONSE_SIMILARITY_THRESHOLD
-            )
-        ):
-            result = True
-            return result
-    result = False
-    return result
-
-
-def input_repeats(candidate: str, recent_inputs: list[str]) -> bool:
-    normalized_candidate = normalize(candidate)
-    result = bool(normalized_candidate and any(normalized_candidate == normalize(recent_input) for recent_input in recent_inputs))
-    return result
-
-
-def pattern_has_wildcard(pattern: str) -> bool:
-    result = any(word.lstrip("$") in WILDCARD_TOKENS for word in pattern.split())
-    return result
 
 
 def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
@@ -175,6 +163,204 @@ def format_graph_facts(facts: list[tuple[str, str, str]]) -> str:
     return result
 
 
+def failed_graph_read(operation: str, error: BaseException, empty):
+    """Log a database failure in full and return the same empty result as no rows.
+
+    The caller sees an ordinary empty result, never the failure text.
+    """
+    logger.warning("Graph read failed (%s)", operation, exc_info=error)
+    result = empty
+    return result
+
+
+def normalize_seed_pair(pair, path: str) -> dict:
+    """Validate one seed entry using the same rules as ``load_static_data``."""
+    if not isinstance(pair, dict):
+        raise ValueError(f"seed file {path} entries must be objects")
+    text = pair.get("response", "")
+    pattern = pair.get("pattern", "")
+    that = pair.get("that", "")
+    topic = pair.get("topic", "")
+    template = pair.get("template", {})
+    if not isinstance(text, str):
+        raise ValueError(f"seed file {path} responses must be strings")
+    if not all(isinstance(value, str) for value in (pattern, that, topic)):
+        raise ValueError(f"seed file {path} pattern, that, and topic values must be strings")
+    if not isinstance(template, dict):
+        raise ValueError(f"seed file {path} templates must be objects")
+    if not text.strip() and not template:
+        raise ValueError(f"seed file {path} entries require a response or template")
+    result = {
+        "pattern": pattern,
+        "response": text,
+        "that": that,
+        "topic": topic,
+        "template": dict(template),
+    }
+    return result
+
+
+def read_seed_file(path: str) -> list:
+    """Read one ``{"pairs": [...]}`` seed file."""
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("seed file paths must be non-empty strings")
+    seed_path = path.strip()
+    if not os_path.isfile(seed_path):
+        raise ValueError(f"seed file {seed_path} is missing or is not a file")
+    try:
+        with open(seed_path, encoding="utf-8") as handle:
+            data = json_load(handle)
+    except json_JSONDecodeError as error:
+        raise ValueError(f"seed file {seed_path} is not valid JSON") from error
+    pairs = data.get("pairs") if isinstance(data, dict) else ()
+    if not isinstance(pairs, list):
+        raise ValueError(f"seed file {seed_path} requires a pairs array")
+    result = [normalize_seed_pair(pair, seed_path) for pair in pairs]
+    return result
+
+
+def load_seed_files(paths: list | tuple, duplicate_policy: str = "error") -> list:
+    """
+    Read seed files in listed order and return one concatenated pair list.
+    """
+    if isinstance(paths, str) or not isinstance(paths, (list, tuple)):
+        raise ValueError("seed files must be a list of paths")
+    if duplicate_policy not in {"error", "last", "first"}:
+        raise ValueError("conversation duplicate_policy must be error, last, or first")
+    pairs: list[dict] = []
+    origins: dict[tuple[str, str, str], str] = {}
+    indexes: dict[tuple[str, str, str], int] = {}
+    for path in paths:
+        for pair in read_seed_file(path):
+            key = (normalize_pattern(pair["pattern"]), normalize_pattern(pair["that"]), normalize_pattern(pair["topic"]))
+            if key in origins:
+                if duplicate_policy == "error":
+                    earlier = pairs[indexes[key]]["pattern"]
+                    raise ValueError(f"duplicate seed pattern {earlier!r} in {origins[key]} and {pair['pattern']!r} in {path}")
+                if duplicate_policy == "first":
+                    continue
+                pairs[indexes[key]] = pair
+                origins[key] = path
+                continue
+            indexes[key] = len(pairs)
+            origins[key] = path
+            pairs.append(pair)
+    return pairs
+
+
+def read_json_object(path: str, label: str) -> dict:
+    """Read one JSON object file used by the conversation tables."""
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(f"{label} paths must be non-empty strings")
+    table_path = path.strip()
+    if not os_path.isfile(table_path):
+        raise ValueError(f"{label} file {table_path} is missing or is not a file")
+    try:
+        with open(table_path, encoding="utf-8") as handle:
+            data = json_load(handle)
+    except json_JSONDecodeError as error:
+        raise ValueError(f"{label} file {table_path} is not valid JSON") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} file {table_path} requires an object")
+    return data
+
+
+def read_string_map(path: str, label: str) -> dict[str, str]:
+    """Read a flat JSON object of strings."""
+    data = read_json_object(path, label)
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"{label} file {path} keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise ValueError(f"{label} file {path} values must be strings")
+        result[key.strip()] = value
+    return result
+
+
+def read_set_file(path: str) -> dict[str, list[str]]:
+    """Read a JSON object of set name to member words."""
+    data = read_json_object(path, "set")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"set file {path} names must be non-empty strings")
+        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+            raise ValueError(f"set file {path} entries must be lists of non-empty strings")
+        result[key.strip()] = [item.strip() for item in value]
+    return result
+
+
+def read_map_file(path: str) -> dict[str, dict[str, str]]:
+    """Read a JSON object of map name to string tables."""
+    data = read_json_object(path, "map")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"map file {path} names must be non-empty strings")
+        if not isinstance(value, dict):
+            raise ValueError(f"map file {path} entries must be objects of strings")
+        table = {}
+        for inner_key, inner_value in value.items():
+            if not isinstance(inner_key, str) or not inner_key.strip() or not isinstance(inner_value, str):
+                raise ValueError(f"map file {path} entries must be objects of strings")
+            table[inner_key.strip()] = inner_value
+        result[key.strip()] = table
+    return result
+
+
+_SUBSTITUTION_KEYS = {"contractions", "person", "person2", "gender", "custom"}
+
+
+def read_substitution_file(path: str) -> dict[str, dict[str, str]]:
+    """Read optional contraction, person, gender, and custom substitution tables."""
+    data = read_json_object(path, "substitution")
+    unknown = sorted(str(key) for key in data if key not in _SUBSTITUTION_KEYS)
+    if unknown:
+        logger.warning("Ignoring unknown substitution table(s) in %s: %s", path, ", ".join(unknown))
+    result = {}
+    for key, value in data.items():
+        if key not in _SUBSTITUTION_KEYS:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"substitution file {path} tables must be objects of strings")
+        table = {}
+        for inner_key, inner_value in value.items():
+            if not isinstance(inner_key, str) or not inner_key.strip() or not isinstance(inner_value, str):
+                raise ValueError(f"substitution file {path} tables must be objects of strings")
+            table[inner_key.strip().lower()] = inner_value
+        result[key] = table
+    return result
+
+
+def load_conversation_tables(engram, settings: dict) -> None:
+    """Load properties, sets, maps, predicates, and substitutions before categories.
+
+    A later file replaces the same set name, map name, or property. Substitutions
+    merge over the built-in tables. ``bot_name`` and the library version win
+    over a properties file.
+    """
+    properties_file = settings.get("properties_file") or ""
+    if properties_file:
+        engram.bot_properties.update(read_string_map(properties_file, "properties"))
+    bot_name = settings.get("bot_name", "ENGRAM")
+    engram.bot_properties["name"] = bot_name.strip() if isinstance(bot_name, str) else bot_name
+    engram.bot_properties["version"] = VERSION
+    for path in settings.get("set_files") or []:
+        for name, members in read_set_file(path).items():
+            engram.sets[name] = members
+    for path in settings.get("map_files") or []:
+        for name, table in read_map_file(path).items():
+            engram.maps[name] = table
+    predicate_file = settings.get("predicate_file") or ""
+    if predicate_file:
+        engram.default_predicates.update(read_string_map(predicate_file, "predicate"))
+    substitution_file = settings.get("substitution_file") or ""
+    if substitution_file:
+        for key, table in read_substitution_file(substitution_file).items():
+            engram.substitution_maps[key].update(table)
+
+
 class Engram:
     """Keyword-indexed statement store with hit-rate tracking.
 
@@ -188,6 +374,7 @@ class Engram:
 
         Args:
             config: Configuration options. Uses defaults if not provided.
+                ``conversation.seed_files`` is read once here, before serving.
         """
         if not isinstance(config, dict):
             raise ValueError("config must be an object")
@@ -195,16 +382,36 @@ class Engram:
 
         # Core data structures
         self.statements: list[dict] = []
-        self.statement_index: dict[str, int] = {}  # id -> list index
+        # Statement bookkeeping. ``statements`` keeps store order. Lookups go
+        # through ``statement_by_id``; a position comes from the store-order
+        # sequence (``statement_position``), so removing one statement does not
+        # renumber the rest. DYNAMIC statements sit in a lazily checked LRU heap.
+        self.statement_by_id: dict[str, dict] = {}
+        self.statement_sequence: dict[str, int] = {}
+        self.statement_sequences: list[int] = []
+        self.next_statement_sequence = 0
+        self.dynamic_statement_ids: set[str] = set()
+        self.dynamic_lru: list[tuple] = []
         self.keywords: dict[str, dict] = {}
         self.sessions: dict[str, dict] = {}
         self.pattern_to_statement: dict[str, str] = {}  # pattern -> statement_id
+        # Registered pattern or alias -> ids of the statements carrying it, in
+        # store order, so matching and eviction never scan every statement.
+        self.pattern_statements: dict[str, list[str]] = {}
 
-        # Bot properties and data (public for direct access)
+        # Bot properties and data (public for direct access). The persona name
+        # is applied before patterns are added, so {bot:name} follows config
+        # even when no seed file is loaded.
+        conversation_settings = self.config.get("conversation") or {}
+        bot_name = conversation_settings.get("bot_name", "ENGRAM")
+        if not isinstance(bot_name, str) or not bot_name.strip():
+            raise ValueError("conversation bot_name must be a non-empty string")
         self.bot_properties: dict[str, str] = {
-            "name": "ENGRAM",
+            "name": bot_name.strip(),
             "version": VERSION,
         }
+        seed_files = conversation_settings.get("seed_files") or []
+        duplicate_policy = conversation_settings.get("duplicate_policy", "error")
         self.sets: dict[str, list[str]] = {}
         self.maps: dict[str, dict[str, str]] = {}
 
@@ -227,14 +434,18 @@ class Engram:
         # and pattern_to_statement map (mutated on store/evict, read on match),
         # and thereby the shared template processor, whose recursion counters
         # are only touched while the pattern pipeline holds statement_lock.
+        # Template rendering can <learn>, which stores, so the pattern pipeline
+        # takes mutation_lock before statement_lock as well.
         # count_lock guards the top-level metrics counters.
-        self.mutation_lock = threading_RLock()
-        self.statement_lock = threading_RLock()
-        self.keyword_lock = threading_RLock()
-        self.session_lock = threading_RLock()
+        self.mutation_lock = OwnedRLock()
+        self.statement_lock = OwnedRLock()
+        self.keyword_lock = OwnedRLock()
+        self.session_lock = OwnedRLock()
         self.count_lock = threading_Lock()
         self.response_repository = ArtifactRepository()
         self.semantic_retriever = StandaloneSemanticRetriever(self.config.get("semantic") or {})
+        # Per-scope sparse index, synced to the artifact snapshot on each search.
+        self.sparse_index = SparseIndex()
         self.reranker = TransparentLogisticReranker(self.config.get("reranker") or {})
         self.utility_registry = UtilityRegistry(self.config.get("utility") or {})
         self.mutation_receipts = MutationReceiptLedger()
@@ -244,6 +455,13 @@ class Engram:
         self.hit_count = 0
         self.eviction_count = 0
         self.operational_metrics = operational_telemetry()
+
+        # Reject a missing file or a repeated pattern before opening a graph
+        # connection and before any statement is stored. Tables load first so
+        # categories can use them. Indexing waits until preflight has confirmed
+        # the NLTK readers.
+        load_conversation_tables(self, conversation_settings)
+        static_pairs = load_seed_files(seed_files, duplicate_policy=duplicate_policy) if seed_files else []
 
         # Graph tooling is optional even when configured. Construction records
         # its readiness, but an unavailable graph must not prevent the local
@@ -259,7 +477,6 @@ class Engram:
                 port=graph_config["port"],
                 username=graph_config["username"],
                 password=graph_config.get("password", ""),
-                deployment_mode=graph_config.get("deployment_mode", ""),
                 visibility_scope=graph_config.get("visibility_scope", {}),
             )
         if graph_config.get("vector_enabled"):
@@ -267,11 +484,13 @@ class Engram:
                 self.load_graph_embedding_model()
             except Exception as error:
                 self.graph_embedding_model = ()
-                logger.warning("Optional graph vector model is unavailable: %s", type(error).__name__)
+                logger.warning("Optional graph vector model is unavailable", exc_info=error)
         try:
             self.component_status = self.preflight_components()
         except RuntimeError as error:
             raise ValueError(f"component preflight failed: {error}") from error
+        if static_pairs:
+            self.load_static_data(static_pairs)
 
     @property
     def graph_client(self):
@@ -302,7 +521,7 @@ class Engram:
             try:
                 vector_ready = self.warm_vector_recall()
             except Exception as error:
-                logger.warning("Optional graph vector recall is unavailable: %s", type(error).__name__)
+                logger.warning("Optional graph vector recall is unavailable", exc_info=error)
         if spacy_full_enabled and not get_nlp():
             raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
         spacy_ready = bool(get_nlp()) if spacy_full_enabled or spacy_phrasing_enabled else False
@@ -375,8 +594,7 @@ class Engram:
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
         except RuntimeError as err:
-            logger.debug("Graph query failed (%s)", type(err).__name__)
-            result = []
+            result = failed_graph_read("graph_query", err, [])
             return result
 
     def graph_read_fn(self, cypher: str, params=()) -> list:
@@ -449,7 +667,7 @@ class Engram:
             result = rows if isinstance(rows, list) else []
             return result
         except Exception as err:
-            logger.warning("Vector graph recall unavailable; using keyword fallback (%s)", type(err).__name__)
+            logger.warning("Vector graph recall unavailable; using keyword fallback", exc_info=err)
             result = []
             return result
 
@@ -496,10 +714,7 @@ class Engram:
         except (TimeoutError, MemoryError):
             raise
         except Exception as err:
-            logger.warning(
-                "Vector Proposition projection unavailable; omitting response-less evidence (%s)",
-                type(err).__name__,
-            )
+            logger.warning("Vector Proposition projection unavailable; omitting response-less evidence", exc_info=err)
             result = []
             return result
 
@@ -510,7 +725,11 @@ class Engram:
         if not client or not callable(lookup):
             result = ()
             return result
-        rows = lookup(proposition_id)
+        try:
+            rows = lookup(proposition_id)
+        except RuntimeError as error:
+            result = failed_graph_read("current_proposition_projection", error, ())
+            return result
         if not isinstance(rows, list) or len(rows) > 1:
             raise ValueError("Proposition projection revalidation boundary returned an invalid collection")
         result = tuple(validate_proposition_projection(row) for row in rows)
@@ -548,14 +767,16 @@ class Engram:
         max_working_memory_bytes: int,
     ) -> dict:
         """Search request-local sparse structures derived from the current artifacts."""
-        repository = self.response_repository.snapshot()
+        artifacts = self.response_repository.trusted_artifacts()
         result = search_sparse_artifacts(
-            tuple(repository.get("artifacts", {}).values()),
+            tuple(artifacts.values()),
             text,
             scope,
             self.config.get("sparse") or {},
             limit=limit,
             max_working_memory_bytes=max_working_memory_bytes,
+            trusted_artifacts=True,
+            index=self.sparse_index,
         )
         return result
 
@@ -570,15 +791,17 @@ class Engram:
         cooperative_check=(),
     ) -> dict:
         """Search request-local embeddings derived from the current artifacts."""
-        repository = self.response_repository.snapshot()
+        artifacts = self.response_repository.trusted_artifacts()
+        self.semantic_retriever.retain(artifacts)
         result = self.semantic_retriever.search(
             text,
             scope,
-            tuple(repository.get("artifacts", {}).values()),
+            tuple(artifacts.values()),
             limit=limit,
             max_vector_results=max_vector_results,
             max_working_memory_bytes=max_working_memory_bytes,
             cooperative_check=cooperative_check,
+            trusted_artifacts=True,
         )
         return result
 
@@ -668,7 +891,7 @@ class Engram:
         scored: list[tuple[float, int, dict]] = []
         scored_bytes = 64
         retained_bytes = source_working_bytes + estimate_working_bytes(support_scores)
-        repository = self.response_repository.snapshot()
+        repository = self.response_repository.trusted_state()
         edge_count = 0
         for index, artifact in enumerate(repository.get("artifacts", {}).values()):
             run_cooperative_check(cooperative_check)
@@ -801,6 +1024,7 @@ class Engram:
         keyword_source: str = "",
         introduced_by_user_id: str = "",
         source_label: str = "",
+        replace_learned: bool = False,
     ) -> str:
         """Add a statement to the store.
 
@@ -818,6 +1042,10 @@ class Engram:
                 keyword score; preferred among equal pattern matches).
             keyword_source: Optional text to index the conversational statement
                 under instead of its pattern or rendered text.
+            replace_learned: When True, a DYNAMIC statement replaces the DYNAMIC
+                statements already filed under the same pattern, that, and
+                topic, so re-teaching changes the answer. Learning uses it;
+                STATIC statements are never replaced.
 
         Returns:
             Assigned statement ID.
@@ -856,8 +1084,12 @@ class Engram:
             source_label=source_label,
         )
         with self.mutation_lock, self.statement_lock, self.keyword_lock:
-            if stmt["id"] in self.statement_index:
+            if stmt["id"] in self.statement_by_id:
                 raise ValueError(f"duplicate statement id: {stmt['id']}")
+
+            if replace_learned and pattern and tier == Tier.DYNAMIC:
+                for replaced_id in self.replaceable_statement_ids(pattern, that or "", topic or ""):
+                    eviction_mod.evict_statement_at(self, self.statement_position(replaced_id))
 
             # Register the pattern under the same lock that guards matching,
             # so a concurrent pattern_query never sees a half-updated matcher.
@@ -867,14 +1099,22 @@ class Engram:
                     self.pattern_to_statement[registered_pattern] = stmt["id"]
 
             if tier == Tier.DYNAMIC:
-                dynamic_count = sum(1 for s in self.statements if s["tier"] == Tier.DYNAMIC)
-                while dynamic_count >= self.config["capacity"]:
+                while len(self.dynamic_statement_ids) >= self.config["capacity"]:
                     if not eviction_mod.evict_dynamic(self):
                         break
-                    dynamic_count -= 1
 
-            self.statement_index[stmt["id"]] = len(self.statements)
+            sequence = self.next_statement_sequence
+            self.next_statement_sequence += 1
             self.statements.append(stmt)
+            self.statement_sequences.append(sequence)
+            self.statement_by_id[stmt["id"]] = stmt
+            self.statement_sequence[stmt["id"]] = sequence
+            if tier == Tier.DYNAMIC:
+                self.dynamic_statement_ids.add(stmt["id"])
+                heapq_heappush(self.dynamic_lru, eviction_mod.lru_entry(stmt, sequence))
+            if pattern:
+                for registered_pattern in [pattern, *aliases]:
+                    self.pattern_statements.setdefault(registered_pattern, []).append(stmt["id"])
             for kw in keywords:
                 if kw not in self.keywords:
                     self.keywords[kw] = keyword_entry(keyword=kw)
@@ -882,6 +1122,21 @@ class Engram:
 
         result = stmt["id"]
         return result
+
+    def replaceable_statement_ids(self, pattern: str, that: str, topic: str) -> list[str]:
+        """Return the learned (DYNAMIC) statements filed under exactly this pattern, that, and topic."""
+        with self.statement_lock:
+            result = []
+            for statement_id in self.pattern_statements.get(pattern, ()):
+                existing = self.statement_by_id[statement_id]
+                if (
+                    existing["tier"] == Tier.DYNAMIC
+                    and existing["pattern"] == pattern
+                    and existing["that"] == that
+                    and existing["topic"] == topic
+                ):
+                    result.append(statement_id)
+            return result
 
     def query_candidates(
         self,
@@ -973,10 +1228,11 @@ class Engram:
             total = len(self.statements)
             for statement_id in candidate_ids:
                 run_cooperative_check(cooperative_check)
-                if statement_id not in self.statement_index:
+                if statement_id not in self.statement_by_id:
                     continue
-                index = self.statement_index[statement_id]
-                statement_value = self.statements[index]
+                # Store order breaks score ties, as the list position did.
+                index = self.statement_sequence[statement_id]
+                statement_value = self.statement_by_id[statement_id]
                 if statement_filter and not statement_filter(statement_value):
                     continue
                 components = score_statement_components(
@@ -1046,27 +1302,16 @@ class Engram:
         require_working_memory(retained_bytes, max_working_memory_bytes)
         for sentence in sentences:
             run_cooperative_check(cooperative_check)
-            match_text = sentence
-            if self.config["use_spell_correction"]:
-                with self.keyword_lock:
-                    vocabulary = set(self.keywords)
-                match_text = correct_spelling(normalize(sentence), vocabulary)
+            match_text = self._expand_for_match(sentence)
+            match_that = self._expand_for_match(that)
+            match_topic = self._expand_for_match(topic)
             with self.statement_lock:
-                matched = self.pattern_matcher.match(match_text, that=that, topic=topic)
+                matched = self.pattern_matcher.match(match_text, that=match_that, topic=match_topic)
                 run_cooperative_check(cooperative_check)
                 if not matched:
                     continue
                 response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = matched
-                selected: dict = {}
-                for statement_value in self.statements:
-                    carries_pattern = (
-                        statement_value["pattern"] == matched_pattern or matched_pattern in statement_value["pattern_aliases"]
-                    )
-                    triple_match = (
-                        carries_pattern and statement_value["topic"] == matched_topic and statement_value["that"] == matched_that
-                    )
-                    if triple_match and (not selected or statement_value["priority"] > selected.get("priority", 0)):
-                        selected = statement_value
+                selected = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                 if not selected:
                     continue
                 discovery = {
@@ -1128,7 +1373,11 @@ class Engram:
             remaining = row_limit - len(retained)
             if not remaining:
                 break
-            rows = search(value, projection_id=projection_id, limit=remaining)
+            try:
+                rows = search(value, projection_id=projection_id, limit=remaining)
+            except RuntimeError as error:
+                result = failed_graph_read("structured_proposition_projections", error, [])
+                return result
             if not isinstance(rows, list) or len(rows) > remaining:
                 raise ValueError("structured Proposition projection boundary returned an invalid collection")
             validated_rows = [validate_proposition_projection(row) for row in rows]
@@ -1158,7 +1407,11 @@ class Engram:
         if not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(surface, limit=limit)
+        try:
+            rows = search(surface, limit=limit)
+        except RuntimeError as error:
+            result = failed_graph_read("canonical_entity_matches", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical entity boundary returned an invalid collection")
         result = [canonical_entity_match_from_graph_row(row) for row in rows]
@@ -1178,7 +1431,11 @@ class Engram:
         if not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(surface, limit=limit)
+        try:
+            rows = search(surface, limit=limit)
+        except RuntimeError as error:
+            result = failed_graph_read("canonical_predicate_matches", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical Predicate boundary returned an invalid collection")
         result = [canonical_predicate_match_from_graph_row(row) for row in rows]
@@ -1205,12 +1462,16 @@ class Engram:
         if not row_limit or not client or not callable(search):
             return []
         run_cooperative_check(cooperative_check)
-        rows = search(
-            subject_entity_id,
-            predicate_id,
-            limit=row_limit,
-            include_historical=include_historical,
-        )
+        try:
+            rows = search(
+                subject_entity_id,
+                predicate_id,
+                limit=row_limit,
+                include_historical=include_historical,
+            )
+        except RuntimeError as error:
+            result = failed_graph_read("relation_one_hop_proposition_projections", error, [])
+            return result
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise ValueError("relation one-hop boundary returned an invalid collection")
         result = [validate_relation_proposition_projection(row) for row in rows]
@@ -1278,7 +1539,7 @@ class Engram:
         if self.config["expand_contractions"]:
             expanded_text = expand_contractions(
                 expanded_text,
-                self.substitution_maps["contractions"],
+                get_all_input_subs(self.substitution_maps),
             )
         if context_id:
             session = sessions_mod.get_session(self, context_id, create_if_missing=True)
@@ -1307,6 +1568,54 @@ class Engram:
         )
         return result
 
+    @property
+    def statement_index(self) -> dict[str, int]:
+        """Return statement id -> position in ``statements``, built on request."""
+        with self.statement_lock:
+            result = {stmt["id"]: position for position, stmt in enumerate(self.statements)}
+            return result
+
+    def statement_position(self, statement_id: str) -> int:
+        """Return a stored statement's position in ``statements``."""
+        result = bisect_left(self.statement_sequences, self.statement_sequence[statement_id])
+        return result
+
+    def holds_state_lock(self) -> bool:
+        """Return whether the calling thread holds any Engram state lock."""
+        result = any(
+            lock.held_by_current_thread()
+            for lock in (self.mutation_lock, self.statement_lock, self.keyword_lock, self.session_lock)
+        )
+        return result
+
+    def _statement_for_match(self, matched_pattern: str, matched_topic: str, matched_that: str) -> dict:
+        """Return the statement carrying a matched (pattern, topic, that), or {}.
+
+        A statement carries a pattern as its own or as an alias. Among
+        duplicates the highest priority wins, ties going to the earliest
+        stored. The caller holds statement_lock.
+        """
+        selected: dict = {}
+        for statement_id in self.pattern_statements.get(matched_pattern, ()):
+            stmt = self.statement_by_id[statement_id]
+            triple_match = stmt["topic"] == matched_topic and stmt["that"] == matched_that
+            if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
+                selected = stmt
+        result = selected
+        return result
+
+    def _expand_for_match(self, text: str) -> str:
+        """Expand contractions before the graphmaster sees a sentence, that, or topic.
+
+        Hyphen splitting and the last sentence of ``that`` happen inside the
+        matcher. Spell correction stays on the keyword path.
+        """
+        if not text or not self.config["expand_contractions"]:
+            result = text
+            return result
+        result = expand_contractions(text, get_all_input_subs(self.substitution_maps))
+        return result
+
     def pattern_query(
         self,
         text: str,
@@ -1326,8 +1635,12 @@ class Engram:
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
-            For multi-sentence input, returns the candidate selected for the complete turn.
+            For multi-sentence input, the response joins every matched sentence
+            and the statement is the last one matched. The stored dialogue act
+            still comes from the sentence that represents the turn.
         """
+        if len(text.encode("utf-8", "surrogatepass")) > MAX_REQUEST_BYTES:
+            raise InvalidRequestError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
         with self.count_lock:
             self.query_count += 1
 
@@ -1335,7 +1648,7 @@ class Engram:
 
         processed_text = text
         if self.config["expand_contractions"]:
-            processed_text = expand_contractions(text, self.substitution_maps["contractions"])
+            processed_text = expand_contractions(text, get_all_input_subs(self.substitution_maps))
 
         sentences = split_sentences(processed_text)
         if not sentences:
@@ -1358,14 +1671,6 @@ class Engram:
                     topic = session.get("predicates", {}).get("topic", "")
                     active_topic = session.get("active_topic", "")
 
-        # Input cleanup: correct typos toward the store's vocabulary before
-        # matching. Fact extraction below still sees the raw sentence, since
-        # its punctuation and casing carry signal.
-        vocabulary: set[str] = set()
-        if self.config["use_spell_correction"]:
-            with self.keyword_lock:
-                vocabulary = set(self.keywords)
-
         responses: list[str] = []
         candidates: list[dict] = []
         turn_dialogue_acts: list[str] = []
@@ -1373,22 +1678,18 @@ class Engram:
         turn_fact_admissions: list[dict] = []
 
         for sentence in sentences:
-            match_text = sentence
-            if vocabulary:
-                match_text = correct_spelling(normalize(sentence), vocabulary)
-
             # Interpret every sentence before response selection.  Fact
             # admission is intentionally narrower than extraction: transient,
             # hedged, and conversation-meta assertions can shape the current
             # turn without becoming shared durable knowledge.
             extracted_facts = []
-            if self.config["learn_user_facts"]:
+            if self.config["learn_user_facts"] and len(sentence.split()) <= MAX_FACT_SENTENCE_WORDS:
                 if self.config["use_spacy_facts"]:
                     extracted_facts = extract_facts(sentence)
                 else:
                     extracted = extract_fact(sentence)
                     extracted_facts = [extracted] if extracted else []
-            if extracted_facts and input_kind(match_text) != KIND_STATEMENT:
+            if extracted_facts and input_kind(sentence) != KIND_STATEMENT:
                 extracted_facts = []
             fact_decisions = []
             for fact in extracted_facts:
@@ -1440,7 +1741,13 @@ class Engram:
             turn_entities.extend(sentence_entities)
 
             with self.statement_lock:
-                result = self.pattern_matcher.match(match_text, that=that, topic=topic)
+                # ``sentence`` was already expanded before it was split. Expanding
+                # it again would apply a custom substitution twice.
+                result = self.pattern_matcher.match(
+                    sentence,
+                    that=self._expand_for_match(that),
+                    topic=self._expand_for_match(topic),
+                )
             if result:
                 (
                     response_text,
@@ -1453,38 +1760,17 @@ class Engram:
                 ) = result
                 captured = restore_capture_case(captured, sentence)
 
-                learned = False
-                known_response = ""
                 for fact in admitted_facts:
-                    if self.learn_fact(
+                    self.learn_fact(
                         fact,
                         introduced_by_user_id=attributed_user_id,
-                    ):
-                        learned = True
-                        continue
-                    # Already known. Surface the stored belief instead of a
-                    # generic deflection: the no-overwrite rule protects the
-                    # stored fact, but staying silent about a contradiction
-                    # would read as agreement.
-                    existing_id = self.pattern_to_statement.get(fact_subject_upper(fact), "")
-                    existing = self.get_statement(existing_id)
-                    if existing and existing["text"]:
-                        if normalize(existing["text"]) == normalize(fact["original"]):
-                            reply = random_choice(KNOWN_FACT_RESPONSES)
-                        else:
-                            reply = random_choice(CONFLICTING_FACT_RESPONSES)
-                        known_response = reply.replace("{existing}", existing["text"])
+                    )
 
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
                 # the earliest stored.
-                with self.statement_lock:
-                    selected: dict = {}
-                    for stmt in self.statements:
-                        carries_pattern = stmt["pattern"] == matched_pattern or matched_pattern in stmt["pattern_aliases"]
-                        triple_match = carries_pattern and stmt["topic"] == matched_topic and stmt["that"] == matched_that
-                        if triple_match and (not selected or stmt["priority"] > selected.get("priority", 0)):
-                            selected = stmt
+                with self.mutation_lock, self.statement_lock:
+                    selected = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                     if selected:
                         # Pattern selection is a query and a hit in one step
                         # (there is no later confirmation on this path), so
@@ -1493,26 +1779,23 @@ class Engram:
                         record_statement_query(selected)
                         record_statement_hit(selected)
 
-                        # If we learned a fact and matched catch-all, acknowledge
-                        # instead -- rotating the phrasing so a teaching session
-                        # does not answer identically every turn. A restated or
-                        # contradicted known fact surfaces the stored belief.
-                        catchall_render = ()
-                        if learned and matched_pattern == "*":
-                            final_response = random_choice(LEARNED_ACKNOWLEDGMENTS)
-                        elif known_response and matched_pattern == "*":
-                            final_response = known_response
-                        else:
-                            final_response = self.process_statement_template(
-                                selected,
-                                captured,
-                                sentence,
-                                session,
-                                thatstars=thatstars,
-                                topicstars=topicstars,
-                            )
-                            if is_pure_wildcard(matched_pattern):
-                                catchall_render = (selected, captured, sentence, thatstars, topicstars)
+                        final_response = self.process_statement_template(
+                            selected,
+                            captured,
+                            sentence,
+                            session,
+                            thatstars=thatstars,
+                            topicstars=topicstars,
+                            that=that,
+                            topic=topic,
+                        )
+                        # Output cleanup: repair casing (sentence starts, the
+                        # pronoun I) that lowercase captures splice into
+                        # authored text. Text that rendered exactly as authored
+                        # is kept, so code such as "s[1:4]" or "pop()" survives.
+                        authored = selected.get("template", {}) or selected.get("text", "")
+                        if self.config["polish_responses"] and final_response != authored:
+                            final_response = polish_response(final_response)
                         responses.append(final_response)
                         candidates.append(
                             {
@@ -1520,15 +1803,13 @@ class Engram:
                                 "captured": captured,
                                 "response": final_response,
                                 "dialogue_act": sentence_act,
-                                "topic": active_topic if topic_grounded else "",
-                                "topic_grounded": topic_grounded,
-                                "learned": learned,
-                                "known_response": bool(known_response),
-                                "catchall_render": catchall_render,
                             }
                         )
 
                         that = final_response
+                        if session:
+                            with self.session_lock:
+                                topic = session.get("predicates", {}).get("topic", "")
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
@@ -1556,9 +1837,9 @@ class Engram:
             return result
 
         selected_candidate = select_turn_candidate(candidates)
-        combined_response = selected_candidate["response"]
-        returned_stmt = selected_candidate["statement"]
-        returned_captured = selected_candidate["captured"]
+        combined_response = " ".join(responses)
+        returned_stmt = candidates[-1]["statement"]
+        returned_captured = candidates[-1]["captured"]
 
         # A successful learned-fact recall is direct evidence of the new
         # topic, even when the query used an inverse alias such as
@@ -1567,126 +1848,6 @@ class Engram:
             recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
             if recalled_topic:
                 active_topic = recalled_topic
-                selected_candidate["topic"] = recalled_topic
-                selected_candidate["topic_grounded"] = True
-
-        recent_responses = session.get("response_history", [])[:REPETITION_HISTORY_SIZE] if session else []
-        allow_similarity = selected_candidate["dialogue_act"] != DIALOGUE_TOPIC_SHIFT
-        expected_fact_recall = bool(
-            returned_stmt
-            and returned_stmt.get("pattern_aliases")
-            and selected_candidate["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION}
-        )
-        expected_name_recall = bool(
-            returned_stmt
-            and returned_stmt["pattern"] in {"DO YOU REMEMBER MY NAME", "WHAT IS MY NAME"}
-            and selected_candidate["dialogue_act"] == DIALOGUE_QUESTION
-        )
-        redirect_repeated_input = bool(
-            session
-            and not reports_repetition(text)
-            and input_repeats(text, session.get("input_history", [])[:REPETITION_HISTORY_SIZE])
-            and selected_candidate["dialogue_act"]
-            not in {
-                DIALOGUE_ACKNOWLEDGMENT,
-                DIALOGUE_CLOSING,
-                DIALOGUE_FACT,
-                DIALOGUE_GRATITUDE,
-                DIALOGUE_GREETING,
-                DIALOGUE_SELF_INTRODUCTION,
-            }
-            and not (expected_fact_recall or expected_name_recall)
-        )
-
-        # Broad prompts should not override stronger dialogue evidence or
-        # argue with explicit feedback that the conversation is looping.
-        if session and returned_stmt and reports_repetition(text) and pattern_has_wildcard(returned_stmt["pattern"]):
-            combined_response = REPETITION_ESCAPE_RESPONSE
-        elif (
-            session
-            and returned_stmt
-            and (
-                (is_pure_wildcard(returned_stmt["pattern"]) and bool(returned_stmt["template"]))
-                or pattern_is_broad(returned_stmt["pattern"])
-                or (
-                    selected_candidate["dialogue_act"] in {DIALOGUE_CLOSING, DIALOGUE_TOPIC_SHIFT}
-                    and pattern_has_wildcard(returned_stmt["pattern"])
-                )
-            )
-        ):
-            # Prefer a response grounded in the active per-user topic over
-            # a generic therapist-style prompt. Learned/known fact
-            # acknowledgments remain authoritative.
-            can_ground_fallback = selected_candidate["topic_grounded"] or selected_candidate["dialogue_act"] in {
-                DIALOGUE_CLOSING,
-                DIALOGUE_TOPIC_SHIFT,
-            }
-            if can_ground_fallback and not selected_candidate["learned"] and not selected_candidate["known_response"]:
-                fact_text = ""
-                if active_topic:
-                    fact_id = self.pattern_to_statement.get(active_topic.upper(), "")
-                    topic_fact = self.get_statement(fact_id)
-                    fact_text = topic_fact.get("text", "") if topic_fact else ""
-                options = contextual_fallback_options(
-                    selected_candidate["dialogue_act"],
-                    topic=selected_candidate["topic"] or active_topic,
-                    fact_text=fact_text,
-                    had_gratitude=DIALOGUE_GRATITUDE in turn_dialogue_acts,
-                )
-                for option in options:
-                    if not response_repeats(option, recent_responses, allow_similarity=allow_similarity):
-                        combined_response = option
-                        break
-
-            catchall_render = selected_candidate["catchall_render"]
-            if response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity) and catchall_render:
-                selected, captured, sentence, thatstars, topicstars = catchall_render
-                for _ in range(8):
-                    candidate = self.process_statement_template(
-                        selected,
-                        captured,
-                        sentence,
-                        session,
-                        thatstars=thatstars,
-                        topicstars=topicstars,
-                    )
-                    if not response_repeats(candidate, recent_responses, allow_similarity=allow_similarity):
-                        combined_response = candidate
-                        break
-                else:
-                    combined_response = REPETITION_ESCAPE_RESPONSE
-
-        if redirect_repeated_input:
-            for option in repeated_input_response_options():
-                if not response_repeats(option, recent_responses):
-                    combined_response = option
-                    break
-            else:
-                combined_response = REPETITION_ESCAPE_RESPONSE
-
-        # Repetition control applies to every conversational response,
-        # including exact authored patterns. Repeated factual recalls are
-        # useful and remain exempt.
-        if (
-            session
-            and response_repeats(combined_response, recent_responses, allow_similarity=allow_similarity)
-            and not (expected_fact_recall or expected_name_recall)
-        ):
-            if selected_candidate["learned"]:
-                alternatives = LEARNED_ACKNOWLEDGMENTS
-            elif selected_candidate["known_response"]:
-                alternatives = ()
-            else:
-                alternatives = repetition_response_options(selected_candidate["dialogue_act"], active_topic)
-            for alternative in alternatives:
-                if not response_repeats(alternative, recent_responses, allow_similarity=allow_similarity):
-                    combined_response = alternative
-                    break
-
-        # Output cleanup: repair casing (sentence starts, the pronoun I) that
-        # lowercase wildcard captures splice into authored text.
-        if self.config["polish_responses"]:
-            combined_response = polish_response(combined_response)
 
         if session:
             with self.session_lock:
@@ -1710,6 +1871,8 @@ class Engram:
         session,
         thatstars=(),
         topicstars=(),
+        that: str = "",
+        topic: str = "",
     ) -> str:
         """Process a statement's template with context.
 
@@ -1750,7 +1913,11 @@ class Engram:
 
         def redirect_fn(pattern: str) -> str:
             with self.statement_lock:
-                result = self.pattern_matcher.match(pattern)
+                result = self.pattern_matcher.match(
+                    self._expand_for_match(pattern),
+                    that=self._expand_for_match(that),
+                    topic=self._expand_for_match(topic),
+                )
             if result:
                 (
                     response_text,
@@ -1761,14 +1928,8 @@ class Engram:
                     matched_topic,
                     matched_that,
                 ) = result
-                with self.statement_lock:
-                    # Same selection rule as pattern_query: highest priority
-                    # among statements sharing the matched (pattern, topic, that).
-                    redirect_stmt: dict = {}
-                    for s in self.statements:
-                        triple_match = s["pattern"] == matched_pattern and s["topic"] == matched_topic and s["that"] == matched_that
-                        if triple_match and (not redirect_stmt or s["priority"] > redirect_stmt.get("priority", 0)):
-                            redirect_stmt = s
+                with self.mutation_lock, self.statement_lock:
+                    redirect_stmt = self._statement_for_match(matched_pattern, matched_topic, matched_that)
                     if redirect_stmt:
                         new_context = template_context(
                             stars=new_captured,
@@ -1802,12 +1963,21 @@ class Engram:
         def learn_fn(learn_data: dict) -> None:
             pattern = learn_data.get("pattern", "")
             template = learn_data.get("template", {})
+            too_long = any(
+                pattern_word_count(value) > MAX_PATTERN_WORDS
+                for value in (pattern, learn_data.get("that", ""), learn_data.get("topic", ""))
+                if value
+            )
+            if too_long:
+                logger.info("Not learning a pattern longer than %d words", MAX_PATTERN_WORDS)
+                return
             if pattern:
                 text = ""
                 if isinstance(template, dict) and "text" in template:
                     text = template["text"]
                 elif isinstance(template, str):
                     text = template
+                # An explicit teaching replaces what was learned before on this path.
                 self.store(
                     text=text,
                     pattern=pattern,
@@ -1815,6 +1985,7 @@ class Engram:
                     that=learn_data.get("that", ""),
                     topic=learn_data.get("topic", ""),
                     tier=Tier.DYNAMIC,
+                    replace_learned=True,
                 )
 
         context["learn_fn"] = learn_fn
@@ -1851,8 +2022,8 @@ class Engram:
                     self.keywords[kw]["hit_count"] += 1
         if statement_id:
             with self.statement_lock:
-                if statement_id in self.statement_index:
-                    record_statement_hit(self.statements[self.statement_index[statement_id]])
+                if statement_id in self.statement_by_id:
+                    record_statement_hit(self.statement_by_id[statement_id])
 
     def learn_fact(
         self,
@@ -1873,29 +2044,53 @@ class Engram:
             tier: Storage tier for the generated statements.
 
         Returns:
-            True if the fact was learned, False if it was already known.
+            True if the fact was learned. False if it is already known, if the
+            subject's pattern belongs to a seed or hand-stored statement, or if
+            the subject is longer than MAX_PATTERN_WORDS. A new fact about a
+            subject replaces the learned fact already stored for it.
         """
         if not isinstance(introduced_by_user_id, str):
             raise ValueError("introduced_by_user_id must be a string")
         if not isinstance(source_label, str):
             raise ValueError("source_label must be a string")
 
-        # Check and store under one re-entrant statement lock so concurrent
-        # speakers cannot admit duplicate copies of the same fact.
+        # Check and store under the re-entrant mutation and statement locks so
+        # concurrent speakers cannot admit duplicate copies of the same fact.
+        # store() takes them in this order too.
         subject_pattern = fact_subject_upper(fact)
-        with self.statement_lock:
-            for stmt in self.statements:
-                if stmt["pattern"] == subject_pattern:
+        if pattern_word_count(subject_pattern) > MAX_PATTERN_WORDS:
+            logger.info("Not learning a fact whose subject is longer than %d words", MAX_PATTERN_WORDS)
+            result = False
+            return result
+        with self.mutation_lock, self.statement_lock:
+            for statement_id in self.pattern_statements.get(subject_pattern, ()):
+                existing = self.statement_by_id[statement_id]
+                if existing["pattern"] != subject_pattern:
+                    continue
+                # Restating a fact changes nothing, and only a learned fact about
+                # this subject is replaced: never a seed or hand-stored statement.
+                if (
+                    existing["tier"] != Tier.DYNAMIC
+                    or existing["text"] == fact.get("original", "")
+                    or subject_pattern not in self.fact_subject_patterns(existing["text"])
+                ):
                     result = False
                     return result
+            replaced_ids = set(self.replaceable_statement_ids(subject_pattern, "", ""))
 
             # Store one fact statement with alternate retrieval patterns.
             # Aliases live in the matcher and map to this one statement, so a
-            # fact does not consume capacity once per query phrasing.
+            # fact does not consume capacity once per query phrasing. The
+            # statement being replaced gives up its aliases to the new one.
             aliases = []
             for query_pattern in fact_query_patterns(fact)[1:]:
                 query_pattern = query_pattern.strip()
-                if query_pattern and query_pattern != subject_pattern and query_pattern not in self.pattern_to_statement:
+                if (
+                    query_pattern
+                    and query_pattern != subject_pattern
+                    and pattern_word_count(query_pattern) <= MAX_PATTERN_WORDS
+                    and self.pattern_to_statement.get(query_pattern, "") in replaced_ids | {""}
+                ):
                     aliases.append(query_pattern)
             aliases = list(dict.fromkeys(aliases))
 
@@ -1910,9 +2105,19 @@ class Engram:
                 keyword_source=fact.get("original", ""),
                 introduced_by_user_id=introduced_by_user_id,
                 source_label=source_label,
+                replace_learned=True,
             )
 
         result = True
+        return result
+
+    def fact_subject_patterns(self, text: str) -> set[str]:
+        """Return the subject patterns of the facts extracted from ``text``, as learning would."""
+        facts = extract_facts(text) if self.config["use_spacy_facts"] else []
+        if not facts:
+            fact = extract_fact(text)
+            facts = [fact] if fact else []
+        result = {fact_subject_upper(fact) for fact in facts}
         return result
 
     def add_fact(
@@ -1928,9 +2133,9 @@ class Engram:
         context. The returned id identifies the primary stored statement.
         """
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("fact text must be a non-empty string")
+            raise InvalidRequestError("fact text must be a non-empty string")
         if not isinstance(source_label, str):
-            raise ValueError("source_label must be a string")
+            raise InvalidRequestError("source_label must be a string")
 
         fact_text = text.strip()
         facts = extract_facts(fact_text) if self.config["use_spacy_facts"] else []
@@ -1976,8 +2181,8 @@ class Engram:
             Statement dict if found, {} otherwise.
         """
         with self.statement_lock:
-            if statement_id in self.statement_index:
-                result = self.statements[self.statement_index[statement_id]]
+            if statement_id in self.statement_by_id:
+                result = self.statement_by_id[statement_id]
                 return result
         result = {}
         return result
@@ -1998,10 +2203,10 @@ class Engram:
             True if a statement was removed, False if the id was not present.
         """
         with self.mutation_lock, self.statement_lock:
-            if statement_id not in self.statement_index:
+            if statement_id not in self.statement_by_id:
                 result = False
                 return result
-            result = eviction_mod.evict_statement_at(self, self.statement_index[statement_id])
+            result = eviction_mod.evict_statement_at(self, self.statement_position(statement_id))
             return result
 
     # =========================================================================
@@ -2062,7 +2267,7 @@ class Engram:
             )
 
         with self.mutation_lock, self.statement_lock, self.session_lock:
-            artifacts = self.response_repository.snapshot().get("artifacts", {})
+            artifacts = self.response_repository.trusted_artifacts()
             has_process_state = (
                 bool(self.statements)
                 or bool(self.sessions)

@@ -4,11 +4,8 @@ from engram.config import engram_config
 from engram.core import Engram
 from engram.substitutions import (
     apply_gender,
-    apply_person,
-    apply_person2,
     apply_substitutions,
     expand_contractions,
-    normalize_for_matching,
     split_sentences,
     substitution_maps,
 )
@@ -127,57 +124,6 @@ def test_expand_contractions_no_contractions():
     assert result == text
 
 
-"""Tests for person substitution (I -> you)."""
-
-
-def test_apply_person_basic_person():
-    """Test basic person substitution."""
-    result = apply_person("I am happy")
-    assert "you" in result.lower()
-    assert "are" in result.lower()
-
-
-def test_apply_person_my_to_your():
-    """Test my -> your."""
-    result = apply_person("my name is Bob")
-    assert "your" in result.lower()
-
-
-def test_apply_person_me_to_you():
-    """Test me -> you."""
-    result = apply_person("help me please")
-    assert "you" in result.lower()
-
-
-def test_apply_person_custom_person_map():
-    """Test custom person map."""
-    custom = {"we": "they"}
-    result = apply_person("we are here", custom)
-    assert "they" in result.lower()
-
-
-"""Tests for person2 substitution (you -> I)."""
-
-
-def test_apply_person2_basic_person2():
-    """Test basic person2 substitution."""
-    result = apply_person2("you are happy")
-    assert "i" in result.lower()
-
-
-def test_apply_person2_your_to_my():
-    """Test your -> my."""
-    result = apply_person2("your name is Bob")
-    assert "my" in result.lower()
-
-
-def test_apply_person2_custom_person2_map():
-    """Test custom person2 map."""
-    custom = {"they": "we"}
-    result = apply_person2("they are here", custom)
-    assert "we" in result.lower()
-
-
 """Tests for gender substitution (gendered pronouns -> singular they/them)."""
 
 
@@ -279,27 +225,6 @@ def test_split_sentences_decimals_handled():
     """Test NLTK handles decimal numbers correctly."""
     result = split_sentences("The value is 3.14. That's pi.")
     assert len(result) == 2
-
-
-"""Tests for normalize_for_matching function."""
-
-
-def test_normalize_for_matching_expands_contractions():
-    """Test contractions are expanded by default."""
-    result = normalize_for_matching("I'm here")
-    assert "i am" in result.lower()
-
-
-def test_normalize_for_matching_skip_contractions():
-    """Test contractions expansion can be skipped."""
-    result = normalize_for_matching("I'm here", expand_contr=False)
-    assert "i'm" in result.lower()
-
-
-def test_normalize_for_matching_normalizes_whitespace():
-    """Test whitespace is normalized."""
-    result = normalize_for_matching("hello   world")
-    assert result == "hello world"
 
 
 """Tests for SubstitutionMaps class."""

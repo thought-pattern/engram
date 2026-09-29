@@ -20,7 +20,6 @@ from engram.relation import (
     one_hop_query_plan,
     resolve_canonical_predicate,
     resolve_canonical_subject,
-    validate_one_hop_query_plan,
 )
 from engram.resolution import QueryFrameBuilder, ResolutionOutcome, capture_resolution_budget, query_frame_with_changes
 from engram.resolvers import StructuredGraphResolver, resolver_budget as build_resolver_budget
@@ -52,8 +51,6 @@ def proposition_row(proposition_id: str = "proposition:ada-birthplace", object_i
         "trust_category_available": False,
         "supplied_trust": 0.8,
         "supplied_trust_available": True,
-        "supplied_trust_version": 1,
-        "supplied_trust_version_available": True,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -304,15 +301,12 @@ def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() ->
 
     assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_PROPOSITION_V1
     assert set(plan) == {
-        "schema_version",
         "template_id",
         "subject_entity_id",
         "predicate_id",
         "expected_object_type",
         "max_rows",
     }
-    with pytest_raises(InvalidRequestError):
-        validate_one_hop_query_plan({**plan, "cypher": "MATCH (n) RETURN n"})
     with pytest_raises(InvalidRequestError):
         one_hop_query_plan(
             canonical_resolution(
@@ -435,6 +429,37 @@ def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evide
     assert record["features"]["values"]["relation_match"] == 0.92
     assert {"relation_plan_match", "relation_result_unique", "object_type_match"}.issubset(record["selection_reasons"])
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
+
+
+def test_relation_resolver_answers_a_one_hop_question_that_contains_of() -> None:
+    engine = Engram()
+    graph = RelationGraph()
+    engine.internal_graph_client = graph
+    frame = internal_frame(engine, "Where was Ada Lovelace born, in terms of city?")
+    lease = internal_lease(frame)
+
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, lease)
+    plain_frame = internal_frame(engine, "Where was Ada Lovelace born?")
+    plain = StructuredGraphResolver(engine, lambda: START_NS).resolve(plain_frame, internal_lease(plain_frame))
+
+    assert result["reason_code"] == "relation_proposition_candidate"
+    assert result["candidates"][0]["response"] == "Ada Lovelace — birth place: London."
+    # The rows composition spent resolving the subject still count.
+    assert plain["consumption"]["graph_rows"] < result["consumption"]["graph_rows"] <= lease["max_graph_rows"]
+
+
+def test_relation_resolver_accepts_a_request_longer_than_a_predicate_label() -> None:
+    engine = Engram()
+    graph = RelationGraph()
+    engine.internal_graph_client = graph
+    request = "Where was Ada Lovelace born? " + "I am asking for a history report about early computing. " * 6
+    assert len(request.encode("utf-8")) > 256
+    frame = internal_frame(engine, request)
+
+    result = StructuredGraphResolver(engine, lambda: START_NS).resolve(frame, internal_lease(frame))
+
+    assert result["state"].value == "completed"
+    assert graph.one_hop_calls
 
 
 def test_relation_resolver_requests_history_and_keeps_open_bounds_as_evidence() -> None:

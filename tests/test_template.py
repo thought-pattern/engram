@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from engram.template import TemplateProcessor, get_input, get_map, get_response, get_star, process_template, template_context
+from engram.template import TemplateProcessor, get_input, get_map, get_response, get_star, template_context
 
 
 def test_template_context_get_star():
@@ -608,23 +608,6 @@ def test_template_processor_learn_learn_callback():
     assert len(learned) == 1
     assert learned[0]["pattern"] == "THE SKY"
     assert learned[0]["template"] == {"text": "blue"}
-
-
-"""Tests for process_template convenience function."""
-
-
-def test_process_template_function_basic_usage():
-    """Test basic function usage."""
-    ctx = template_context(stars=["world"])
-    result = process_template("Hello, {star1}!", ctx)
-    assert result == "Hello, world!"
-
-
-def test_process_template_function_with_srai_limit():
-    """Test with custom SRAI limit."""
-    ctx = template_context()
-    result = process_template({"text": "Test"}, ctx, srai_limit=50)
-    assert result == "Test"
 
 
 """Integration tests for templates."""

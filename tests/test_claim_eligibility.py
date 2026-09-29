@@ -13,7 +13,6 @@ from engram.evidence import (
     PropositionEligibilityReason,
     proposition_evidence_record,
     proposition_validity_inputs_from_eligibility,
-    revalidate_propositions,
     validate_proposition_eligibility_decision,
     visibility_authorization,
     visibility_grant,
@@ -64,8 +63,6 @@ def internal_projection(ownership: str = "PUBLIC") -> dict:
         "trust_category_available": False,
         "supplied_trust": 0.0,
         "supplied_trust_available": False,
-        "supplied_trust_version": 0,
-        "supplied_trust_version_available": False,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -214,8 +211,7 @@ def test_historical_queries_reuse_the_same_exact_scope_visibility_decision() -> 
     )
     frame = internal_frame(request="What was the status in 2024?")
     authority = ExactScopeVisibilityAuthority(
-        "tapestry-visibility",
-        "visibility-v3",
+        "visibility-authority",
         (visibility_grant(frame["scope"], PropositionOwnership.COMPANY),),
     )
 
@@ -286,7 +282,6 @@ def test_public_proposition_uses_explicit_public_rule_without_authority() -> Non
     assert decision["reason"] == PropositionEligibilityReason.ELIGIBLE_PUBLIC
     assert decision["disclosure"]["scope"] == frame["scope"]
     assert decision["disclosure"]["authority_available"] is False
-    assert decision["disclosure"]["policy_version"] == "proposition-disclosure-v1"
     copied = validate_proposition_eligibility_decision(decision)
     assert copied == decision
     assert copied is not decision
@@ -299,8 +294,7 @@ def test_private_proposition_requires_configured_exact_scope_and_ownership() -> 
     frame = internal_frame()
     unavailable = PropositionEligibilityEvaluator().evaluate(projection, frame)
     authority = ExactScopeVisibilityAuthority(
-        "tapestry-visibility",
-        "visibility-v3",
+        "visibility-authority",
         (visibility_grant(frame["scope"], PropositionOwnership.COMPANY),),
     )
     allowed = PropositionEligibilityEvaluator(authority).evaluate(projection, frame)
@@ -310,7 +304,7 @@ def test_private_proposition_requires_configured_exact_scope_and_ownership() -> 
     assert unavailable["reason"] == PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
     assert allowed["eligible"] is True
     assert allowed["reason"] == PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
-    assert allowed["disclosure"]["authority"] == "tapestry-visibility"
+    assert allowed["disclosure"]["authority"] == "visibility-authority"
     assert allowed["disclosure"]["scope"] == frame["scope"]
     assert wrong_context["reason"] == PropositionEligibilityReason.VISIBILITY_DENIED
     assert wrong_ownership["reason"] == PropositionEligibilityReason.VISIBILITY_DENIED
@@ -322,7 +316,7 @@ def test_visibility_authority_configuration_is_bounded() -> None:
     grant = visibility_grant(internal_scope(), PropositionOwnership.COMPANY)
 
     with pytest_raises(InvalidRequestError, match="4096"):
-        ExactScopeVisibilityAuthority("authority", "v1", (grant,) * 4_097)
+        ExactScopeVisibilityAuthority("authority", (grant,) * 4_097)
 
 
 def test_visibility_evaluator_rejects_falsey_invalid_authority() -> None:
@@ -337,7 +331,6 @@ def test_visibility_authority_result_must_match_exact_input() -> None:
             internal_scope("tenant:other"),
             ownership,
             "wrong-scope",
-            "v1",
             "granted",
         )
         return result
@@ -349,7 +342,6 @@ def test_visibility_authority_result_must_match_exact_input() -> None:
             scope,
             PropositionOwnership.CUSTOMER,
             "wrong-owner",
-            "v1",
             "granted",
         )
         return result
@@ -435,8 +427,6 @@ def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -
         discovered,
         supplied_trust=0.0,
         supplied_trust_available=True,
-        supplied_trust_version=4,
-        supplied_trust_version_available=True,
     )
 
     def current_proposition_projection(proposition_id: str) -> tuple[dict, ...]:
@@ -453,7 +443,6 @@ def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -
     assert decision["revalidated"] is True
     assert decision["projection"]["supplied_trust"] == 0.0
     assert decision["projection"]["supplied_trust_available"] is True
-    assert decision["projection"]["supplied_trust_version"] == 4
     assert validity["evaluation_time"] == EVALUATION_TIME
     assert validity["active"] is validity["system_current"] is validity["valid_time_current"] is True
     assert validity["temporal_operator"].value == "unspecified"
@@ -477,32 +466,6 @@ def test_proposition_record_construction_requires_allowed_matching_discovery_pro
         proposition_evidence_record(discovered, decision, frame, "lexical")
     with pytest_raises(InvalidRequestError, match="vector discovery"):
         proposition_evidence_record(discovered, decision, frame, "support_semantic")
-
-
-def test_batch_revalidation_is_bounded_and_cooperative() -> None:
-    discovered = internal_projection()
-    current = internal_current(discovered)
-    checks = []
-
-    def current_proposition_projection(proposition_id: str) -> tuple[dict, ...]:
-        del proposition_id
-        result = (current,)
-        return result
-
-    decisions = revalidate_propositions(
-        (discovered,),
-        internal_frame(),
-        PropositionEligibilityEvaluator(),
-        current_proposition_projection,
-        cooperative_check=lambda: checks.append("checked"),
-    )
-
-    assert len(decisions) == 1 and decisions[0]["eligible"]
-    assert checks == ["checked", "checked"]
-    with pytest_raises(InvalidRequestError, match="at most 1000"):
-        revalidate_propositions(
-            (discovered,) * 1_001, internal_frame(), PropositionEligibilityEvaluator(), current_proposition_projection
-        )
 
 
 def test_validity_inputs_require_publication_revalidation() -> None:

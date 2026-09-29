@@ -29,10 +29,10 @@ jobs:
         run: ruff check --line-length 132 .
 
       - name: Bytecode compilation check
-        run: python -m compileall -q engram scripts eval tests
+        run: python -m compileall -q engram scripts tests
 
       - name: Security scan
-        run: bandit -q -ii -lll -r engram scripts eval
+        run: bandit -q -ii -lll -r engram scripts
 
       - name: Dead-code scan
         run: vulture
@@ -50,10 +50,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
-
-      # pymgclient builds from source and needs OpenSSL headers and CMake.
-      - name: Install build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev cmake
 
       - name: Install application and test dependencies
         run: |

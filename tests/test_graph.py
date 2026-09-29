@@ -17,6 +17,7 @@ from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
 from engram.utilities import UTILITY_TZDATA_VERSION
 
+from .bolt_stub import BoltStub
 from .support_fixtures import PROPOSITION_REFERENCE_A
 
 
@@ -369,14 +370,7 @@ def test_template_graph_operations_graph_query_list_format():
 def read_only_graph_wiring_engram_with_graph(client):
     """An ENGRAM with the graph enabled and a mock client injected."""
     with patch("engram.core.connect_graph", return_value=client) as connect_graph:
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
     connect_graph.assert_called_once()
     return engram
 
@@ -416,14 +410,7 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
     client = MockGraphClient()
     client.available = False
     with patch("engram.core.connect_graph", return_value=client):
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
 
     assert engram.component_status["graph"] == {"enabled": True, "ready": False}
     assert engram.graph_query("RETURN 1") == []
@@ -433,14 +420,7 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
 def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_component_readiness():
     client = MockGraphClient()
     with patch("engram.core.connect_graph", return_value=client):
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
 
     core = EngramCore(engram)
 
@@ -461,7 +441,6 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
             "ready": False,
             "implementation": "transparent_logistic_v1",
             "model_version": "transparent-logistic-v1",
-            "contract_version": 1,
             "requests": 0,
             "completed": 0,
             "fallbacks": 0,
@@ -471,20 +450,18 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
         "utility": {
             "enabled": False,
             "ready": False,
-            "contract_version": "utility-plugin-v1",
             "plugins": {
-                "arithmetic_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
-                "boolean_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
-                "set_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "arithmetic_v1": {"enabled": False, "ready": False},
+                "boolean_v1": {"enabled": False, "ready": False},
+                "set_v1": {"enabled": False, "ready": False},
                 "date_time_v1": {
                     "enabled": False,
                     "ready": False,
-                    "version": "1.0.0",
                     "timezone_database_version": UTILITY_TZDATA_VERSION,
                 },
-                "unit_conversion_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
-                "version_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
-                "identifier_v1": {"enabled": False, "ready": False, "version": "1.0.0"},
+                "unit_conversion_v1": {"enabled": False, "ready": False},
+                "version_v1": {"enabled": False, "ready": False},
+                "identifier_v1": {"enabled": False, "ready": False},
             },
         },
     }
@@ -507,7 +484,7 @@ def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_conn
 
     with pytest_raises(ValueError, match="read-only"):
         client.execute("CREATE (n)")
-    assert client.conn == ()
+    assert client.driver == ()
 
 
 def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
@@ -524,37 +501,28 @@ def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
 
 
 def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call_stays_refused():
-    client = MemGraphConnection()
-    captured = {}
+    stub = BoltStub()
+    stub.rows = []
+    client = MemGraphConnection(host="127.0.0.1", port=stub.port)
+    try:
+        assert client.connect()
+        rows = client.vector_search_propositions(
+            [0.0, 1.0],
+            index_name="proposition_embeddings",
+            limit=25,
+            min_similarity=0.5,
+        )
 
-    class RecordingCursor:
-        description = ()
-
-        def execute(self, query: str, parameters=()) -> None:
-            captured.update({"query": query, "params": parameters})
-
-        def fetchall(self) -> list:
-            return []
-
-    class RecordingDriverConnection:
-        def cursor(self) -> RecordingCursor:
-            result = RecordingCursor()
-            return result
-
-    client.conn = RecordingDriverConnection()
-
-    rows = client.vector_search_propositions(
-        [0.0, 1.0],
-        index_name="proposition_embeddings",
-        limit=25,
-        min_similarity=0.5,
-    )
-
-    assert rows == []
-    assert "CALL vector_search.search" in captured.get("query", "")
-    assert captured.get("params", {})["limit"] == 25
-    with pytest_raises(ValueError, match="read-only"):
-        client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+        assert rows == []
+        query, params = stub.queries[-1]
+        assert "CALL vector_search.search" in query
+        assert params["limit"] == 25
+        with pytest_raises(ValueError, match="read-only"):
+            client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
+        assert len(stub.queries) == 1
+    finally:
+        client.disconnect()
+        stub.close()
 
 
 def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_proposition():
@@ -571,7 +539,6 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
     config = engram_config(
         graph=graph_config(
             enabled=True,
-            deployment_mode="tapestry_managed",
             vector_enabled=True,
         )
     )
@@ -603,7 +570,6 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     config = engram_config(
         graph=graph_config(
             enabled=True,
-            deployment_mode="tapestry_managed",
             vector_enabled=True,
             vector_weight=0.75,
         )
@@ -620,7 +586,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         "Why did Rome fall?",
         "Rome declined through overlapping political and military pressures.",
         request_id="learn-1",
-        namespace="tapestry",
+        namespace="support",
         context_fingerprint="local-v1",
         metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
@@ -628,7 +594,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     proposal = core.propose(
         "zygomatic quasar lattice",
         request_id="proposal-1",
-        namespace="tapestry",
+        namespace="support",
         context_fingerprint="local-v1",
     )
 

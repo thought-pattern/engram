@@ -48,6 +48,35 @@ def test_commit_publishes_artifact_and_process_local_receipt() -> None:
     }
 
 
+@pytest_mark.parametrize("stored", [10, 60])
+def test_mutations_validate_only_the_artifacts_they_change(monkeypatch, stored) -> None:
+    import engram.repository as repository_module
+
+    def unique(statement_id: str, request: str) -> dict:
+        result = accepted_artifact(statement_id=statement_id, request=request, retrieval=build_retrieval_representation(request))
+        return result
+
+    artifacts = tuple(unique(f"stmt-{index}", f"Stored question number {index}?") for index in range(stored))
+    service = response_service(capacity=stored + 10, artifacts=artifacts)
+    original = repository_module.validate_cached_response_artifact
+    calls = []
+
+    def counting(value):
+        calls.append(value)
+        result = original(value)
+        return result
+
+    monkeypatch.setattr(repository_module, "validate_cached_response_artifact", counting)
+
+    service.commit_response(unique("stmt-new", "A brand new question?"), "commit-new")
+    service.record_response_queries(("stmt-0", "stmt-1"), "query-two")
+
+    # Three changed artifacts, each validated when built, planned, and executed.
+    # The count does not grow with the number stored.
+    assert len(calls) <= 9
+    assert set(service.coordinator.snapshot()["repository"]["artifacts"]) == {*(a["statement_id"] for a in artifacts), "stmt-new"}
+
+
 def test_exact_retry_replays_without_a_second_mutation() -> None:
     service = response_service()
     artifact = accepted_artifact(tier=Tier.DYNAMIC)
@@ -117,7 +146,7 @@ def test_learn_response_accepts_regulator_answer_as_dynamic_memory() -> None:
         "regulator",
         "tenant-a",
         "",
-        "tapestry:regulator",
+        "regulator",
         {},
     )
 
@@ -138,7 +167,7 @@ def test_idk_is_never_learned() -> None:
             "regulator",
             "tenant-a",
             "",
-            "tapestry:regulator",
+            "regulator",
             {},
         )
 

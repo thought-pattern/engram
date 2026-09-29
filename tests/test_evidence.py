@@ -12,10 +12,8 @@ from engram.evidence import (
     evidence_usefulness_decision,
     evidence_usefulness_policy,
     evidence_usefulness_policy_from_dict,
-    evidence_usefulness_policy_from_json,
     evidence_usefulness_policy_to_dict,
-    evidence_usefulness_policy_to_json,
-    evidence_usefulness_policy_with_changes,
+    validate_evidence_usefulness_policy,
 )
 from engram.identity import scope_key
 from engram.resolution import (
@@ -24,19 +22,13 @@ from engram.resolution import (
     PropositionOwnership,
     build_evidence_package,
     canonical_proposition_references,
-    canonical_proposition_references_from_dict,
-    canonical_proposition_references_to_dict,
     disclosure_decision,
-    disclosure_decision_from_dict,
-    disclosure_decision_to_dict,
-    disclosure_decision_with_changes,
     empty_evidence_package,
     evidence_package,
     evidence_package_from_dict,
     evidence_package_from_json,
     evidence_package_to_dict,
     evidence_package_to_json,
-    evidence_package_with_changes,
     feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
@@ -45,12 +37,7 @@ from engram.resolution import (
     proposition_evidence_record_to_json,
     proposition_evidence_record_with_changes,
     proposition_trust_inputs,
-    proposition_trust_inputs_from_dict,
-    proposition_trust_inputs_to_dict,
     proposition_validity_inputs,
-    proposition_validity_inputs_from_dict,
-    proposition_validity_inputs_to_dict,
-    proposition_validity_inputs_with_changes,
     validate_canonical_proposition_references,
     validate_disclosure_decision,
     validate_evidence_package,
@@ -87,14 +74,11 @@ def internal_record() -> dict:
             trust_category_available=True,
             supplied_trust=0.84,
             supplied_trust_available=True,
-            supplied_trust_version=3,
-            supplied_trust_version_available=True,
         ),
         disclosure=disclosure_decision(
             ownership=PropositionOwnership.PUBLIC,
             basis=DisclosureBasis.PUBLIC_RULE,
             scope=scope_key(namespace="support", context_fingerprint="account:one"),
-            policy_version="proposition-disclosure-v1",
         ),
         path=("proposition:01J5M6Q9J8",),
         selection_reasons=("canonical_complete", "structured_match"),
@@ -147,7 +131,6 @@ def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> No
     assert encoded == json_dumps(serialized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert "null" not in encoded
     assert set(serialized) == {
-        "schema_version",
         "proposition_id",
         "source_resolver",
         "source_contributions",
@@ -189,41 +172,23 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
     trust = proposition_trust_inputs(
         supplied_trust=0.0,
         supplied_trust_available=True,
-        supplied_trust_version=1,
-        supplied_trust_version_available=True,
     )
     disclosure = disclosure_decision(
         ownership=PropositionOwnership.PUBLIC,
         basis=DisclosureBasis.PUBLIC_RULE,
         scope=scope,
-        policy_version="proposition-disclosure-v1",
     )
 
     contracts = (
-        (
-            references,
-            validate_canonical_proposition_references,
-            canonical_proposition_references_to_dict,
-            canonical_proposition_references_from_dict,
-        ),
-        (
-            validity,
-            validate_proposition_validity_inputs,
-            proposition_validity_inputs_to_dict,
-            proposition_validity_inputs_from_dict,
-        ),
-        (trust, validate_proposition_trust_inputs, proposition_trust_inputs_to_dict, proposition_trust_inputs_from_dict),
-        (disclosure, validate_disclosure_decision, disclosure_decision_to_dict, disclosure_decision_from_dict),
+        (references, validate_canonical_proposition_references),
+        (validity, validate_proposition_validity_inputs),
+        (trust, validate_proposition_trust_inputs),
+        (disclosure, validate_disclosure_decision),
     )
-    for value, validator, serializer, decoder in contracts:
+    for value, validator in contracts:
         copied = validator(value)
-        serialized = serializer(value)
-        decoded = decoder(serialized)
-        assert type(value) is dict
-        assert type(copied) is dict
         assert copied == value
         assert copied is not value
-        assert decoded == value
         malformed = dict(value)
         malformed["unexpected"] = True
         with pytest_raises(InvalidRequestError):
@@ -303,9 +268,8 @@ def test_proposition_evidence_normalization_orders_distinct_propositions_by_stab
         (
             change_record(
                 semantic_record(),
-                disclosure=disclosure_decision_with_changes(
-                    semantic_record()["disclosure"],
-                    {"scope": scope_key(namespace="different")},
+                disclosure=validate_disclosure_decision(
+                    {**semantic_record()["disclosure"], "scope": scope_key(namespace="different")}
                 ),
             ),
             "conflicting current evidence state",
@@ -345,13 +309,9 @@ def test_proposition_evidence_normalization_enforces_input_source_and_cooperativ
 def test_evidence_usefulness_policy_codec_and_frozen_hand_authored_floors() -> None:
     policy = evidence_usefulness_policy()
     serialized = evidence_usefulness_policy_to_dict(policy)
-    encoded = evidence_usefulness_policy_to_json(policy)
 
-    assert type(policy) is dict
     assert evidence_usefulness_policy_from_dict(serialized) == policy
-    assert evidence_usefulness_policy_from_json(encoded) == policy
     assert serialized == {
-        "policy_version": "proposition-evidence-usefulness-v1",
         "canonical_completeness_floor": 1.0,
         "structured_match_floor": 1.0,
         "semantic_similarity_floor": 0.6,
@@ -360,9 +320,7 @@ def test_evidence_usefulness_policy_codec_and_frozen_hand_authored_floors() -> N
         "supplied_trust_floor_available": False,
     }
     with pytest_raises(InvalidRequestError, match="frozen at 0.6"):
-        evidence_usefulness_policy_with_changes(policy, {"semantic_similarity_floor": 0.61})
-    with pytest_raises(InvalidRequestError, match="unsupported evidence usefulness"):
-        evidence_usefulness_policy_with_changes(policy, {"policy_version": "fitted-v2"})
+        validate_evidence_usefulness_policy({**policy, "semantic_similarity_floor": 0.61})
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         evidence_usefulness_policy_from_dict({**serialized, "coefficient": 0.5})
 
@@ -370,7 +328,6 @@ def test_evidence_usefulness_policy_codec_and_frozen_hand_authored_floors() -> N
 @pytest_mark.parametrize(
     ("field", "malformed", "message"),
     (
-        ("policy_version", 1, "policy_version must be a string"),
         ("semantic_similarity_floor", 1, "semantic_similarity_floor must be a float"),
         ("supplied_trust_floor_available", 0, "supplied_trust_floor_available must be a boolean"),
     ),
@@ -465,8 +422,6 @@ def test_evidence_usefulness_configured_trust_floor_distinguishes_absence_zero_a
         trust=proposition_trust_inputs(
             supplied_trust=0.0,
             supplied_trust_available=True,
-            supplied_trust_version=1,
-            supplied_trust_version_available=True,
         ),
         features=feature_set(
             values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
@@ -478,8 +433,6 @@ def test_evidence_usefulness_configured_trust_floor_distinguishes_absence_zero_a
         trust=proposition_trust_inputs(
             supplied_trust=0.5,
             supplied_trust_available=True,
-            supplied_trust_version=1,
-            supplied_trust_version_available=True,
         ),
         features=feature_set(
             values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.5},
@@ -513,8 +466,6 @@ def test_evidence_usefulness_default_policy_does_not_rank_or_require_supplied_tr
         trust=proposition_trust_inputs(
             supplied_trust=0.0,
             supplied_trust_available=True,
-            supplied_trust_version=1,
-            supplied_trust_version_available=True,
         ),
         features=feature_set(
             values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
@@ -574,8 +525,6 @@ def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero
         trust=proposition_trust_inputs(
             supplied_trust=0.0,
             supplied_trust_available=True,
-            supplied_trust_version=1,
-            supplied_trust_version_available=True,
         ),
     )
 
@@ -602,21 +551,21 @@ def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero
         (
             lambda: change_record(
                 internal_record(),
-                validity=proposition_validity_inputs_with_changes(internal_record()["validity"], {"active": False}),
+                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "active": False}),
             ),
             "active conflicts with the disclosed invalidation boundary",
         ),
         (
             lambda: change_record(
                 internal_record(),
-                validity=proposition_validity_inputs_with_changes(internal_record()["validity"], {"system_current": False}),
+                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "system_current": False}),
             ),
             "system_current conflicts with the disclosed system interval",
         ),
         (
             lambda: change_record(
                 internal_record(),
-                validity=proposition_validity_inputs_with_changes(internal_record()["validity"], {"valid_time_current": False}),
+                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "valid_time_current": False}),
             ),
             "conflicts with the disclosed",
         ),
@@ -634,7 +583,6 @@ def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero
                     ownership=PropositionOwnership.COMPANY,
                     basis=DisclosureBasis.PUBLIC_RULE,
                     scope=scope_key(namespace="support"),
-                    policy_version="proposition-disclosure-v1",
                 ),
             ),
             "trusted scope authority",
@@ -651,8 +599,7 @@ def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
         ownership=PropositionOwnership.COMPANY,
         basis=DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
         scope=scope_key(namespace="support", context_fingerprint="tenant:acme"),
-        policy_version="proposition-disclosure-v1",
-        authority="tapestry-visibility-v3",
+        authority="visibility-authority-v3",
         authority_available=True,
     )
     record = change_record(internal_record(), disclosure=disclosure)
@@ -670,20 +617,13 @@ def test_proposition_evidence_decoder_rejects_excluded_payload_fields(field: str
         proposition_evidence_record_from_dict(payload)
 
 
-def test_proposition_evidence_decoder_rejects_nested_unknown_fields_and_versions() -> None:
+def test_proposition_evidence_decoder_rejects_nested_unknown_fields() -> None:
     unknown = proposition_evidence_record_to_dict(internal_record())
     validity = unknown["validity"]
     assert isinstance(validity, dict)
     validity["unexpected"] = "secret"
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         proposition_evidence_record_from_dict(unknown)
-
-    unsupported = proposition_evidence_record_to_dict(internal_record())
-    references = unsupported["canonical_references"]
-    assert isinstance(references, dict)
-    references["schema_version"] = 2
-    with pytest_raises(InvalidRequestError, match="schema_version"):
-        proposition_evidence_record_from_dict(unsupported)
 
 
 def test_evidence_package_codec_canonicalizes_and_deduplicates() -> None:
@@ -783,7 +723,6 @@ def test_evidence_package_hard_byte_limit_truncates_before_construction() -> Non
 @pytest_mark.parametrize(
     ("changes", "message"),
     [
-        ({"wire_version": 3}, "wire_version"),
         ({"records": (internal_record(),) * 11, "retained_count": 11}, "limit of 10"),
         ({"records": (internal_record(),), "retained_count": 0}, "must equal"),
         ({"omitted_count": 1, "truncated": False}, "truncated must equal"),
@@ -799,7 +738,7 @@ def test_evidence_package_hard_byte_limit_truncates_before_construction() -> Non
 )
 def test_evidence_package_rejects_inconsistent_envelopes(changes, message) -> None:
     with pytest_raises(InvalidRequestError, match=message):
-        evidence_package_with_changes(empty_evidence_package(), changes)
+        validate_evidence_package({**empty_evidence_package(), **changes})
 
 
 def test_evidence_package_decoder_is_closed_and_rejects_unknown_reasons() -> None:

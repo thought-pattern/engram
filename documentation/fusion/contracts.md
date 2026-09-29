@@ -1,4 +1,4 @@
-# Candidate fusion and ambiguity contract v1
+# Candidate fusion and ambiguity contract
 
 **Status:** Current implemented and qualified contract
 **Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolvers.py`
@@ -86,7 +86,7 @@ identity/type mismatches keep a useful candidate at `EVIDENCE`.
 
 ## Formula and decision policy
 
-For every available non-exact, non-margin feature `i`, formula version 1 calculates:
+For every available non-exact, non-margin feature `i`, the formula calculates:
 
 ```text
 weighted_average = sum(weight[i] * value[i]) / sum(weight[i])

@@ -1,0 +1,144 @@
+{
+  "pairs": [
+    {
+      "pattern": "HOW DO I PREPARE SOFTWARE FOR USE",
+      "response": "Prepare the program people will run, a note of exactly which files this version contains, and the guides those people need. Then install it where they will use it, following the installation plan. The program alone is not the delivery."
+    },
+    {
+      "pattern": "WHAT DO USERS NEED BESIDES THE PROGRAM",
+      "response": "Prepare the program people will run, a note of exactly which files this version contains, and the guides those people need. Then install it where they will use it, following the installation plan. The program alone is not the delivery."
+    },
+    {
+      "pattern": "WHAT IS A VERSION DESCRIPTION",
+      "response": "A version description lists the files in one delivery and what is notable about that release. The people using it get one, so they know what they received. The people maintaining it get one too, for the copy they will look after. Those can be the same list. They are still worth writing twice if the two sites are not the same."
+    },
+    {
+      "pattern": "WHAT IS A RELEASE NOTE FOR A SITE",
+      "response": "A version description lists the files in one delivery and what is notable about that release. The people using it get one, so they know what they received. The people maintaining it get one too, for the copy they will look after. Those can be the same list. They are still worth writing twice if the two sites are not the same."
+    },
+    {
+      "pattern": "WHAT IS A USER GUIDE",
+      "response": "A user guide is for someone who operates the software and uses its results. It says what the software is for, what it needs in order to run, and how to do the work. Write it for that person, not for the programmer who built it."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE USER MANUAL",
+      "response": "A user guide is for someone who operates the software and uses its results. It says what the software is for, what it needs in order to run, and how to do the work. Write it for that person, not for the programmer who built it."
+    },
+    {
+      "pattern": "WHO IS A HANDS ON USER",
+      "response": "A user guide is for someone who operates the software and uses its results. It says what the software is for, what it needs in order to run, and how to do the work. Write it for that person, not for the programmer who built it."
+    },
+    {
+      "pattern": "WHAT IS AN INPUT AND OUTPUT GUIDE",
+      "response": "Some people never operate the software. They prepare inputs and read outputs, and someone else runs it. Their guide is about those inputs and outputs, not about menus they will not see."
+    },
+    {
+      "pattern": "WHAT IF THE USER DOES NOT OPERATE THE SOFTWARE",
+      "response": "Some people never operate the software. They prepare inputs and read outputs, and someone else runs it. Their guide is about those inputs and outputs, not about menus they will not see."
+    },
+    {
+      "pattern": "WHAT IS AN OPERATOR GUIDE",
+      "response": "An operator guide is for the people who install and run the software in a computer room or some other shared installation. It is about keeping the software running for other people, not about doing those people's jobs."
+    },
+    {
+      "pattern": "WHAT DOES A COMPUTER ROOM OPERATOR NEED",
+      "response": "An operator guide is for the people who install and run the software in a computer room or some other shared installation. It is about keeping the software running for other people, not about doing those people's jobs."
+    },
+    {
+      "pattern": "WHAT IS A COMPUTER OPERATION GUIDE",
+      "response": "A computer operation guide says how to operate a particular machine and the equipment attached to it. It is about the computer, not about one program. Write it when the people receiving the software also have to run that machine."
+    },
+    {
+      "pattern": "HOW DO I DOCUMENT THE COMPUTER ITSELF",
+      "response": "A computer operation guide says how to operate a particular machine and the equipment attached to it. It is about the computer, not about one program. Write it when the people receiving the software also have to run that machine."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN THE USER GUIDES",
+      "response": "A hands-on user gets a user guide. Someone who only prepares inputs and reads outputs gets an input and output guide. A person who runs the software for other people gets an operator guide. A person who runs the machine itself gets a computer operation guide. Write the ones this project actually has readers for."
+    },
+    {
+      "pattern": "WHAT IS AN INSTALLATION PLAN",
+      "response": "The installation plan says how the software will be put on the computers where people will use it. Preparing the program is a separate step. Installation is carrying that program to the site and leaving it running, according to the plan."
+    },
+    {
+      "pattern": "HOW DO I PLAN SOFTWARE INSTALLATION",
+      "response": "The installation plan says how the software will be put on the computers where people will use it. Preparing the program is a separate step. Installation is carrying that program to the site and leaving it running, according to the plan."
+    },
+    {
+      "pattern": "HOW DO I INSTALL SOFTWARE FOR USERS",
+      "response": "The installation plan says how the software will be put on the computers where people will use it. Preparing the program is a separate step. Installation is carrying that program to the site and leaving it running, according to the plan."
+    },
+    {
+      "pattern": "HOW DO I HAND SOFTWARE TO MAINTAINERS",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    },
+    {
+      "pattern": "WHAT DO MAINTAINERS NEED",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    },
+    {
+      "pattern": "HOW DO I PREPARE SOFTWARE FOR HANDOFF",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    },
+    {
+      "pattern": "WHAT IS A HANDOFF PLAN",
+      "response": "The handoff plan says what the maintainers will need in order to take responsibility: people, skills, tools, files, and sites. Write it early, with the other plans. Use it at the end, when you actually move the software to them. If the same team will keep maintaining it, say that, and keep only the parts that still help."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE TRANSITION PLAN",
+      "response": "The handoff plan says what the maintainers will need in order to take responsibility: people, skills, tools, files, and sites. Write it early, with the other plans. Use it at the end, when you actually move the software to them. If the same team will keep maintaining it, say that, and keep only the parts that still help."
+    },
+    {
+      "pattern": "WHAT IS A MAINTENANCE HANDOFF",
+      "response": "The handoff plan says what the maintainers will need in order to take responsibility: people, skills, tools, files, and sites. Write it early, with the other plans. Use it at the end, when you actually move the software to them. If the same team will keep maintaining it, say that, and keep only the parts that still help."
+    },
+    {
+      "pattern": "WHAT IS THE AS BUILT DESIGN",
+      "response": "The design you hand over has to describe the software that was built, not the software you intended at the start. Update it, including the picture of the whole system. A maintainer who trusts an old design will fix the wrong thing."
+    },
+    {
+      "pattern": "WHY MUST THE DESIGN MATCH THE CODE",
+      "response": "The design you hand over has to describe the software that was built, not the software you intended at the start. Update it, including the picture of the whole system. A maintainer who trusts an old design will fix the wrong thing."
+    },
+    {
+      "pattern": "WHAT IS A PROGRAMMERS GUIDE TO THE COMPUTER",
+      "response": "A programmer's guide tells a maintainer how to program the computer the software runs on. A firmware guide tells them how to program the firmware devices. These are for the people who will sustain the system, not for the everyday user."
+    },
+    {
+      "pattern": "WHAT IS A FIRMWARE GUIDE",
+      "response": "A programmer's guide tells a maintainer how to program the computer the software runs on. A firmware guide tells them how to program the firmware devices. These are for the people who will sustain the system, not for the everyday user."
+    },
+    {
+      "pattern": "WHAT IS A PRODUCT DESCRIPTION",
+      "response": "The product description is the as-built package: the program that runs, the source, and the design and support notes that match them. It is what you prepare for users and, again, what you prepare for maintainers. The version description says which of those files this delivery contains."
+    },
+    {
+      "pattern": "WHAT IS THE AS BUILT SOFTWARE DESCRIPTION",
+      "response": "The product description is the as-built package: the program that runs, the source, and the design and support notes that match them. It is what you prepare for users and, again, what you prepare for maintainers. The version description says which of those files this delivery contains."
+    },
+    {
+      "pattern": "HOW DO I PREPARE IT FOR SOMEONE ELSE TO USE",
+      "response": "Prepare the program people will run, a note of exactly which files this version contains, and the guides those people need. Then install it where they will use it, following the installation plan. The program alone is not the delivery."
+    },
+    {
+      "pattern": "HOW DO I PREPARE THIS FOR SOMEONE ELSE TO USE",
+      "response": "Prepare the program people will run, a note of exactly which files this version contains, and the guides those people need. Then install it where they will use it, following the installation plan. The program alone is not the delivery."
+    },
+    {
+      "pattern": "HOW DO I PREPARE IT FOR USE",
+      "response": "Prepare the program people will run, a note of exactly which files this version contains, and the guides those people need. Then install it where they will use it, following the installation plan. The program alone is not the delivery."
+    },
+    {
+      "pattern": "HOW DO I HAND IT TO MAINTAINERS",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    },
+    {
+      "pattern": "HOW DO I HAND THIS TO MAINTAINERS",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    },
+    {
+      "pattern": "HOW DO I HAND IT OFF",
+      "response": "Give the maintainers the program, the source, a version description, and a design that matches what was actually built. Update the system design so it matches too. Add a programmer's guide to the computer, and a firmware guide if they must sustain firmware. The handoff plan, written when the project was planned, is the list of what they must receive."
+    }
+  ]
+}
