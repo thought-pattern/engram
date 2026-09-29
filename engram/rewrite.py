@@ -19,6 +19,7 @@ from unicodedata import normalize as unicodedata_normalize
 from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
 from engram.errors import InvalidRequestError
 from engram.resolution import query_frame_with_changes, rewrite_trace_step, validate_query_frame
+from engram.validation import require_any_text
 
 logger = logging_getLogger(__name__)
 
@@ -98,10 +99,8 @@ def internal_mapping(value: object, name: str, fields: set[str]) -> dict[str, ob
 
 
 def internal_text(value: object, name: str, maximum: int, *, empty: bool = False) -> str:
-    if not isinstance(value, str) or (not empty and not value.strip()) or len(value.encode("utf-8")) > maximum:
-        qualifier = "bounded string" if empty else "bounded non-empty string"
-        raise InvalidRequestError(f"{name} must be a {qualifier}")
-    result = value.strip()
+    """Validate rewrite corpus text and return it trimmed."""
+    result = require_any_text(value, name, maximum, allow_empty=empty, blank_is_empty=True).strip()
     return result
 
 

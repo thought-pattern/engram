@@ -5,10 +5,8 @@ the lifecycle vocabulary and policies without depending on storage tier,
 residency, indexes, or adapters.
 """
 
-from datetime import datetime
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
-from unicodedata import category as unicodedata_category
 
 from engram.constants import (
     ARTIFACT_PROVENANCE_FIELDS,
@@ -34,7 +32,6 @@ from engram.constants import (
     MAX_RESPONSE_BYTES,
     MAX_SOURCE_LABEL_BYTES,
     MAX_SUPPORT_REFERENCES,
-    MAX_TIMESTAMP_BYTES,
     TERMINAL_LIFECYCLE_STATES as TERMINAL_LIFECYCLE_STATES,
     HistoricalKeyReuseReason,
     LifecycleDecisionReason,
@@ -56,6 +53,7 @@ from engram.identity import (
     validate_scope_key,
 )
 from engram.support import validate_support_references
+from engram.validation import Characters, require_available_utc_timestamp, require_bool, require_text, require_utc_timestamp
 
 
 def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
@@ -75,37 +73,9 @@ def require_mapping(value: object, name: str) -> dict:
     return value
 
 
-def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(unicodedata_category(character) in {"Cc", "Cs"} for character in value):
-        raise InvalidRequestError(f"{name} contains a control or surrogate character")
-    return value
-
-
 def require_response(value: object) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError("artifact response must be a string")
-    if not value:
-        raise InvalidRequestError("artifact response must not be empty")
-    if len(value.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise InvalidRequestError(f"artifact response exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
-    for character in value:
-        if unicodedata_category(character) == "Cs":
-            raise InvalidRequestError("artifact response contains a surrogate character")
-        if unicodedata_category(character) == "Cc" and character not in "\t\n\r":
-            raise InvalidRequestError("artifact response contains an unsupported control character")
-    return value
-
-
-def require_bool(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
+    result = require_text(value, "artifact response", MAX_RESPONSE_BYTES, characters=Characters.LINES)
+    return result
 
 
 def require_positive_int(value: object, name: str) -> int:
@@ -125,33 +95,6 @@ def require_schema_version(value: object, expected: int, name: str) -> int:
     if version != expected:
         raise InvalidRequestError(f"unsupported {name}: {version}; expected {expected}")
     return version
-
-
-def require_canonical_utc_timestamp(value: object, name: str, *, allow_empty: bool) -> str:
-    text = require_text(value, name, MAX_TIMESTAMP_BYTES, allow_empty=allow_empty)
-    if not text:
-        return text
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    canonical = parsed.isoformat().replace("+00:00", "Z")
-    if canonical != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return text
-
-
-def require_present_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
-    presence = require_bool(available, f"{name}_available")
-    text = require_canonical_utc_timestamp(value, name, allow_empty=not presence)
-    if presence and not text:
-        raise InvalidRequestError(f"{name} must not be empty when {name}_available is true")
-    if not presence and text:
-        raise InvalidRequestError(f"{name} must be empty when {name}_available is false")
-    result = (text, presence)
-    return result
 
 
 def freeze_json_value(value: object, name: str, depth: int, item_count: list[int]) -> object:
@@ -236,7 +179,7 @@ def validate_artifact_provenance(value: object) -> dict:
             MAX_CALLER_ID_BYTES,
             allow_empty=True,
         ),
-        "accepted_at": require_canonical_utc_timestamp(
+        "accepted_at": require_utc_timestamp(
             data["accepted_at"],
             "artifact provenance accepted_at",
             allow_empty=False,
@@ -282,7 +225,7 @@ def validate_artifact_statistics(value: object) -> dict:
     """Validate and copy authoritative response statistics."""
 
     data = require_exact_mapping(value, "ArtifactStatistics", ARTIFACT_STATISTICS_FIELDS)
-    last_hit, last_hit_available = require_present_timestamp(
+    last_hit, last_hit_available = require_available_utc_timestamp(
         data["last_hit"],
         data["last_hit_available"],
         "artifact statistics last_hit",
@@ -372,12 +315,12 @@ def validate_cached_response_artifact(value: object) -> dict:
         support_references = validate_support_references(raw_support)
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
-    valid_from, valid_from_available = require_present_timestamp(
+    valid_from, valid_from_available = require_available_utc_timestamp(
         data["valid_from"],
         data["valid_from_available"],
         "artifact valid_from",
     )
-    valid_until, valid_until_available = require_present_timestamp(
+    valid_until, valid_until_available = require_available_utc_timestamp(
         data["valid_until"],
         data["valid_until_available"],
         "artifact valid_until",
@@ -533,9 +476,9 @@ def cached_response_artifact_from_dict(value: object) -> dict:
         lifecycle=lifecycle,
         scope=scope_key_from_dict(scope),
         support_references=tuple(raw_support),
-        valid_from=require_canonical_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
+        valid_from=require_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
         valid_from_available=require_bool(data["valid_from_available"], "artifact valid_from_available"),
-        valid_until=require_canonical_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),
+        valid_until=require_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),
         valid_until_available=require_bool(data["valid_until_available"], "artifact valid_until_available"),
         superseded_by=require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True),
         provenance=artifact_provenance_from_dict(provenance),

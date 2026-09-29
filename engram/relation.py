@@ -1,6 +1,5 @@
 """Canonical entity, Predicate, and bounded one-hop relation interpretation."""
 
-from datetime import datetime
 from math import isfinite as math_isfinite
 
 from engram.constants import (
@@ -26,29 +25,7 @@ from engram.identity import normalize_retrieval_key
 from engram.resolution import validate_query_frame
 from engram.spacy_setup import get_nlp
 from engram.temporal import validate_temporal_query
-
-
-def internal_text(
-    value: object,
-    name: str,
-    *,
-    allow_empty: bool = False,
-    maximum_bytes: int = MAX_RELATION_LABEL_BYTES,
-) -> str:
-    if not isinstance(value, str) or (not allow_empty and not value):
-        raise InvalidRequestError(f"{name} must be a {'possibly empty ' if allow_empty else 'non-empty '}string")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
-
-
-def internal_identifier(value: object, name: str, *, allow_empty: bool = False) -> str:
-    result = internal_text(value, name, allow_empty=allow_empty)
-    if result and any(character.isspace() for character in result):
-        raise InvalidRequestError(f"{name} must not contain whitespace")
-    return result
+from engram.validation import require_identifier, require_text, utc_datetime
 
 
 def internal_score(value: object, name: str) -> float:
@@ -84,14 +61,23 @@ def canonical_resolution(
         raise InvalidRequestError("canonical resolution object_type is unsupported")
     if not isinstance(candidate_ids, tuple) or not isinstance(evidence, tuple):
         raise InvalidRequestError("canonical resolution collections must be tuples")
-    normalized_ids = tuple(internal_identifier(value, "canonical resolution candidate ID") for value in candidate_ids)
-    normalized_evidence = tuple(internal_identifier(value, "canonical resolution evidence") for value in evidence)
+    normalized_ids = tuple(
+        require_identifier(value, "canonical resolution candidate ID", maximum_bytes=MAX_RELATION_LABEL_BYTES)
+        for value in candidate_ids
+    )
+    normalized_evidence = tuple(
+        require_identifier(value, "canonical resolution evidence", maximum_bytes=MAX_RELATION_LABEL_BYTES) for value in evidence
+    )
     if len(normalized_ids) > MAX_RELATION_CANDIDATES or normalized_ids != tuple(sorted(set(normalized_ids))):
         raise InvalidRequestError("canonical resolution candidate IDs must be bounded, unique, and sorted")
     if len(normalized_evidence) > MAX_RELATION_SURFACES or normalized_evidence != tuple(sorted(set(normalized_evidence))):
         raise InvalidRequestError("canonical resolution evidence must be bounded, unique, and sorted")
-    normalized_id = internal_identifier(canonical_id, "canonical resolution ID", allow_empty=True)
-    normalized_label = internal_text(primary_label, "canonical resolution label", allow_empty=True)
+    normalized_id = require_identifier(
+        canonical_id, "canonical resolution ID", allow_empty=True, maximum_bytes=MAX_RELATION_LABEL_BYTES
+    )
+    normalized_label = require_text(
+        primary_label, "canonical resolution label", allow_empty=True, maximum_bytes=MAX_RELATION_LABEL_BYTES
+    )
     normalized_score = internal_score(score, "canonical resolution score")
     if status == CanonicalResolutionStatus.SELECTED:
         if not normalized_id or not normalized_label or normalized_id not in normalized_ids or not normalized_evidence:
@@ -262,7 +248,7 @@ def dependency_predicate_surfaces(text: object) -> tuple[tuple[str, str, float],
     """
     if isinstance(text, str):
         text = " ".join(text.split())
-    request = internal_text(text, "predicate request", maximum_bytes=MAX_REQUEST_BYTES)
+    request = require_text(text, "predicate request", maximum_bytes=MAX_REQUEST_BYTES)
     nlp = get_nlp()
     if not nlp:
         return ()
@@ -457,8 +443,7 @@ def projection_interval(
     upper = projection["system_to"]
     upper_available = projection["system_to_available"]
     if projection["invalidated_at_available"] and (
-        not upper_available
-        or datetime.fromisoformat(projection["invalidated_at"][:-1] + "+00:00") < datetime.fromisoformat(upper[:-1] + "+00:00")
+        not upper_available or utc_datetime(projection["invalidated_at"]) < utc_datetime(upper)
     ):
         upper = projection["invalidated_at"]
         upper_available = True
@@ -475,14 +460,10 @@ def intervals_overlap(first: dict, second: dict, axis: TemporalAxis) -> bool:
     first_lower, first_lower_available, first_upper, first_upper_available = projection_interval(first, axis)
     second_lower, second_lower_available, second_upper, second_upper_available = projection_interval(second, axis)
     first_starts_before_second_ends = (
-        not second_upper_available
-        or not first_lower_available
-        or datetime.fromisoformat(first_lower[:-1] + "+00:00") < datetime.fromisoformat(second_upper[:-1] + "+00:00")
+        not second_upper_available or not first_lower_available or utc_datetime(first_lower) < utc_datetime(second_upper)
     )
     second_starts_before_first_ends = (
-        not first_upper_available
-        or not second_lower_available
-        or datetime.fromisoformat(second_lower[:-1] + "+00:00") < datetime.fromisoformat(first_upper[:-1] + "+00:00")
+        not first_upper_available or not second_lower_available or utc_datetime(second_lower) < utc_datetime(first_upper)
     )
     result = first_starts_before_second_ends and second_starts_before_first_ends
     return result
@@ -555,7 +536,7 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
                     cardinality=cardinality,
                 )
                 return result
-            lower_values.append((datetime.fromisoformat(lower[:-1] + "+00:00"), item))
+            lower_values.append((utc_datetime(lower), item))
         latest = max(value for value, internal_item in lower_values)
         considered = tuple(item for value, item in lower_values if value == latest)
 
@@ -685,8 +666,8 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
 
 def phrase_relation_result(subject_label: object, predicate_label: object, object_label: object) -> str:
     """Produce the sole bounded one-hop phrasing form from validated labels."""
-    subject = internal_text(subject_label, "relation subject label")
-    predicate = internal_text(predicate_label, "relation Predicate label")
-    value = internal_text(object_label, "relation object label")
+    subject = require_text(subject_label, "relation subject label", maximum_bytes=MAX_RELATION_LABEL_BYTES)
+    predicate = require_text(predicate_label, "relation Predicate label", maximum_bytes=MAX_RELATION_LABEL_BYTES)
+    value = require_text(object_label, "relation object label", maximum_bytes=MAX_RELATION_LABEL_BYTES)
     result = f"{subject} — {predicate}: {value}."
     return result

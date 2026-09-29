@@ -5,7 +5,6 @@ from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, l
 
 from engram.artifacts import lifecycle_base_eligibility, validate_cached_response_artifact
 from engram.constants import (
-    CONTEXTUAL_EXACT_LOOKUP_RESULT_FIELDS,
     ELIGIBILITY_CONTEXT_FIELDS,
     ELIGIBILITY_CONTEXT_SCHEMA_VERSION,
     ELIGIBILITY_DECISION_FIELDS,
@@ -13,7 +12,6 @@ from engram.constants import (
     LIFECYCLE_EXCLUSION_REASONS,
     MAX_ELIGIBILITY_CONTEXT_SIGNATURE_BYTES,
     MAX_ELIGIBILITY_STATEMENT_ID_BYTES,
-    MAX_ELIGIBILITY_TIMESTAMP_BYTES,
     MAX_EXACT_LOOKUP_OWNERS,
     MAX_EXACT_LOOKUP_PROVENANCE_BYTES,
     MAX_EXACT_LOOKUP_REPRESENTATION_BYTES,
@@ -29,10 +27,10 @@ from engram.identity import (
     MAX_NAMESPACE_BYTES,
     retrieval_representation_bindings,
     scope_key,
-    scoped_retrieval_key_to_dict,
     validate_scope_key,
     validate_scoped_retrieval_key,
 )
+from engram.validation import require_available_utc_timestamp, require_bool, require_text, utc_datetime
 
 
 def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
@@ -47,31 +45,11 @@ def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
     return value
 
 
-def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    """Validate bounded Unicode contract text."""
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
-
-
 def require_namespace(value: object) -> str:
     """Validate one scope namespace."""
     namespace = require_text(value, "eligibility namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
     scope_key(namespace=namespace)
     return namespace
-
-
-def require_bool(value: object, name: str) -> bool:
-    """Validate one exact boolean."""
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
 
 
 def require_positive_version(value: object, expected: int, name: str) -> int:
@@ -83,25 +61,6 @@ def require_positive_version(value: object, expected: int, name: str) -> int:
     return value
 
 
-def require_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
-    """Validate one availability-tagged canonical UTC timestamp."""
-    presence = require_bool(available, f"{name}_available")
-    text = require_text(value, name, MAX_ELIGIBILITY_TIMESTAMP_BYTES, allow_empty=not presence)
-    if not presence:
-        if text:
-            raise InvalidRequestError(f"{name} must be empty when unavailable")
-        return text, presence
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return text, presence
-
-
 def datetime_to_timestamp(value: object) -> str:
     """Convert a timezone-aware UTC datetime to canonical contract text."""
     if not isinstance(value, datetime):
@@ -109,7 +68,7 @@ def datetime_to_timestamp(value: object) -> str:
     if not value.tzinfo or value.utcoffset() != timedelta(0):
         raise InvalidRequestError("eligibility clock must return a timezone-aware UTC datetime")
     text = value.isoformat().replace("+00:00", "Z")
-    require_timestamp(text, True, "eligibility evaluation_time")
+    require_available_utc_timestamp(text, True, "eligibility evaluation_time")
     return text
 
 
@@ -135,7 +94,7 @@ def eligibility_context(
             "artifact_repository_available",
         ),
     }
-    timestamp, available = require_timestamp(
+    timestamp, available = require_available_utc_timestamp(
         evaluation_time,
         evaluation_time_available,
         "eligibility evaluation_time",
@@ -214,7 +173,7 @@ def eligibility_decision(
         raise InvalidRequestError("exclusion_reason must be an EligibilityExclusionReason")
     if answer_eligible != (exclusion_reason == EligibilityExclusionReason.ELIGIBLE):
         raise InvalidRequestError("direct_answer_eligible must agree with exclusion_reason")
-    timestamp, available = require_timestamp(
+    timestamp, available = require_available_utc_timestamp(
         evaluation_time,
         evaluation_time_available,
         "eligibility evaluation_time",
@@ -293,12 +252,6 @@ def eligibility_decision_context_signature(value: object) -> str:
     return result
 
 
-def timestamp_to_datetime(value: str) -> datetime:
-    """Parse one previously validated canonical timestamp."""
-    result = datetime.fromisoformat(value[:-1] + "+00:00")
-    return result
-
-
 def eligibility_result(
     artifact: dict,
     context: dict,
@@ -370,14 +323,14 @@ def evaluate_artifact_eligibility(
             ),
         )
         return result
-    evaluation_time = timestamp_to_datetime(current_context.get("evaluation_time", ""))
+    evaluation_time = utc_datetime(current_context.get("evaluation_time", ""))
     valid_from = (
-        timestamp_to_datetime(current_artifact.get("valid_from", ""))
+        utc_datetime(current_artifact.get("valid_from", ""))
         if current_artifact.get("valid_from_available", False)
         else evaluation_time
     )
     valid_until = (
-        timestamp_to_datetime(current_artifact.get("valid_until", ""))
+        utc_datetime(current_artifact.get("valid_until", ""))
         if current_artifact.get("valid_until_available", False)
         else evaluation_time
     )
@@ -492,22 +445,6 @@ def validate_exact_lookup_result(value: object) -> dict:
     return result
 
 
-def exact_lookup_result_to_dict(value: object) -> dict:
-    """Return the external dictionary for one direct artifact lookup."""
-    lookup = validate_exact_lookup_result(value)
-    result = {
-        "outcome": lookup.get("outcome", ExactLookupOutcome.MISS).value,
-        "key": scoped_retrieval_key_to_dict(lookup.get("key", {})),
-        "statement_id": lookup.get("statement_id", ""),
-        "generation": lookup.get("generation", 0),
-        "provenance": lookup.get("provenance", ""),
-        "representation": lookup.get("representation", ""),
-        "owner_statement_ids": list(lookup.get("owner_statement_ids", ())),
-        "truncated": lookup.get("truncated", False),
-    }
-    return result
-
-
 def contextual_exact_lookup_result(
     lookup: object,
     decisions: object,
@@ -532,28 +469,6 @@ def contextual_exact_lookup_result(
         "decisions": normalized_decisions,
         "context_signature": normalized_signature,
     }
-
-
-def validate_contextual_exact_lookup_result(value: object) -> dict:
-    """Validate and copy one contextual exact lookup result."""
-    data = require_exact_mapping(value, "ContextualExactLookupResult", CONTEXTUAL_EXACT_LOOKUP_RESULT_FIELDS)
-    result = contextual_exact_lookup_result(
-        data.get("lookup", ()),
-        data.get("decisions", ()),
-        data.get("context_signature", ()),
-    )
-    return result
-
-
-def contextual_exact_lookup_result_to_dict(value: object) -> dict:
-    """Return the external dictionary for one contextual exact lookup."""
-    lookup_result = validate_contextual_exact_lookup_result(value)
-    result = {
-        "lookup": exact_lookup_result_to_dict(lookup_result.get("lookup", {})),
-        "decisions": [eligibility_decision_to_dict(decision) for decision in lookup_result.get("decisions", ())],
-        "context_signature": lookup_result.get("context_signature", ""),
-    }
-    return result
 
 
 class ContextualExactLookup:

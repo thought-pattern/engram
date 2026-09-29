@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from functools import lru_cache
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -58,10 +57,8 @@ from engram.constants import (
     MAX_NEGATIVE_TTL_SECONDS,
     MAX_REFERENCE_ID_BYTES,
     MAX_STATEMENT_ID_BYTES,
-    MAX_TIMESTAMP_BYTES,
     MAX_VERSION_BYTES,
     NEGATIVE_KEY_SCHEMA_VERSION,
-    NEGATIVE_LOOKUP_FIELDS,
     NEGATIVE_RESOLUTION_FIELDS,
     NEGATIVE_RESOLUTION_KEY_FIELDS,
     NEGATIVE_RESOLUTION_SCHEMA_VERSION,
@@ -97,18 +94,7 @@ from engram.mutations import (
     validate_mutation_receipt,
     validate_mutation_receipt_ledger_state,
 )
-
-
-def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(ord(character) < 32 or 127 <= ord(character) <= 159 or 0xD800 <= ord(character) <= 0xDFFF for character in value):
-        raise InvalidRequestError(f"{name} contains a control or surrogate character")
-    return value
+from engram.validation import require_bool, require_text, require_utc_datetime
 
 
 def internal_integer(value: object, name: str, minimum: int = 0, maximum: int = 9_223_372_036_854_775_807) -> int:
@@ -124,12 +110,6 @@ def internal_number(value: object, name: str, minimum: float, maximum: float) ->
     if not math_isfinite(normalized) or not minimum <= normalized <= maximum:
         raise InvalidRequestError(f"{name} must be finite and from {minimum} through {maximum}")
     return normalized
-
-
-def internal_boolean(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
 
 
 def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
@@ -217,27 +197,6 @@ def internal_fingerprint(value: object, name: str) -> str:
     return value
 
 
-@lru_cache(maxsize=4_096)
-def parse_timestamp_text(text: str, name: str) -> datetime:
-    internal_text(text, name, MAX_TIMESTAMP_BYTES)
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.tzinfo != UTC or parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return parsed
-
-
-def parse_timestamp(value: object, name: str) -> datetime:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    result = parse_timestamp_text(value, name)
-    return result
-
-
 def canonical_utc(value: datetime) -> str:
     """Serialize an aware UTC datetime using the repository's canonical form."""
 
@@ -248,7 +207,7 @@ def canonical_utc(value: datetime) -> str:
 
 
 def bucket_start(value: str, bucket_seconds: int) -> str:
-    parsed = parse_timestamp(value, "feedback observed_at")
+    parsed = require_utc_datetime(value, "feedback observed_at")
     unix_seconds = int(parsed.timestamp())
     start_seconds = unix_seconds - (unix_seconds % bucket_seconds)
     result = canonical_utc(datetime.fromtimestamp(start_seconds, UTC))
@@ -269,8 +228,8 @@ def constraint_fingerprint(
 
     if not isinstance(required_metadata, dict):
         raise InvalidRequestError("feedback required_metadata must be an object")
-    internal_text(expected_object_type, "feedback expected_object_type", 64)
-    internal_text(required_source_label, "feedback required_source_label", 256, allow_empty=True)
+    require_text(expected_object_type, "feedback expected_object_type", 64)
+    require_text(required_source_label, "feedback required_source_label", 256, allow_empty=True)
     value = {
         "expected_object_type": expected_object_type,
         "required_metadata": dict(required_metadata),
@@ -302,7 +261,7 @@ def feedback_policy(
     version = internal_integer(schema_version, "feedback policy schema_version", 0)
     if version != FEEDBACK_POLICY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback policy schema_version: {version}")
-    validated_policy_version = internal_text(policy_version, "feedback policy_version", MAX_VERSION_BYTES)
+    validated_policy_version = require_text(policy_version, "feedback policy_version", MAX_VERSION_BYTES)
     validated_samples = internal_integer(
         minimum_verdict_samples, "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
     )
@@ -351,25 +310,9 @@ def validate_feedback_policy(value: object) -> dict:
     return result
 
 
-def feedback_policy_with_changes(value: object, changes: object) -> dict:
-    current = validate_feedback_policy(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(FEEDBACK_POLICY_FIELDS):
-        raise InvalidRequestError("feedback policy changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_feedback_policy(updated)
-    return result
-
-
 def feedback_policy_to_dict(value: object) -> dict:
     current = validate_feedback_policy(value)
     result = dict(current)
-    return result
-
-
-def feedback_policy_to_json(value: object) -> str:
-    data = feedback_policy_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -377,7 +320,7 @@ def feedback_policy_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
     result = feedback_policy(
         schema_version=internal_integer(data["schema_version"], "feedback policy schema_version", 0),
-        policy_version=internal_text(data["policy_version"], "feedback policy_version", MAX_VERSION_BYTES),
+        policy_version=require_text(data["policy_version"], "feedback policy_version", MAX_VERSION_BYTES),
         minimum_verdict_samples=internal_integer(
             data["minimum_verdict_samples"], "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
         ),
@@ -397,12 +340,6 @@ def feedback_policy_from_dict(value: object) -> dict:
             data["max_relationship_records"], "feedback max_relationship_records", 1, MAX_FEEDBACK_POLICY_RECORDS
         ),
     )
-    return result
-
-
-def feedback_policy_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "FeedbackPolicy JSON")
-    result = feedback_policy_from_dict(data)
     return result
 
 
@@ -428,9 +365,9 @@ def statement_feedback_key(
     version = internal_integer(schema_version, "statement feedback key schema_version", 0)
     if version != FEEDBACK_KEY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported statement feedback key schema_version: {version}")
-    validated_statement_id = internal_text(statement_id, "feedback statement_id", MAX_STATEMENT_ID_BYTES)
+    validated_statement_id = require_text(statement_id, "feedback statement_id", MAX_STATEMENT_ID_BYTES)
     validated_generation = internal_integer(generation, "feedback generation", 0)
-    generation_is_available = internal_boolean(generation_available, "feedback generation_available")
+    generation_is_available = require_bool(generation_available, "feedback generation_available")
     if generation_is_available and validated_generation < 1:
         raise InvalidRequestError("available feedback generation must be positive")
     if not generation_is_available and validated_generation != 0:
@@ -473,19 +410,6 @@ def statement_feedback_key_fingerprint(value: object) -> str:
     return result
 
 
-def statement_feedback_key_signature(value: object) -> tuple[object, ...]:
-    current = validate_statement_feedback_key(value)
-    result = (
-        current["statement_id"],
-        current["generation"],
-        current["generation_available"],
-        current["policy_fingerprint"],
-        current["contract_fingerprint"],
-        current["schema_version"],
-    )
-    return result
-
-
 def statement_feedback_key_to_json(value: object) -> str:
     data = statement_feedback_key_to_dict(value)
     result = json_text(data)
@@ -496,9 +420,9 @@ def statement_feedback_key_from_dict(value: object) -> dict:
     data = exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
     result = statement_feedback_key(
         schema_version=internal_integer(data["schema_version"], "statement feedback key schema_version", 0),
-        statement_id=internal_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
+        statement_id=require_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
         generation=internal_integer(data["generation"], "feedback generation", 0),
-        generation_available=internal_boolean(data["generation_available"], "feedback generation_available"),
+        generation_available=require_bool(data["generation_available"], "feedback generation_available"),
         policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
         contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
     )
@@ -664,7 +588,7 @@ def feedback_observation(
         raise InvalidRequestError(f"unsupported feedback observation schema_version: {version}")
     if not isinstance(reference_kind, FeedbackReferenceKind):
         raise InvalidRequestError("feedback reference_kind must be a FeedbackReferenceKind")
-    validated_reference_id = internal_text(reference_id, "feedback reference_id", MAX_REFERENCE_ID_BYTES)
+    validated_reference_id = require_text(reference_id, "feedback reference_id", MAX_REFERENCE_ID_BYTES)
     if not isinstance(kind, FeedbackObservationKind) or not isinstance(outcome, FeedbackOutcome):
         raise InvalidRequestError("feedback kind and outcome must use the closed vocabularies")
     if kind == FeedbackObservationKind.CANDIDACY and outcome != FeedbackOutcome.CANDIDATE:
@@ -689,8 +613,8 @@ def feedback_observation(
         policy_fingerprint,
         contract_fingerprint,
     )
-    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "feedback observed_at"))
-    validated_reason = internal_text(reason, "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
+    validated_observed_at = canonical_utc(require_utc_datetime(observed_at, "feedback observed_at"))
+    validated_reason = require_text(reason, "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
     result: dict = {
         "reference_kind": reference_kind,
         "reference_id": validated_reference_id,
@@ -868,19 +792,19 @@ def feedback_observation_from_dict(value: object) -> dict:
     result = feedback_observation(
         schema_version=internal_integer(data["schema_version"], "feedback observation schema_version", 0),
         reference_kind=reference_kind,
-        reference_id=internal_text(data["reference_id"], "feedback reference_id", MAX_REFERENCE_ID_BYTES),
+        reference_id=require_text(data["reference_id"], "feedback reference_id", MAX_REFERENCE_ID_BYTES),
         kind=kind,
         outcome=outcome,
         query_identity=query_identity_from_dict(data["query_identity"]),
         scope=scope_key_from_dict(data["scope"]),
         constraint_fingerprint=internal_fingerprint(data["constraint_fingerprint"], "feedback constraint_fingerprint"),
-        statement_id=internal_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
+        statement_id=require_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
         generation=internal_integer(data["generation"], "feedback generation", 0),
-        generation_available=internal_boolean(data["generation_available"], "feedback generation_available"),
+        generation_available=require_bool(data["generation_available"], "feedback generation_available"),
         policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
         contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
-        observed_at=canonical_utc(parse_timestamp(data["observed_at"], "feedback observed_at")),
-        reason=internal_text(data["reason"], "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True),
+        observed_at=canonical_utc(require_utc_datetime(data["observed_at"], "feedback observed_at")),
+        reason=require_text(data["reason"], "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True),
     )
     return result
 
@@ -939,18 +863,6 @@ def validate_feedback_statistics(value: object) -> dict:
     return result
 
 
-def feedback_statistics_verdict_count(value: object) -> int:
-    current = validate_feedback_statistics(value)
-    result = (
-        current["accept_count"]
-        + current["rejected_quality"]
-        + current["rejected_context"]
-        + current["rejected_stale"]
-        + current["rejected_policy"]
-    )
-    return result
-
-
 def feedback_statistics_increment(value: object, outcome: object) -> dict:
     current = validate_feedback_statistics(value)
     if not isinstance(outcome, FeedbackOutcome):
@@ -959,23 +871,6 @@ def feedback_statistics_increment(value: object, outcome: object) -> dict:
     field_name = FEEDBACK_OUTCOME_COUNTER_FIELDS[outcome]
     updated[field_name] = current[field_name] + 1
     result = validate_feedback_statistics(updated)
-    return result
-
-
-def feedback_statistics_add(first: object, second: object) -> dict:
-    try:
-        first_value = validate_feedback_statistics(first)
-        second_value = validate_feedback_statistics(second)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("feedback statistics can only add FeedbackStatistics") from error
-    result = feedback_statistics(
-        candidate_count=first_value["candidate_count"] + second_value["candidate_count"],
-        accept_count=first_value["accept_count"] + second_value["accept_count"],
-        rejected_quality=first_value["rejected_quality"] + second_value["rejected_quality"],
-        rejected_context=first_value["rejected_context"] + second_value["rejected_context"],
-        rejected_stale=first_value["rejected_stale"] + second_value["rejected_stale"],
-        rejected_policy=first_value["rejected_policy"] + second_value["rejected_policy"],
-    )
     return result
 
 
@@ -1021,7 +916,7 @@ def feedback_bucket(
     version = internal_integer(schema_version, "feedback bucket schema_version", 0)
     if version != FEEDBACK_BUCKET_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback bucket schema_version: {version}")
-    validated_start_at = canonical_utc(parse_timestamp(start_at, "feedback bucket start_at"))
+    validated_start_at = canonical_utc(require_utc_datetime(start_at, "feedback bucket start_at"))
     try:
         validated_statistics = validate_feedback_statistics(statistics)
     except InvalidRequestError as error:
@@ -1040,23 +935,13 @@ def validate_feedback_bucket(value: object) -> dict:
     return result
 
 
-def feedback_bucket_to_dict(value: object) -> dict:
-    current = validate_feedback_bucket(value)
-    result = {
-        "schema_version": current["schema_version"],
-        "start_at": current["start_at"],
-        "statistics": feedback_statistics_to_dict(current["statistics"]),
-    }
-    return result
-
-
 def feedback_bucket_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
     if not isinstance(data.get("statistics", {}), dict):
         raise InvalidRequestError("feedback bucket statistics must be an object")
     result = feedback_bucket(
         schema_version=internal_integer(data["schema_version"], "feedback bucket schema_version", 0),
-        start_at=canonical_utc(parse_timestamp(data["start_at"], "feedback bucket start_at")),
+        start_at=canonical_utc(require_utc_datetime(data["start_at"], "feedback bucket start_at")),
         statistics=feedback_statistics_from_dict(data["statistics"]),
     )
     return result
@@ -1107,7 +992,7 @@ def statement_feedback_record(
         raise InvalidRequestError("statement feedback bucket starts must be unique")
     if not isinstance(last_outcome, FeedbackOutcome):
         raise InvalidRequestError("statement feedback last_outcome must be a FeedbackOutcome")
-    validated_last_observed_at = canonical_utc(parse_timestamp(last_observed_at, "statement feedback last_observed_at"))
+    validated_last_observed_at = canonical_utc(require_utc_datetime(last_observed_at, "statement feedback last_observed_at"))
     result: dict = {
         "key": validated_key,
         "raw": validated_raw,
@@ -1129,14 +1014,6 @@ def validate_statement_feedback_record(value: object) -> dict:
         data["last_observed_at"],
         data["schema_version"],
     )
-    return result
-
-
-def statement_feedback_record_apply(value: object, observation: object, policy: object) -> dict:
-    current = validate_statement_feedback_record(value)
-    validated_observation = validate_feedback_observation(observation)
-    validated_policy = validate_feedback_policy(policy)
-    result = trusted_statement_feedback_record_apply(current, validated_observation, validated_policy)
     return result
 
 
@@ -1184,19 +1061,6 @@ def trusted_statement_feedback_record(
     return result
 
 
-def statement_feedback_record_to_dict(value: object) -> dict:
-    current = validate_statement_feedback_record(value)
-    result = {
-        "schema_version": current["schema_version"],
-        "key": statement_feedback_key_to_dict(current["key"]),
-        "raw": feedback_statistics_to_dict(current["raw"]),
-        "buckets": [feedback_bucket_to_dict(bucket) for bucket in current["buckets"]],
-        "last_outcome": current["last_outcome"].value,
-        "last_observed_at": current["last_observed_at"],
-    }
-    return result
-
-
 def statement_feedback_record_from_dict(value: object) -> dict:
     data = exact_mapping(value, "StatementFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     if not isinstance(data.get("key", {}), dict) or not isinstance(data.get("raw", {}), dict):
@@ -1221,7 +1085,7 @@ def statement_feedback_record_from_dict(value: object) -> dict:
         "raw": feedback_statistics_from_dict(data["raw"]),
         "buckets": buckets,
         "last_outcome": last_outcome,
-        "last_observed_at": canonical_utc(parse_timestamp(data["last_observed_at"], "statement feedback last_observed_at")),
+        "last_observed_at": canonical_utc(require_utc_datetime(data["last_observed_at"], "statement feedback last_observed_at")),
         "schema_version": version,
     }
     return result
@@ -1256,7 +1120,7 @@ def relationship_feedback_record(
         raise InvalidRequestError("relationship feedback bucket starts must be unique")
     if not isinstance(last_outcome, FeedbackOutcome):
         raise InvalidRequestError("relationship feedback last_outcome must be a FeedbackOutcome")
-    validated_last_observed_at = canonical_utc(parse_timestamp(last_observed_at, "relationship feedback last_observed_at"))
+    validated_last_observed_at = canonical_utc(require_utc_datetime(last_observed_at, "relationship feedback last_observed_at"))
     result: dict = {
         "key": validated_key,
         "raw": validated_raw,
@@ -1278,14 +1142,6 @@ def validate_relationship_feedback_record(value: object) -> dict:
         data["last_observed_at"],
         data["schema_version"],
     )
-    return result
-
-
-def relationship_feedback_record_apply(value: object, observation: object, policy: object) -> dict:
-    current = validate_relationship_feedback_record(value)
-    validated_observation = validate_feedback_observation(observation)
-    validated_policy = validate_feedback_policy(policy)
-    result = trusted_relationship_feedback_record_apply(current, validated_observation, validated_policy)
     return result
 
 
@@ -1334,19 +1190,6 @@ def trusted_relationship_feedback_record(
     return result
 
 
-def relationship_feedback_record_to_dict(value: object) -> dict:
-    current = validate_relationship_feedback_record(value)
-    result = {
-        "schema_version": current["schema_version"],
-        "key": relationship_feedback_key_to_dict(current["key"]),
-        "raw": feedback_statistics_to_dict(current["raw"]),
-        "buckets": [feedback_bucket_to_dict(bucket) for bucket in current["buckets"]],
-        "last_outcome": current["last_outcome"].value,
-        "last_observed_at": current["last_observed_at"],
-    }
-    return result
-
-
 def relationship_feedback_record_from_dict(
     value: object,
     identity_cache: object = (),
@@ -1376,17 +1219,17 @@ def relationship_feedback_record_from_dict(
         "raw": feedback_statistics_from_dict(data["raw"]),
         "buckets": buckets,
         "last_outcome": last_outcome,
-        "last_observed_at": canonical_utc(parse_timestamp(data["last_observed_at"], "relationship feedback last_observed_at")),
+        "last_observed_at": canonical_utc(require_utc_datetime(data["last_observed_at"], "relationship feedback last_observed_at")),
         "schema_version": version,
     }
     return result
 
 
 def policy_suppression(statement_id: object, namespace: object, policy_fingerprint: object, observed_at: object) -> dict:
-    validated_statement_id = internal_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
-    validated_namespace = internal_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+    validated_statement_id = require_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
+    validated_namespace = require_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
     validated_policy = internal_fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
-    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "policy suppression observed_at"))
+    validated_observed_at = canonical_utc(require_utc_datetime(observed_at, "policy suppression observed_at"))
     result: dict = {
         "statement_id": validated_statement_id,
         "namespace": validated_namespace,
@@ -1408,12 +1251,6 @@ def policy_suppression_signature(value: object) -> tuple[str, str, str, str]:
     return result
 
 
-def policy_suppression_to_dict(value: object) -> dict:
-    current = validate_policy_suppression(value)
-    result = dict(current)
-    return result
-
-
 def policy_suppression_from_dict(value: object) -> dict:
     result = validate_policy_suppression(value)
     return result
@@ -1427,7 +1264,7 @@ def stale_exclusion(statement_id: object, generation: object, generation_availab
         EMPTY_FINGERPRINT,
         FEEDBACK_CONTRACT_FINGERPRINT,
     )
-    validated_observed_at = canonical_utc(parse_timestamp(observed_at, "stale exclusion observed_at"))
+    validated_observed_at = canonical_utc(require_utc_datetime(observed_at, "stale exclusion observed_at"))
     result: dict = {
         "statement_id": key["statement_id"],
         "generation": key["generation"],
@@ -1446,12 +1283,6 @@ def validate_stale_exclusion(value: object) -> dict:
 def stale_exclusion_signature(value: object) -> tuple[str, int, bool, str]:
     current = validate_stale_exclusion(value)
     result = (current["statement_id"], current["generation"], current["generation_available"], current["observed_at"])
-    return result
-
-
-def stale_exclusion_to_dict(value: object) -> dict:
-    current = validate_stale_exclusion(value)
-    result = dict(current)
     return result
 
 
@@ -1477,11 +1308,11 @@ def feedback_history(
     if version != FEEDBACK_HISTORY_SCHEMA_VERSION:
         raise InvalidRequestError(f"unsupported feedback history schema_version: {version}")
     validated_value = internal_number(value, "feedback history value", 0.0, 1.0)
-    validated_available = internal_boolean(available, "feedback history available")
+    validated_available = require_bool(available, "feedback history available")
     validated_statement_value = internal_number(statement_value, "feedback history statement_value", 0.0, 1.0)
-    validated_statement_available = internal_boolean(statement_available, "feedback history statement_available")
+    validated_statement_available = require_bool(statement_available, "feedback history statement_available")
     validated_relationship_value = internal_number(relationship_value, "feedback history relationship_value", 0.0, 1.0)
-    validated_relationship_available = internal_boolean(relationship_available, "feedback history relationship_available")
+    validated_relationship_available = require_bool(relationship_available, "feedback history relationship_available")
     validated_statement_samples = internal_number(statement_samples, "feedback history statement_samples", 0.0, 1.0e18)
     validated_relationship_samples = internal_number(relationship_samples, "feedback history relationship_samples", 0.0, 1.0e18)
     validated_policy = internal_fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
@@ -1793,12 +1624,6 @@ def feedback_state_to_dict(value: object) -> dict:
     return result
 
 
-def feedback_state_signature(value: object) -> str:
-    data = feedback_state_to_dict(value)
-    result = canonical_fingerprint(data)
-    return result
-
-
 def feedback_state_to_json(value: object) -> str:
     data = feedback_state_to_dict(value)
     result = json_text(data)
@@ -1858,16 +1683,6 @@ class PreparedFeedbackState(dict):
         self.canonical = state
 
 
-def feedback_mutation_candidate(before: object, after: object, receipt: object, replayed: object) -> dict:
-    result: dict = {
-        "before": validate_feedback_state(before),
-        "after": validate_feedback_state(after),
-        "receipt": validate_mutation_receipt(receipt),
-        "replayed": internal_boolean(replayed, "feedback mutation replayed"),
-    }
-    return result
-
-
 def trusted_feedback_mutation_candidate(
     before: dict,
     after: dict,
@@ -1881,12 +1696,6 @@ def trusted_feedback_mutation_candidate(
         "receipt": validate_mutation_receipt(receipt),
         "replayed": replayed,
     }
-    return result
-
-
-def validate_feedback_mutation_candidate(value: object) -> dict:
-    data = exact_mapping(value, "FeedbackMutationCandidate", set({"before", "after", "receipt", "replayed"}))
-    result = feedback_mutation_candidate(data["before"], data["after"], data["receipt"], data["replayed"])
     return result
 
 
@@ -1925,11 +1734,11 @@ def record_buckets(value: object) -> tuple[dict, ...]:
 
 
 def aged_values(records: tuple[object, ...], at: str, policy: dict) -> dict[FeedbackOutcome, float]:
-    evaluation = parse_timestamp(at, "feedback history evaluation time")
+    evaluation = require_utc_datetime(at, "feedback history evaluation time")
     values = dict.fromkeys(FeedbackOutcome, 0.0)
     for record in records:
         for bucket in record_buckets(record):
-            start = parse_timestamp(bucket["start_at"], "feedback bucket start_at")
+            start = require_utc_datetime(bucket["start_at"], "feedback bucket start_at")
             # A bucket represents its complete interval. Using its deterministic
             # end prevents same-bucket samples from falling below the integer
             # floor merely because they arrived after the bucket boundary.
@@ -2146,7 +1955,7 @@ class FeedbackStore:
         observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict:
-        internal_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
+        require_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not isinstance(observations, tuple) or not observations:
             raise InvalidRequestError("feedback observations must be a non-empty tuple of FeedbackObservation values")
         if len(observations) > MAX_FEEDBACK_OBSERVATIONS:
@@ -2198,7 +2007,7 @@ class FeedbackStore:
         lifecycle_status: LifecycleHandoffStatus,
     ) -> dict:
         """Check the receipt and apply observations to an off-live clone."""
-        internal_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
+        require_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not validated_observations or len(validated_observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError("validated feedback observations must be a non-empty bounded tuple")
         if not isinstance(lifecycle_status, LifecycleHandoffStatus):
@@ -2255,10 +2064,10 @@ class FeedbackStore:
         except IdentityValidationError as error:
             raise InvalidRequestError("feedback history query_identity must be QueryIdentity") from error
         internal_fingerprint(constraint, "feedback history constraint_fingerprint")
-        internal_text(statement_id, "feedback history statement_id", MAX_STATEMENT_ID_BYTES)
+        require_text(statement_id, "feedback history statement_id", MAX_STATEMENT_ID_BYTES)
         internal_integer(current_generation, "feedback history current_generation", 1)
         policy_value = internal_fingerprint(policy_fingerprint, "feedback history policy_fingerprint")
-        parse_timestamp(evaluation_time, "feedback history evaluation_time")
+        require_utc_datetime(evaluation_time, "feedback history evaluation_time")
         with self.internal_lock:
             statement_records = tuple(
                 record
@@ -2333,9 +2142,9 @@ class FeedbackStore:
         return result
 
     def stale_excluded(self, statement_id: str, current_generation: int, generation_available: bool = True) -> bool:
-        internal_text(statement_id, "stale exclusion statement_id", MAX_STATEMENT_ID_BYTES)
+        require_text(statement_id, "stale exclusion statement_id", MAX_STATEMENT_ID_BYTES)
         internal_integer(current_generation, "stale exclusion current_generation", 0)
-        internal_boolean(generation_available, "stale exclusion generation_available")
+        require_bool(generation_available, "stale exclusion generation_available")
         result = self.trusted_stale_excluded(statement_id, current_generation, generation_available)
         return result
 
@@ -2360,8 +2169,8 @@ class FeedbackStore:
         return result
 
     def policy_suppressed(self, statement_id: str, namespace: str, policy_fingerprint: str) -> bool:
-        internal_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
-        internal_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+        require_text(statement_id, "policy suppression statement_id", MAX_STATEMENT_ID_BYTES)
+        require_text(namespace, "policy suppression namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
         policy_value = internal_fingerprint(policy_fingerprint, "policy suppression policy_fingerprint")
         result = self.trusted_policy_suppressed(statement_id, namespace, policy_value)
         return result
@@ -2440,13 +2249,6 @@ class FeedbackStore:
                 "omitted_relationship_count": max(0, len(relationship_values) - limit),
             }
         return result
-
-
-def feedback_store_from_dict(value: dict) -> FeedbackStore:
-    """Construct a feedback store from one validated serialized state."""
-    state = feedback_state_from_dict(value)
-    result = FeedbackStore(state)
-    return result
 
 
 def negative_resolution_key(
@@ -2596,8 +2398,8 @@ def negative_resolution(
         raise InvalidRequestError("negative resolution key has an invalid type") from error
     if not isinstance(reason, NegativeResolutionReason):
         raise InvalidRequestError("negative resolution reason has an invalid type")
-    created = parse_timestamp(created_at, "negative created_at")
-    expires = parse_timestamp(expires_at, "negative expires_at")
+    created = require_utc_datetime(created_at, "negative created_at")
+    expires = require_utc_datetime(expires_at, "negative expires_at")
     if expires <= created:
         raise InvalidRequestError("negative expires_at must be after created_at")
     validated_created_at = canonical_utc(created)
@@ -2656,52 +2458,8 @@ def negative_resolution_with_changes(value: object, changes: object) -> dict:
     return result
 
 
-def negative_resolution_to_dict(value: object) -> dict:
-    current = validate_negative_resolution(value)
-    result = {
-        "schema_version": current["schema_version"],
-        "key": negative_resolution_key_to_dict(current["key"]),
-        "reason": current["reason"].value,
-        "created_at": current["created_at"],
-        "expires_at": current["expires_at"],
-        "hit_count": current["hit_count"],
-    }
-    return result
-
-
-def negative_resolution_to_json(value: object) -> str:
-    data = negative_resolution_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def negative_resolution_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
-    if not isinstance(data.get("key", {}), dict):
-        raise InvalidRequestError("negative key must be an object")
-    try:
-        reason = NegativeResolutionReason(data["reason"])
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("negative resolution contains an unsupported reason") from error
-    result = negative_resolution(
-        schema_version=internal_integer(data["schema_version"], "negative resolution schema_version", 0),
-        key=negative_resolution_key_from_dict(data["key"]),
-        reason=reason,
-        created_at=canonical_utc(parse_timestamp(data["created_at"], "negative created_at")),
-        expires_at=canonical_utc(parse_timestamp(data["expires_at"], "negative expires_at")),
-        hit_count=internal_integer(data["hit_count"], "negative hit_count", 0),
-    )
-    return result
-
-
-def negative_resolution_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "NegativeResolution JSON")
-    result = negative_resolution_from_dict(data)
-    return result
-
-
 def negative_lookup(hit: object, record: object = {}) -> dict:
-    validated_hit = internal_boolean(hit, "negative lookup hit")
+    validated_hit = require_bool(hit, "negative lookup hit")
     if not isinstance(record, dict):
         raise InvalidRequestError("negative lookup record must be NegativeResolution")
     try:
@@ -2711,12 +2469,6 @@ def negative_lookup(hit: object, record: object = {}) -> dict:
     if not validated_hit and validated_record != empty_negative_resolution():
         raise InvalidRequestError("negative lookup miss must use the concrete empty record")
     result: dict = {"hit": validated_hit, "record": validated_record}
-    return result
-
-
-def validate_negative_lookup(value: object) -> dict:
-    data = exact_mapping(value, "NegativeLookup", NEGATIVE_LOOKUP_FIELDS)
-    result = negative_lookup(data["hit"], data["record"])
     return result
 
 
@@ -2746,7 +2498,7 @@ class NegativeResolutionStore:
         expired = [
             key
             for key, record in self.internal_records.items()
-            if parse_timestamp(record["expires_at"], "negative expires_at") <= at
+            if require_utc_datetime(record["expires_at"], "negative expires_at") <= at
         ]
         for key in expired:
             del self.internal_records[key]
@@ -2769,7 +2521,7 @@ class NegativeResolutionStore:
             validated_key = validate_negative_resolution_key(key)
         except InvalidRequestError as error:
             raise InvalidRequestError("negative lookup key must be NegativeResolutionKey") from error
-        at = parse_timestamp(evaluation_time, "negative lookup evaluation_time")
+        at = require_utc_datetime(evaluation_time, "negative lookup evaluation_time")
         with self.internal_lock:
             self.internal_metrics["lookups"] += 1
             self.expire(at)
@@ -2791,7 +2543,7 @@ class NegativeResolutionStore:
             validated_key = validate_negative_resolution_key(key)
         except InvalidRequestError as error:
             raise InvalidRequestError("negative admission key must be NegativeResolutionKey") from error
-        at = parse_timestamp(evaluation_time, "negative admission evaluation_time")
+        at = require_utc_datetime(evaluation_time, "negative admission evaluation_time")
         with self.internal_lock:
             self.expire(at)
             self.invalidate_related(validated_key)

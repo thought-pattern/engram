@@ -577,7 +577,7 @@ def test_cache_requests_that_cannot_become_a_lookup_key_are_rejected_before_any_
 
     monkeypatch.setattr(core.query_frame_builder, "build", no_work)
     oversized = "x" * (MAX_CACHE_REQUEST_BYTES + 1)
-    limit = f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes"
+    limit = f"request exceeds the limit of {MAX_CACHE_REQUEST_BYTES} UTF-8 bytes"
     with pytest_raises(InvalidRequestError, match=limit):
         core.resolve_request(oversized, "oversized-resolve")
     with pytest_raises(InvalidRequestError, match=limit):

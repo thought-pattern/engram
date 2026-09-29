@@ -31,6 +31,7 @@ from engram.identity import (
 )
 from engram.resolution import inheritance_provenance, query_frame_with_changes, validate_query_frame
 from engram.temporal import temporal_query, temporal_query_from_dict, temporal_query_to_dict, validate_temporal_query
+from engram.validation import require_text
 
 FOLLOW_UP_LEADS = (
     "and ",
@@ -41,18 +42,6 @@ FOLLOW_UP_LEADS = (
     "instead ",
 )
 FOLLOW_UP_REFERENTS = set({"it", "its", "that", "this", "they", "them", "their", "there", "he", "she"})
-
-
-def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
 
 
 def internal_turn(value: object, name: str) -> int:
@@ -135,7 +124,7 @@ def compact_query_frame(
         "qualifiers": validated_qualifiers,
         "source_turn": internal_turn(source_turn, "compact query frame source_turn"),
         "confidence": internal_confidence(confidence, "compact query frame confidence"),
-        "topic": internal_text(topic, "compact query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True),
+        "topic": require_text(topic, "compact query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True),
     }
     return result
 
@@ -195,9 +184,9 @@ def compact_query_frame_from_dict(value: object) -> dict:
     if not isinstance(raw_subjects, list) or not isinstance(raw_qualifiers, list):
         raise InvalidRequestError("serialized compact query frame collections must be lists")
     try:
-        operator = QueryOperator(internal_text(data["operator"], "compact operator", 32, allow_empty=False))
+        operator = QueryOperator(require_text(data["operator"], "compact operator", 32, allow_empty=False))
         expected = ExpectedObjectType(
-            internal_text(data["expected_object_type"], "compact expected_object_type", 32, allow_empty=False)
+            require_text(data["expected_object_type"], "compact expected_object_type", 32, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("serialized compact query frame enum is unsupported") from error
@@ -237,7 +226,7 @@ def infer_expected_object_type(operator: object) -> ExpectedObjectType:
 
 def is_elliptical_follow_up(request: object) -> bool:
     """Recognize bounded surface evidence for a context-dependent follow-up."""
-    text = internal_text(request, "follow-up request", 4_096, allow_empty=False)
+    text = require_text(request, "follow-up request", 4_096, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     tokens = normalized.split()
     if not tokens:
@@ -261,7 +250,7 @@ def is_elliptical_follow_up(request: object) -> bool:
 
 def classify_query_frame_operator(request: object, previous: object = {}) -> dict:
     """Classify or conservatively inherit the existing QueryOperator vocabulary."""
-    text = internal_text(request, "operator request", 4_096, allow_empty=False)
+    text = require_text(request, "operator request", 4_096, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     contextual_text = normalized
     for lead in FOLLOW_UP_LEADS:
@@ -334,7 +323,7 @@ def enrich_query_frame(
     """Populate expected type and inherit only missing fields from nearby context."""
     frame = validate_query_frame(value)
     turn = internal_turn(current_turn, "current query frame turn")
-    current_topic = internal_text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
+    current_topic = require_text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
     identity = frame["identity"]
     operator = identity["operator"]
     # The live request keeps every entity it named. Only the compact frame

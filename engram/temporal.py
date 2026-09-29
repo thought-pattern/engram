@@ -13,6 +13,7 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.errors import InvalidRequestError
+from engram.validation import require_available_utc_timestamp, require_text, utc_datetime
 
 DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
 BETWEEN_RE = re_compile(rf"\bbetween\s+({DATE_TOKEN})\s+(?:and|to)\s+({DATE_TOKEN})\b", IGNORECASE)
@@ -56,45 +57,12 @@ UNRESOLVED_RE = re_compile(
 )
 
 
-def internal_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds {maximum_bytes} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
-
-
 def internal_confidence(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError("temporal query confidence must be numeric")
     result = float(value)
     if not math_isfinite(result) or not 0.0 <= result <= 1.0:
         raise InvalidRequestError("temporal query confidence must be finite and from 0 through 1")
-    return result
-
-
-def internal_timestamp(value: object, available: object, name: str) -> tuple[str, bool]:
-    if not isinstance(available, bool):
-        raise InvalidRequestError(f"temporal query {name}_available must be a boolean")
-    text = internal_text(value, f"temporal query {name}", 64, allow_empty=not available)
-    if not available:
-        if text:
-            raise InvalidRequestError(f"temporal query {name} must be empty when unavailable")
-        result = text, available
-        return result
-    if not text or not text.endswith("Z"):
-        raise InvalidRequestError(f"temporal query {name} must be a canonical UTC timestamp")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"temporal query {name} must be a canonical UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"temporal query {name} must use canonical RFC 3339 form")
-    result = text, available
     return result
 
 
@@ -119,13 +87,17 @@ def temporal_query(
         raise InvalidRequestError("temporal query axis is unsupported")
     if not isinstance(resolved, bool):
         raise InvalidRequestError("temporal query resolved must be a boolean")
-    source = internal_text(source_text, "temporal query source_text", MAX_TEMPORAL_SOURCE_BYTES, allow_empty=True)
-    normalized_start, normalized_start_available = internal_timestamp(start, start_available, "start")
-    normalized_end, normalized_end_available = internal_timestamp(end, end_available, "end")
+    source = require_text(source_text, "temporal query source_text", MAX_TEMPORAL_SOURCE_BYTES, allow_empty=True)
+    normalized_start, normalized_start_available = require_available_utc_timestamp(
+        start, start_available, "temporal query start", maximum_bytes=64
+    )
+    normalized_end, normalized_end_available = require_available_utc_timestamp(
+        end, end_available, "temporal query end", maximum_bytes=64
+    )
     normalized_confidence = internal_confidence(confidence)
     if normalized_start_available and normalized_end_available:
-        start_value = datetime.fromisoformat(normalized_start[:-1] + "+00:00")
-        end_value = datetime.fromisoformat(normalized_end[:-1] + "+00:00")
+        start_value = utc_datetime(normalized_start)
+        end_value = utc_datetime(normalized_end)
         if start_value >= end_value:
             raise InvalidRequestError("temporal query start must be earlier than end")
     bounds = normalized_start_available, normalized_end_available
@@ -280,7 +252,7 @@ def parse_temporal_query(request: object) -> dict:
     """
     if isinstance(request, str):
         request = WHITESPACE_CONTROL_RE.sub(" ", request)
-    text = internal_text(request, "temporal request", 4_096, allow_empty=False)
+    text = require_text(request, "temporal request", 4_096, allow_empty=False)
     axis = TemporalAxis.SYSTEM_TIME if SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
     candidates: list[tuple[TemporalQueryOperator, re_Match[str]]] = []
     quantity_starts: set[int] = set()

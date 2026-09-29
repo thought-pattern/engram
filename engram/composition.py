@@ -16,6 +16,7 @@ from engram.constants import (
     MAX_COMPOSITION_HOPS,
     MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_COMPOSITION_ROWS,
+    MAX_COMPOSITION_TEXT_BYTES,
     CanonicalResolutionStatus,
     CompositionReason,
     ExpectedObjectType,
@@ -28,29 +29,13 @@ from engram.evidence import validate_proposition_eligibility_decision
 from engram.graph import validate_relation_proposition_projection
 from engram.relation import canonical_resolution, validate_canonical_resolution
 from engram.resolution import validate_query_frame
+from engram.validation import require_identifier, require_text
 
 logger = logging_getLogger(__name__)
 
 
-def internal_text(value: object, name: str, maximum: int = 256, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str) or (not allow_empty and not value):
-        raise InvalidRequestError(f"{name} must be a {'possibly empty ' if allow_empty else 'non-empty '}string")
-    if len(value.encode("utf-8")) > maximum:
-        raise InvalidRequestError(f"{name} exceeds {maximum} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
-
-
-def internal_identifier(value: object, name: str, *, allow_empty: bool = False) -> str:
-    result = internal_text(value, name, allow_empty=allow_empty)
-    if result and any(character.isspace() for character in result):
-        raise InvalidRequestError(f"{name} must not contain whitespace")
-    return result
-
-
 def internal_binding(value: object, name: str) -> str:
-    result = internal_identifier(value, name)
+    result = require_identifier(value, name, maximum_bytes=MAX_COMPOSITION_TEXT_BYTES)
     if len(result.encode("utf-8")) > MAX_COMPOSITION_BINDING_BYTES or not result.startswith("$") or len(result) == 1:
         raise InvalidRequestError(f"{name} must be a bounded $ binding")
     return result
@@ -83,13 +68,13 @@ def composition_step(
         "branch": internal_integer(branch, "composition step branch", 0, MAX_COMPOSITION_BRANCHES - 1),
         "hop": internal_integer(hop, "composition step hop", 0, MAX_COMPOSITION_HOPS - 1),
         "subject_binding": internal_binding(subject_binding, "composition step subject_binding"),
-        "subject_entity_id": internal_identifier(
-            subject_entity_id,
-            "composition step subject_entity_id",
-            allow_empty=True,
+        "subject_entity_id": require_identifier(
+            subject_entity_id, "composition step subject_entity_id", allow_empty=True, maximum_bytes=MAX_COMPOSITION_TEXT_BYTES
         ),
-        "predicate_id": internal_identifier(predicate_id, "composition step predicate_id"),
-        "predicate_label": internal_text(predicate_label, "composition step predicate_label"),
+        "predicate_id": require_identifier(predicate_id, "composition step predicate_id", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES),
+        "predicate_label": require_text(
+            predicate_label, "composition step predicate_label", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES
+        ),
         "object_binding": internal_binding(object_binding, "composition step object_binding"),
         "expected_object_type": expected_object_type,
         "max_candidates": internal_integer(
@@ -133,7 +118,7 @@ def composition_step_from_dict(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != COMPOSITION_STEP_FIELDS:
         raise InvalidRequestError("CompositionStep has invalid fields")
     try:
-        expected = ExpectedObjectType(internal_text(value["expected_object_type"], "composition step expected_object_type", 16))
+        expected = ExpectedObjectType(require_text(value["expected_object_type"], "composition step expected_object_type", 16))
     except ValueError as error:
         raise InvalidRequestError("composition step expected_object_type is unsupported") from error
     result = composition_step(
@@ -209,7 +194,7 @@ def composition_plan(
         raise InvalidRequestError("composition Boolean operator requires at least two branches")
 
     terminal = internal_binding(terminal_binding, "composition plan terminal_binding")
-    root_id = internal_identifier(root_entity_id, "composition plan root_entity_id")
+    root_id = require_identifier(root_entity_id, "composition plan root_entity_id", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES)
     for branch in branches:
         branch_steps = tuple(step for step in normalized_steps if step["branch"] == branch)
         if len(branch_steps) > hop_limit or len(branch_steps) > path_limit:
@@ -265,7 +250,7 @@ def composition_plan(
         "schema_version": version,
         "operator": operator,
         "root_entity_id": root_id,
-        "root_label": internal_text(root_label, "composition plan root_label"),
+        "root_label": require_text(root_label, "composition plan root_label", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES),
         "steps": normalized_steps,
         "terminal_binding": terminal,
         "aggregation_inputs": normalized_aggregation,
@@ -324,7 +309,7 @@ def composition_plan_from_dict(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != COMPOSITION_PLAN_FIELDS:
         raise InvalidRequestError("CompositionPlan has invalid fields")
     try:
-        operator = GraphCompositionOperator(internal_text(value["operator"], "composition plan operator", 16))
+        operator = GraphCompositionOperator(require_text(value["operator"], "composition plan operator", 16))
     except ValueError as error:
         raise InvalidRequestError("composition plan operator is unsupported") from error
     raw_steps = value["steps"]
@@ -489,7 +474,7 @@ PREDICATE_STOP_WORDS = {
 
 def bounded_predicate_surfaces(text: object, excluded_words: object = ()) -> tuple[tuple[int, str], ...]:
     """Return deterministic one- to three-token Predicate lookup surfaces."""
-    request = internal_text(text, "composition request", 16_384)
+    request = require_text(text, "composition request", 16_384)
     if not isinstance(excluded_words, tuple):
         raise InvalidRequestError("composition excluded_words must be a tuple")
     excluded = {str(value).casefold() for value in excluded_words}
@@ -537,8 +522,12 @@ def resolve_composition_predicates(
         if len({row["canonical_id"] for row in rows}) > 1:
             raise InvalidRequestError(CompositionReason.IDENTITY_AMBIGUOUS.value)
         for row in rows:
-            canonical_id = internal_identifier(row["canonical_id"], "composition Predicate canonical_id")
-            label = internal_text(row["primary_label"], "composition Predicate primary_label")
+            canonical_id = require_identifier(
+                row["canonical_id"], "composition Predicate canonical_id", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES
+            )
+            label = require_text(
+                row["primary_label"], "composition Predicate primary_label", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES
+            )
             object_type = row["object_type"]
             if not isinstance(object_type, ExpectedObjectType):
                 raise InvalidRequestError("composition Predicate object_type is unsupported")

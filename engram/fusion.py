@@ -10,7 +10,6 @@ from engram.constants import (
     CANDIDATE_ELIGIBILITY_FIELDS,
     CANDIDATE_ELIGIBILITY_SCHEMA_VERSION,
     DEFAULT_FUSION_WEIGHTS,
-    FEATURE_DEFINITION_FIELDS,
     FUSED_CANDIDATE_FIELDS,
     FUSED_CANDIDATE_SCHEMA_VERSION,
     FUSION_AMBIGUITY_MARGIN,
@@ -37,6 +36,7 @@ from engram.constants import (
     MAX_FUSION_REPORT_BYTES,
     MAX_FUSION_REPORT_CANDIDATES,
     MAX_FUSION_REPORT_CONTRIBUTIONS,
+    MAX_REQUEST_BYTES,
     MIN_FUSION_INDEPENDENT_SOURCES,
     NORMALIZED_FEATURE_SCHEMA_VERSION,
     NORMALIZED_FEATURE_SET_FIELDS,
@@ -78,6 +78,7 @@ from engram.resolution import (
     validate_query_frame,
 )
 from engram.utilities import UTILITY_PLUGIN_VERSION, evaluate_named_utility
+from engram.validation import require_any_text, require_bool
 
 logger = logging_getLogger(__name__)
 
@@ -139,25 +140,6 @@ def feature_definition(
         "combination_rule": normalized_combination_rule,
         "role": role,
     }
-    return result
-
-
-def validate_feature_definition(value: object) -> dict:
-    data = exact_mapping(value, "FeatureDefinition", FEATURE_DEFINITION_FIELDS)
-    result = feature_definition(
-        data["feature"],
-        data["minimum"],
-        data["maximum"],
-        data["higher_is_better"],
-        data["meaning"],
-        data["unavailable_meaning"],
-        data["producer"],
-        data["owner_section"],
-        data["trust_boundary"],
-        data["raw_range"],
-        data["combination_rule"],
-        data["role"],
-    )
     return result
 
 
@@ -263,18 +245,6 @@ def contains_none(value: object) -> bool:
 def internal_integer(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise InvalidRequestError(f"{name} must be an integer")
-    return value
-
-
-def internal_text(value: object, name: str) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    return value
-
-
-def internal_boolean(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
     return value
 
 
@@ -415,7 +385,7 @@ def fusion_policy(
         raise InvalidRequestError(
             f"minimum_independent_sources must be from {MIN_FUSION_INDEPENDENT_SOURCES} through {MAX_FUSION_INDEPENDENT_SOURCES}"
         )
-    support_required = internal_boolean(require_support_for_non_exact, "require_support_for_non_exact")
+    support_required = require_bool(require_support_for_non_exact, "require_support_for_non_exact")
     report_candidates = internal_integer(max_report_candidates, "max_report_candidates")
     if not 1 <= report_candidates <= MAX_FUSION_REPORT_CANDIDATES:
         raise InvalidRequestError(f"max_report_candidates must be from 1 through {MAX_FUSION_REPORT_CANDIDATES}")
@@ -493,7 +463,7 @@ def fusion_policy_from_dict(value: object) -> dict:
         feature: internal_number(raw_weights[feature.value], f"FusionPolicy {feature.value} weight") for feature in FusionFeature
     }
     result = fusion_policy(
-        policy_version=internal_text(data["policy_version"], "FusionPolicy policy_version"),
+        policy_version=require_any_text(data["policy_version"], "FusionPolicy policy_version", MAX_REQUEST_BYTES, allow_empty=True),
         formula_version=internal_integer(data["formula_version"], "FusionPolicy formula_version"),
         weights=weights,
         answer_threshold=internal_number(data["answer_threshold"], "FusionPolicy answer_threshold"),
@@ -502,7 +472,7 @@ def fusion_policy_from_dict(value: object) -> dict:
         minimum_independent_sources=internal_integer(
             data["minimum_independent_sources"], "FusionPolicy minimum_independent_sources"
         ),
-        require_support_for_non_exact=internal_boolean(
+        require_support_for_non_exact=require_bool(
             data["require_support_for_non_exact"], "FusionPolicy require_support_for_non_exact"
         ),
         max_report_candidates=internal_integer(data["max_report_candidates"], "FusionPolicy max_report_candidates"),
@@ -649,9 +619,9 @@ def candidate_eligibility_from_dict(value: object) -> dict:
     except ValueError as error:
         raise InvalidRequestError("CandidateEligibility contains an unsupported reason code") from error
     result = candidate_eligibility(
-        score_eligible=internal_boolean(data["score_eligible"], "CandidateEligibility score_eligible"),
-        evidence_eligible=internal_boolean(data["evidence_eligible"], "CandidateEligibility evidence_eligible"),
-        answer_eligible=internal_boolean(data["answer_eligible"], "CandidateEligibility answer_eligible"),
+        score_eligible=require_bool(data["score_eligible"], "CandidateEligibility score_eligible"),
+        evidence_eligible=require_bool(data["evidence_eligible"], "CandidateEligibility evidence_eligible"),
+        answer_eligible=require_bool(data["answer_eligible"], "CandidateEligibility answer_eligible"),
         reason_codes=reasons,
         feature_values=enum_feature_mapping(data["feature_values"], "CandidateEligibility feature_values", complete=False),
         feature_available=feature_tuple(data["feature_available"], "CandidateEligibility feature_available"),
@@ -1187,12 +1157,6 @@ def trusted_fusion_contribution_to_dict(current: dict) -> dict:
     return result
 
 
-def fusion_contribution_to_report_dict(value: object) -> dict:
-    current = validate_fusion_contribution(value)
-    result = trusted_fusion_contribution_to_report_dict(current)
-    return result
-
-
 def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     """Render an engine-owned contribution for bounded diagnostics."""
     result = {
@@ -1338,22 +1302,6 @@ def trusted_fused_candidate(
     return result
 
 
-def fused_candidate_with_changes(value: object, changes: object) -> dict:
-    current = validate_fused_candidate(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(FUSED_CANDIDATE_FIELDS):
-        raise InvalidRequestError("fused candidate changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_fused_candidate(updated)
-    return result
-
-
-def fused_candidate_sources(value: object) -> tuple[CandidateSource, ...]:
-    current = validate_fused_candidate(value)
-    result = trusted_fused_candidate_sources(current)
-    return result
-
-
 def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...]:
     """Collect active sources from an engine-owned fused candidate."""
     sources = tuple(
@@ -1383,12 +1331,6 @@ def trusted_fused_candidate_to_dict(current: dict) -> dict:
         "score_contributions": {feature.value: current.get("score_contributions", {})[feature] for feature in FusionFeature},
         "eligibility": trusted_candidate_eligibility_to_dict(current.get("eligibility", {})),
     }
-    return result
-
-
-def fused_candidate_to_report_dict(value: object) -> dict:
-    current = validate_fused_candidate(value)
-    result = trusted_fused_candidate_to_report_dict(current)
     return result
 
 
@@ -1483,7 +1425,7 @@ def fusion_decision(
         validated_selected_candidate = empty_candidate() if not selected_candidate else validate_candidate(selected_candidate)
     except InvalidRequestError as error:
         raise InvalidRequestError("fusion selected_candidate must be a Candidate") from error
-    selected_available = internal_boolean(selected_candidate_available, "fusion selected_candidate_available")
+    selected_available = require_bool(selected_candidate_available, "fusion selected_candidate_available")
     if not isinstance(response_candidates, tuple):
         raise InvalidRequestError("fusion response_candidates must be a tuple of Candidate values")
     try:
@@ -1501,7 +1443,7 @@ def fusion_decision(
     if len(validated_evidence) > MAX_FUSION_CONTRIBUTIONS:
         raise InvalidRequestError("fusion evidence exceeds the evidence limit")
     validated_confidence = bounded_unit(confidence)
-    confidence_is_available = internal_boolean(confidence_available, "fusion confidence_available")
+    confidence_is_available = require_bool(confidence_available, "fusion confidence_available")
     if not isinstance(reason_codes, tuple) or not 1 <= len(reason_codes) <= MAX_FUSION_REASON_CODES:
         raise InvalidRequestError("fusion reason_codes must be a bounded non-empty tuple")
     if tuple(dict.fromkeys(reason_codes)) != reason_codes:
@@ -1640,8 +1582,8 @@ def fusion_decision_from_dict(value: object) -> dict:
         outcome = ResolutionOutcome(outcome_value)
     except ValueError as error:
         raise InvalidRequestError("FusionDecision outcome is unsupported") from error
-    selected_available = internal_boolean(data["selected_candidate_available"], "FusionDecision selected_candidate_available")
-    confidence_available = internal_boolean(data["confidence_available"], "FusionDecision confidence_available")
+    selected_available = require_bool(data["selected_candidate_available"], "FusionDecision selected_candidate_available")
+    confidence_available = require_bool(data["confidence_available"], "FusionDecision confidence_available")
     selected_value = data["selected_candidate"]
     response_values = data["response_candidates"]
     evidence_values = data["evidence"]
@@ -1732,14 +1674,6 @@ def normalize_validated_candidate_features(validated_candidate: dict) -> dict:
     return result
 
 
-def merge_candidate_eligibility(first: dict, second: dict) -> dict:
-    """Merge structural and authoritative candidate eligibility."""
-    validated_first = validate_candidate_eligibility(first)
-    validated_second = validate_candidate_eligibility(second)
-    result = merge_validated_candidate_eligibility(validated_first, validated_second)
-    return result
-
-
 def merge_validated_candidate_eligibility(
     validated_first: dict,
     validated_second: dict,
@@ -1761,13 +1695,6 @@ def merge_validated_candidate_eligibility(
         values,
         available,
     )
-    return result
-
-
-def canonical_candidate_key(candidate: dict) -> tuple[int, str, str]:
-    """Return the deterministic ordering key for one candidate."""
-    candidate = validate_candidate(candidate)
-    result = trusted_canonical_candidate_key(candidate)
     return result
 
 
@@ -1800,17 +1727,6 @@ def dedupe_evidence(
             continue
         retained.append(variants[sorted(variants)[0]])
     result = tuple(retained), conflict_count
-    return result
-
-
-def apply_authoritative_features(
-    normalized: dict,
-    eligibility: dict,
-) -> dict:
-    """Overlay authoritative feature values on normalized producer features."""
-    normalized = validate_normalized_feature_set(normalized)
-    eligibility = validate_candidate_eligibility(eligibility)
-    result = apply_validated_authoritative_features(normalized, eligibility)
     return result
 
 

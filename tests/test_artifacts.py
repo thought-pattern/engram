@@ -430,7 +430,7 @@ def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
     [
         ({"statement_id": ""}, "must not be empty"),
         ({"generation": True}, "positive integer"),
-        ({"response": "bad\x00response"}, "unsupported control"),
+        ({"response": "bad\x00response"}, "control character"),
         ({"tier": "STATIC"}, "must be a Tier"),
         ({"lifecycle": "ACTIVE"}, "must be a LifecycleState"),
         ({"support_references": []}, "must be a tuple"),

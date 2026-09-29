@@ -691,21 +691,6 @@ class TemplateProcessor:
         return text
 
 
-def parse_template(data):
-    """Parse template from JSON/dict representation.
-
-    This is a pass-through for now since templates are already in dict form.
-    Future versions may add validation.
-
-    Args:
-        data: Template data (string or dict).
-
-    Returns:
-        Template object (currently same as input).
-    """
-    return data
-
-
 def process_template(
     template,
     context: dict,

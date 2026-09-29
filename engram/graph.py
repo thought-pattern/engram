@@ -62,6 +62,7 @@ from engram.errors import InvalidRequestError
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
+from engram.validation import parse_utc_timestamp, require_bool, require_identifier, require_text, utc_datetime
 
 logger = logging_getLogger(__name__)
 
@@ -145,31 +146,6 @@ async def read_rows(driver, statement: str, parameters: dict) -> list[dict]:
     return rows
 
 
-def projection_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} contains a control character")
-    return value
-
-
-def projection_identifier(value: object, name: str) -> str:
-    identifier = projection_text(value, name, MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES, allow_empty=False)
-    if any(character.isspace() for character in identifier):
-        raise InvalidRequestError(f"{name} must not contain whitespace")
-    return identifier
-
-
-def projection_bool(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise InvalidRequestError(f"{name} must be a boolean")
-    return value
-
-
 def projection_int(value: object, name: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise InvalidRequestError(f"{name} must be an integer from {minimum} through {maximum}")
@@ -201,15 +177,8 @@ def projection_timestamp(value: object, available: bool, name: str) -> str:
             raise InvalidRequestError(f"{name} must be timezone-aware UTC")
         text = value.isoformat().replace("+00:00", "Z")
     else:
-        text = projection_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
+        text = require_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
+    parse_utc_timestamp(text, name)
     return text
 
 
@@ -219,21 +188,21 @@ def optional_projection_text(value: object, available: bool, name: str, maximum_
             result = ""
             return result
         raise InvalidRequestError(f"{name} must be empty when unavailable")
-    result = projection_text(value, name, maximum_bytes, allow_empty=False)
+    result = require_text(value, name, maximum_bytes, allow_empty=False)
     return result
 
 
 def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
         raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")
-    normalized = tuple(projection_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
+    normalized = tuple(require_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
     if normalized != tuple(dict.fromkeys(normalized)):
         raise InvalidRequestError(f"{name} must contain unique values")
     return normalized
 
 
 def projection_object_type(value: object, name: str) -> ExpectedObjectType:
-    raw = projection_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, 32, allow_empty=False).upper()
     try:
         result = ExpectedObjectType(raw)
     except ValueError as error:
@@ -242,7 +211,7 @@ def projection_object_type(value: object, name: str) -> ExpectedObjectType:
 
 
 def projection_cardinality(value: object, name: str) -> PredicateCardinality:
-    raw = projection_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, 32, allow_empty=False).upper()
     try:
         result = PredicateCardinality(raw)
     except ValueError as error:
@@ -255,8 +224,10 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != CANONICAL_ENTITY_MATCH_FIELDS:
         raise InvalidRequestError("canonical entity match row has invalid fields")
     result: dict = {
-        "canonical_id": projection_identifier(value["canonical_id"], "canonical entity ID"),
-        "primary_label": projection_text(
+        "canonical_id": require_identifier(
+            value["canonical_id"], "canonical entity ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        ),
+        "primary_label": require_text(
             value["primary_label"], "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
@@ -271,8 +242,10 @@ def canonical_predicate_match_from_graph_row(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
         raise InvalidRequestError("canonical Predicate match row has invalid fields")
     result: dict = {
-        "canonical_id": projection_identifier(value["canonical_id"], "canonical Predicate ID"),
-        "primary_label": projection_text(
+        "canonical_id": require_identifier(
+            value["canonical_id"], "canonical Predicate ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        ),
+        "primary_label": require_text(
             value["primary_label"], "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "synonyms": projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
@@ -314,15 +287,23 @@ def proposition_projection(
     vector_index_id_available: object,
 ) -> dict:
     """Build one validated strict Proposition projection dictionary."""
-    normalized_proposition_id = projection_identifier(proposition_id, "Proposition projection proposition_id")
-    normalized_subject_id = projection_identifier(subject_entity_id, "Proposition projection subject_entity_id")
-    normalized_predicate_id = projection_identifier(predicate_id, "Proposition projection predicate_id")
-    normalized_object_id = projection_identifier(object_entity_id, "Proposition projection object_entity_id")
-    normalized_invalidated_available = projection_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
-    normalized_system_from_available = projection_bool(system_from_available, "Proposition projection system_from_available")
-    normalized_system_to_available = projection_bool(system_to_available, "Proposition projection system_to_available")
-    normalized_valid_from_available = projection_bool(valid_from_available, "Proposition projection valid_from_available")
-    normalized_valid_to_available = projection_bool(valid_to_available, "Proposition projection valid_to_available")
+    normalized_proposition_id = require_identifier(
+        proposition_id, "Proposition projection proposition_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_subject_id = require_identifier(
+        subject_entity_id, "Proposition projection subject_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_predicate_id = require_identifier(
+        predicate_id, "Proposition projection predicate_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_object_id = require_identifier(
+        object_entity_id, "Proposition projection object_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+    )
+    normalized_invalidated_available = require_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
+    normalized_system_from_available = require_bool(system_from_available, "Proposition projection system_from_available")
+    normalized_system_to_available = require_bool(system_to_available, "Proposition projection system_to_available")
+    normalized_valid_from_available = require_bool(valid_from_available, "Proposition projection valid_from_available")
+    normalized_valid_to_available = require_bool(valid_to_available, "Proposition projection valid_to_available")
     normalized_invalidated_at = projection_timestamp(
         invalidated_at, normalized_invalidated_available, "Proposition projection invalidated_at"
     )
@@ -335,33 +316,29 @@ def proposition_projection(
     if (
         normalized_system_from_available
         and normalized_system_to_available
-        and datetime.fromisoformat(normalized_system_from[:-1] + "+00:00")
-        >= datetime.fromisoformat(normalized_system_to[:-1] + "+00:00")
+        and utc_datetime(normalized_system_from) >= utc_datetime(normalized_system_to)
     ):
         raise InvalidRequestError("Proposition projection system_from must be earlier than system_to")
     if (
         normalized_valid_from_available
         and normalized_valid_to_available
-        and datetime.fromisoformat(normalized_valid_from[:-1] + "+00:00")
-        >= datetime.fromisoformat(normalized_valid_to[:-1] + "+00:00")
+        and utc_datetime(normalized_valid_from) >= utc_datetime(normalized_valid_to)
     ):
         raise InvalidRequestError("Proposition projection valid_from must be earlier than valid_to")
-    normalized_predicate_canonical = projection_bool(predicate_canonical, "Proposition projection predicate_canonical")
-    normalized_ownership = projection_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
+    normalized_predicate_canonical = require_bool(predicate_canonical, "Proposition projection predicate_canonical")
+    normalized_ownership = require_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
     if normalized_ownership not in {"PUBLIC", "COMPANY", "CUSTOMER"}:
         raise InvalidRequestError("Proposition projection ownership_category is unsupported")
-    normalized_trust_category_available = projection_bool(
-        trust_category_available, "Proposition projection trust_category_available"
-    )
+    normalized_trust_category_available = require_bool(trust_category_available, "Proposition projection trust_category_available")
     normalized_trust_category = optional_projection_text(
         trust_category,
         normalized_trust_category_available,
         "Proposition projection trust_category",
         96,
     )
-    normalized_trust_available = projection_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
+    normalized_trust_available = require_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
     normalized_trust = projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
-    normalized_version_available = projection_bool(
+    normalized_version_available = require_bool(
         supplied_trust_version_available, "Proposition projection supplied_trust_version_available"
     )
     normalized_version = projection_int(supplied_trust_version, "Proposition projection supplied_trust_version", 0, 2_147_483_647)
@@ -369,13 +346,11 @@ def proposition_projection(
         raise InvalidRequestError("Proposition projection supplied_trust_version must be zero when unavailable")
     if normalized_trust_available != normalized_version_available:
         raise InvalidRequestError("Proposition projection supplied trust value and version availability must match")
-    normalized_structured_available = projection_bool(
-        structured_match_available, "Proposition projection structured_match_available"
-    )
+    normalized_structured_available = require_bool(structured_match_available, "Proposition projection structured_match_available")
     normalized_structured = projection_score(
         structured_match, normalized_structured_available, "Proposition projection structured_match"
     )
-    normalized_semantic_available = projection_bool(
+    normalized_semantic_available = require_bool(
         semantic_similarity_available, "Proposition projection semantic_similarity_available"
     )
     normalized_semantic = projection_score(
@@ -383,8 +358,8 @@ def proposition_projection(
     )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection projection_id must be a PropositionProjectionQuery")
-    normalized_vector_available = projection_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
-    normalized_vector_id = projection_text(
+    normalized_vector_available = require_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
+    normalized_vector_id = require_text(
         vector_index_id, "Proposition projection vector_index_id", 128, allow_empty=not normalized_vector_available
     )
     if normalized_vector_available and not VECTOR_INDEX_NAME.fullmatch(normalized_vector_id):
@@ -489,16 +464,16 @@ def proposition_projection_from_graph_row(
         )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection query identifier is unsupported")
-    invalidated_available = projection_bool(value["invalidated_at_available"], "invalidated_at_available")
-    system_from_available = projection_bool(value["system_from_available"], "system_from_available")
-    system_to_available = projection_bool(value["system_to_available"], "system_to_available")
-    valid_from_available = projection_bool(value["valid_from_available"], "valid_from_available")
-    valid_to_available = projection_bool(value["valid_to_available"], "valid_to_available")
-    trust_category_available = projection_bool(value["trust_category_available"], "trust_category_available")
-    trust_available = projection_bool(value["supplied_trust_available"], "supplied_trust_available")
-    version_available = projection_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
-    structured_available = projection_bool(value["structured_match_available"], "structured_match_available")
-    semantic_available = projection_bool(value["semantic_similarity_available"], "semantic_similarity_available")
+    invalidated_available = require_bool(value["invalidated_at_available"], "invalidated_at_available")
+    system_from_available = require_bool(value["system_from_available"], "system_from_available")
+    system_to_available = require_bool(value["system_to_available"], "system_to_available")
+    valid_from_available = require_bool(value["valid_from_available"], "valid_from_available")
+    valid_to_available = require_bool(value["valid_to_available"], "valid_to_available")
+    trust_category_available = require_bool(value["trust_category_available"], "trust_category_available")
+    trust_available = require_bool(value["supplied_trust_available"], "supplied_trust_available")
+    version_available = require_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
+    structured_available = require_bool(value["structured_match_available"], "structured_match_available")
+    semantic_available = require_bool(value["semantic_similarity_available"], "semantic_similarity_available")
     raw_version = value["supplied_trust_version"]
     if not version_available and raw_version is None:
         supplied_version = 0
@@ -574,9 +549,7 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
     projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
     result: dict = {
         "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP_V1),
-        "object_label": projection_text(
-            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
-        ),
+        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
         "object_type": projection_object_type(value["object_type"], "relation object type"),
         "predicate_cardinality": projection_cardinality(
             value["predicate_cardinality"],
@@ -603,9 +576,7 @@ def validate_relation_proposition_projection(value: object) -> dict:
         raise InvalidRequestError("relation result predicate_cardinality must be a PredicateCardinality")
     result: dict = {
         "projection": validate_proposition_projection(value["projection"]),
-        "object_label": projection_text(
-            value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
-        ),
+        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
@@ -998,9 +969,7 @@ class MemGraphConnection:
         limit: int = 10,
     ) -> list[dict]:
         """Run one allow-listed structured Proposition projection and strictly decode its rows."""
-        term = projection_text(
-            value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False
-        )
+        term = require_text(value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False)
         if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY_V1:
             query = STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY
         elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD_V1:
@@ -1014,7 +983,7 @@ class MemGraphConnection:
 
     def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve an entity surface through one fixed, read-only query."""
-        term = projection_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        term = require_text(surface, "canonical entity surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
         row_limit = projection_int(limit, "canonical entity match limit", 1, MAX_RELATION_CANDIDATES)
         rows = self.execute(CANONICAL_ENTITY_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
@@ -1027,7 +996,7 @@ class MemGraphConnection:
 
     def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
         """Resolve a Predicate surface through one fixed, read-only query."""
-        term = projection_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
+        term = require_text(surface, "canonical Predicate surface", MAX_RELATION_LABEL_BYTES, allow_empty=False)
         row_limit = projection_int(limit, "canonical Predicate match limit", 1, MAX_RELATION_CANDIDATES)
         rows = self.execute(CANONICAL_PREDICATE_MATCH_QUERY, {"surface": term, "limit": row_limit})
         if not isinstance(rows, list) or len(rows) > row_limit:
@@ -1047,8 +1016,12 @@ class MemGraphConnection:
         include_historical: bool = False,
     ) -> list[dict]:
         """Execute only the allow-listed parameterized one-hop Proposition template."""
-        subject = projection_identifier(subject_entity_id, "relation subject_entity_id")
-        predicate = projection_identifier(predicate_id, "relation predicate_id")
+        subject = require_identifier(
+            subject_entity_id, "relation subject_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        )
+        predicate = require_identifier(
+            predicate_id, "relation predicate_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+        )
         if not isinstance(include_historical, bool):
             raise InvalidRequestError("relation include_historical must be a boolean")
         row_limit = projection_int(limit, "relation one-hop limit", 1, MAX_RELATION_PLAN_ROWS)
@@ -1101,7 +1074,11 @@ class MemGraphConnection:
 
     def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
         """Re-read one Proposition through the fixed canonical projection for publication revalidation."""
-        identifier = projection_identifier(proposition_id, "Proposition projection revalidation proposition_id")
+        identifier = require_identifier(
+            proposition_id,
+            "Proposition projection revalidation proposition_id",
+            maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
+        )
         rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
         result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
         return result

@@ -399,12 +399,6 @@ def validate_resolution_plan_entry(value: object) -> dict:
     return result
 
 
-def resolution_plan_entry_to_dict(value: object) -> dict[str, object]:
-    current = validate_resolution_plan_entry(value)
-    result = trusted_resolution_plan_entry_to_dict(current)
-    return result
-
-
 def trusted_resolution_plan_entry_to_dict(current: dict) -> dict[str, object]:
     """Serialize an entry already produced by this module."""
     resolver = current.get("resolver", {})

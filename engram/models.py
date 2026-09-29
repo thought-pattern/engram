@@ -56,15 +56,6 @@ def statement(
     return stmt
 
 
-def statement_hit_rate(stmt: dict) -> float:
-    """Calculate hit rate (hits/queries), default 0.5 when undefined."""
-    if stmt.get("query_count", 0) == 0:
-        result = 0.5
-        return result
-    rate = stmt.get("hit_count", 0) / stmt.get("query_count", 0)
-    return rate
-
-
 def record_statement_hit(stmt: dict) -> None:
     """Record a hit on this statement."""
     stmt["hit_count"] += 1
@@ -331,14 +322,6 @@ def session_update_dialogue(
 def session_touch(session: dict) -> None:
     """Update last_active timestamp."""
     session["last_active"] = datetime.now(UTC)
-
-
-def session_clear_predicates(session: dict) -> None:
-    """Clear all predicates except topic."""
-    topic = session.get("predicates", {}).get("topic", "")
-    session.get("predicates", {}).clear()
-    if topic:
-        session.get("predicates", {})["topic"] = topic
 
 
 def session_to_dict(session: dict) -> dict:

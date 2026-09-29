@@ -1,6 +1,15 @@
 """Tests for AIML-style pattern matching."""
 
-from engram.pattern import PatternMatcher, match_pattern, normalize_pattern, pattern_to_regex
+from engram.pattern import PatternMatcher, normalize_pattern
+
+
+def trie_match(pattern: str, text: str) -> tuple:
+    """Match one pattern with the production graphmaster; () when it misses."""
+    matcher = PatternMatcher()
+    matcher.add_pattern(pattern, "matched")
+    result = matcher.match(text)
+    return result
+
 
 """Tests for normalize_pattern function."""
 
@@ -48,87 +57,77 @@ def test_normalize_pattern_splits_intra_word_hyphen_and_underscore():
     assert normalize_pattern("HELLO _") == "hello _"
 
 
-def test_match_pattern_hyphenated_input_matches_spaced_pattern():
-    result = match_pattern("WHAT IS MIL STD 498", "What is MIL-STD-498?")
-    assert result["matched"] is True
+def test_matching_hyphenated_input_matches_spaced_pattern():
+    result = trie_match("WHAT IS MIL STD 498", "What is MIL-STD-498?")
+    assert result
 
 
-"""Tests for pattern_to_regex function."""
+"""Exact words and wildcards."""
 
 
-def test_pattern_to_regex_exact_word():
-    regex, _ = pattern_to_regex("HELLO")
-    assert regex.match("hello")
-    assert not regex.match("hello world")
+def test_pattern_exact_word():
+    assert trie_match("HELLO", "hello")
+    assert not trie_match("HELLO", "hello world")
 
 
-def test_pattern_to_regex_wildcard_star():
-    regex, score = pattern_to_regex("HELLO *")
-    _, exact_score = pattern_to_regex("HELLO WORLD")
-    assert score < exact_score
-    assert regex.match("hello world")
-    assert regex.match("hello there friend")
-    assert not regex.match("hello")  # * needs at least one word
+def test_pattern_wildcard_star():
+    assert trie_match("HELLO *", "hello world")
+    assert trie_match("HELLO *", "hello there friend")
+    assert not trie_match("HELLO *", "hello")  # * needs at least one word
 
 
-def test_pattern_to_regex_empty_pattern():
-    regex, score = pattern_to_regex("")
-    assert score == 0
+"""Matches and captures."""
 
 
-"""Tests for match_pattern function."""
+def test_matching_exact_match():
+    result = trie_match("HELLO", "hello")
+    assert result
+    assert list(result[1]) == []
 
 
-def test_match_pattern_exact_match():
-    result = match_pattern("HELLO", "hello")
-    assert result["matched"] is True
-    assert result["score"] > 0
-    assert result["captured"] == []
+def test_matching_exact_match_case_insensitive():
+    result = trie_match("HELLO", "HeLLo")
+    assert result
 
 
-def test_match_pattern_exact_match_case_insensitive():
-    result = match_pattern("HELLO", "HeLLo")
-    assert result["matched"] is True
+def test_matching_wildcard_capture():
+    result = trie_match("HELLO *", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
 
 
-def test_match_pattern_wildcard_capture():
-    result = match_pattern("HELLO *", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["world"]
+def test_matching_wildcard_capture_multiple_words():
+    result = trie_match("HELLO *", "hello there my friend")
+    assert result
+    assert list(result[1]) == ["there my friend"]
 
 
-def test_match_pattern_wildcard_capture_multiple_words():
-    result = match_pattern("HELLO *", "hello there my friend")
-    assert result["matched"] is True
-    assert result["captured"] == ["there my friend"]
+def test_matching_no_match():
+    result = trie_match("HELLO", "goodbye")
+    assert not result
 
 
-def test_match_pattern_no_match():
-    result = match_pattern("HELLO", "goodbye")
-    assert result["matched"] is False
+def test_matching_partial_no_match():
+    result = trie_match("HELLO WORLD", "hello")
+    assert not result
 
 
-def test_match_pattern_partial_no_match():
-    result = match_pattern("HELLO WORLD", "hello")
-    assert result["matched"] is False
+def test_matching_catchall():
+    result = trie_match("*", "anything at all")
+    assert result
+    assert list(result[1]) == ["anything at all"]
 
 
-def test_match_pattern_catchall():
-    result = match_pattern("*", "anything at all")
-    assert result["matched"] is True
-    assert result["captured"] == ["anything at all"]
+def test_matching_wildcard_at_start():
+    result = trie_match("* WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
 
 
-def test_match_pattern_wildcard_at_start():
-    result = match_pattern("* WORLD", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["hello"]
-
-
-def test_match_pattern_wildcard_in_middle():
-    result = match_pattern("HELLO * WORLD", "hello beautiful world")
-    assert result["matched"] is True
-    assert result["captured"] == ["beautiful"]
+def test_matching_wildcard_in_middle():
+    result = trie_match("HELLO * WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
 
 
 """Tests for # and ^ wildcards (zero or more words)."""
@@ -136,100 +135,96 @@ def test_match_pattern_wildcard_in_middle():
 
 def test_zero_or_more_wildcards_hash_matches_zero_words():
     """# should match zero words."""
-    result = match_pattern("HELLO # WORLD", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("HELLO # WORLD", "hello world")
+    assert result
+    assert list(result[1]) == [""]
 
 
 def test_zero_or_more_wildcards_hash_matches_one_word():
     """# should match one word."""
-    result = match_pattern("HELLO # WORLD", "hello beautiful world")
-    assert result["matched"] is True
-    assert result["captured"] == ["beautiful"]
+    result = trie_match("HELLO # WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
 
 
 def test_zero_or_more_wildcards_hash_matches_multiple_words():
     """# should match multiple words."""
-    result = match_pattern("HELLO # WORLD", "hello very beautiful world")
-    assert result["matched"] is True
-    assert result["captured"] == ["very beautiful"]
+    result = trie_match("HELLO # WORLD", "hello very beautiful world")
+    assert result
+    assert list(result[1]) == ["very beautiful"]
 
 
 def test_zero_or_more_wildcards_caret_matches_zero_words():
     """^ should match zero words."""
-    result = match_pattern("HELLO ^ WORLD", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("HELLO ^ WORLD", "hello world")
+    assert result
+    assert list(result[1]) == [""]
 
 
 def test_zero_or_more_wildcards_caret_matches_one_word():
     """^ should match one word."""
-    result = match_pattern("HELLO ^ WORLD", "hello beautiful world")
-    assert result["matched"] is True
-    assert result["captured"] == ["beautiful"]
+    result = trie_match("HELLO ^ WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
 
 
 def test_zero_or_more_wildcards_hash_at_start():
     """# at start matches zero or more."""
-    result = match_pattern("# WORLD", "world")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("# WORLD", "world")
+    assert result
+    assert list(result[1]) == [""]
 
-    result = match_pattern("# WORLD", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["hello"]
+    result = trie_match("# WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
 
 
 def test_zero_or_more_wildcards_hash_at_end():
     """# at end matches zero or more."""
-    result = match_pattern("HELLO #", "hello")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("HELLO #", "hello")
+    assert result
+    assert list(result[1]) == [""]
 
-    result = match_pattern("HELLO #", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["world"]
+    result = trie_match("HELLO #", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
 
 
 def test_zero_or_more_wildcards_caret_at_start():
     """^ at start matches zero or more."""
-    result = match_pattern("^ WORLD", "world")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("^ WORLD", "world")
+    assert result
+    assert list(result[1]) == [""]
 
-    result = match_pattern("^ WORLD", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["hello"]
+    result = trie_match("^ WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
 
 
 def test_zero_or_more_wildcards_caret_at_end():
     """^ at end matches zero or more."""
-    result = match_pattern("HELLO ^", "hello")
-    assert result["matched"] is True
-    assert result["captured"] == [""]
+    result = trie_match("HELLO ^", "hello")
+    assert result
+    assert list(result[1]) == [""]
 
-    result = match_pattern("HELLO ^", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["world"]
+    result = trie_match("HELLO ^", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
 
 
 def test_zero_or_more_wildcards_hash_only_pattern():
-    """# alone should match anything including empty."""
-    result = match_pattern("#", "hello world")
-    assert result["matched"] is True
-    assert result["captured"] == ["hello world"]
-
-    empty_result = match_pattern("#", "")
-    assert empty_result["matched"] is True
-    assert empty_result["captured"] == [""]
+    """# alone should match any words."""
+    result = trie_match("#", "hello world")
+    assert result
+    assert list(result[1]) == ["hello world"]
 
 
 def test_zero_or_more_wildcards_caret_priority_over_hash():
     """^ should have higher priority than #."""
-
-    _, hash_score = pattern_to_regex("HELLO #")
-    _, caret_score = pattern_to_regex("HELLO ^")
-    assert caret_score > hash_score
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO #", "hash")
+    matcher.add_pattern("HELLO ^", "caret")
+    assert matcher.match("hello world")[0] == "caret"
 
 
 def test_graphmaster_underscore_beats_an_exact_word():
@@ -299,14 +294,14 @@ def test_graphmaster_exact_pattern_beats_a_that_scoped_star():
 
 def test_zero_or_more_wildcards_star_requires_one_word():
     """* still requires at least one word."""
-    result = match_pattern("HELLO * WORLD", "hello world")
-    assert result["matched"] is False  # * needs at least one word
+    result = trie_match("HELLO * WORLD", "hello world")
+    assert not result  # * needs at least one word
 
 
 def test_zero_or_more_wildcards_underscore_requires_one_word():
     """_ still requires at least one word."""
-    result = match_pattern("HELLO _ WORLD", "hello world")
-    assert result["matched"] is False  # _ needs at least one word
+    result = trie_match("HELLO _ WORLD", "hello world")
+    assert not result  # _ needs at least one word
 
 
 """Tests for PatternMatcher with # and ^ wildcards."""
@@ -901,25 +896,14 @@ def test_priority_operator_normalize_multiple_dollar_words():
 
 def test_priority_operator_dollar_word_matches():
     """Test that $ word matches correctly."""
-    regex, _ = pattern_to_regex("$HELLO")
-    assert regex.match("hello")
-    assert not regex.match("world")
+    assert trie_match("$HELLO", "hello")
+    assert not trie_match("$HELLO", "world")
 
 
 def test_priority_operator_dollar_with_regular_words():
     """Test $ word combined with regular words."""
-    regex, _ = pattern_to_regex("$WHO IS *")
-    assert regex.match("who is john")
-    assert not regex.match("what is john")
-
-
-def test_priority_operator_dollar_word_wins_over_regular():
-    """Test that $ pattern beats regular pattern."""
-    result1 = match_pattern("WHO IS *", "who is john")
-    result2 = match_pattern("$WHO IS *", "who is john")
-    # Regular: 100 + 100 - 4 = 196
-    # Priority: 1000 + 100 - 4 = 1096
-    assert result2["score"] > result1["score"]
+    assert trie_match("$WHO IS *", "who is john")
+    assert not trie_match("$WHO IS *", "what is john")
 
 
 def test_priority_operator_matcher_prefers_dollar():
@@ -936,22 +920,20 @@ def test_priority_operator_matcher_prefers_dollar():
 
 def test_priority_operator_dollar_at_end():
     """Test $ word at end of pattern."""
-    regex, _ = pattern_to_regex("HELLO $WORLD")
-    assert regex.match("hello world")
+    assert trie_match("HELLO $WORLD", "hello world")
 
 
 def test_priority_operator_dollar_captures_wildcards():
     """Test capturing with $ patterns."""
-    result = match_pattern("$WHO IS *", "who is john smith")
-    assert result["matched"]
-    assert result["captured"] == ["john smith"]
+    result = trie_match("$WHO IS *", "who is john smith")
+    assert result
+    assert list(result[1]) == ["john smith"]
 
 
 def test_priority_operator_multiple_dollar_words():
     """Test multiple $ words in same pattern."""
-    regex, _ = pattern_to_regex("$HELLO $WORLD")
-    assert regex.match("hello world")
-    assert not regex.match("hello there")
+    assert trie_match("$HELLO $WORLD", "hello world")
+    assert not trie_match("$HELLO $WORLD", "hello there")
 
 
 """Tests for stemming support in pattern matching."""

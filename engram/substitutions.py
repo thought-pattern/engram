@@ -176,25 +176,3 @@ def split_sentences(text: str) -> list[str]:
 
     cleaned = [s.strip() for s in sentences if s.strip()]
     return cleaned
-
-
-def normalize_for_matching(text: str, expand_contr: bool = True) -> str:
-    """Normalize text for pattern matching.
-
-    Applies contractions expansion and normalizes whitespace.
-
-    Args:
-        text: Input text.
-        expand_contr: Whether to expand contractions.
-
-    Returns:
-        Normalized text ready for pattern matching.
-    """
-    result = text
-
-    if expand_contr:
-        result = expand_contractions(result)
-
-    result = " ".join(result.split())
-
-    return result

@@ -8,7 +8,6 @@ from engram.substitutions import (
     apply_person2,
     apply_substitutions,
     expand_contractions,
-    normalize_for_matching,
     split_sentences,
     substitution_maps,
 )
@@ -279,27 +278,6 @@ def test_split_sentences_decimals_handled():
     """Test NLTK handles decimal numbers correctly."""
     result = split_sentences("The value is 3.14. That's pi.")
     assert len(result) == 2
-
-
-"""Tests for normalize_for_matching function."""
-
-
-def test_normalize_for_matching_expands_contractions():
-    """Test contractions are expanded by default."""
-    result = normalize_for_matching("I'm here")
-    assert "i am" in result.lower()
-
-
-def test_normalize_for_matching_skip_contractions():
-    """Test contractions expansion can be skipped."""
-    result = normalize_for_matching("I'm here", expand_contr=False)
-    assert "i'm" in result.lower()
-
-
-def test_normalize_for_matching_normalizes_whitespace():
-    """Test whitespace is normalized."""
-    result = normalize_for_matching("hello   world")
-    assert result == "hello world"
 
 
 """Tests for SubstitutionMaps class."""

@@ -8,8 +8,8 @@ from math import isfinite as math_isfinite
 from engram.constants import (
     CANONICAL_COMPLETENESS_FLOOR_V1,
     EMPTY_SCOPE_KEY,
-    EVIDENCE_USEFULNESS_DECISION_FIELDS,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
+    MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_VISIBILITY_GRANTS,
     PROPOSITION_DISCLOSURE_POLICY_VERSION,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
@@ -46,6 +46,7 @@ from engram.resolution import (
     validate_proposition_evidence_record,
     validate_query_frame,
 )
+from engram.validation import require_identifier, require_utc_datetime
 
 logger = logging_getLogger(__name__)
 
@@ -79,7 +80,9 @@ def evidence_usefulness_decision(
     policy_version: object = PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
 ) -> dict:
     """Build one content-free evidence inclusion decision."""
-    normalized_proposition_id = token(proposition_id, "evidence usefulness proposition_id")
+    normalized_proposition_id = require_identifier(
+        proposition_id, "evidence usefulness proposition_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+    )
     if not isinstance(included, bool):
         raise InvalidRequestError("evidence usefulness included must be a boolean")
     if policy_version != PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION:
@@ -114,23 +117,6 @@ def evidence_usefulness_decision(
         "proposition_id": normalized_proposition_id,
         "included": included,
         "reasons": normalized_reasons,
-    }
-    return result
-
-
-def validate_evidence_usefulness_decision(value: object) -> dict:
-    data = exact_mapping(value, "EvidenceUsefulnessDecision", EVIDENCE_USEFULNESS_DECISION_FIELDS)
-    result = evidence_usefulness_decision(data["proposition_id"], data["included"], data["reasons"], data["policy_version"])
-    return result
-
-
-def evidence_usefulness_decision_to_dict(value: object) -> dict:
-    decision = validate_evidence_usefulness_decision(value)
-    result = {
-        "policy_version": decision["policy_version"],
-        "proposition_id": decision["proposition_id"],
-        "included": decision["included"],
-        "reasons": [reason.value for reason in decision["reasons"]],
     }
     return result
 
@@ -299,28 +285,6 @@ def evaluate_evidence_usefulness(policy: object, record: object) -> dict:
     return result
 
 
-def token(value: object, name: str, maximum_bytes: int = 256) -> str:
-    if not isinstance(value, str) or not value:
-        raise InvalidRequestError(f"{name} must be a non-empty string")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
-    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
-        raise InvalidRequestError(f"{name} must not contain whitespace or control characters")
-    return value
-
-
-def internal_timestamp(value: str) -> datetime:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise InvalidRequestError("Proposition eligibility time must be canonical RFC 3339 UTC")
-    try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError("Proposition eligibility time must be canonical RFC 3339 UTC") from error
-    if parsed.isoformat().replace("+00:00", "Z") != value:
-        raise InvalidRequestError("Proposition eligibility time must use the canonical UTC representation")
-    return parsed
-
-
 def visibility_authorization(
     allowed: object,
     scope: object,
@@ -341,9 +305,13 @@ def visibility_authorization(
         PropositionOwnership.CUSTOMER,
     }:
         raise InvalidRequestError("visibility authorization ownership must be COMPANY or CUSTOMER")
-    normalized_authority = token(authority_id, "visibility authorization authority_id")
-    normalized_policy = token(policy_version, "visibility authorization policy_version")
-    normalized_reason = token(reason_code, "visibility authorization reason_code", 96)
+    normalized_authority = require_identifier(
+        authority_id, "visibility authorization authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+    )
+    normalized_policy = require_identifier(
+        policy_version, "visibility authorization policy_version", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+    )
+    normalized_reason = require_identifier(reason_code, "visibility authorization reason_code", 96)
     result: dict = {
         "allowed": allowed,
         "scope": validated_scope,
@@ -393,8 +361,12 @@ class ExactScopeVisibilityAuthority:
     """Configured allow-list that compares complete ScopeKey values by equality."""
 
     def __init__(self, authority_id: str, policy_version: str, grants: tuple[dict, ...]) -> None:
-        self.authority_id = token(authority_id, "visibility authority_id")
-        self.policy_version = token(policy_version, "visibility policy_version")
+        self.authority_id = require_identifier(
+            authority_id, "visibility authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        )
+        self.policy_version = require_identifier(
+            policy_version, "visibility policy_version", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
+        )
         if not isinstance(grants, tuple):
             raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values")
         if len(grants) > MAX_VISIBILITY_GRANTS:
@@ -527,12 +499,15 @@ def proposition_validity_inputs_from_eligibility(
         raise InvalidRequestError("Proposition validity inputs require an eligible revalidated decision")
     projection = decision.get("projection", {})
     temporal = frame.get("temporal_query", {})
-    evaluation_time = internal_timestamp(frame.get("eligibility_context", {})["evaluation_time"])
+    evaluation_time = require_utc_datetime(
+        frame.get("eligibility_context", {})["evaluation_time"], name="Proposition eligibility time"
+    )
     effective_system_to = projection["system_to"]
     effective_system_to_available = projection["system_to_available"]
     if projection["invalidated_at_available"] and (
         not effective_system_to_available
-        or internal_timestamp(projection["invalidated_at"]) < internal_timestamp(effective_system_to)
+        or require_utc_datetime(projection["invalidated_at"], name="Proposition eligibility time")
+        < require_utc_datetime(effective_system_to, name="Proposition eligibility time")
     ):
         effective_system_to = projection["invalidated_at"]
         effective_system_to_available = True
@@ -585,8 +560,8 @@ def interval_contains(
     upper_available: bool,
 ) -> bool:
     """Return half-open point containment for an interval with concrete open bounds."""
-    after_lower = not lower_available or point >= internal_timestamp(lower)
-    before_upper = not upper_available or point < internal_timestamp(upper)
+    after_lower = not lower_available or point >= require_utc_datetime(lower, name="Proposition eligibility time")
+    before_upper = not upper_available or point < require_utc_datetime(upper, name="Proposition eligibility time")
     result = after_lower and before_upper
     return result
 
@@ -603,10 +578,16 @@ def interval_overlaps(
 ) -> bool:
     """Return half-open overlap without inventing values for open bounds."""
     starts_before_request_end = (
-        not requested_end_available or not lower_available or internal_timestamp(lower) < internal_timestamp(requested_end)
+        not requested_end_available
+        or not lower_available
+        or require_utc_datetime(lower, name="Proposition eligibility time")
+        < require_utc_datetime(requested_end, name="Proposition eligibility time")
     )
     ends_after_request_start = (
-        not requested_start_available or not upper_available or internal_timestamp(upper) > internal_timestamp(requested_start)
+        not requested_start_available
+        or not upper_available
+        or require_utc_datetime(upper, name="Proposition eligibility time")
+        > require_utc_datetime(requested_start, name="Proposition eligibility time")
     )
     result = starts_before_request_end and ends_after_request_start
     return result
@@ -624,7 +605,13 @@ def requested_interval_match(
     upper_available: bool,
 ) -> bool:
     if operator == TemporalQueryOperator.AS_OF:
-        result = interval_contains(internal_timestamp(requested_start), lower, lower_available, upper, upper_available)
+        result = interval_contains(
+            require_utc_datetime(requested_start, name="Proposition eligibility time"),
+            lower,
+            lower_available,
+            upper,
+            upper_available,
+        )
         return result
     result = interval_overlaps(
         requested_start,
@@ -649,14 +636,20 @@ def outside_interval_reason(
     not_yet_reason: PropositionEligibilityReason,
     no_longer_reason: PropositionEligibilityReason,
 ) -> PropositionEligibilityReason:
-    if requested_end_available and lower_available and internal_timestamp(lower) >= internal_timestamp(requested_end):
+    if (
+        requested_end_available
+        and lower_available
+        and require_utc_datetime(lower, name="Proposition eligibility time")
+        >= require_utc_datetime(requested_end, name="Proposition eligibility time")
+    ):
         result = not_yet_reason
         return result
     if (
         requested_start_available
         and not requested_end_available
         and lower_available
-        and internal_timestamp(lower) > internal_timestamp(requested_start)
+        and require_utc_datetime(lower, name="Proposition eligibility time")
+        > require_utc_datetime(requested_start, name="Proposition eligibility time")
     ):
         result = not_yet_reason
         return result
@@ -688,7 +681,7 @@ class PropositionEligibilityEvaluator:
         if not context["evaluation_time_available"]:
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.EVALUATION_TIME_UNAVAILABLE)
             return result
-        evaluation_time = internal_timestamp(context["evaluation_time"])
+        evaluation_time = require_utc_datetime(context["evaluation_time"], name="Proposition eligibility time")
         temporal = frame.get("temporal_query", {})
         if not temporal["resolved"]:
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.TEMPORAL_QUERY_UNRESOLVED)
@@ -705,21 +698,21 @@ class PropositionEligibilityEvaluator:
             if projection.get("invalidated_at_available", False):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.PROPOSITION_INACTIVE)
                 return result
-            if evaluation_time < internal_timestamp(projection.get("system_from", "")):
+            if evaluation_time < require_utc_datetime(projection.get("system_from", ""), name="Proposition eligibility time"):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SYSTEM_NOT_YET_CURRENT)
                 return result
-            if projection.get("system_to_available", False) and evaluation_time >= internal_timestamp(
-                projection.get("system_to", "")
+            if projection.get("system_to_available", False) and evaluation_time >= require_utc_datetime(
+                projection.get("system_to", ""), name="Proposition eligibility time"
             ):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SYSTEM_NO_LONGER_CURRENT)
                 return result
-            if projection.get("valid_from_available", False) and evaluation_time < internal_timestamp(
-                projection.get("valid_from", "")
+            if projection.get("valid_from_available", False) and evaluation_time < require_utc_datetime(
+                projection.get("valid_from", ""), name="Proposition eligibility time"
             ):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VALID_TIME_NOT_YET_CURRENT)
                 return result
-            if projection.get("valid_to_available", False) and evaluation_time >= internal_timestamp(
-                projection.get("valid_to", "")
+            if projection.get("valid_to_available", False) and evaluation_time >= require_utc_datetime(
+                projection.get("valid_to", ""), name="Proposition eligibility time"
             ):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VALID_TIME_NO_LONGER_CURRENT)
                 return result
@@ -727,18 +720,18 @@ class PropositionEligibilityEvaluator:
             if projection.get("invalidated_at_available", False):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.PROPOSITION_INACTIVE)
                 return result
-            if evaluation_time < internal_timestamp(projection.get("system_from", "")):
+            if evaluation_time < require_utc_datetime(projection.get("system_from", ""), name="Proposition eligibility time"):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SYSTEM_NOT_YET_CURRENT)
                 return result
-            if projection.get("system_to_available", False) and evaluation_time >= internal_timestamp(
-                projection.get("system_to", "")
+            if projection.get("system_to_available", False) and evaluation_time >= require_utc_datetime(
+                projection.get("system_to", ""), name="Proposition eligibility time"
             ):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SYSTEM_NO_LONGER_CURRENT)
                 return result
             if (
                 temporal["operator"] == TemporalQueryOperator.LATEST
                 and projection.get("valid_from_available", False)
-                and evaluation_time < internal_timestamp(projection.get("valid_from", ""))
+                and evaluation_time < require_utc_datetime(projection.get("valid_from", ""), name="Proposition eligibility time")
             ):
                 result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VALID_TIME_NOT_YET_CURRENT)
                 return result
@@ -770,12 +763,13 @@ class PropositionEligibilityEvaluator:
             effective_system_to_available = projection.get("system_to_available", False)
             if projection.get("invalidated_at_available", False) and (
                 not effective_system_to_available
-                or internal_timestamp(projection.get("invalidated_at", "")) < internal_timestamp(effective_system_to)
+                or require_utc_datetime(projection.get("invalidated_at", ""), name="Proposition eligibility time")
+                < require_utc_datetime(effective_system_to, name="Proposition eligibility time")
             ):
                 effective_system_to = projection.get("invalidated_at", "")
                 effective_system_to_available = True
             if temporal["operator"] == TemporalQueryOperator.LATEST:
-                if internal_timestamp(projection.get("system_from", "")) > evaluation_time:
+                if require_utc_datetime(projection.get("system_from", ""), name="Proposition eligibility time") > evaluation_time:
                     result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SYSTEM_NOT_YET_CURRENT)
                     return result
             elif not requested_interval_match(
@@ -958,7 +952,7 @@ def proposition_evidence_record(
     """
     discovered = discovered if trusted else validate_proposition_projection(discovered)
     decision = decision if trusted else validate_proposition_eligibility_decision(decision)
-    source = token(source_resolver, "Proposition evidence source_resolver", 96)
+    source = require_identifier(source_resolver, "Proposition evidence source_resolver", 96)
     if source not in PROPOSITION_EVIDENCE_PRODUCERS:
         raise InvalidRequestError("Proposition evidence source_resolver is not an allowed producer")
     if source == "structured_graph" and discovered.get("projection_id", PropositionProjectionQuery.BY_ID_V1) not in {

@@ -339,7 +339,7 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
             )
 
         assert failure.value.code() == grpc_StatusCode.INVALID_ARGUMENT
-        assert failure.value.details() == f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes"
+        assert failure.value.details() == f"request exceeds the limit of {MAX_CACHE_REQUEST_BYTES} UTF-8 bytes"
         assert internal_trailing_metadata(failure.value)["engram-error-type"] == "InvalidRequestError"
         assert core.resolution_requests == {}
 

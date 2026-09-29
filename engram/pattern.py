@@ -30,35 +30,13 @@ from functools import lru_cache
 from re import (
     IGNORECASE as IGNORECASE,
     Match as re_Match,
-    Pattern as re_Pattern,
     compile as re_compile,
-    escape as re_escape,
     sub as re_sub,
 )
 
 from engram.constants import MAX_PATTERN_WORDS, WILDCARD_TOKENS
 from engram.substitutions import split_sentences
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
-
-
-def match_result(
-    matched: bool,
-    pattern: str,
-    score: int,  # Higher = more specific match
-    captured: list[str],  # Text captured by wildcards
-    thatstars=(),  # Captures from that pattern
-    topicstars=(),  # Captures from topic pattern
-) -> dict:
-    """Build a pattern-match result dict."""
-    result = {
-        "matched": matched,
-        "pattern": pattern,
-        "score": score,
-        "captured": captured,
-        "thatstars": list(thatstars or ()),
-        "topicstars": list(topicstars or ()),
-    }
-    return result
 
 
 def break_intra_word_marks(text: str) -> str:
@@ -186,170 +164,6 @@ def normalize_pattern(pattern: str) -> str:
         result = result.replace(f"\x06{i}\x06", f"{{bot:{name}}}")
 
     result = " ".join(result.split())
-    return result
-
-
-def pattern_to_regex(
-    pattern: str,
-    sets=(),
-    bot_properties=(),
-) -> tuple[re_Pattern, int]:
-    """Convert AIML-style pattern to regex.
-
-    Args:
-        pattern: AIML pattern with *, _, #, ^ wildcards.
-        sets: Optional dictionary of named word sets for {set:name} matching.
-        bot_properties: Optional bot properties for {bot:name} matching.
-
-    Returns:
-        Tuple of (compiled regex, specificity score).
-    """
-    normalized = normalize_pattern(pattern)
-    words = normalized.split()
-
-    if not words:
-        empty_regex = re_compile(r"^$")
-        empty_result = (empty_regex, 0)
-        return empty_result
-
-    regex_parts = []
-    specificity = 0
-    can_be_empty = []
-
-    set_ref_pattern = re_compile(r"^\{set:(\w+)\}$")
-    bot_ref_pattern = re_compile(r"^\{bot:(\w+)\}$")
-
-    for word in words:
-        if word == "^":
-            # ^ matches zero or more words, high priority
-            # Wildcards subtract from specificity so exact matches win
-            # ^ has smallest penalty (highest wildcard priority)
-            regex_parts.append(r"(.*?)")
-            can_be_empty.append(True)
-            specificity -= 1  # Smallest penalty (highest priority wildcard)
-        elif word == "_":
-            # _ matches one or more words, high priority
-            regex_parts.append(r"(.+?)")
-            can_be_empty.append(False)
-            specificity -= 2  # Small penalty (high priority wildcard)
-        elif word == "#":
-            # # matches zero or more words, low priority
-            regex_parts.append(r"(.*?)")
-            can_be_empty.append(True)
-            specificity -= 3  # Larger penalty (low priority wildcard)
-        elif word == "*":
-            # * matches one or more words, lowest priority
-            regex_parts.append(r"(.+?)")
-            can_be_empty.append(False)
-            specificity -= 4  # Largest penalty (lowest priority wildcard)
-        elif set_match := set_ref_pattern.match(word):
-            # {set:name} - match any word from the named set
-            set_name = set_match.group(1)
-            if sets and set_name in sets and sets[set_name]:
-                set_words = [re_escape(w.lower()) for w in sets[set_name]]
-                regex_parts.append(f"({('|'.join(set_words))})")
-            else:
-                # Unknown set - match nothing (use impossible pattern)
-                regex_parts.append(r"(?!.)")
-            can_be_empty.append(False)
-            specificity += 90  # High but less than exact word match
-        elif bot_match := bot_ref_pattern.match(word):
-            # {bot:name} - match the bot property value
-            prop_name = bot_match.group(1)
-            if bot_properties and prop_name in bot_properties:
-                prop_value = bot_properties[prop_name].lower()
-                regex_parts.append(f"({re_escape(prop_value)})")
-            else:
-                # Unknown property - match nothing
-                regex_parts.append(r"(?!.)")
-            can_be_empty.append(False)
-            specificity += 90  # High but less than exact word match
-        elif word.startswith("$"):
-            # Priority word - exact match with highest priority
-            actual_word = word[1:]
-            regex_parts.append(re_escape(actual_word))
-            can_be_empty.append(False)
-            specificity += 1000  # Highest priority for $ words
-        else:
-            # Exact word match
-            regex_parts.append(re_escape(word))
-            can_be_empty.append(False)
-            specificity += 100  # High specificity for exact matches
-
-    # Join with flexible spacing: parts that can be empty (# and ^) get
-    # optional surrounding whitespace, everything else requires a separator.
-    regex_str = r"^\s*"
-    for i, part in enumerate(regex_parts):
-        if i > 0:
-            if can_be_empty[i] or can_be_empty[i - 1]:
-                regex_str += r"\s*"
-            else:
-                regex_str += r"\s+"
-        regex_str += part
-    regex_str += r"\s*$"
-
-    compiled = re_compile(regex_str, IGNORECASE)
-    result = (compiled, specificity)
-    return result
-
-
-def match_pattern(pattern: str, text: str) -> dict:
-    """Match text against an AIML-style pattern.
-
-    Args:
-        pattern: AIML pattern (e.g., "HELLO *", "WHAT IS YOUR *")
-        text: User input text.
-
-    Returns:
-        MatchResult indicating if matched and captured groups.
-    """
-    regex, specificity = pattern_to_regex(pattern)
-    normalized_text = prepare_pattern_text(text)
-
-    match = regex.match(normalized_text)
-
-    if match:
-        captured = list(match.groups())
-        matched_result = match_result(
-            matched=True,
-            pattern=pattern,
-            score=specificity,
-            captured=captured,
-        )
-        return matched_result
-
-    unmatched_result = match_result(
-        matched=False,
-        pattern=pattern,
-        score=0,
-        captured=[],
-    )
-    return unmatched_result
-
-
-def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
-    """Find the best matching pattern for input text.
-
-    Args:
-        patterns: List of (pattern, response) tuples.
-        text: User input text.
-
-    Returns:
-        Tuple of (pattern, response, captured), or an empty tuple if no match.
-    """
-    best_match: tuple = ()
-
-    for pattern, response in patterns:
-        result = match_pattern(pattern, text)
-
-        if result["matched"] and (not best_match or result["score"] > best_match[3]):
-            best_match = (pattern, response, result["captured"], result["score"])
-
-    if best_match:
-        best = (best_match[0], best_match[1], best_match[2])
-        return best
-
-    result = ()
     return result
 
 

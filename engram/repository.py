@@ -25,6 +25,7 @@ from engram.identity import (
     trusted_scoped_retrieval_key_signature,
     validate_scoped_retrieval_key,
 )
+from engram.validation import utc_datetime
 
 MAX_PLANNED_CANDIDATES = 16
 
@@ -55,17 +56,12 @@ def positive_int(value: object, name: str) -> int:
     return value
 
 
-def artifact_time(value: str) -> datetime:
-    result = datetime.fromisoformat(value[:-1] + "+00:00")
-    return result
-
-
 def eviction_order_key(artifact: dict) -> tuple[datetime, int, str]:
     statistics = artifact.get("statistics", {})
     provenance = artifact.get("provenance", {})
-    accepted_at = artifact_time(provenance.get("accepted_at", ""))
+    accepted_at = utc_datetime(provenance.get("accepted_at", ""))
     last_hit_available = bool(statistics.get("last_hit_available", False))
-    last_used = artifact_time(statistics.get("last_hit", "")) if last_hit_available else accepted_at
+    last_used = utc_datetime(statistics.get("last_hit", "")) if last_hit_available else accepted_at
     result = (last_used, 1 if last_hit_available else 0, artifact.get("statement_id", ""))
     return result
 

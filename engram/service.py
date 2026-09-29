@@ -20,7 +20,6 @@ from uuid import uuid4
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
-    EARLIEST_UTC,
     EMPTY_CONFIG,
     EMPTY_MAPPING,
     EMPTY_METADATA,
@@ -118,6 +117,7 @@ from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_
 from engram.rollout import apply_rollout, rollout_status, select_rollout
 from engram.telemetry import record_regulator_outcome, record_resolution
 from engram.text import normalize
+from engram.validation import require_any_text
 
 LOGGER = logging_getLogger("engram.service")
 
@@ -145,25 +145,13 @@ def feedback_mutation_request_id(kind: str, request_id: str) -> str:
     return result
 
 
-def require_service_text(value: str, name: str, maximum_bytes: int) -> None:
-    """Require a nonempty service-boundary string."""
-    if not isinstance(value, str) or not value.strip():
-        raise InvalidRequestError(f"{name} must be a non-empty string")
-    try:
-        size = len(value.encode("utf-8"))
-    except UnicodeEncodeError as error:
-        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
-    if size > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-
-
 def require_cache_request(request: str) -> None:
     """Reject a regulated-cache request that cannot become a lookup key, before any other work.
 
     The request is normalized into an exact-match key. Normalization expands
     contractions and some characters, so the normalized form is checked too.
     """
-    require_service_text(request, "request", MAX_CACHE_REQUEST_BYTES)
+    require_any_text(request, "request", MAX_CACHE_REQUEST_BYTES, blank_is_empty=True)
     normalized = normalize_retrieval_key(request)
     if not normalized:
         raise InvalidRequestError("request must contain searchable text")
@@ -172,18 +160,6 @@ def require_cache_request(request: str) -> None:
             f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes once normalized; "
             "normalization expands contractions and some characters"
         )
-
-
-def require_service_string(value: str, name: str, maximum_bytes: int) -> None:
-    """Require a concrete service-boundary string, including an empty string."""
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    try:
-        size = len(value.encode("utf-8"))
-    except UnicodeEncodeError as error:
-        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
-    if size > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
 
 
 def service_request_signature(**values) -> str:
@@ -264,23 +240,6 @@ class IsolatedGraphClient:
             setattr(object.__getattribute__(self, "client"), name, value)
 
 
-def service_candidate_result(statement: dict, score: float) -> dict:
-    """Build the transport-neutral proposal view of one response candidate."""
-    result = {
-        "statement_id": statement.get("id", ""),
-        "response": statement.get("text", ""),
-        "score": score,
-        "tier": statement.get("tier", Tier.DYNAMIC).value,
-        "created_at": statement.get("created_at", EARLIEST_UTC).isoformat(),
-        "hit_count": statement.get("hit_count", 0),
-        "query_count": statement.get("query_count", 0),
-        "source_label": statement.get("source_label", ""),
-        "introduced_by_user_id": statement.get("introduced_by_user_id", "") or "",
-        "metadata": deepcopy(statement.get("template", {})),
-    }
-    return result
-
-
 def artifact_candidate_result(artifact: dict, score: float) -> dict:
     """Build the proposal view directly from one accepted-response artifact."""
     statistics = artifact.get("statistics", {})
@@ -314,7 +273,7 @@ def normalize_service_user_id(user_id: str) -> str:
     """Normalize a service user identity and translate boundary errors."""
     try:
         result = sessions.normalize_user_id(user_id)
-        require_service_text(result, "user_id", MAX_CALLER_ID_BYTES)
+        require_any_text(result, "user_id", MAX_CALLER_ID_BYTES, blank_is_empty=True)
         return result
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
@@ -322,7 +281,7 @@ def normalize_service_user_id(user_id: str) -> str:
 
 def conversation_user_id(user_id: str) -> str:
     """Validate a conversation identity while preserving anonymous emptiness."""
-    require_service_string(user_id, "user_id", MAX_CALLER_ID_BYTES)
+    require_any_text(user_id, "user_id", MAX_CALLER_ID_BYTES, allow_empty=True)
     result = user_id
     return result
 
@@ -896,13 +855,13 @@ class EngramCore:
     ) -> dict:
         """Run one transport-neutral bounded resolution pipeline."""
         require_cache_request(request)
-        require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+        require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         normalized_user_id = normalize_service_user_id(user_id)
         with self.resolution_slot(request_id, normalized_user_id), self.lock:
             self.require_running()
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if not isinstance(identity, dict):
                 raise InvalidRequestError("identity must be an object")
             if not isinstance(budget, dict):
@@ -1117,10 +1076,10 @@ class EngramCore:
 
         with self.lock:
             self.require_running()
-            require_service_text(resolution_request_id, "resolution_request_id", MAX_REQUEST_ID_BYTES)
-            require_service_text(feedback_request_id, "feedback_request_id", MAX_REQUEST_ID_BYTES)
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(resolution_request_id, "resolution_request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(feedback_request_id, "feedback_request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             try:
                 verdict = FeedbackOutcome(outcome)
             except (TypeError, ValueError) as error:
@@ -1284,8 +1243,8 @@ class EngramCore:
         """Add one unattributed shared fact without changing user context."""
         with self.lock:
             self.require_running()
-            require_service_text(text, "text", MAX_RESPONSE_BYTES)
-            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
+            require_any_text(text, "text", MAX_RESPONSE_BYTES, blank_is_empty=True)
+            require_any_text(source_label, "source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             statement_id = self.engram.add_fact(text, source_label=source_label)
             result = statement_view(self.engram.get_statement(statement_id))
             return result
@@ -1318,8 +1277,8 @@ class EngramCore:
         """Set one caller-owned predicate on a user context."""
         with self.lock:
             self.require_running()
-            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
-            require_service_string(value, "value", MAX_METADATA_STRING_BYTES)
+            require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
+            require_any_text(value, "value", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
@@ -1329,8 +1288,8 @@ class EngramCore:
         """Read one caller-owned predicate from a user context."""
         with self.lock:
             self.require_running()
-            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
-            require_service_string(default, "default", MAX_METADATA_STRING_BYTES)
+            require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
+            require_any_text(default, "default", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
             if not session:
@@ -1393,10 +1352,10 @@ class EngramCore:
             self.require_running()
             self.cleanup_transient()
             require_cache_request(request)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
                 raise InvalidRequestError("limit must be an integer from 1 through 10")
             if not isinstance(required_metadata, dict):
@@ -1588,10 +1547,10 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(outcome, "outcome", MAX_REASON_CODE_BYTES)
-            require_service_string(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(outcome, "outcome", MAX_REASON_CODE_BYTES, allow_empty=True)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             if outcome not in REGULATOR_OUTCOMES:
                 supported = ", ".join(sorted(REGULATOR_OUTCOMES))
                 raise InvalidRequestError(f"outcome must be one of: {supported}")
@@ -1701,11 +1660,11 @@ class EngramCore:
             self.require_running()
             self.cleanup_transient()
             require_cache_request(request)
-            require_service_text(response, "response", MAX_RESPONSE_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
+            require_any_text(response, "response", MAX_RESPONSE_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(source_label, "source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if normalize(response) == "idk":
                 raise InvalidRequestError("IDK is not a cacheable response")
             if not isinstance(metadata, dict):
@@ -1770,9 +1729,9 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             current = self.engram.response_repository.get_artifact(statement_id)
             mutation = self.response_mutations.supersede_response(
                 statement_id,
@@ -1791,9 +1750,9 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
             response_artifacts = self.engram.response_repository.trusted_artifacts()
             if statement_id in response_artifacts:
                 previous = self.retire_requests.get(request_id, {})

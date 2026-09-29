@@ -2,7 +2,7 @@
 
 from pytest import raises as pytest_raises
 
-from engram.support import MAX_CONTRACT_NAME_LENGTH, validate_support_reference
+from engram.support import MAX_CONTRACT_NAME_BYTES, validate_support_reference
 
 from .support_fixtures import ASSERTION_REFERENCE_A
 
@@ -19,7 +19,7 @@ def test_contract_names_must_be_non_empty_and_bounded() -> None:
     with pytest_raises(ValueError, match="schema_version"):
         validate_support_reference({**ASSERTION_REFERENCE_A, "schema_version": ""})
     with pytest_raises(ValueError, match="representation_contract"):
-        validate_support_reference({**ASSERTION_REFERENCE_A, "representation_contract": "x" * (MAX_CONTRACT_NAME_LENGTH + 1)})
+        validate_support_reference({**ASSERTION_REFERENCE_A, "representation_contract": "x" * (MAX_CONTRACT_NAME_BYTES + 1)})
 
 
 def test_the_reference_shape_is_still_enforced() -> None:

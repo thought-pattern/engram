@@ -1,18 +1,15 @@
 """Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
-from datetime import datetime
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
-from unicodedata import category as unicodedata_category
 
 from engram.constants import (
     ARTIFACT_GENERATION_CHANGE_FIELDS,
     MAX_AFFECTED_GENERATIONS,
     MAX_RECEIPT_JSON_BYTES,
     MAX_RECEIPT_STATEMENT_ID_BYTES,
-    MAX_RECEIPT_TIMESTAMP_BYTES,
     MAX_RECEIPTS,
     MAX_REQUEST_ID_BYTES,
     MAX_RESULT_BYTES,
@@ -33,18 +30,7 @@ from engram.constants import (
     ReceiptLookupOutcome,
 )
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
-
-
-def require_text(value: object, name: str, maximum_bytes: int, *, allow_empty: bool) -> str:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    if not allow_empty and not value:
-        raise InvalidRequestError(f"{name} must not be empty")
-    if len(value.encode("utf-8")) > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
-    if any(unicodedata_category(character) in {"Cc", "Cs"} for character in value):
-        raise InvalidRequestError(f"{name} contains a control or surrogate character")
-    return value
+from engram.validation import require_text, require_utc_timestamp
 
 
 def positive_int(value: object, name: str, maximum: int = 9_223_372_036_854_775_807) -> int:
@@ -66,19 +52,6 @@ def exact_mapping(value: object, name: str, keys: set[str]) -> dict:
     if actual != keys:
         raise InvalidRequestError(f"{name} has invalid fields: missing={sorted(keys - actual)}, extra={sorted(actual - keys)}")
     return value
-
-
-def internal_timestamp(value: object, name: str) -> str:
-    text = require_text(value, name, MAX_RECEIPT_TIMESTAMP_BYTES, allow_empty=False)
-    if not text.endswith("Z"):
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
-    try:
-        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
-    if parsed.isoformat().replace("+00:00", "Z") != text:
-        raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
-    return text
 
 
 def freeze_json(value: object, name: str, depth: int, count: list[int]) -> object:
@@ -254,7 +227,7 @@ def mutation_receipt(
     frozen_result = freeze_result(result)
     if not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
-    normalized_created_at = internal_timestamp(created_at, "mutation receipt created_at")
+    normalized_created_at = require_utc_timestamp(created_at, "mutation receipt created_at")
     if completion_state == ReceiptCompletionState.PREPARED and (
         ordered_generations or frozen_result or result_code != MutationResultCode.REJECTED_CAPACITY
     ):
@@ -370,7 +343,7 @@ def mutation_receipt_from_dict(value: object) -> dict:
         affected_generations=tuple(artifact_generation_change_from_dict(change) for change in affected),
         result=result,
         completion_state=completion_state,
-        created_at=internal_timestamp(data["created_at"], "mutation receipt created_at"),
+        created_at=require_utc_timestamp(data["created_at"], "mutation receipt created_at"),
     )
     return receipt
 

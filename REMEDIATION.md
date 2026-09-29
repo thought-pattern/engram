@@ -603,6 +603,12 @@ documentation, and R2.5's missing-path error) are not planned.
   `isort --check-only`, `ruff check`) and fail the build on differences. Never
   push to `main` or `develop` from CI. Developers format locally, ideally with
   a pre-commit hook.
+- **Decision (2026-09-28): rejected.** Autoformatting stays. Failing builds on
+  formatting differences adds fragility for no benefit. The one real gap is
+  that the formatter's pushed commit is never analyzed or tested. If that is
+  worth closing, make `python_analysis.yml` reusable (`workflow_call` with a
+  `ref` input) and call it from the formatting workflow on the commit it
+  pushed.
 
 ### R7.2 Dependency locking and Dependabot
 
@@ -684,6 +690,21 @@ documentation, and R2.5's missing-path error) are not planned.
   `maximum_bytes`, `allow_empty` and a whitespace policy), `require_timestamp`
   and `require_identifier`. Migrate the modules one at a time, with tests
   pinning today's limits.
+- **Status (2026-09-29): done.** `engram/validation.py` now holds
+  `require_text`, `require_any_text`, `require_identifier`, `require_bool`, and
+  the canonical UTC timestamp helpers. Sixteen modules use it instead of their
+  own copies.
+  - Character rules are one enum: `ANY`, `TEXT` (no C0 controls or DEL),
+    `LINES` (tab and line breaks allowed), and `IDENTIFIER` (no whitespace).
+    Four modules used to reject the rarely seen C1 range too; now none do.
+  - Each failure reads the same way everywhere, for example
+    "exceeds the limit of N UTF-8 bytes".
+  - A lone surrogate used to crash several validators with an internal
+    `UnicodeEncodeError`; it is now rejected as invalid Unicode.
+  - The eight copies of the canonical timestamp check and the ~20 inline
+    `fromisoformat(x[:-1] + "+00:00")` parses use the shared helpers. The
+    duplicate 40-byte timestamp limits are gone.
+  - Byte limits are unchanged. `tests/test_validation.py` pins each rule.
 
 ### R8.2 Split large modules
 
@@ -712,6 +733,14 @@ documentation, and R2.5's missing-path error) are not planned.
     caller.
 - **Recommendation.** Delete the test-only regex matcher and its tests, and
   prune unused codec helpers as modules are split.
+- **Status (2026-09-29): done.** The regex matcher, `normalize_for_matching`,
+  and `parse_template` are deleted. The regex tests that described real
+  matching behavior now run against the production `PatternMatcher`; they
+  agreed except that `#` matched empty input in the regex version only.
+  - 45 functions and 18 constants that nothing referenced (not even tests) are
+    deleted.
+  - About 127 functions are used only by tests or scripts, mostly codec
+    helpers. They stay until R8.2 splits the modules.
 
 ### R8.4 Shared mutable defaults
 
