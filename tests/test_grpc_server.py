@@ -161,9 +161,7 @@ def test_unknown_user_wire_lifecycle_uses_explicit_zero() -> None:
         turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello", conversation_token=token), timeout=5))
         stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="", name="mood", value="curious"), timeout=5)
         assert stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="0", name="mood"), timeout=5).value == "curious"
-        inspected = as_dict(
-            stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5)
-        )
+        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
         report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="", conversation_token=token), timeout=5))
         assert core.get_conversation("0").user_id == "0"
         with pytest_raises(grpc_RpcError) as unowned:
@@ -300,7 +298,7 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
         assert as_dict(result.selected_candidate)["response"] == "The transport-neutral result."
         assert len(result.response_candidates) == 1
         assert result.evidence_package_available is False
-        assert result.evidence_package.wire_version == 2
+        assert result.evidence_package.wire_version == 1
         assert result.evidence_package.retained_count == 0
         assert result.evidence_package.records == []
 

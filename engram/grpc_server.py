@@ -405,9 +405,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         result = require_struct_message(message, "RetireResponses")
         return result
 
-    def ResponsesBySupport(
-        self, request: engram_pb2.ResponsesBySupportRequest, context: grpc_ServicerContext
-    ) -> struct_pb2.Struct:
+    def ResponsesBySupport(self, request: engram_pb2.ResponsesBySupportRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
         message = self.invoke(context, lambda: to_struct(self.core.responses_by_support(list(request.record_ids))))
         result = require_struct_message(message, "ResponsesBySupport")
         return result

@@ -8,6 +8,8 @@ from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, l
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
 
+from msgpack import ExtType as msgpack_ExtType, packb as msgpack_packb
+
 from engram.constants import (
     DEFAULT_NEGATIVE_MAX_RECORDS,
     DEFAULT_NEGATIVE_TTL_SECONDS,
@@ -167,10 +169,48 @@ def load_json_mapping(value: str, name: str) -> dict:
     return decoded
 
 
-def canonical_fingerprint(value: object) -> str:
-    """Return one content-only lowercase SHA-256 fingerprint."""
+def canonical_binary_value(value: object) -> object:
+    """Sort native mappings and reserve extension tags for tuples and large integers."""
+    if value is None:
+        return None
+    if isinstance(value, str) and type(value) is str:
+        return value
+    if isinstance(value, bool) and type(value) is bool:
+        return value
+    if isinstance(value, int) and type(value) is int:
+        if -(1 << 63) <= value < (1 << 64):
+            return value
+        return msgpack_ExtType(2, str(value).encode("ascii"))
+    if isinstance(value, float) and type(value) is float:
+        if not math_isfinite(value):
+            raise InvalidRequestError("feedback fingerprint values must be finite")
+        return value
+    if isinstance(value, list) and type(value) is list:
+        return [canonical_binary_value(item) for item in value]
+    if isinstance(value, dict) and type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise InvalidRequestError("feedback fingerprint mapping keys must be strings")
+        return {key: canonical_binary_value(value.get(key)) for key in sorted(value)}
+    if isinstance(value, tuple) and type(value) is tuple:
+        elements = [canonical_binary_value(item) for item in value]
+        encoded = msgpack_packb(elements, use_bin_type=True, strict_types=True, use_single_float=False)
+        if not isinstance(encoded, bytes):
+            raise InvalidRequestError("feedback fingerprint tuple encoding failed")
+        return msgpack_ExtType(1, encoded)
+    raise InvalidRequestError("feedback fingerprint contains an unsupported native value")
 
-    result = hashlib_sha256(json_text(value).encode("utf-8")).hexdigest()
+
+def canonical_fingerprint(value: object) -> str:
+    """Return one domain-separated, canonical binary SHA-256 fingerprint."""
+    try:
+        encoded = msgpack_packb(canonical_binary_value(value), use_bin_type=True, strict_types=True, use_single_float=False)
+    except InvalidRequestError:
+        raise
+    except (OverflowError, ValueError, TypeError, UnicodeError, RecursionError) as error:
+        raise InvalidRequestError("feedback fingerprint contains an invalid native value") from error
+    if not isinstance(encoded, bytes):
+        raise InvalidRequestError("feedback fingerprint encoding failed")
+    result = hashlib_sha256(b"engram-feedback-fingerprint-v1\0" + encoded).hexdigest()
     return result
 
 
@@ -1633,6 +1673,19 @@ def feedback_wire_record(value: dict) -> dict:
     return projected
 
 
+def feedback_native_copy(value: object) -> object:
+    """Copy a validated native state without changing tuple or enum contracts."""
+    if isinstance(value, dict):
+        result: object = {key: feedback_native_copy(nested) for key, nested in value.items()}
+    elif isinstance(value, list):
+        result = [feedback_native_copy(nested) for nested in value]
+    elif isinstance(value, tuple):
+        result = tuple(feedback_native_copy(nested) for nested in value)
+    else:
+        result = value
+    return result
+
+
 def trusted_feedback_key_fingerprint(value: dict) -> str:
     """Fingerprint a key already validated by its record decoder or store."""
     result = canonical_fingerprint(feedback_wire_value(value))
@@ -1693,9 +1746,7 @@ def feedback_state_from_validated_components(
     if stale_exclusions != tuple(sorted(stale_exclusions, key=stale_exclusion_signature)):
         raise InvalidRequestError("feedback stale exclusions must use canonical order")
     validate_mutation_receipt_ledger_state(receipts)
-    receipt_copy = json_loads(json_text(receipts))
-    if not isinstance(receipt_copy, dict):
-        raise InvalidRequestError("feedback receipts must decode to an object")
+    receipt_copy = feedback_wire_record(receipts)
     result = trusted_feedback_state(
         policy,
         statement_records,
@@ -1810,12 +1861,25 @@ def feedback_state_from_dict(value: object) -> dict:
     relationship_values = data["relationship_records"]
     suppression_values = data["policy_suppressions"]
     exclusion_values = data["stale_exclusions"]
-    parsed_statements = tuple(statement_feedback_record_from_dict(item) for item in statement_values)
-    statement_cache = {trusted_feedback_key_fingerprint(record["key"]): record["key"] for record in parsed_statements}
+    parsed_statements = tuple(
+        sorted(
+            (statement_feedback_record_from_dict(item) for item in statement_values),
+            key=lambda record: trusted_feedback_key_fingerprint(record.get("key", {})),
+        )
+    )
+    statement_cache = {
+        trusted_feedback_key_fingerprint(record.get("key", {})): record.get("key", {}) for record in parsed_statements
+    }
     identity_cache: dict[str, dict] = {}
     scope_cache: dict[str, dict] = {}
     parsed_relationships = tuple(
-        relationship_feedback_record_from_dict(item, identity_cache, scope_cache, statement_cache) for item in relationship_values
+        sorted(
+            (
+                relationship_feedback_record_from_dict(item, identity_cache, scope_cache, statement_cache)
+                for item in relationship_values
+            ),
+            key=lambda record: trusted_feedback_key_fingerprint(record.get("key", {})),
+        )
     )
     result = feedback_state_from_validated_components(
         feedback_policy_from_dict(data["policy"]),
@@ -1843,8 +1907,9 @@ class PreparedFeedbackState(dict):
     """Opaque link between a returned state projection and its off-live owner."""
 
     def __init__(self, state: dict, target: object, candidate: object) -> None:
-        super().__init__(state)
-        self["receipts"] = json_loads(json_text(state.get("receipts", ())))
+        super().__init__(
+            {key: feedback_wire_value(value) if key == "receipts" else feedback_native_copy(value) for key, value in state.items()}
+        )
         self.target = target
         self.candidate = candidate
         self.canonical = state

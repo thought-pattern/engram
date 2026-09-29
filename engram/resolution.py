@@ -1612,10 +1612,16 @@ def proposition_evidence_record(
     disclosure: object,
     path: object,
     selection_reasons: object,
-    schema_version: object = 1,
+    schema_version: object = PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
+    path_kind: object = "direct",
 ) -> dict:
     """Build strict wire-safe full-Proposition evidence without unrestricted graph content."""
-    version = require_int(schema_version, "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
+    version = require_int(
+        schema_version, "schema_version", PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION
+    )
+    kind = require_text(path_kind, "Proposition evidence path_kind", 16, allow_empty=False)
+    if kind not in {"direct", "composed"}:
+        raise InvalidRequestError("Proposition evidence path_kind is unsupported")
     normalized_proposition_id = require_identifier(proposition_id, "Proposition evidence proposition_id")
     source = require_identifier(source_resolver, "Proposition evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
     if not isinstance(source_contributions, tuple):
@@ -1654,7 +1660,7 @@ def proposition_evidence_record(
         raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
-    if version == 1:
+    if kind == "direct":
         normalized_path: tuple[object, ...] = tuple(
             require_identifier(value, "Proposition evidence path identifier") for value in path
         )
@@ -1705,6 +1711,7 @@ def proposition_evidence_record(
         "validity": validated_validity,
         "trust": validated_trust,
         "disclosure": validated_disclosure,
+        "path_kind": kind,
         "path": normalized_path,
         "selection_reasons": reasons,
     }
@@ -1726,6 +1733,7 @@ def validate_proposition_evidence_record(value: object) -> dict:
         data["path"],
         data["selection_reasons"],
         data["schema_version"],
+        data["path_kind"],
     )
     return result
 
@@ -1774,9 +1782,10 @@ def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, objec
             "authority": record.get("disclosure", {})["authority"],
             "authority_available": record.get("disclosure", {})["authority_available"],
         },
+        "path_kind": record.get("path_kind", ""),
         "path": (
             list(record.get("path", ()))
-            if record.get("schema_version", 0) == 1
+            if record.get("path_kind", "") == "direct"
             else [proposition_evidence_path_step_to_dict(step) for step in record.get("path", ())]
         ),
         "selection_reasons": list(record.get("selection_reasons", ())),
@@ -1793,9 +1802,17 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
     normalized_contributions = tuple(
         require_identifier(item, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
     )
-    version = require_int(data["schema_version"], "schema_version", 1, PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION)
+    version = require_int(
+        data["schema_version"],
+        "schema_version",
+        PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
+        PROPOSITION_EVIDENCE_RECORD_SCHEMA_VERSION,
+    )
+    kind = require_text(data["path_kind"], "Proposition evidence path_kind", 16, allow_empty=False)
+    if kind not in {"direct", "composed"}:
+        raise InvalidRequestError("Proposition evidence path_kind is unsupported")
     normalized_path: tuple[object, ...]
-    if version == 1:
+    if kind == "direct":
         normalized_path = tuple(require_identifier(item, "Proposition evidence path identifier") for item in path)
     else:
         normalized_path = tuple(
@@ -1823,6 +1840,7 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
         normalized_path,
         normalized_reasons,
         version,
+        kind,
     )
     return result
 
@@ -1871,8 +1889,6 @@ def evidence_package(
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
-    if version == 1 and any(record["schema_version"] != 1 for record in validated_records):
-        raise InvalidRequestError("evidence package wire_version 1 cannot contain composed Proposition paths")
     if len(validated_records) > MAX_EVIDENCE_PACKAGE_RECORDS:
         raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
     identifiers = tuple(record["proposition_id"] for record in validated_records)

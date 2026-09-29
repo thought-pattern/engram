@@ -74,9 +74,7 @@ class InteractiveChat:
             self.debug_mode = not self.debug_mode
             print(f"Debug mode: {'on' if self.debug_mode else 'off'}")
         elif command == "metrics":
-            metrics = self.core.inspect_conversation(self.session_id, conversation_token=self.conversation_token).get(
-                "metrics", {}
-            )
+            metrics = self.core.inspect_conversation(self.session_id, conversation_token=self.conversation_token).get("metrics", {})
             print(json_dumps(metrics, indent=2))
         elif command == "inspect":
             print(json_dumps(self.core.inspect_conversation(self.session_id, conversation_token=self.conversation_token), indent=2))

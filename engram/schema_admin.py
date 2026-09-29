@@ -66,6 +66,8 @@ def read_metadata(connection) -> dict:
         "s.representation_contract AS representation_contract, "
         "s.proof_scratch_contract AS proof_scratch_contract, "
         "s.engram_support_contract AS engram_support_contract, "
+        "s.identifier_contract AS identifier_contract, "
+        "s.identifier_catalog_id AS identifier_catalog_id, "
         "s.schema_digest AS schema_digest"
     )
     graph_rows = connection.execute(
@@ -110,11 +112,12 @@ def expected_tapestry_metadata() -> dict:
         "representation_contract": REPRESENTATION_CONTRACT,
         "proof_scratch_contract": PROOF_SCRATCH_CONTRACT,
         "engram_support_contract": ENGRAM_SUPPORT_CONTRACT,
+        "identifier_contract": "uuid7",
         "installation_state": "accepted",
     }
 
 
-def compare_metadata(expected: dict, actual: dict) -> dict:
+def compare_metadata(expected: dict, actual: dict, *, require_catalog_id: bool = False) -> dict:
     """Compare ownership, versions, state, and singleton cardinality."""
     mismatched = {}
     for name, expected_value in expected.items():
@@ -129,6 +132,16 @@ def compare_metadata(expected: dict, actual: dict) -> dict:
         mismatched["graph_revision"] = {"expected": "non-negative integer", "actual": revision}
     if actual.get("maintenance_state", "") != "":
         mismatched["maintenance_state"] = {"expected": "", "actual": actual.get("maintenance_state", "")}
+    if require_catalog_id:
+        catalog_id = actual.get("identifier_catalog_id")
+        if (
+            type(catalog_id) is not str
+            or not catalog_id
+            or catalog_id != catalog_id.strip()
+            or len(catalog_id) > 4096
+            or "\x00" in catalog_id
+        ):
+            mismatched["identifier_catalog_id"] = {"expected": "nonempty opaque text", "actual": catalog_id}
     result = {"valid": not mismatched, "mismatched": mismatched}
     return result
 
@@ -145,7 +158,7 @@ def verify_schema(connection, schema_path: Path, deployment_mode: str) -> dict:
     )
     metadata = read_metadata(connection)
     expected = expected_standalone_metadata(schema_path) if deployment_mode == "standalone" else expected_tapestry_metadata()
-    metadata_report = compare_metadata(expected, metadata)
+    metadata_report = compare_metadata(expected, metadata, require_catalog_id=deployment_mode == "tapestry_managed")
     result = {
         "valid": bool(catalog_report.get("valid", False) and metadata_report.get("valid", False)),
         "deployment_mode": deployment_mode,

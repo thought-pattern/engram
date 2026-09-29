@@ -22,6 +22,7 @@ classifiers = [
 # requirements.txt, which carries the pinned versions.
 dependencies = [
     "PyYAML>=6.0.3",
+    "msgpack==1.2.1",
     "nltk>=3.10.3",
     "spacy>=3.8.16",
     "sentence-transformers>=6.0.1",

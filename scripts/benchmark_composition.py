@@ -100,10 +100,7 @@ def internal_current(item):
 
 
 def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
-    if "branches" in case:
-        raw = case.get("branches", [])
-    else:
-        raw = [case.get("predicates", [])]
+    raw = case.get("branches", []) if "branches" in case else [case.get("predicates", [])]
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []

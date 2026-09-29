@@ -74,9 +74,6 @@ def validate_support_reference(value) -> dict:
     if kind not in {"assertion", "proposition"}:
         raise ValueError("support record_kind is not registered")
     identifier = support_text(value.get("id", ""), "support identifier")
-    expected_prefix = "ast_" if kind == "assertion" else "prp_"
-    if not identifier.startswith(expected_prefix) or len(identifier) != 68:
-        raise ValueError("support identifier does not match record_kind")
     state_revision = support_revision(value.get("state_revision", {}), "support state_revision")
     proposition_revision = value.get("support_revision", {})
     if kind == "proposition":

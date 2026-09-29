@@ -45,8 +45,14 @@ process. Engram does not import Tapestry. Startup validates the resource's
 bounded mapping and strictly bare subject/object placeholders; missing or
 invalid data fails explicitly rather than selecting a copied fallback map.
 
-Idiomatic overrides bypass spaCy. Other labels retain the existing grammatical
-rendering and bare-active fallback when Engram's NLP model is unavailable.
+Idiomatic overrides bypass spaCy. Other labels are phrased from their grammar,
+with a bare-active fallback when Engram's NLP model is unavailable. A label that
+starts with an auxiliary keeps its own. A label spaCy misreads in isolation, a
+finite verb such as `prevents` tagged as a plural noun or `get` tagged as an
+infinitive, is re-read after a subject pronoun. It becomes an active verb only if
+WordNet knows its lemma as a verb, so a noun role such as `genre` keeps its
+possessive frame. Without WordNet data the parsed reading stands. Tapestry
+derives identical frames.
 Braces in dynamic labels and argument text remain literal, including in that
 fallback. Predicate slug underscores still normalize to spaces and sentence
 lists retain their supplied order. Phrasing does not establish source entailment.

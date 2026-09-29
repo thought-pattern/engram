@@ -21,6 +21,7 @@ from uuid import UUID
 
 from mgclient import connect as mgclient_connect
 
+from engram.bolt_socket import disable_nagle
 from engram.constants import (
     CANONICAL_ENTITY_MATCH_FIELDS,
     CANONICAL_ENTITY_MATCH_QUERY,
@@ -752,6 +753,7 @@ class MemGraphConnection:
                 connect_params["password"] = self.password
 
             self.conn = mgclient_connect(**connect_params)
+            disable_nagle(self.host, self.port)
             self.conn.autocommit = True
             self.available = True
             logger.debug("Connected to MemGraph at %s:%d", self.host, self.port)

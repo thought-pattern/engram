@@ -58,6 +58,7 @@ from engram.evidence import (
     proposition_evidence_record,
     validate_evidence_usefulness_policy,
 )
+from engram.feedback import canonical_fingerprint
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.graph import proposition_projection_to_dict
 from engram.identity import build_scoped_retrieval_key
@@ -513,6 +514,17 @@ def working_size(value: object, seen=()) -> int:
 def internal_candidate_id(source: CandidateSource, statement_id: str, diagnostic_id: str) -> str:
     digest = hashlib_sha256(f"{diagnostic_id}:{source.value}:{statement_id}".encode()).hexdigest()
     result = f"candidate:sha256:{digest}"
+    return result
+
+
+def composition_candidate_id(operator: str, proposition_ids: tuple[str, ...], diagnostic_id: str) -> str:
+    """Name one request-local composition proposal from exact ordered native fields."""
+    digest = hashlib_sha256(b"engram-composition-candidate-v1\0")
+    for value in (operator, diagnostic_id, *proposition_ids):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    result = "composition:" + digest.hexdigest()
     return result
 
 
@@ -1275,7 +1287,7 @@ class StructuredGraphResolver:
                 proposition_evidence_record_with_changes(
                     base,
                     {
-                        "schema_version": 2,
+                        "path_kind": "composed",
                         "path": path_steps,
                         "selection_reasons": tuple(sorted(reasons)),
                     },
@@ -1315,19 +1327,7 @@ class StructuredGraphResolver:
                 )
                 for proposition_id in proposition_ids
             )
-            composition_id = (
-                "composition:"
-                + hashlib_sha256(
-                    json_dumps(
-                        {
-                            "operator": plan["operator"].value,
-                            "proposition_ids": proposition_ids,
-                            "diagnostic_id": frame.get("diagnostic_id", ""),
-                        },
-                        sort_keys=True,
-                    ).encode("utf-8")
-                ).hexdigest()
-            )
+            composition_id = composition_candidate_id(plan.get("operator").value, proposition_ids, frame.get("diagnostic_id", ""))
             candidates.append(
                 resolution_candidate(
                     candidate_id=composition_id,
@@ -2572,7 +2572,7 @@ def accounting_signature(results: tuple[dict, ...], accepted_statement_id: str) 
         "accepted_statement_id": accepted_statement_id,
         "results": stable_results,
     }
-    result = hashlib_sha256(json_dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    result = canonical_fingerprint(payload)
     return result
 
 

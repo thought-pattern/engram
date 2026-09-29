@@ -275,7 +275,7 @@ def main() -> int:
         if value.is_file() and ".cache" not in value.relative_to(model_path).parts
     )
     result = {
-        "schema_version": 2,
+        "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
         "source_state": benchmark_source_state(),
         "corpus": {

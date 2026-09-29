@@ -51,7 +51,7 @@ from engram.constants import (
 from engram.eligibility import evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.evidence import PropositionEligibilityEvaluator
-from engram.feedback import FeedbackStore, constraint_fingerprint
+from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint, feedback_wire_record
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.relation import phrase_relation_result
 from engram.reranking import RERANKER_FEATURES, TransparentLogisticReranker
@@ -255,6 +255,15 @@ def contains_none(value: object) -> bool:
         return result
     result = False
     return result
+
+
+def report_has_only_string_keys(value: object) -> bool:
+    """Keep a native report's object keys within the JSON object contract."""
+    if isinstance(value, dict):
+        return all(type(key) is str and report_has_only_string_keys(item) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return all(report_has_only_string_keys(item) for item in value)
+    return True
 
 
 def internal_integer(value: object, name: str) -> int:
@@ -1511,14 +1520,16 @@ def fusion_decision(
         raise InvalidRequestError("fusion decision contains an unsupported reason code") from error
     if not isinstance(report, dict) or contains_none(report):
         raise InvalidRequestError("fusion report must be a concrete no-null object")
+    if not report_has_only_string_keys(report):
+        raise InvalidRequestError("fusion report object keys must be strings")
     try:
         encoded_report = json_text(dict(report))
-        copied_report = json_loads(encoded_report)
     except (TypeError, ValueError, json_JSONDecodeError) as error:
         raise InvalidRequestError("fusion report must contain deterministic JSON values") from error
     report_size = len(encoded_report.encode("utf-8"))
     if report_size > MAX_FUSION_REPORT_BYTES:
         raise InvalidRequestError("fusion report exceeds its byte limit")
+    copied_report = feedback_wire_record(report)
     if not isinstance(copied_report, dict):
         raise InvalidRequestError("fusion report must contain an object")
     working_bytes = internal_integer(working_memory_bytes, "fusion working_memory_bytes")
@@ -1607,7 +1618,7 @@ def validate_fusion_decision(value: object) -> dict:
 def fusion_decision_to_dict(value: object) -> dict:
     current = validate_fusion_decision(value)
     selected = candidate_to_dict(current["selected_candidate"]) if current["selected_candidate_available"] else {}
-    report = json_loads(json_text(dict(current["report"])))
+    report = feedback_wire_record(current["report"])
     result = {
         "schema_version": current["schema_version"],
         "outcome": current["outcome"].value,
@@ -2428,8 +2439,7 @@ class CandidateFusionEngine:
 
 
 def policy_fingerprint(policy: dict) -> str:
-    """Return a stable release/evidence fingerprint without hidden state."""
+    """Return the current policy identity for reports and feedback suppression."""
     data = fusion_policy_to_dict(policy)
-    encoded = json_dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    result = hashlib_sha256(encoded).hexdigest()
+    result = canonical_fingerprint(data)
     return result

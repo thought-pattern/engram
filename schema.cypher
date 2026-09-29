@@ -11,6 +11,13 @@
 // A Tapestry-managed Memgraph receives only the root Tapestry installer.
 // Engram verifies that catalog in tapestry_managed mode and never applies this
 // file to it.
+//
+// Tapestry-managed record IDs and Entity/Predicate canonical IDs are UUIDv7
+// strings owned by Tapestry. Existence, uniqueness and lookup indexes below
+// are intentionally spelling-neutral: Engram reads those references as opaque
+// text and never allocates or interprets them. The managed verifier checks the
+// root identifier contract and catalog identity through deployment metadata;
+// the standalone installer neither opens nor depends on Tapestry's catalog.
 
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT EXISTS (n.component);
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT n.component IS UNIQUE;

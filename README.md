@@ -606,6 +606,13 @@ owners, mixed metadata, partial catalogs, unavailable reads, and invalid
 vector shapes fail closed. Static `--check` needs no configuration, Tapestry
 checkout, service, or database.
 
+For a Tapestry-managed graph, Engram also requires the accepted
+`SchemaRevision.identifier_contract` to be `uuid7` and a nonempty
+`identifier_catalog_id`. It treats that catalog ID and all Tapestry support
+references as opaque text. Tapestry's own readiness check verifies the exact
+catalog binding and UUID spelling; Engram never opens that catalog. The
+standalone Engram schema keeps its existing spelling-neutral ID constraints.
+
 Static schema admission derives allowed labels from Engram's current identity
 contracts and retains its exact text/vector definitions. The statement parser
 preserves quoted strings, backtick identifiers, escapes and literal whitespace;
