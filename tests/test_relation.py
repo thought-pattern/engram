@@ -20,7 +20,6 @@ from engram.relation import (
     one_hop_query_plan,
     resolve_canonical_predicate,
     resolve_canonical_subject,
-    validate_one_hop_query_plan,
 )
 from engram.resolution import QueryFrameBuilder, ResolutionOutcome, capture_resolution_budget, query_frame_with_changes
 from engram.resolvers import StructuredGraphResolver, resolver_budget as build_resolver_budget
@@ -52,8 +51,6 @@ def proposition_row(proposition_id: str = "proposition:ada-birthplace", object_i
         "trust_category_available": False,
         "supplied_trust": 0.8,
         "supplied_trust_available": True,
-        "supplied_trust_version": 1,
-        "supplied_trust_version_available": True,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -304,15 +301,12 @@ def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() ->
 
     assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_PROPOSITION_V1
     assert set(plan) == {
-        "schema_version",
         "template_id",
         "subject_entity_id",
         "predicate_id",
         "expected_object_type",
         "max_rows",
     }
-    with pytest_raises(InvalidRequestError):
-        validate_one_hop_query_plan({**plan, "cypher": "MATCH (n) RETURN n"})
     with pytest_raises(InvalidRequestError):
         one_hop_query_plan(
             canonical_resolution(

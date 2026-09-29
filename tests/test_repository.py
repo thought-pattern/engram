@@ -13,7 +13,6 @@ from engram.repository import (
     AdmissionOutcome,
     ArtifactRepository,
     RepositoryRemovalReason,
-    admission_plan_to_dict,
     normalize_repository_state,
     repository_state,
     tier_admission_policy,
@@ -238,14 +237,12 @@ def test_dynamic_admission_below_capacity_changes_no_existing_residency() -> Non
     repository = ArtifactRepository((existing,))
     plan = repository.plan_admission(incoming, tier_admission_policy(2))
 
-    assert admission_plan_to_dict(plan) == {
-        "outcome": "ADMITTED",
-        "candidate_state_generation": 2,
-        "admitted_statement_id": "stmt-incoming",
-        "evicted_statement_ids": [],
-        "residency_changed": True,
-        "lifecycle_changed": False,
-    }
+    assert plan["outcome"] == AdmissionOutcome.ADMITTED
+    assert plan["candidate"]["state_generation"] == 2
+    assert plan["admitted_statement_id"] == "stmt-incoming"
+    assert plan["evicted_statement_ids"] == ()
+    assert plan["residency_changed"] is True
+    assert plan["lifecycle_changed"] is False
     assert set(plan["candidate"]["artifacts"]) == {"stmt-existing", "stmt-incoming"}
     assert existing["lifecycle"] == LifecycleState.ACTIVE
 

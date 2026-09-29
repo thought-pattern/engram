@@ -16,7 +16,6 @@ from engram.repository import ArtifactRepository
 from engram.resolution import (
     QueryFrameBuilder,
     inheritance_provenance,
-    query_frame_to_json,
     query_frame_with_changes,
     resolution_budget,
 )
@@ -28,7 +27,6 @@ from engram.rewrite import (
     load_default_rewrite_corpus,
     load_rewrite_corpus_text,
     rewrite_rule,
-    rewrite_rule_to_dict,
 )
 from engram.service import EngramCore
 
@@ -46,9 +44,7 @@ def internal_rule(
     maximum: int = 1,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
         "rule_id": rule_id,
-        "rule_version": 1,
         "category": "test",
         "input_constraints": {
             "match_mode": match_mode,
@@ -101,18 +97,18 @@ def engine_with_artifact(request: str) -> Engram:
     return engine
 
 
-def test_rule_schema_round_trip_and_strict_validation() -> None:
-    rule = rewrite_rule(internal_rule("one", "alpha beta gamma", "delta"))
-    assert rewrite_rule(rewrite_rule_to_dict(rule)) == rule
-    malformed = rewrite_rule_to_dict(rule)
+def test_rule_schema_is_strict() -> None:
+    rule = internal_rule("one", "alpha beta gamma", "delta")
+    assert rewrite_rule(rule)["rule_id"] == "one"
+    malformed = dict(rule)
     malformed["unknown"] = True
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         rewrite_rule(malformed)
 
 
-def test_corpus_loader_rejects_duplicate_rule_versions_and_unknown_fields() -> None:
+def test_corpus_loader_rejects_duplicate_rules_and_unknown_fields() -> None:
     rule = internal_rule("duplicate", "alpha beta gamma", "delta")
-    payload = {"schema_version": 1, "corpus_id": "test", "corpus_version": 1, "rules": [rule, rule]}
+    payload = {"corpus_id": "test", "rules": [rule, rule]}
     with pytest_raises(InvalidRequestError, match="duplicate rule"):
         load_rewrite_corpus_text(json_dumps(payload))
     payload["extra"] = 1
@@ -149,7 +145,7 @@ def test_deterministic_priority_chain_and_application_limit() -> None:
     second = engine.rewrite("alpha")
     assert first["final_text"] == "charlie delta"
     assert first["chain"] == second["chain"]
-    assert [step[0] for step in first["chain"]] == ["first@1", "second@1", "grow-once@1"]
+    assert [step[0] for step in first["chain"]] == ["first", "second", "grow-once"]
 
 
 def test_depth_expansion_cycle_output_and_time_bounds() -> None:
@@ -214,12 +210,11 @@ def test_frame_trace_preserves_original_identity_and_round_trips() -> None:
     assert rewritten["identity"] == identity
     assert rewritten["rewrite_chain"] == (
         {
-            "rule_id": "question-could-you-tell-me@1",
+            "rule_id": "question-could-you-tell-me",
             "input_text": "could you tell me where atlas runs?",
             "output_text": "where atlas runs?",
         },
     )
-    assert "question-could-you-tell-me@1" in query_frame_to_json(rewritten)
 
 
 def test_contextual_rule_requires_inherited_subject() -> None:
@@ -238,7 +233,7 @@ def test_contextual_rule_requires_inherited_subject() -> None:
 
 
 def test_held_out_engineering_corpus_has_expected_rewrites_and_identity_stability() -> None:
-    payload = json_loads((REPOSITORY / "eval" / "section11-rewrite-v1.json").read_text(encoding="utf-8"))
+    payload = json_loads((REPOSITORY / "tests" / "fixtures" / "rewrite" / "cases.json").read_text(encoding="utf-8"))
     engine = RewriteEngine(load_default_rewrite_corpus())
     seen = set()
     for case in payload["cases"]:

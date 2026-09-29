@@ -19,9 +19,7 @@ from engram.constants import (
     MAX_RESULT_STRING_BYTES,
     MAX_SIGNATURE_INPUT_BYTES,
     MAX_TOMBSTONES,
-    MUTATION_LEDGER_SCHEMA_VERSION,
     MUTATION_RECEIPT_FIELDS,
-    MUTATION_RECEIPT_SCHEMA_VERSION,
     RECEIPT_LOOKUP_FIELDS,
     RECEIPT_TOMBSTONE_FIELDS,
     MutationOperation,
@@ -211,11 +209,8 @@ def mutation_receipt(
     result: dict,
     completion_state: ReceiptCompletionState,
     created_at: str,
-    schema_version: int = MUTATION_RECEIPT_SCHEMA_VERSION,
 ) -> dict:
     """Build one validated mutation-receipt dictionary."""
-    if schema_version != MUTATION_RECEIPT_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported mutation receipt schema_version: {schema_version}")
     normalized_sequence = positive_int(sequence, "mutation receipt sequence")
     normalized_request_id = require_text(request_id, "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False)
     if not isinstance(operation, MutationOperation):
@@ -233,7 +228,6 @@ def mutation_receipt(
     ):
         raise InvalidRequestError("a PREPARED receipt must carry empty effects and the concrete placeholder result code")
     receipt: dict = {
-        "schema_version": schema_version,
         "sequence": normalized_sequence,
         "request_id": normalized_request_id,
         "operation": operation,
@@ -259,7 +253,6 @@ def validate_mutation_receipt(value: object) -> dict:
     result = data.get("result", ())
     completion_state = data.get("completion_state", ())
     created_at = data.get("created_at", ())
-    schema_version = data.get("schema_version", ())
     if not isinstance(sequence, int) or not isinstance(request_id, str):
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
@@ -268,7 +261,7 @@ def validate_mutation_receipt(value: object) -> dict:
         raise InvalidRequestError("mutation receipt fields are malformed")
     if not isinstance(result, dict) or not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("mutation receipt fields are malformed")
-    if not isinstance(created_at, str) or not isinstance(schema_version, int):
+    if not isinstance(created_at, str):
         raise InvalidRequestError("mutation receipt fields are malformed")
     receipt = mutation_receipt(
         sequence=sequence,
@@ -280,7 +273,6 @@ def validate_mutation_receipt(value: object) -> dict:
         result=result,
         completion_state=completion_state,
         created_at=created_at,
-        schema_version=schema_version,
     )
     return receipt
 
@@ -297,7 +289,6 @@ def trusted_mutation_receipt_to_dict(receipt: dict) -> dict:
     affected = [artifact_generation_change_to_dict(change) for change in receipt.get("affected_generations", ())]
     result_value = thaw_json(receipt.get("result", {}))
     result = {
-        "schema_version": receipt.get("schema_version", 0),
         "sequence": receipt.get("sequence", 0),
         "request_id": receipt.get("request_id", ""),
         "operation": receipt.get("operation", MutationOperation.COMMIT_RESPONSE).value,
@@ -334,7 +325,6 @@ def mutation_receipt_from_dict(value: object) -> dict:
     if not isinstance(result, dict):
         raise InvalidRequestError("mutation receipt result must be an object")
     receipt = mutation_receipt(
-        schema_version=positive_int(data["schema_version"], "mutation receipt schema_version"),
         sequence=positive_int(data["sequence"], "mutation receipt sequence"),
         request_id=require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
         operation=operation,
@@ -660,7 +650,6 @@ class MutationReceiptLedger:
     def snapshot(self) -> dict:
         with self.internal_lock:
             result = {
-                "schema_version": MUTATION_LEDGER_SCHEMA_VERSION,
                 "max_receipts": self.max_receipts,
                 "max_tombstones": self.max_tombstones,
                 "next_sequence": self.internal_next_sequence,
@@ -730,7 +719,6 @@ def validate_mutation_receipt_ledger_state(value: object) -> dict:
         "MutationReceiptLedger",
         set(
             {
-                "schema_version",
                 "max_receipts",
                 "max_tombstones",
                 "next_sequence",
@@ -739,8 +727,6 @@ def validate_mutation_receipt_ledger_state(value: object) -> dict:
             }
         ),
     )
-    if data["schema_version"] != MUTATION_LEDGER_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported mutation ledger schema_version: {data['schema_version']}")
     receipts = data["receipts"]
     tombstones = data["tombstones"]
     if not isinstance(receipts, list) or not isinstance(tombstones, list):

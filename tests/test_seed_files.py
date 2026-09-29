@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pytest import raises as pytest_raises
 
-from engram.config import config_from_dict, config_to_dict, conversation_config, engram_config, load_config
+from engram.config import conversation_config, engram_config, load_config
 from engram.constants import VERSION
 from engram.core import Engram, load_seed_files
 from engram.pattern import normalize_pattern
@@ -166,16 +166,6 @@ def test_bot_name_renders_in_seed_responses(tmp_path):
 
     result = engram.pattern_query("What is your name?")
     assert result and "Mara" in result[2]
-
-
-def test_conversation_round_trip_keeps_absolute_paths_without_rereading_files(tmp_path):
-    path = write_seed(tmp_path / "one.json", [{"pattern": "PING", "response": "Pong."}])
-    config = engram_config(conversation=conversation_config(bot_name="Mara", seed_files=[path]))
-    exported = config_to_dict(config)
-    Path(path).unlink()
-
-    restored = config_from_dict(exported)
-    assert restored["conversation"] == config["conversation"]
 
 
 def test_duplicate_policy_last_keeps_one_later_pair(tmp_path):

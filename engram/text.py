@@ -306,23 +306,6 @@ def get_lemmatizer() -> WordNetLemmatizer:
 
 
 @lru_cache(maxsize=8192)
-def stem_word(word: str) -> str:
-    """Apply Porter stemming to a word.
-
-    Stemming reduces words to their root form by removing suffixes.
-    Example: "running" -> "run", "cats" -> "cat"
-
-    Args:
-        word: Input word.
-
-    Returns:
-        Stemmed word.
-    """
-    stemmed = get_stemmer().stem(word.lower())
-    return stemmed
-
-
-@lru_cache(maxsize=8192)
 def lemmatize_word(word: str, pos: str = "n") -> str:
     """Apply WordNet lemmatization to a word.
 
@@ -416,24 +399,6 @@ def lemmatize_text_spacy(text: str) -> str:
     doc = nlp(text)
     lemmatized = " ".join(token.lemma_.lower() for token in doc)
     return lemmatized
-
-
-@lru_cache(maxsize=4096)
-def normalize_with_stemming(text: str) -> str:
-    """Normalize text and apply stemming for flexible matching.
-
-    Combines standard normalization with stemming to allow
-    matching of different word forms (e.g., "running" matches "run").
-
-    Args:
-        text: Input text.
-
-    Returns:
-        Normalized and stemmed text.
-    """
-    normalized = normalize(text)
-    stemmed = stem_text(normalized)
-    return stemmed
 
 
 @lru_cache(maxsize=1)

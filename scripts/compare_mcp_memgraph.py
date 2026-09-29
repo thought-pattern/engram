@@ -21,7 +21,7 @@ from engram.core import Engram
 from engram.mcp_server import EngramMCPServer
 from engram.service import EngramCore
 
-DEFAULT_OUTPUT = Path("eval/results/contextual/mcp-memgraph-comparison-2026-08-20.json")
+DEFAULT_OUTPUT = Path("eval/results/contextual/mcp-memgraph-comparison.json")
 PROMPTS = (
     "Tell me about Sarah.",
     "Who is Sarah married to?",
@@ -197,7 +197,6 @@ async def compare(config_path: str) -> dict:
             }
         )
     result = {
-        "schema_version": 1,
         "created_at": datetime.now(UTC).isoformat(),
         "engram_version": VERSION,
         "transport": "official MCP Client against repository MCPServer",

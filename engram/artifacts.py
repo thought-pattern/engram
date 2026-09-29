@@ -5,18 +5,14 @@ the lifecycle vocabulary and policies without depending on storage tier,
 residency, indexes, or adapters.
 """
 
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from json import dumps as json_dumps
 from math import isfinite as math_isfinite
 
 from engram.constants import (
     ARTIFACT_PROVENANCE_FIELDS,
-    ARTIFACT_PROVENANCE_SCHEMA_VERSION,
-    ARTIFACT_SCHEMA_VERSION,
     ARTIFACT_STATISTICS_FIELDS,
-    ARTIFACT_STATISTICS_SCHEMA_VERSION,
     CACHED_RESPONSE_ARTIFACT_FIELDS,
     EMPTY_MAPPING,
-    HISTORICAL_KEY_REUSE_DECISION_FIELDS,
     LEGAL_LIFECYCLE_TRANSITIONS,
     LIFECYCLE_BASE_DECISION_FIELDS,
     LIFECYCLE_INELIGIBLE_REASONS,
@@ -33,7 +29,6 @@ from engram.constants import (
     MAX_SOURCE_LABEL_BYTES,
     MAX_SUPPORT_REFERENCES,
     TERMINAL_LIFECYCLE_STATES as TERMINAL_LIFECYCLE_STATES,
-    HistoricalKeyReuseReason,
     LifecycleDecisionReason,
     LifecycleOperation,
     LifecycleState,
@@ -53,7 +48,13 @@ from engram.identity import (
     validate_scope_key,
 )
 from engram.support import validate_support_references
-from engram.validation import Characters, require_available_utc_timestamp, require_bool, require_text, require_utc_timestamp
+from engram.validation import (
+    Characters,
+    require_available_utc_timestamp,
+    require_bool,
+    require_text,
+    require_utc_timestamp,
+)
 
 
 def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
@@ -88,13 +89,6 @@ def require_nonnegative_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise InvalidRequestError(f"{name} must be a nonnegative integer")
     return value
-
-
-def require_schema_version(value: object, expected: int, name: str) -> int:
-    version = require_positive_int(value, name)
-    if version != expected:
-        raise InvalidRequestError(f"unsupported {name}: {version}; expected {expected}")
-    return version
 
 
 def freeze_json_value(value: object, name: str, depth: int, item_count: list[int]) -> object:
@@ -162,11 +156,6 @@ def validate_artifact_provenance(value: object) -> dict:
 
     data = require_exact_mapping(value, "ArtifactProvenance", ARTIFACT_PROVENANCE_FIELDS)
     result: dict = {
-        "schema_version": require_schema_version(
-            data["schema_version"],
-            ARTIFACT_PROVENANCE_SCHEMA_VERSION,
-            "artifact provenance schema_version",
-        ),
         "source_label": require_text(
             data["source_label"],
             "artifact provenance source_label",
@@ -192,12 +181,10 @@ def artifact_provenance(
     source_label: str,
     caller_id: str,
     accepted_at: str,
-    schema_version: int = ARTIFACT_PROVENANCE_SCHEMA_VERSION,
 ) -> dict:
     """Construct bounded accepted-response provenance."""
 
     raw_provenance = {
-        "schema_version": schema_version,
         "source_label": source_label,
         "caller_id": caller_id,
         "accepted_at": accepted_at,
@@ -231,11 +218,6 @@ def validate_artifact_statistics(value: object) -> dict:
         "artifact statistics last_hit",
     )
     result: dict = {
-        "schema_version": require_schema_version(
-            data["schema_version"],
-            ARTIFACT_STATISTICS_SCHEMA_VERSION,
-            "artifact statistics schema_version",
-        ),
         "hit_count": require_nonnegative_int(data["hit_count"], "artifact statistics hit_count"),
         "query_count": require_nonnegative_int(data["query_count"], "artifact statistics query_count"),
         "last_hit": last_hit,
@@ -249,12 +231,10 @@ def artifact_statistics(
     query_count: int = 0,
     last_hit: str = "",
     last_hit_available: bool = False,
-    schema_version: int = ARTIFACT_STATISTICS_SCHEMA_VERSION,
 ) -> dict:
     """Construct authoritative response statistics."""
 
     raw_statistics = {
-        "schema_version": schema_version,
         "hit_count": hit_count,
         "query_count": query_count,
         "last_hit": last_hit,
@@ -283,7 +263,6 @@ def validate_cached_response_artifact(value: object) -> dict:
     """Validate and defensively copy one accepted-response artifact."""
 
     data = require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
-    schema_version = require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version")
     statement_id = require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
     generation = require_positive_int(data["generation"], "artifact generation")
     response = require_response(data["response"])
@@ -336,7 +315,6 @@ def validate_cached_response_artifact(value: object) -> dict:
     statistics = validate_artifact_statistics(data["statistics"])
     metadata = freeze_metadata(data["metadata"])
     result: dict = {
-        "schema_version": schema_version,
         "statement_id": statement_id,
         "generation": generation,
         "response": response,
@@ -376,7 +354,6 @@ def cached_response_artifact(
     provenance: dict,
     statistics: dict = EMPTY_MAPPING,
     metadata: dict = EMPTY_MAPPING,
-    schema_version: int = ARTIFACT_SCHEMA_VERSION,
 ) -> dict:
     """Construct one authoritative accepted-response artifact."""
 
@@ -384,7 +361,6 @@ def cached_response_artifact(
         raise InvalidRequestError("artifact statistics must be ArtifactStatistics")
     selected_statistics = validate_artifact_statistics(statistics) if statistics else artifact_statistics()
     raw_artifact = {
-        "schema_version": schema_version,
         "statement_id": statement_id,
         "generation": generation,
         "response": response,
@@ -412,7 +388,6 @@ def cached_response_artifact_to_dict(value: object) -> dict:
 
     artifact = validate_cached_response_artifact(value)
     result: dict = {
-        "schema_version": artifact["schema_version"],
         "statement_id": artifact["statement_id"],
         "generation": artifact["generation"],
         "response": artifact["response"],
@@ -431,14 +406,6 @@ def cached_response_artifact_to_dict(value: object) -> dict:
         "statistics": artifact_statistics_to_dict(artifact["statistics"]),
         "metadata": thaw_json_value(artifact["metadata"]),
     }
-    return result
-
-
-def cached_response_artifact_to_json(value: object) -> str:
-    """Serialize one accepted-response artifact to canonical JSON."""
-
-    data = cached_response_artifact_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -466,7 +433,6 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     provenance = require_mapping(data["provenance"], "artifact provenance")
     statistics = require_mapping(data["statistics"], "artifact statistics")
     result = cached_response_artifact(
-        schema_version=require_schema_version(data["schema_version"], ARTIFACT_SCHEMA_VERSION, "artifact schema_version"),
         statement_id=require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
         generation=require_positive_int(data["generation"], "artifact generation"),
         response=require_response(data["response"]),
@@ -488,21 +454,6 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     return result
 
 
-def cached_response_artifact_from_json(value: object) -> dict:
-    """Decode one accepted-response artifact from canonical JSON."""
-
-    if not isinstance(value, str):
-        raise InvalidRequestError("CachedResponseArtifact JSON must be a string")
-    try:
-        data = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError("CachedResponseArtifact JSON is malformed") from error
-    if not isinstance(data, dict):
-        raise InvalidRequestError("CachedResponseArtifact JSON must contain an object")
-    result = cached_response_artifact_from_dict(data)
-    return result
-
-
 def require_lifecycle(value: object, name: str) -> LifecycleState:
     if not isinstance(value, LifecycleState):
         raise InvalidRequestError(f"{name} must be a LifecycleState")
@@ -521,12 +472,6 @@ def require_lifecycle_decision_reason(value: object, name: str) -> LifecycleDeci
     return value
 
 
-def require_historical_key_reuse_reason(value: object) -> HistoricalKeyReuseReason:
-    if not isinstance(value, HistoricalKeyReuseReason):
-        raise InvalidRequestError("historical key reuse reason must be a HistoricalKeyReuseReason")
-    return value
-
-
 def validate_lifecycle_base_decision(value: object) -> dict:
     """Validate and copy one lifecycle-only eligibility decision."""
 
@@ -542,18 +487,6 @@ def validate_lifecycle_base_decision(value: object) -> dict:
         "lifecycle": lifecycle,
         "direct_answer_eligible": direct_answer_eligible,
         "reason": reason,
-    }
-    return result
-
-
-def lifecycle_base_decision_to_dict(value: object) -> dict:
-    """Serialize one validated lifecycle-only eligibility decision."""
-
-    decision = validate_lifecycle_base_decision(value)
-    result: dict = {
-        "lifecycle": decision["lifecycle"].value,
-        "direct_answer_eligible": decision["direct_answer_eligible"],
-        "reason": decision["reason"].value,
     }
     return result
 
@@ -598,41 +531,6 @@ def validate_lifecycle_transition_decision(value: object) -> dict:
     return result
 
 
-def lifecycle_transition_decision_to_dict(value: object) -> dict:
-    """Serialize one validated lifecycle transition decision."""
-
-    decision = validate_lifecycle_transition_decision(value)
-    result = {
-        "current": decision["current"].value,
-        "target": decision["target"].value,
-        "operation": decision["operation"].value,
-        "allowed": decision["allowed"],
-        "reason": decision["reason"].value,
-    }
-    return result
-
-
-def validate_historical_key_reuse_decision(value: object) -> dict:
-    """Validate and copy one historical retrieval-key reuse decision."""
-
-    data = require_exact_mapping(value, "HistoricalKeyReuseDecision", HISTORICAL_KEY_REUSE_DECISION_FIELDS)
-    allowed = require_bool(data["allowed"], "historical key reuse allowed")
-    reason = require_historical_key_reuse_reason(data["reason"])
-    expected_allowed = reason == HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
-    if allowed != expected_allowed:
-        raise InvalidRequestError("HistoricalKeyReuseDecision allowed does not match reason")
-    result: dict = {"allowed": allowed, "reason": reason}
-    return result
-
-
-def historical_key_reuse_decision_to_dict(value: object) -> dict:
-    """Serialize one validated historical retrieval-key reuse decision."""
-
-    decision = validate_historical_key_reuse_decision(value)
-    result = {"allowed": decision["allowed"], "reason": decision["reason"].value}
-    return result
-
-
 def lifecycle_base_eligibility(lifecycle: object) -> dict:
     """Evaluate lifecycle alone; temporal checks are applied later."""
 
@@ -658,7 +556,7 @@ def lifecycle_transition_decision(
     target: object,
     operation: object,
 ) -> dict:
-    """Return the version 1 legal-transition decision without mutating state."""
+    """Return the legal-transition decision without mutating state."""
 
     current_state = require_lifecycle(current, "current lifecycle")
     target_state = require_lifecycle(target, "target lifecycle")
@@ -688,42 +586,6 @@ def require_lifecycle_transition(
             f"illegal lifecycle transition: {decision['current'].value} -> {decision['target'].value} "
             f"via {decision['operation'].value} ({decision['reason'].value})"
         )
-    return decision
-
-
-def historical_key_reuse_decision(
-    *,
-    explicit_replacement: object,
-    expected_statement_id: object,
-    expected_generation: object,
-) -> dict:
-    """Apply the v1 policy for a retrieval key already present in history.
-
-    Repository collision checks remain responsible for verifying that the
-    expected owner is the applicable current or historical owner.  This policy
-    merely prevents blind base commit from reusing an owned key.
-    """
-
-    if not isinstance(explicit_replacement, bool):
-        raise InvalidRequestError("explicit_replacement must be a boolean")
-    if not isinstance(expected_statement_id, str):
-        raise InvalidRequestError("expected_statement_id must be a string")
-    if isinstance(expected_generation, bool) or not isinstance(expected_generation, int):
-        raise InvalidRequestError("expected_generation must be an integer")
-    if not explicit_replacement:
-        allowed = False
-        reason = HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
-    elif not expected_statement_id:
-        allowed = False
-        reason = HistoricalKeyReuseReason.EXPECTED_STATEMENT_ID_REQUIRED
-    elif expected_generation < 1:
-        allowed = False
-        reason = HistoricalKeyReuseReason.EXPECTED_GENERATION_REQUIRED
-    else:
-        allowed = True
-        reason = HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
-    raw_decision = {"allowed": allowed, "reason": reason}
-    decision = validate_historical_key_reuse_decision(raw_decision)
     return decision
 
 

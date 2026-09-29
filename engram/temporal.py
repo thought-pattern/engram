@@ -8,7 +8,6 @@ from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compil
 from engram.constants import (
     MAX_TEMPORAL_SOURCE_BYTES,
     TEMPORAL_QUERY_FIELDS,
-    TEMPORAL_QUERY_SCHEMA_VERSION,
     TemporalAxis,
     TemporalQueryOperator,
 )
@@ -76,11 +75,8 @@ def temporal_query(
     end_available: object = False,
     confidence: object = 0.0,
     resolved: object = True,
-    schema_version: object = TEMPORAL_QUERY_SCHEMA_VERSION,
 ) -> dict:
     """Build one exact temporal interpretation without inferring missing bounds."""
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != TEMPORAL_QUERY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported temporal query schema_version: {schema_version}")
     if not isinstance(operator, TemporalQueryOperator):
         raise InvalidRequestError("temporal query operator is unsupported")
     if not isinstance(axis, TemporalAxis):
@@ -122,7 +118,6 @@ def temporal_query(
     elif not source:
         raise InvalidRequestError("explicit temporal query requires preserved source text")
     result: dict = {
-        "schema_version": TEMPORAL_QUERY_SCHEMA_VERSION,
         "operator": operator,
         "axis": axis,
         "source_text": source,
@@ -149,7 +144,6 @@ def validate_temporal_query(value: object) -> dict:
         end_available=value["end_available"],
         confidence=value["confidence"],
         resolved=value["resolved"],
-        schema_version=value["schema_version"],
     )
     return result
 
@@ -157,7 +151,6 @@ def validate_temporal_query(value: object) -> dict:
 def temporal_query_to_dict(value: object) -> dict[str, object]:
     current = validate_temporal_query(value)
     result = {
-        "schema_version": current["schema_version"],
         "operator": current["operator"].value,
         "axis": current["axis"].value,
         "source_text": current["source_text"],
@@ -189,7 +182,6 @@ def temporal_query_from_dict(value: object) -> dict:
         end_available=value["end_available"],
         confidence=value["confidence"],
         resolved=value["resolved"],
-        schema_version=value["schema_version"],
     )
     return result
 

@@ -249,13 +249,10 @@ def reranker_config(
 
 
 def rollout_config(
-    policy_version: str = "rollout-v1",
     default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
     namespaces: dict = EMPTY_CONFIG,
 ) -> dict:
     """Build the small namespace rollout policy used by unified resolution."""
-    if not isinstance(policy_version, str) or not policy_version.strip():
-        raise ValueError("rollout policy_version must be a non-empty string")
     if not isinstance(default_mode, RolloutMode):
         try:
             default_mode = RolloutMode(default_mode)
@@ -272,7 +269,6 @@ def rollout_config(
         except (TypeError, ValueError) as error:
             raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from error
     result: dict = {
-        "policy_version": policy_version.strip(),
         "default_mode": default_mode,
         "namespaces": selected_namespaces,
     }
@@ -493,37 +489,6 @@ def engram_config(
     return config
 
 
-def config_to_dict(config: dict) -> dict:
-    """Serialize a config dict to a JSON-ready dictionary.
-
-    Enums are written by value and the stopword set as a sorted list, so the
-    result round-trips through JSON. Graph credentials are runtime-only and
-    deliberately omitted because runtime credentials are not configuration exports.
-    """
-    data = dict(config)
-    data["session_overflow"] = config.get("session_overflow", SessionOverflow.REJECT).value
-    data["stopwords"] = sorted(config.get("stopwords", set()))
-    graph = config.get("graph", {}) or {}
-    data["graph"] = {key: value for key, value in graph.items() if key != "password"}
-    data["sparse"] = dict(config.get("sparse", {}) or sparse_config())
-    data["semantic"] = dict(config.get("semantic", {}) or semantic_config())
-    data["reranker"] = dict(config.get("reranker", {}) or reranker_config())
-    rollout = config.get("rollout", {}) or rollout_config()
-    data["rollout"] = {
-        "policy_version": rollout["policy_version"],
-        "default_mode": rollout["default_mode"].value,
-        "namespaces": {namespace: mode.value for namespace, mode in rollout["namespaces"].items()},
-    }
-    data["utility"] = dict(config.get("utility", {}) or utility_config())
-    data.get("utility", {})["plugins"] = list(data.get("utility", {})["plugins"])
-    conversation = dict(config.get("conversation", {}) or conversation_config())
-    conversation["seed_files"] = list(conversation.get("seed_files", ()))
-    conversation["set_files"] = list(conversation.get("set_files", ()))
-    conversation["map_files"] = list(conversation.get("map_files", ()))
-    data["conversation"] = conversation
-    return data
-
-
 SECTION_BUILDERS = (
     ("graph", graph_config),
     ("sparse", sparse_config),
@@ -549,32 +514,6 @@ def known_keys(values: object, allowed: set, section: str, source: str) -> dict:
         logger.warning("Ignoring unknown %s key(s) in %s: %s", label, source, ", ".join(unknown))
     result = {key: value for key, value in values.items() if key in allowed}
     return result
-
-
-def config_from_dict(data: dict) -> dict:
-    """Rebuild a validated config dict from its JSON-ready form.
-
-    Inverse of ``config_to_dict``: enum values are mapped back to their enums,
-    the stopword list back to a set, and nested sections revalidated. Seed paths
-    are kept as stored. Missing keys fall back to ``engram_config`` defaults, and
-    unknown keys are ignored.
-    """
-    if not isinstance(data, dict):
-        raise ValueError("serialized config must be an object")
-    source = "serialized config"
-    params = known_keys(data, set(engram_config()), "", source)
-    if "session_overflow" in params:
-        params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
-    if "stopwords" in params:
-        params["stopwords"] = set(params.get("stopwords", set()))
-    for name, builder in SECTION_BUILDERS:
-        if name in params:
-            if not isinstance(params.get(name, {}), dict):
-                raise ValueError(f"serialized {name} config must be an object")
-            if params.get(name, {}):
-                params[name] = builder(**known_keys(params.get(name, {}), set(builder()), name, source))
-    config = engram_config(**params)
-    return config
 
 
 def load_config(path: str = "config.yml") -> dict:

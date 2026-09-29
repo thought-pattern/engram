@@ -8,7 +8,7 @@ from .support_fixtures import ASSERTION_REFERENCE_A
 
 
 def test_a_reference_naming_newer_contracts_is_accepted_and_kept_as_given() -> None:
-    reference = {**ASSERTION_REFERENCE_A, "schema_version": "support-v2", "representation_contract": "representation-v2"}
+    reference = {**ASSERTION_REFERENCE_A, "representation_contract": "representation-v2"}
 
     validated = validate_support_reference(reference)
 
@@ -16,8 +16,6 @@ def test_a_reference_naming_newer_contracts_is_accepted_and_kept_as_given() -> N
 
 
 def test_contract_names_must_be_non_empty_and_bounded() -> None:
-    with pytest_raises(ValueError, match="schema_version"):
-        validate_support_reference({**ASSERTION_REFERENCE_A, "schema_version": ""})
     with pytest_raises(ValueError, match="representation_contract"):
         validate_support_reference({**ASSERTION_REFERENCE_A, "representation_contract": "x" * (MAX_CONTRACT_NAME_BYTES + 1)})
 

@@ -271,8 +271,6 @@ def trim_projection(index: int) -> dict:
         "trust_category_available": False,
         "supplied_trust": 0.0,
         "supplied_trust_available": False,
-        "supplied_trust_version": 0,
-        "supplied_trust_version_available": False,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -384,7 +382,6 @@ def run_benchmark(sizes: list[int], pattern_sizes: list[int], trim_sizes: list[i
         scenarios = reported(f"evidence records={size}", lambda size=size: trim_scenario(size, iterations))
         results.append({"kind": "evidence", "size": size, "scenarios": scenarios})
     result = {
-        "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {"packages": package_versions()},

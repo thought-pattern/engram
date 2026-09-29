@@ -29,10 +29,10 @@ jobs:
         run: ruff check --line-length 132 .
 
       - name: Bytecode compilation check
-        run: python -m compileall -q engram scripts eval tests
+        run: python -m compileall -q engram scripts tests
 
       - name: Security scan
-        run: bandit -q -ii -lll -r engram scripts eval
+        run: bandit -q -ii -lll -r engram scripts
 
       - name: Dead-code scan
         run: vulture

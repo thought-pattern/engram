@@ -15,31 +15,20 @@ from engram.constants import (
     EMPTY_NEGATIVE_EXPIRES_AT,
     EMPTY_SCOPE_KEY,
     FEEDBACK_BUCKET_FIELDS,
-    FEEDBACK_BUCKET_SCHEMA_VERSION,
     FEEDBACK_BUCKET_SECONDS,
-    FEEDBACK_CONTRACT_FINGERPRINT,
     FEEDBACK_HALF_LIFE_SECONDS,
-    FEEDBACK_HISTORY_FIELDS,
-    FEEDBACK_HISTORY_SCHEMA_VERSION,
-    FEEDBACK_KEY_SCHEMA_VERSION,
     FEEDBACK_MAX_BUCKETS_PER_RECORD,
     FEEDBACK_MAX_RELATIONSHIP_RECORDS,
     FEEDBACK_MAX_STATEMENT_RECORDS,
     FEEDBACK_MINIMUM_VERDICT_SAMPLES,
     FEEDBACK_OBSERVATION_FIELDS,
-    FEEDBACK_OBSERVATION_SCHEMA_VERSION,
     FEEDBACK_OUTCOME_COUNTER_FIELDS,
     FEEDBACK_POLICY_FIELDS,
-    FEEDBACK_POLICY_SCHEMA_VERSION,
-    FEEDBACK_POLICY_VERSION,
     FEEDBACK_PRIOR_ACCEPT,
     FEEDBACK_PRIOR_REJECT,
     FEEDBACK_RECORD_FIELDS,
-    FEEDBACK_RECORD_SCHEMA_VERSION,
     FEEDBACK_STATE_FIELDS,
-    FEEDBACK_STATE_SCHEMA_VERSION,
     FEEDBACK_STATISTICS_FIELDS,
-    FEEDBACK_STATISTICS_SCHEMA_VERSION,
     MAX_CONSTRAINT_JSON_BYTES,
     MAX_FEEDBACK_BUCKET_SECONDS,
     MAX_FEEDBACK_BUCKETS,
@@ -57,11 +46,8 @@ from engram.constants import (
     MAX_NEGATIVE_TTL_SECONDS,
     MAX_REFERENCE_ID_BYTES,
     MAX_STATEMENT_ID_BYTES,
-    MAX_VERSION_BYTES,
-    NEGATIVE_KEY_SCHEMA_VERSION,
     NEGATIVE_RESOLUTION_FIELDS,
     NEGATIVE_RESOLUTION_KEY_FIELDS,
-    NEGATIVE_RESOLUTION_SCHEMA_VERSION,
     POLICY_SUPPRESSION_FIELDS,
     RELATIONSHIP_FEEDBACK_KEY_FIELDS,
     STALE_EXCLUSION_FIELDS,
@@ -246,7 +232,6 @@ def constraint_fingerprint(
 
 
 def feedback_policy(
-    policy_version: object = FEEDBACK_POLICY_VERSION,
     minimum_verdict_samples: object = FEEDBACK_MINIMUM_VERDICT_SAMPLES,
     prior_accept: object = FEEDBACK_PRIOR_ACCEPT,
     prior_reject: object = FEEDBACK_PRIOR_REJECT,
@@ -255,13 +240,8 @@ def feedback_policy(
     max_buckets_per_record: object = FEEDBACK_MAX_BUCKETS_PER_RECORD,
     max_statement_records: object = FEEDBACK_MAX_STATEMENT_RECORDS,
     max_relationship_records: object = FEEDBACK_MAX_RELATIONSHIP_RECORDS,
-    schema_version: object = FEEDBACK_POLICY_SCHEMA_VERSION,
 ) -> dict:
     """Build the hand-authored, unfitted aging and history policy."""
-    version = internal_integer(schema_version, "feedback policy schema_version", 0)
-    if version != FEEDBACK_POLICY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback policy schema_version: {version}")
-    validated_policy_version = require_text(policy_version, "feedback policy_version", MAX_VERSION_BYTES)
     validated_samples = internal_integer(
         minimum_verdict_samples, "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
     )
@@ -279,7 +259,6 @@ def feedback_policy(
         max_relationship_records, "feedback max_relationship_records", 1, MAX_FEEDBACK_POLICY_RECORDS
     )
     result: dict = {
-        "policy_version": validated_policy_version,
         "minimum_verdict_samples": validated_samples,
         "prior_accept": validated_prior_accept,
         "prior_reject": validated_prior_reject,
@@ -288,7 +267,6 @@ def feedback_policy(
         "max_buckets_per_record": validated_max_buckets,
         "max_statement_records": validated_statement_records,
         "max_relationship_records": validated_relationship_records,
-        "schema_version": version,
     }
     return result
 
@@ -296,7 +274,6 @@ def feedback_policy(
 def validate_feedback_policy(value: object) -> dict:
     data = exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
     result = feedback_policy(
-        data["policy_version"],
         data["minimum_verdict_samples"],
         data["prior_accept"],
         data["prior_reject"],
@@ -305,7 +282,6 @@ def validate_feedback_policy(value: object) -> dict:
         data["max_buckets_per_record"],
         data["max_statement_records"],
         data["max_relationship_records"],
-        data["schema_version"],
     )
     return result
 
@@ -319,8 +295,6 @@ def feedback_policy_to_dict(value: object) -> dict:
 def feedback_policy_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeedbackPolicy", FEEDBACK_POLICY_FIELDS)
     result = feedback_policy(
-        schema_version=internal_integer(data["schema_version"], "feedback policy schema_version", 0),
-        policy_version=require_text(data["policy_version"], "feedback policy_version", MAX_VERSION_BYTES),
         minimum_verdict_samples=internal_integer(
             data["minimum_verdict_samples"], "feedback minimum_verdict_samples", 1, MAX_FEEDBACK_POLICY_SAMPLES
         ),
@@ -358,13 +332,8 @@ def statement_feedback_key(
     generation: object,
     generation_available: object,
     policy_fingerprint: object,
-    contract_fingerprint: object = FEEDBACK_CONTRACT_FINGERPRINT,
-    schema_version: object = FEEDBACK_KEY_SCHEMA_VERSION,
 ) -> dict:
     """Build one statement-lineage observation partition."""
-    version = internal_integer(schema_version, "statement feedback key schema_version", 0)
-    if version != FEEDBACK_KEY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported statement feedback key schema_version: {version}")
     validated_statement_id = require_text(statement_id, "feedback statement_id", MAX_STATEMENT_ID_BYTES)
     validated_generation = internal_integer(generation, "feedback generation", 0)
     generation_is_available = require_bool(generation_available, "feedback generation_available")
@@ -373,14 +342,11 @@ def statement_feedback_key(
     if not generation_is_available and validated_generation != 0:
         raise InvalidRequestError("unavailable feedback generation must be zero")
     validated_policy = internal_fingerprint(policy_fingerprint, "feedback policy_fingerprint")
-    validated_contract = internal_fingerprint(contract_fingerprint, "feedback contract_fingerprint")
     result: dict = {
         "statement_id": validated_statement_id,
         "generation": validated_generation,
         "generation_available": generation_is_available,
         "policy_fingerprint": validated_policy,
-        "contract_fingerprint": validated_contract,
-        "schema_version": version,
     }
     return result
 
@@ -392,8 +358,6 @@ def validate_statement_feedback_key(value: object) -> dict:
         data["generation"],
         data["generation_available"],
         data["policy_fingerprint"],
-        data["contract_fingerprint"],
-        data["schema_version"],
     )
     return result
 
@@ -410,28 +374,14 @@ def statement_feedback_key_fingerprint(value: object) -> str:
     return result
 
 
-def statement_feedback_key_to_json(value: object) -> str:
-    data = statement_feedback_key_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def statement_feedback_key_from_dict(value: object) -> dict:
     data = exact_mapping(value, "StatementFeedbackKey", STATEMENT_FEEDBACK_KEY_FIELDS)
     result = statement_feedback_key(
-        schema_version=internal_integer(data["schema_version"], "statement feedback key schema_version", 0),
         statement_id=require_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
         generation=internal_integer(data["generation"], "feedback generation", 0),
         generation_available=require_bool(data["generation_available"], "feedback generation_available"),
         policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
-        contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
     )
-    return result
-
-
-def statement_feedback_key_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "StatementFeedbackKey JSON")
-    result = statement_feedback_key_from_dict(data)
     return result
 
 
@@ -440,12 +390,8 @@ def relationship_feedback_key(
     scope: object,
     constraint_fingerprint: object,
     statement: object,
-    schema_version: object = FEEDBACK_KEY_SCHEMA_VERSION,
 ) -> dict:
     """Build one exact query, scope, constraint, and statement partition."""
-    version = internal_integer(schema_version, "relationship feedback key schema_version", 0)
-    if version != FEEDBACK_KEY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported relationship feedback key schema_version: {version}")
     try:
         validated_query_identity = validate_query_identity(query_identity)
     except IdentityValidationError as error:
@@ -466,7 +412,6 @@ def relationship_feedback_key(
         "scope": validated_scope,
         "constraint_fingerprint": validated_constraint,
         "statement": validated_statement,
-        "schema_version": version,
     }
     return result
 
@@ -478,7 +423,6 @@ def validate_relationship_feedback_key(value: object) -> dict:
         data["scope"],
         data["constraint_fingerprint"],
         data["statement"],
-        data["schema_version"],
     )
     return result
 
@@ -486,7 +430,6 @@ def validate_relationship_feedback_key(value: object) -> dict:
 def relationship_feedback_key_to_dict(value: object) -> dict:
     current = validate_relationship_feedback_key(value)
     result = {
-        "schema_version": current["schema_version"],
         "query_identity": feedback_wire_value(current["query_identity"]),
         "scope": feedback_wire_value(current["scope"]),
         "constraint_fingerprint": current["constraint_fingerprint"],
@@ -498,12 +441,6 @@ def relationship_feedback_key_to_dict(value: object) -> dict:
 def relationship_feedback_key_fingerprint(value: object) -> str:
     data = relationship_feedback_key_to_dict(value)
     result = canonical_fingerprint(data)
-    return result
-
-
-def relationship_feedback_key_to_json(value: object) -> str:
-    data = relationship_feedback_key_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -544,9 +481,6 @@ def relationship_feedback_key_from_dict(
     else:
         statement = statement_feedback_key_from_dict(data["statement"])
         statements[statement_fingerprint] = statement
-    version = internal_integer(data["schema_version"], "relationship feedback key schema_version", 0)
-    if version != FEEDBACK_KEY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported relationship feedback key schema_version: {version}")
     if query_identity["scope"] != scope:
         raise InvalidRequestError("relationship scope must match query identity scope")
     result: dict = {
@@ -554,14 +488,7 @@ def relationship_feedback_key_from_dict(
         "scope": scope,
         "constraint_fingerprint": internal_fingerprint(data["constraint_fingerprint"], "relationship constraint_fingerprint"),
         "statement": statement,
-        "schema_version": version,
     }
-    return result
-
-
-def relationship_feedback_key_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "RelationshipFeedbackKey JSON")
-    result = relationship_feedback_key_from_dict(data)
     return result
 
 
@@ -579,13 +506,8 @@ def feedback_observation(
     policy_fingerprint: object,
     observed_at: object,
     reason: object = "",
-    contract_fingerprint: object = FEEDBACK_CONTRACT_FINGERPRINT,
-    schema_version: object = FEEDBACK_OBSERVATION_SCHEMA_VERSION,
 ) -> dict:
     """Build one exactly targeted candidacy or external verdict observation."""
-    version = internal_integer(schema_version, "feedback observation schema_version", 0)
-    if version != FEEDBACK_OBSERVATION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback observation schema_version: {version}")
     if not isinstance(reference_kind, FeedbackReferenceKind):
         raise InvalidRequestError("feedback reference_kind must be a FeedbackReferenceKind")
     validated_reference_id = require_text(reference_id, "feedback reference_id", MAX_REFERENCE_ID_BYTES)
@@ -611,7 +533,6 @@ def feedback_observation(
         generation,
         generation_available,
         policy_fingerprint,
-        contract_fingerprint,
     )
     validated_observed_at = canonical_utc(require_utc_datetime(observed_at, "feedback observed_at"))
     validated_reason = require_text(reason, "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
@@ -629,8 +550,6 @@ def feedback_observation(
         "policy_fingerprint": statement["policy_fingerprint"],
         "observed_at": validated_observed_at,
         "reason": validated_reason,
-        "contract_fingerprint": statement["contract_fingerprint"],
-        "schema_version": version,
     }
     return result
 
@@ -649,7 +568,6 @@ def trusted_feedback_observation(
     policy_fingerprint: str,
     observed_at: str,
     reason: str = "",
-    contract_fingerprint: str = FEEDBACK_CONTRACT_FINGERPRINT,
 ) -> dict:
     """Build an observation from values established by the regulated service."""
     result: dict = {
@@ -666,8 +584,6 @@ def trusted_feedback_observation(
         "policy_fingerprint": policy_fingerprint,
         "observed_at": observed_at,
         "reason": reason,
-        "contract_fingerprint": contract_fingerprint,
-        "schema_version": FEEDBACK_OBSERVATION_SCHEMA_VERSION,
     }
     return result
 
@@ -688,25 +604,7 @@ def validate_feedback_observation(value: object) -> dict:
         data["policy_fingerprint"],
         data["observed_at"],
         data["reason"],
-        data["contract_fingerprint"],
-        data["schema_version"],
     )
-    return result
-
-
-def feedback_observation_with_changes(value: object, changes: object) -> dict:
-    current = validate_feedback_observation(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(FEEDBACK_OBSERVATION_FIELDS):
-        raise InvalidRequestError("feedback observation changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_feedback_observation(updated)
-    return result
-
-
-def feedback_observation_statement_key(value: object) -> dict:
-    current = validate_feedback_observation(value)
-    result = trusted_feedback_observation_statement_key(current)
     return result
 
 
@@ -717,16 +615,7 @@ def trusted_feedback_observation_statement_key(current: dict) -> dict:
         "generation": current.get("generation", 0),
         "generation_available": current.get("generation_available", False),
         "policy_fingerprint": current.get("policy_fingerprint", ""),
-        "contract_fingerprint": current.get("contract_fingerprint", ""),
-        "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
     }
-    return result
-
-
-def feedback_observation_relationship_key(value: object) -> dict:
-    current = validate_feedback_observation(value)
-    statement = trusted_feedback_observation_statement_key(current)
-    result = trusted_feedback_observation_relationship_key(current, statement)
     return result
 
 
@@ -740,21 +629,13 @@ def trusted_feedback_observation_relationship_key(
         "scope": current.get("scope", {}),
         "constraint_fingerprint": current.get("constraint_fingerprint", ""),
         "statement": statement,
-        "schema_version": FEEDBACK_KEY_SCHEMA_VERSION,
     }
-    return result
-
-
-def feedback_observation_to_dict(value: object) -> dict:
-    current = validate_feedback_observation(value)
-    result = trusted_feedback_observation_to_dict(current)
     return result
 
 
 def trusted_feedback_observation_to_dict(current: dict) -> dict:
     """Serialize an observation already validated by the feedback-store boundary."""
     result = {
-        "schema_version": current.get("schema_version", 0),
         "reference_kind": current.get("reference_kind", FeedbackReferenceKind.RESOLUTION_REQUEST).value,
         "reference_id": current.get("reference_id", ""),
         "kind": current.get("kind", FeedbackObservationKind.CANDIDACY).value,
@@ -766,52 +647,9 @@ def trusted_feedback_observation_to_dict(current: dict) -> dict:
         "generation": current.get("generation", 0),
         "generation_available": current.get("generation_available", False),
         "policy_fingerprint": current.get("policy_fingerprint", ""),
-        "contract_fingerprint": current.get("contract_fingerprint", ""),
         "observed_at": current.get("observed_at", ""),
         "reason": current.get("reason", ""),
     }
-    return result
-
-
-def feedback_observation_to_json(value: object) -> str:
-    data = feedback_observation_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def feedback_observation_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "FeedbackObservation", FEEDBACK_OBSERVATION_FIELDS)
-    if not isinstance(data.get("query_identity", {}), dict) or not isinstance(data.get("scope", {}), dict):
-        raise InvalidRequestError("feedback observation identity and scope must be objects")
-    try:
-        reference_kind = FeedbackReferenceKind(data["reference_kind"])
-        kind = FeedbackObservationKind(data["kind"])
-        outcome = FeedbackOutcome(data["outcome"])
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("feedback observation contains an unsupported enum value") from error
-    result = feedback_observation(
-        schema_version=internal_integer(data["schema_version"], "feedback observation schema_version", 0),
-        reference_kind=reference_kind,
-        reference_id=require_text(data["reference_id"], "feedback reference_id", MAX_REFERENCE_ID_BYTES),
-        kind=kind,
-        outcome=outcome,
-        query_identity=query_identity_from_dict(data["query_identity"]),
-        scope=scope_key_from_dict(data["scope"]),
-        constraint_fingerprint=internal_fingerprint(data["constraint_fingerprint"], "feedback constraint_fingerprint"),
-        statement_id=require_text(data["statement_id"], "feedback statement_id", MAX_STATEMENT_ID_BYTES),
-        generation=internal_integer(data["generation"], "feedback generation", 0),
-        generation_available=require_bool(data["generation_available"], "feedback generation_available"),
-        policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "feedback policy_fingerprint"),
-        contract_fingerprint=internal_fingerprint(data["contract_fingerprint"], "feedback contract_fingerprint"),
-        observed_at=canonical_utc(require_utc_datetime(data["observed_at"], "feedback observed_at")),
-        reason=require_text(data["reason"], "feedback reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True),
-    )
-    return result
-
-
-def feedback_observation_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "FeedbackObservation JSON")
-    result = feedback_observation_from_dict(data)
     return result
 
 
@@ -822,12 +660,8 @@ def feedback_statistics(
     rejected_context: object = 0,
     rejected_stale: object = 0,
     rejected_policy: object = 0,
-    schema_version: object = FEEDBACK_STATISTICS_SCHEMA_VERSION,
 ) -> dict:
     """Build inspectable raw aggregate feedback counters."""
-    version = internal_integer(schema_version, "feedback statistics schema_version", 0)
-    if version != FEEDBACK_STATISTICS_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback statistics schema_version: {version}")
     values = {
         "candidate_count": candidate_count,
         "accept_count": accept_count,
@@ -844,7 +678,6 @@ def feedback_statistics(
         "rejected_context": validated["rejected_context"],
         "rejected_stale": validated["rejected_stale"],
         "rejected_policy": validated["rejected_policy"],
-        "schema_version": version,
     }
     return result
 
@@ -858,7 +691,6 @@ def validate_feedback_statistics(value: object) -> dict:
         data["rejected_context"],
         data["rejected_stale"],
         data["rejected_policy"],
-        data["schema_version"],
     )
     return result
 
@@ -877,7 +709,6 @@ def feedback_statistics_increment(value: object, outcome: object) -> dict:
 def feedback_statistics_to_dict(value: object) -> dict[str, int]:
     current = validate_feedback_statistics(value)
     result = {
-        "schema_version": current["schema_version"],
         "candidate_count": current["candidate_count"],
         "accept_count": current["accept_count"],
         "rejected_quality": current["rejected_quality"],
@@ -888,12 +719,6 @@ def feedback_statistics_to_dict(value: object) -> dict[str, int]:
     return result
 
 
-def feedback_statistics_to_json(value: object) -> str:
-    data = feedback_statistics_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def feedback_statistics_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeedbackStatistics", FEEDBACK_STATISTICS_FIELDS)
     values = {name: internal_integer(data[name], f"feedback statistics {name}", 0) for name in FEEDBACK_STATISTICS_FIELDS}
@@ -901,21 +726,11 @@ def feedback_statistics_from_dict(value: object) -> dict:
     return result
 
 
-def feedback_statistics_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "FeedbackStatistics JSON")
-    result = feedback_statistics_from_dict(data)
-    return result
-
-
 def feedback_bucket(
     start_at: object,
     statistics: object,
-    schema_version: object = FEEDBACK_BUCKET_SCHEMA_VERSION,
 ) -> dict:
     """Build one bounded deterministic time bucket of raw counters."""
-    version = internal_integer(schema_version, "feedback bucket schema_version", 0)
-    if version != FEEDBACK_BUCKET_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback bucket schema_version: {version}")
     validated_start_at = canonical_utc(require_utc_datetime(start_at, "feedback bucket start_at"))
     try:
         validated_statistics = validate_feedback_statistics(statistics)
@@ -924,14 +739,13 @@ def feedback_bucket(
     result: dict = {
         "start_at": validated_start_at,
         "statistics": validated_statistics,
-        "schema_version": version,
     }
     return result
 
 
 def validate_feedback_bucket(value: object) -> dict:
     data = exact_mapping(value, "FeedbackBucket", FEEDBACK_BUCKET_FIELDS)
-    result = feedback_bucket(data["start_at"], data["statistics"], data["schema_version"])
+    result = feedback_bucket(data["start_at"], data["statistics"])
     return result
 
 
@@ -940,7 +754,6 @@ def feedback_bucket_from_dict(value: object) -> dict:
     if not isinstance(data.get("statistics", {}), dict):
         raise InvalidRequestError("feedback bucket statistics must be an object")
     result = feedback_bucket(
-        schema_version=internal_integer(data["schema_version"], "feedback bucket schema_version", 0),
         start_at=canonical_utc(require_utc_datetime(data["start_at"], "feedback bucket start_at")),
         statistics=feedback_statistics_from_dict(data["statistics"]),
     )
@@ -969,11 +782,7 @@ def statement_feedback_record(
     buckets: object,
     last_outcome: object,
     last_observed_at: object,
-    schema_version: object = FEEDBACK_RECORD_SCHEMA_VERSION,
 ) -> dict:
-    version = internal_integer(schema_version, "statement feedback record schema_version", 0)
-    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported statement feedback record schema_version: {version}")
     try:
         validated_key = validate_statement_feedback_key(key)
         validated_raw = validate_feedback_statistics(raw)
@@ -999,7 +808,6 @@ def statement_feedback_record(
         "buckets": validated_buckets,
         "last_outcome": last_outcome,
         "last_observed_at": validated_last_observed_at,
-        "schema_version": version,
     }
     return result
 
@@ -1012,7 +820,6 @@ def validate_statement_feedback_record(value: object) -> dict:
         data["buckets"],
         data["last_outcome"],
         data["last_observed_at"],
-        data["schema_version"],
     )
     return result
 
@@ -1056,7 +863,6 @@ def trusted_statement_feedback_record(
         "buckets": buckets,
         "last_outcome": last_outcome,
         "last_observed_at": last_observed_at,
-        "schema_version": FEEDBACK_RECORD_SCHEMA_VERSION,
     }
     return result
 
@@ -1071,9 +877,6 @@ def statement_feedback_record_from_dict(value: object) -> dict:
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("statement feedback contains an unsupported last_outcome") from error
-    version = internal_integer(data["schema_version"], "statement feedback record schema_version", 0)
-    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported statement feedback record schema_version: {version}")
     buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
     bucket_starts = tuple(bucket["start_at"] for bucket in buckets)
     if len(buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_starts)) != bucket_starts:
@@ -1086,7 +889,6 @@ def statement_feedback_record_from_dict(value: object) -> dict:
         "buckets": buckets,
         "last_outcome": last_outcome,
         "last_observed_at": canonical_utc(require_utc_datetime(data["last_observed_at"], "statement feedback last_observed_at")),
-        "schema_version": version,
     }
     return result
 
@@ -1097,11 +899,7 @@ def relationship_feedback_record(
     buckets: object,
     last_outcome: object,
     last_observed_at: object,
-    schema_version: object = FEEDBACK_RECORD_SCHEMA_VERSION,
 ) -> dict:
-    version = internal_integer(schema_version, "relationship feedback record schema_version", 0)
-    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported relationship feedback record schema_version: {version}")
     try:
         validated_key = validate_relationship_feedback_key(key)
         validated_raw = validate_feedback_statistics(raw)
@@ -1127,7 +925,6 @@ def relationship_feedback_record(
         "buckets": validated_buckets,
         "last_outcome": last_outcome,
         "last_observed_at": validated_last_observed_at,
-        "schema_version": version,
     }
     return result
 
@@ -1140,7 +937,6 @@ def validate_relationship_feedback_record(value: object) -> dict:
         data["buckets"],
         data["last_outcome"],
         data["last_observed_at"],
-        data["schema_version"],
     )
     return result
 
@@ -1185,7 +981,6 @@ def trusted_relationship_feedback_record(
         "buckets": buckets,
         "last_outcome": last_outcome,
         "last_observed_at": last_observed_at,
-        "schema_version": FEEDBACK_RECORD_SCHEMA_VERSION,
     }
     return result
 
@@ -1205,9 +1000,6 @@ def relationship_feedback_record_from_dict(
         last_outcome = FeedbackOutcome(data["last_outcome"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("relationship feedback contains an unsupported last_outcome") from error
-    version = internal_integer(data["schema_version"], "relationship feedback record schema_version", 0)
-    if version != FEEDBACK_RECORD_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported relationship feedback record schema_version: {version}")
     buckets = tuple(feedback_bucket_from_dict(item) for item in data["buckets"])
     bucket_starts = tuple(bucket["start_at"] for bucket in buckets)
     if len(buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_starts)) != bucket_starts:
@@ -1220,7 +1012,6 @@ def relationship_feedback_record_from_dict(
         "buckets": buckets,
         "last_outcome": last_outcome,
         "last_observed_at": canonical_utc(require_utc_datetime(data["last_observed_at"], "relationship feedback last_observed_at")),
-        "schema_version": version,
     }
     return result
 
@@ -1262,7 +1053,6 @@ def stale_exclusion(statement_id: object, generation: object, generation_availab
         generation,
         generation_available,
         EMPTY_FINGERPRINT,
-        FEEDBACK_CONTRACT_FINGERPRINT,
     )
     validated_observed_at = canonical_utc(require_utc_datetime(observed_at, "stale exclusion observed_at"))
     result: dict = {
@@ -1302,11 +1092,7 @@ def feedback_history(
     relationship_samples: object = 0.0,
     policy_fingerprint: object = EMPTY_FINGERPRINT,
     feedback_policy_value: object = "",
-    schema_version: object = FEEDBACK_HISTORY_SCHEMA_VERSION,
 ) -> dict:
-    version = internal_integer(schema_version, "feedback history schema_version", 1)
-    if version != FEEDBACK_HISTORY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback history schema_version: {version}")
     validated_value = internal_number(value, "feedback history value", 0.0, 1.0)
     validated_available = require_bool(available, "feedback history available")
     validated_statement_value = internal_number(statement_value, "feedback history statement_value", 0.0, 1.0)
@@ -1322,7 +1108,6 @@ def feedback_history(
     if not validated_available and validated_value != 0.0:
         raise InvalidRequestError("unavailable feedback history must use zero value")
     result: dict = {
-        "schema_version": version,
         "value": validated_value,
         "available": validated_available,
         "statement_value": validated_statement_value,
@@ -1334,47 +1119,6 @@ def feedback_history(
         "policy_fingerprint": validated_policy,
         "feedback_policy_fingerprint": validated_feedback_policy,
     }
-    return result
-
-
-def validate_feedback_history(value: object) -> dict:
-    data = exact_mapping(value, "FeedbackHistory", FEEDBACK_HISTORY_FIELDS)
-    result = feedback_history(
-        value=data["value"],
-        available=data["available"],
-        statement_value=data["statement_value"],
-        statement_available=data["statement_available"],
-        relationship_value=data["relationship_value"],
-        relationship_available=data["relationship_available"],
-        statement_samples=data["statement_samples"],
-        relationship_samples=data["relationship_samples"],
-        policy_fingerprint=data["policy_fingerprint"],
-        feedback_policy_value=data["feedback_policy_fingerprint"],
-        schema_version=data["schema_version"],
-    )
-    return result
-
-
-def feedback_history_to_dict(value: object) -> dict:
-    current = validate_feedback_history(value)
-    result = dict(current)
-    return result
-
-
-def feedback_history_to_json(value: object) -> str:
-    data = feedback_history_to_dict(value)
-    result = json_text(data)
-    return result
-
-
-def feedback_history_from_dict(value: object) -> dict:
-    result = validate_feedback_history(value)
-    return result
-
-
-def feedback_history_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "FeedbackHistory JSON")
-    result = feedback_history_from_dict(data)
     return result
 
 
@@ -1421,7 +1165,6 @@ def trusted_feedback_state(
         "relationship_evictions": relationship_evictions,
         "policy_suppression_evictions": policy_suppression_evictions,
         "stale_exclusion_evictions": stale_exclusion_evictions,
-        "schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
     }
     return result
 
@@ -1489,11 +1232,8 @@ def feedback_state_from_validated_components(
     relationship_evictions: object,
     policy_suppression_evictions: object,
     stale_exclusion_evictions: object,
-    schema_version: int,
 ) -> dict:
     """Enforce state-wide invariants after every nested value was validated once."""
-    if schema_version != FEEDBACK_STATE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback state schema_version: {schema_version}")
     if len(statement_records) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback statement records exceed policy capacity")
     if len(relationship_records) > policy.get("max_relationship_records", 0):
@@ -1547,7 +1287,6 @@ def feedback_state_from_validated_components(
         internal_integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
         internal_integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
     )
-    result["schema_version"] = schema_version
     return result
 
 
@@ -1562,11 +1301,7 @@ def feedback_state(
     relationship_evictions: object = 0,
     policy_suppression_evictions: object = 0,
     stale_exclusion_evictions: object = 0,
-    schema_version: object = FEEDBACK_STATE_SCHEMA_VERSION,
 ) -> dict:
-    version = internal_integer(schema_version, "feedback state schema_version", 1)
-    if version != FEEDBACK_STATE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported feedback state schema_version: {version}")
     policy_source = feedback_policy() if policy == {} else policy
     validated_policy = validate_feedback_policy(policy_source)
     if not isinstance(statement_records, tuple):
@@ -1595,7 +1330,6 @@ def feedback_state(
         relationship_evictions,
         policy_suppression_evictions,
         stale_exclusion_evictions,
-        version,
     )
     return result
 
@@ -1613,7 +1347,6 @@ def validate_feedback_state(value: object) -> dict:
         relationship_evictions=data["relationship_evictions"],
         policy_suppression_evictions=data["policy_suppression_evictions"],
         stale_exclusion_evictions=data["stale_exclusion_evictions"],
-        schema_version=data["schema_version"],
     )
     return result
 
@@ -1661,7 +1394,6 @@ def feedback_state_from_dict(value: object) -> dict:
         data["relationship_evictions"],
         data["policy_suppression_evictions"],
         data["stale_exclusion_evictions"],
-        internal_integer(data["schema_version"], "feedback state schema_version", 1),
     )
     return result
 
@@ -2074,7 +1806,6 @@ class FeedbackStore:
                 for record in self.internal_statement_records.values()
                 if record["key"]["statement_id"] == statement_id
                 and record["key"]["policy_fingerprint"] == policy_value
-                and record["key"]["contract_fingerprint"] == FEEDBACK_CONTRACT_FINGERPRINT
                 and record["key"]["generation_available"]
                 and record["key"]["generation"] <= current_generation
             )
@@ -2083,7 +1814,6 @@ class FeedbackStore:
                 for record in self.internal_relationship_records.values()
                 if record["key"]["statement"]["statement_id"] == statement_id
                 and record["key"]["statement"]["policy_fingerprint"] == policy_value
-                and record["key"]["statement"]["contract_fingerprint"] == FEEDBACK_CONTRACT_FINGERPRINT
                 and record["key"]["statement"]["generation_available"]
                 and record["key"]["statement"]["generation"] <= current_generation
                 and record["key"]["query_identity"] == validated_query_identity
@@ -2199,8 +1929,6 @@ class FeedbackStore:
             )
             receipt_tombstones = receipt_snapshot["tombstones"]
             result = {
-                "schema_version": FEEDBACK_STATE_SCHEMA_VERSION,
-                "policy_version": self.internal_policy["policy_version"],
                 "policy_fingerprint": feedback_policy_fingerprint(self.internal_policy),
                 "statement_record_count": len(statement_values),
                 "relationship_record_count": len(relationship_values),
@@ -2255,16 +1983,11 @@ def negative_resolution_key(
     query_identity: object,
     scope: object,
     constraint_fingerprint: object,
-    normalization_version: object,
     resolver_plan_fingerprint: object,
     capability_readiness_fingerprint: object,
     policy_fingerprint: object,
-    schema_version: object = NEGATIVE_KEY_SCHEMA_VERSION,
 ) -> dict:
     """Build the exact knowledge and policy state for one observed miss."""
-    version = internal_integer(schema_version, "negative key schema_version", 0)
-    if version != NEGATIVE_KEY_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported negative key schema_version: {version}")
     try:
         validated_query_identity = validate_query_identity(query_identity)
     except IdentityValidationError as error:
@@ -2276,7 +1999,6 @@ def negative_resolution_key(
     if validated_query_identity["scope"] != validated_scope:
         raise InvalidRequestError("negative scope must match query identity scope")
     validated_constraint = internal_fingerprint(constraint_fingerprint, "negative constraint_fingerprint")
-    validated_normalization_version = internal_integer(normalization_version, "negative normalization_version", 1)
     validated_plan = internal_fingerprint(resolver_plan_fingerprint, "negative resolver_plan_fingerprint")
     validated_readiness = internal_fingerprint(capability_readiness_fingerprint, "negative capability_readiness_fingerprint")
     validated_policy = internal_fingerprint(policy_fingerprint, "negative policy_fingerprint")
@@ -2284,11 +2006,9 @@ def negative_resolution_key(
         "query_identity": validated_query_identity,
         "scope": validated_scope,
         "constraint_fingerprint": validated_constraint,
-        "normalization_version": validated_normalization_version,
         "resolver_plan_fingerprint": validated_plan,
         "capability_readiness_fingerprint": validated_readiness,
         "policy_fingerprint": validated_policy,
-        "schema_version": version,
     }
     return result
 
@@ -2299,33 +2019,19 @@ def validate_negative_resolution_key(value: object) -> dict:
         data["query_identity"],
         data["scope"],
         data["constraint_fingerprint"],
-        data["normalization_version"],
         data["resolver_plan_fingerprint"],
         data["capability_readiness_fingerprint"],
         data["policy_fingerprint"],
-        data["schema_version"],
     )
-    return result
-
-
-def negative_resolution_key_with_changes(value: object, changes: object) -> dict:
-    current = validate_negative_resolution_key(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(NEGATIVE_RESOLUTION_KEY_FIELDS):
-        raise InvalidRequestError("negative resolution key changes contain invalid fields")
-    updated: dict = dict(current)
-    updated.update(changes)
-    result = validate_negative_resolution_key(updated)
     return result
 
 
 def negative_resolution_key_to_dict(value: object) -> dict:
     current = validate_negative_resolution_key(value)
     result = {
-        "schema_version": current["schema_version"],
         "query_identity": query_identity_to_dict(current["query_identity"]),
         "scope": scope_key_to_dict(current["scope"]),
         "constraint_fingerprint": current["constraint_fingerprint"],
-        "normalization_version": current["normalization_version"],
         "resolver_plan_fingerprint": current["resolver_plan_fingerprint"],
         "capability_readiness_fingerprint": current["capability_readiness_fingerprint"],
         "policy_fingerprint": current["policy_fingerprint"],
@@ -2336,12 +2042,6 @@ def negative_resolution_key_to_dict(value: object) -> dict:
 def negative_resolution_key_fingerprint(value: object) -> str:
     data = negative_resolution_key_to_dict(value)
     result = canonical_fingerprint(data)
-    return result
-
-
-def negative_resolution_key_to_json(value: object) -> str:
-    data = negative_resolution_key_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -2356,42 +2056,13 @@ def negative_resolution_key_relationship_fingerprint(value: object) -> str:
     return result
 
 
-def negative_resolution_key_from_dict(value: object) -> dict:
-    data = exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
-    if not isinstance(data.get("query_identity", {}), dict) or not isinstance(data.get("scope", {}), dict):
-        raise InvalidRequestError("negative identity and scope must be objects")
-    result = negative_resolution_key(
-        schema_version=internal_integer(data["schema_version"], "negative key schema_version", 0),
-        query_identity=query_identity_from_dict(data["query_identity"]),
-        scope=scope_key_from_dict(data["scope"]),
-        constraint_fingerprint=internal_fingerprint(data["constraint_fingerprint"], "negative constraint_fingerprint"),
-        normalization_version=internal_integer(data["normalization_version"], "negative normalization_version", 1),
-        resolver_plan_fingerprint=internal_fingerprint(data["resolver_plan_fingerprint"], "negative resolver_plan_fingerprint"),
-        capability_readiness_fingerprint=internal_fingerprint(
-            data["capability_readiness_fingerprint"], "negative capability_readiness_fingerprint"
-        ),
-        policy_fingerprint=internal_fingerprint(data["policy_fingerprint"], "negative policy_fingerprint"),
-    )
-    return result
-
-
-def negative_resolution_key_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "NegativeResolutionKey JSON")
-    result = negative_resolution_key_from_dict(data)
-    return result
-
-
 def negative_resolution(
     key: object,
     reason: object,
     created_at: object,
     expires_at: object,
     hit_count: object = 0,
-    schema_version: object = NEGATIVE_RESOLUTION_SCHEMA_VERSION,
 ) -> dict:
-    version = internal_integer(schema_version, "negative resolution schema_version", 0)
-    if version != NEGATIVE_RESOLUTION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported negative resolution schema_version: {version}")
     try:
         validated_key = validate_negative_resolution_key(key)
     except InvalidRequestError as error:
@@ -2411,7 +2082,6 @@ def negative_resolution(
         "created_at": validated_created_at,
         "expires_at": validated_expires_at,
         "hit_count": validated_hit_count,
-        "schema_version": version,
     }
     return result
 
@@ -2421,7 +2091,6 @@ def empty_negative_resolution() -> dict:
         query_identity=query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
         scope=EMPTY_SCOPE_KEY,
         constraint_fingerprint=EMPTY_FINGERPRINT,
-        normalization_version=1,
         resolver_plan_fingerprint=EMPTY_FINGERPRINT,
         capability_readiness_fingerprint=EMPTY_FINGERPRINT,
         policy_fingerprint=EMPTY_FINGERPRINT,
@@ -2443,7 +2112,6 @@ def validate_negative_resolution(value: object) -> dict:
         data["created_at"],
         data["expires_at"],
         data["hit_count"],
-        data["schema_version"],
     )
     return result
 
@@ -2591,7 +2259,6 @@ class NegativeResolutionStore:
         with self.internal_lock:
             records = sorted(self.internal_records.items())
             result = {
-                "schema_version": NEGATIVE_RESOLUTION_SCHEMA_VERSION,
                 "memory_only": True,
                 "ttl_seconds": self.ttl_seconds,
                 "max_records": self.max_records,

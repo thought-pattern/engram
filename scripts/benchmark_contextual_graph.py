@@ -21,8 +21,8 @@ from engram.service import EngramCore
 from engram.spacy_setup import get_nlp
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_MANIFEST = Path("eval/section8-relation-followup-v1.json")
-DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark-2026-08-20.json")
+DEFAULT_MANIFEST = Path("eval/section8-relation-followup.json")
+DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark.json")
 
 
 def proposition_row(proposition_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:
@@ -47,8 +47,6 @@ def proposition_row(proposition_id: str, subject_id: str, predicate_id: str, obj
         "trust_category_available": True,
         "supplied_trust": 0.8,
         "supplied_trust_available": True,
-        "supplied_trust_version": 1,
-        "supplied_trust_version_available": True,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -202,9 +200,9 @@ def internal_percentile(values: list[float], fraction: float) -> float:
 
 
 def validate_manifest(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != {"schema_version", "benchmark_id", "authored_at", "partitions"}:
+    if not isinstance(value, dict) or set(value) != {"benchmark_id", "authored_at", "partitions"}:
         raise ValueError("benchmark manifest has invalid top-level fields")
-    if value["schema_version"] != 1 or value["benchmark_id"] != "section8-relation-followup-v1":
+    if value["benchmark_id"] != "section8-relation-followup":
         raise ValueError("benchmark manifest identity is unsupported")
     partitions = value["partitions"]
     if not isinstance(partitions, dict) or set(partitions) != {"development", "held_out"}:
@@ -294,7 +292,6 @@ def run(manifest_path: Path) -> dict:
             "results": case_reports,
         }
     result = {
-        "schema_version": 1,
         "benchmark_id": manifest["benchmark_id"],
         "manifest_authored_at": manifest["authored_at"],
         "executed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

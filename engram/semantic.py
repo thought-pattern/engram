@@ -20,7 +20,6 @@ from engram.constants import (
     APPROVED_SEMANTIC_MODEL_ID,
     APPROVED_SEMANTIC_MODEL_VERSION,
     SEMANTIC_ARTIFACT_HASH_VERSION,
-    SEMANTIC_RECORD_SCHEMA_VERSION,
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
@@ -195,7 +194,6 @@ def embedding_record(spec: dict, embedding: tuple[float, ...], identity: dict) -
     text = spec.get("text", "")
     digest = hashlib_sha256(f"{statement_id}\0{generation}\0{origin}\0{ordinal}\0{text}".encode()).hexdigest()
     result = {
-        "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
         "representation_id": f"semantic:sha256:{digest}",
         "statement_id": statement_id,
         "generation": generation,

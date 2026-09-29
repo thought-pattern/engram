@@ -1,12 +1,10 @@
 """Request-scoped time, availability, and cache eligibility contracts."""
 
 from datetime import datetime, timedelta
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 
 from engram.artifacts import lifecycle_base_eligibility, validate_cached_response_artifact
 from engram.constants import (
     ELIGIBILITY_CONTEXT_FIELDS,
-    ELIGIBILITY_CONTEXT_SCHEMA_VERSION,
     ELIGIBILITY_DECISION_FIELDS,
     EXACT_LOOKUP_RESULT_FIELDS,
     LIFECYCLE_EXCLUSION_REASONS,
@@ -52,15 +50,6 @@ def require_namespace(value: object) -> str:
     return namespace
 
 
-def require_positive_version(value: object, expected: int, name: str) -> int:
-    """Validate one exact positive schema version."""
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise InvalidRequestError(f"{name} must be a positive integer")
-    if value != expected:
-        raise InvalidRequestError(f"unsupported {name}: {value}; expected {expected}")
-    return value
-
-
 def datetime_to_timestamp(value: object) -> str:
     """Convert a timezone-aware UTC datetime to canonical contract text."""
     if not isinstance(value, datetime):
@@ -77,15 +66,9 @@ def eligibility_context(
     evaluation_time_available: object,
     namespace: object,
     artifact_repository_available: object,
-    schema_version: object = ELIGIBILITY_CONTEXT_SCHEMA_VERSION,
 ) -> dict:
     """Build one request-scoped cache-eligibility context."""
     result: dict = {
-        "schema_version": require_positive_version(
-            schema_version,
-            ELIGIBILITY_CONTEXT_SCHEMA_VERSION,
-            "eligibility context schema_version",
-        ),
         "evaluation_time": "",
         "evaluation_time_available": False,
         "namespace": require_namespace(namespace),
@@ -112,7 +95,6 @@ def validate_eligibility_context(value: object) -> dict:
         data.get("evaluation_time_available", ()),
         data.get("namespace", ()),
         data.get("artifact_repository_available", ()),
-        data.get("schema_version", ()),
     )
     return result
 
@@ -123,27 +105,9 @@ def eligibility_context_to_dict(value: object) -> dict:
     return result
 
 
-def eligibility_context_to_json(value: object) -> str:
-    """Encode one eligibility context for an external JSON interface."""
-    result = json_dumps(eligibility_context_to_dict(value), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return result
-
-
 def eligibility_context_from_dict(value: object) -> dict:
     """Decode one external eligibility-context dictionary."""
     result = validate_eligibility_context(value)
-    return result
-
-
-def eligibility_context_from_json(value: object) -> dict:
-    """Decode one external eligibility-context JSON value."""
-    if not isinstance(value, str):
-        raise InvalidRequestError("EligibilityContext JSON must be a string")
-    try:
-        data = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError("EligibilityContext JSON is malformed") from error
-    result = eligibility_context_from_dict(data)
     return result
 
 
@@ -209,14 +173,6 @@ def validate_eligibility_decision(value: object) -> dict:
         data.get("namespace", ()),
         data.get("artifact_repository_available", ()),
     )
-    return result
-
-
-def eligibility_decision_to_dict(value: object) -> dict:
-    """Return the external dictionary for one eligibility decision."""
-    decision = validate_eligibility_decision(value)
-    result: dict = dict(decision)
-    result["exclusion_reason"] = decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE).value
     return result
 
 

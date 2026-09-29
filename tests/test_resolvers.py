@@ -36,24 +36,25 @@ from engram.resolution import (
     budget_consumption,
     build_evidence_package,
     candidate as resolution_candidate,
-    canonical_proposition_references_with_changes,
     capture_resolution_budget,
-    disclosure_decision_with_changes,
     empty_evidence_package,
     evidence_package_to_json,
     evidence_reference,
     feature_set,
     proposition_evidence_record_to_dict,
     proposition_evidence_record_with_changes,
-    proposition_validity_inputs_with_changes,
     query_frame_with_changes,
     resolution_budget,
-    resolution_budget_with_changes,
     resolution_result_to_dict,
     resolution_result_to_json,
     resolver_result,
-    resolver_result_from_json,
-    resolver_result_to_json,
+    resolver_result_from_dict,
+    resolver_result_to_dict,
+    validate_canonical_proposition_references,
+    validate_disclosure_decision,
+    validate_proposition_validity_inputs,
+    validate_resolution_budget,
+    validate_resolver_result,
 )
 from engram.resolvers import (
     ExactResolver,
@@ -63,21 +64,18 @@ from engram.resolvers import (
     ResolverRegistry,
     StructuredGraphResolver,
     SupportSemanticResolver,
-    bound_resolver_result,
-    execution_report_canonical_proposition_evidence,
-    execution_report_with_changes,
+    bound_validated_resolver_result,
     json_array_bytes,
     json_size,
-    resolution_plan_to_dict,
     resolver_budget as build_resolver_budget,
-    resolver_budget_from_json,
-    resolver_budget_to_json,
+    resolver_budget_from_dict,
+    resolver_budget_to_dict,
     resolver_budget_with_changes,
     resolver_contract,
     resolver_reservation,
-    resolver_reservation_from_json,
-    resolver_reservation_to_json,
-    resolver_reservation_with_changes,
+    resolver_reservation_from_dict,
+    resolver_reservation_to_dict,
+    validate_resolver_budget,
 )
 from engram.responses import AcceptedResponseService
 from engram.service import EngramCore
@@ -334,8 +332,6 @@ def structured_proposition_projection(proposition_id: str = "proposition-1") -> 
         "trust_category_available": False,
         "supplied_trust": 0.0,
         "supplied_trust_available": False,
-        "supplied_trust_version": 0,
-        "supplied_trust_version_available": False,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -411,7 +407,6 @@ def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
     assert result["candidates"] == ()
-    assert result["schema_version"] == 1
     assert result["evidence"] == ()
     assert len(result["proposition_evidence"]) == 1
     record = result["proposition_evidence"][0]
@@ -423,7 +418,7 @@ def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(
     serialized = proposition_evidence_record_to_dict(record)
     assert "response" not in serialized
     assert not {"subject", "predicate", "object", "proof", "cypher", "embedding"}.intersection(serialized)
-    assert resolver_result_from_json(resolver_result_to_json(result)) == result
+    assert resolver_result_from_dict(resolver_result_to_dict(result)) == result
 
 
 def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(monkeypatch) -> None:
@@ -507,9 +502,10 @@ def test_executor_defensively_bounds_full_proposition_evidence_in_current_schema
     lease = resolver_budget(query_frame)
     raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
 
-    bounded = bound_resolver_result(raw, resolver_budget_with_changes(lease, {"max_evidence": 0}))
+    bounded = bound_validated_resolver_result(
+        validate_resolver_result(raw), validate_resolver_budget(resolver_budget_with_changes(lease, {"max_evidence": 0}))
+    )
 
-    assert bounded["schema_version"] == 1
     assert bounded["proposition_evidence"] == ()
     assert bounded["evidence"] == ()
     assert bounded["consumption"]["evidence"] == 0
@@ -600,7 +596,6 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
 
-    assert result["schema_version"] == 1
     assert result["candidates"] == ()
     assert result["accounting"] == ()
     assert tuple(record["proposition_id"] for record in result["proposition_evidence"]) == ("proposition-unlinked",)
@@ -813,7 +808,7 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
     assert report["results"][1]["accounting"] == ()
 
 
-def test_execution_report_canonicalizes_cross_producer_proposition_without_candidacy_or_accounting(monkeypatch) -> None:
+def test_orchestrator_canonicalizes_cross_producer_proposition_without_candidacy_or_accounting(monkeypatch) -> None:
     engine = Engram()
     enable_graph_resolvers(engine, vector=True)
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
@@ -841,35 +836,9 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
     )
 
     report = ResolverExecutor(lambda: START_NS).execute(query_frame, registry.plan(query_frame))
-    records = execution_report_canonical_proposition_evidence(report)
 
-    assert len(records) == 1
-    assert records[0]["proposition_id"] == "proposition-shared"
-    assert records[0]["source_contributions"] == ("structured_graph", "support_semantic")
-    assert records[0]["features"]["values"]["structured_match"] == 1.0
-    assert records[0]["features"]["values"]["semantic_similarity"] == pytest_approx(0.76)
-    assert records[0]["features"]["values"]["source_agreement"] == 1.0
     assert all(result["candidates"] == () for result in report["results"])
     assert all(result["accounting"] == () for result in report["results"])
-
-    raw_record = report["results"][0]["proposition_evidence"][0]
-    untrusted_record = proposition_evidence_record_with_changes(
-        raw_record,
-        {"source_resolver": "untrusted", "source_contributions": ("untrusted",)},
-    )
-    untrusted_report = execution_report_with_changes(
-        report,
-        {
-            "results": (
-                resolver_result(
-                    "untrusted",
-                    ResolverState.COMPLETED,
-                    proposition_evidence=(untrusted_record,),
-                ),
-            ),
-        },
-    )
-    assert execution_report_canonical_proposition_evidence(untrusted_report) == ()
 
     orchestrated, finalization = ResolutionOrchestrator(
         registry,
@@ -883,6 +852,8 @@ def test_execution_report_canonicalizes_cross_producer_proposition_without_candi
         "structured_graph",
         "support_semantic",
     )
+    assert orchestrated["evidence_package"]["records"][0]["features"]["values"]["structured_match"] == 1.0
+    assert orchestrated["evidence_package"]["records"][0]["features"]["values"]["semantic_similarity"] == pytest_approx(0.76)
     assert orchestrated["evidence_package"]["records"][0]["features"]["values"]["source_agreement"] == 1.0
     assert all(not result["proposition_evidence"] for result in orchestrated["resolver_results"])
     assert finalization["candidate_statement_ids"] == ()
@@ -908,7 +879,6 @@ def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(m
 
     result, finalization = orchestrator.resolve(query_frame, "request-proposition-only")
 
-    assert result["schema_version"] == 1
     assert result["outcome"] == ResolutionOutcome.EVIDENCE
     assert result["selected_candidate_available"] is False
     assert result["response_candidates"] == ()
@@ -928,7 +898,6 @@ def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(m
     assert isinstance(proposition_diagnostics, Mapping)
     assert set(proposition_diagnostics) == set(
         {
-            "policy_version",
             "available",
             "input_count",
             "normalized_count",
@@ -1218,7 +1187,7 @@ def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exh
     memory_limit = probe_execution["consumption"]["working_memory_bytes"] + fusion_required
     constrained_frame = query_frame_with_changes(
         base_frame,
-        {"budget": resolution_budget_with_changes(base_frame["budget"], {"max_working_memory_bytes": memory_limit})},
+        {"budget": validate_resolution_budget({**base_frame["budget"], "max_working_memory_bytes": memory_limit})},
     )
     orchestrator = ResolutionOrchestrator(
         registry,
@@ -1260,9 +1229,8 @@ def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leakin
         {
             "source_resolver": "support_semantic",
             "source_contributions": ("support_semantic",),
-            "canonical_references": canonical_proposition_references_with_changes(
-                record["canonical_references"],
-                {"object_entity_id": "entity:conflict"},
+            "canonical_references": validate_canonical_proposition_references(
+                {**record["canonical_references"], "object_entity_id": "entity:conflict"}
             ),
         },
     )
@@ -1310,22 +1278,12 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
     if mismatch == "scope":
         record = proposition_evidence_record_with_changes(
             record,
-            {
-                "disclosure": disclosure_decision_with_changes(
-                    record["disclosure"],
-                    {"scope": scope_key(namespace="other")},
-                )
-            },
+            {"disclosure": validate_disclosure_decision({**record["disclosure"], "scope": scope_key(namespace="other")})},
         )
     else:
         record = proposition_evidence_record_with_changes(
             record,
-            {
-                "validity": proposition_validity_inputs_with_changes(
-                    record["validity"],
-                    {"evaluation_time": "2026-08-17T12:00:00Z"},
-                )
-            },
+            {"validity": validate_proposition_validity_inputs({**record["validity"], "evaluation_time": "2026-08-17T12:00:00Z"})},
         )
     resolver = FakeResolver(
         "structured_graph",
@@ -1455,7 +1413,7 @@ def test_registry_plan_is_deterministic_and_records_all_decisions() -> None:
 
     assert [resolver_contract(entry["resolver"])[0] for entry in plan["entries"]] == ["exact", "sparse", "support_semantic"]
     assert [entry["reason_code"] for entry in plan["entries"]] == ["", "not_configured", "cost_class_disabled"]
-    assert resolution_plan_to_dict(plan) == resolution_plan_to_dict(registry.plan(query_frame, ("exact", "support_semantic")))
+    assert plan == registry.plan(query_frame, ("exact", "support_semantic"))
     with pytest_raises(InvalidRequestError, match="duplicates"):
         registry.plan(query_frame, ("exact", "exact"))
 
@@ -1534,18 +1492,14 @@ def test_orchestrator_cancellation_after_execution_prevents_accounting_publicati
     assert engine.query_count == 0
 
 
-def test_resolver_lease_and_reservation_codecs_are_deterministic() -> None:
+def test_resolver_lease_and_reservation_codecs_round_trip() -> None:
     engine = Engram()
     query_frame = frame(engine, namespace="")
     lease = resolver_budget(query_frame)
     reservation = resolver_reservation("sparse", 2, lease, budget_consumption(resolvers=1, candidates=1))
 
-    assert resolver_budget_from_json(resolver_budget_to_json(lease)) == lease
-    assert resolver_reservation_from_json(resolver_reservation_to_json(reservation)) == reservation
-    with pytest_raises(InvalidRequestError, match="unsupported resolver budget"):
-        resolver_budget_with_changes(lease, {"schema_version": 3})
-    with pytest_raises(InvalidRequestError, match="unsupported resolver reservation"):
-        resolver_reservation_with_changes(reservation, {"schema_version": 2})
+    assert resolver_budget_from_dict(resolver_budget_to_dict(lease)) == lease
+    assert resolver_reservation_from_dict(resolver_reservation_to_dict(reservation)) == reservation
 
 
 def test_executor_isolates_failures_and_preserves_later_success() -> None:
@@ -1664,7 +1618,7 @@ def test_executor_reports_resolver_count_exhaustion() -> None:
     selected_frame = frame(engine, namespace="")
     first = FakeResolver("first", resolver_result("first", ResolverState.COMPLETED))
     second = FakeResolver("second", resolver_result("second", ResolverState.COMPLETED))
-    count_budget = resolution_budget_with_changes(selected_frame["budget"], {"max_resolvers": 1})
+    count_budget = validate_resolution_budget({**selected_frame["budget"], "max_resolvers": 1})
     count_frame = query_frame_with_changes(selected_frame, {"budget": count_budget})
     count = ResolverExecutor(lambda: START_NS).execute(count_frame, ResolverRegistry((first, second)).plan(count_frame))
 
@@ -1958,7 +1912,7 @@ def test_orchestrator_reserves_remaining_memory_and_reports_fusion_consumption()
     total_limit = probe_execution["consumption"]["working_memory_bytes"] + fusion_required - 1
     constrained_frame = query_frame_with_changes(
         query_frame,
-        {"budget": resolution_budget_with_changes(query_frame["budget"], {"max_working_memory_bytes": total_limit})},
+        {"budget": validate_resolution_budget({**query_frame["budget"], "max_working_memory_bytes": total_limit})},
     )
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((FakeResolver("sparse", raw),)),

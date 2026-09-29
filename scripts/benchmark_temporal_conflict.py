@@ -25,12 +25,6 @@ def internal_score(value: object, name: str) -> float:
     return result
 
 
-def positive_int(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
-
-
 def internal_item(value: dict[str, object], cardinality: str) -> dict:
     trust_available = bool(value.get("trust_available", True))
     valid_from = str(value.get("valid_from", "2020-01-01T00:00:00Z"))
@@ -58,8 +52,6 @@ def internal_item(value: dict[str, object], cardinality: str) -> dict:
         "trust_category_available": trust_available,
         "supplied_trust": internal_score(value.get("trust", 0.8), "trust") if trust_available else 0.0,
         "supplied_trust_available": trust_available,
-        "supplied_trust_version": positive_int(value.get("trust_version", 1), "trust_version") if trust_available else 0,
-        "supplied_trust_version_available": trust_available,
         "structured_match": 1.0,
         "structured_match_available": True,
         "semantic_similarity": 0.0,
@@ -108,7 +100,6 @@ def run(corpus_path: Path) -> dict[str, object]:
                 }
             )
     report = {
-        "schema_version": 1,
         "corpus": corpus["name"],
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": benchmark_source_state(),
@@ -127,11 +118,11 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=Path("eval/section9-temporal-conflict-v1.json"))
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section9-temporal-conflict.json"))
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("eval/results/temporal/benchmark-2026-08-20.json"),
+        default=Path("eval/results/temporal/benchmark.json"),
     )
     arguments = parser.parse_args()
     report = run(arguments.corpus)

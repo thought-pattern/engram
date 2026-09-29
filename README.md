@@ -66,7 +66,7 @@ diagnostics, or counters inherited from the previous process.
 
 - [Python code style](documentation/code-style.md) — the Engram import
   convention and the Google Python Style Guide baseline used elsewhere.
-- [Query identity contracts](documentation/identity/contracts-v1.md) — the
+- [Query identity contracts](documentation/identity/contracts.md) — the
   versioned scope, identity, normalization, retrieval-key, representation, and
   authoritative-input foundation used by exact retrieval work.
 
@@ -512,7 +512,7 @@ produce confirmation or contradiction responses. With spaCy,
 Copulas retain their surface form, prepositions become relations, and action
 verbs use their lemma. NER supplies `subject_type` and `obj_type` when available.
 `learn_user_facts` controls conversational learning; `use_spacy_facts` selects
-the relational extractor. Run `python eval/compare_facts.py` to compare both.
+the relational extractor.
 
 ### Optional spaCy matching/retrieval enhancements
 
@@ -589,22 +589,6 @@ a write-capable account; Engram's runtime simply
 does not issue graph writes. The [graph retrieval guide](documentation/graph-retrieval.md)
 defines canonical identity, relation paths, temporal/conflict handling, vector
 support, availability, and timing behavior.
-
-## Evaluation
-
-`eval/run_eval.py` cycles a corpus of prompts (`eval/corpus.json`) through a
-freshly seeded in-memory Engram instance and
-reports how each prompt is answered:
-
-```bash
-python eval/run_eval.py            # human-readable report
-python eval/run_eval.py --json report.json
-```
-
-Each prompt is classified as a **specific** match (a real, intentional
-pattern), **catch-all** (only the `*` fallback matched - a coverage gap), or
-**fallback** (empty retrieval). The matched pattern shown for each gap indicates
-whether it needs new content or an engine fix.
 
 ## Contributing
 

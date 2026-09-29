@@ -294,13 +294,11 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
             )
         )
 
-        assert result.schema_version == 1
         assert result.outcome == "ANSWER"
         assert result.selected_candidate_available is True
         assert as_dict(result.selected_candidate)["response"] == "The transport-neutral result."
         assert len(result.response_candidates) == 1
         assert result.evidence_package_available is False
-        assert result.evidence_package.wire_version == 2
         assert result.evidence_package.retained_count == 0
         assert result.evidence_package.records == []
 

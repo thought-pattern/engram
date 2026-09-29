@@ -337,7 +337,6 @@ def test_unified_python_api_accepts_mapping_absence_and_authoritative_identity()
 
     assert type(result) is dict
     assert set(result) == set(RESOLUTION_RESULT_FIELDS)
-    assert result["schema_version"] == 1
     assert result["selected_candidate_available"] is False
     assert result["evidence_package_available"] is False
     assert result["evidence_package"]["records"] == ()

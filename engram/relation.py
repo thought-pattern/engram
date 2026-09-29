@@ -9,8 +9,6 @@ from engram.constants import (
     MAX_RELATION_PLAN_ROWS,
     MAX_RELATION_SURFACES,
     MAX_REQUEST_BYTES,
-    ONE_HOP_QUERY_PLAN_FIELDS,
-    RELATION_CONTRACT_SCHEMA_VERSION,
     CanonicalResolutionStatus,
     ExpectedObjectType,
     PredicateCardinality,
@@ -46,15 +44,8 @@ def canonical_resolution(
     score: object = 0.0,
     candidate_ids: object = (),
     evidence: object = (),
-    schema_version: object = RELATION_CONTRACT_SCHEMA_VERSION,
 ) -> dict:
     """Build one explicit selected, ambiguous, or miss resolution."""
-    if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
-        or schema_version != RELATION_CONTRACT_SCHEMA_VERSION
-    ):
-        raise InvalidRequestError("unsupported canonical resolution schema_version")
     if not isinstance(status, CanonicalResolutionStatus):
         raise InvalidRequestError("canonical resolution status is unsupported")
     if not isinstance(object_type, ExpectedObjectType):
@@ -89,7 +80,6 @@ def canonical_resolution(
     if status == CanonicalResolutionStatus.MISS and normalized_ids:
         raise InvalidRequestError("miss canonical resolution must not carry candidates")
     result: dict = {
-        "schema_version": RELATION_CONTRACT_SCHEMA_VERSION,
         "status": status,
         "canonical_id": normalized_id,
         "primary_label": normalized_label,
@@ -112,7 +102,6 @@ def validate_canonical_resolution(value: object) -> dict:
         score=value["score"],
         candidate_ids=value["candidate_ids"],
         evidence=value["evidence"],
-        schema_version=value["schema_version"],
     )
     return result
 
@@ -356,7 +345,6 @@ def one_hop_query_plan(
     *,
     max_rows: object = MAX_RELATION_PLAN_ROWS,
     template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
-    schema_version: object = RELATION_CONTRACT_SCHEMA_VERSION,
 ) -> dict:
     """Compile only the fixed one-hop template; Cypher and procedures are not inputs."""
     entity = validate_canonical_resolution(subject)
@@ -367,52 +355,15 @@ def one_hop_query_plan(
         raise InvalidRequestError("one-hop query plan template is unsupported")
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("one-hop query plan expected object type is unsupported")
-    if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
-        or schema_version != RELATION_CONTRACT_SCHEMA_VERSION
-    ):
-        raise InvalidRequestError("unsupported one-hop query plan schema_version")
     if isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= MAX_RELATION_PLAN_ROWS:
         raise InvalidRequestError(f"one-hop query plan max_rows must be from 1 through {MAX_RELATION_PLAN_ROWS}")
     result: dict = {
-        "schema_version": RELATION_CONTRACT_SCHEMA_VERSION,
         "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
         "subject_entity_id": entity["canonical_id"],
         "predicate_id": relation["canonical_id"],
         "expected_object_type": expected_object_type,
         "max_rows": max_rows,
     }
-    return result
-
-
-def validate_one_hop_query_plan(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != ONE_HOP_QUERY_PLAN_FIELDS:
-        raise InvalidRequestError("OneHopQueryPlan has invalid fields")
-    subject = canonical_resolution(
-        CanonicalResolutionStatus.SELECTED,
-        canonical_id=value["subject_entity_id"],
-        primary_label=value["subject_entity_id"],
-        candidate_ids=(value["subject_entity_id"],),
-        evidence=("validated_plan",),
-        score=1.0,
-    )
-    predicate = canonical_resolution(
-        CanonicalResolutionStatus.SELECTED,
-        canonical_id=value["predicate_id"],
-        primary_label=value["predicate_id"],
-        candidate_ids=(value["predicate_id"],),
-        evidence=("validated_plan",),
-        score=1.0,
-    )
-    result = one_hop_query_plan(
-        subject,
-        predicate,
-        value["expected_object_type"],
-        max_rows=value["max_rows"],
-        template_id=value["template_id"],
-        schema_version=value["schema_version"],
-    )
     return result
 
 
@@ -478,8 +429,6 @@ def relation_selection(
     ranking_proposition_ids: tuple[str, ...],
     reason: RelationSelectionReason,
     cardinality: PredicateCardinality,
-    trust_version: int = 0,
-    trust_version_available: bool = False,
 ) -> dict:
     result: dict = {
         "direct_answer": direct_answer,
@@ -490,8 +439,6 @@ def relation_selection(
         "ranking_proposition_ids": ranking_proposition_ids,
         "reason": reason,
         "cardinality": cardinality,
-        "trust_version": trust_version,
-        "trust_version_available": trust_version_available,
     }
     return result
 
@@ -623,19 +570,6 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
             cardinality=cardinality,
         )
         return result
-    trust_versions = {item["projection"]["supplied_trust_version"] for item in considered}
-    if len(trust_versions) != 1:
-        result = relation_selection(
-            direct_answer=False,
-            selected_proposition_id="",
-            evidence_proposition_ids=evidence_proposition_ids,
-            conflict_proposition_ids=(),
-            ranking_proposition_ids=ranking_proposition_ids,
-            reason=RelationSelectionReason.TRUST_VERSION_INCOMPARABLE,
-            cardinality=cardinality,
-        )
-        return result
-    trust_version = next(iter(trust_versions))
     ranked_considered = sorted(
         considered,
         key=lambda item: (-item["projection"]["supplied_trust"], item["projection"]["proposition_id"]),
@@ -658,8 +592,6 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
         ranking_proposition_ids=ranking_proposition_ids,
         reason=reason,
         cardinality=cardinality,
-        trust_version=trust_version,
-        trust_version_available=True,
     )
     return result
 

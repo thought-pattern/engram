@@ -8,7 +8,6 @@ from threading import RLock as threading_RLock
 
 from engram.artifacts import lifecycle_after_capacity_eviction, validate_cached_response_artifact
 from engram.constants import (
-    ADMISSION_PLAN_FIELDS,
     MAX_REPOSITORY_ARTIFACTS,
     REPOSITORY_STATE_FIELDS,
     TIER_ADMISSION_POLICY_FIELDS,
@@ -190,54 +189,6 @@ def admission_plan(
         "evicted_statement_ids": evicted_statement_ids,
         "residency_changed": residency_changed,
         "lifecycle_changed": lifecycle_changed,
-    }
-    return result
-
-
-def validate_admission_plan(value: object) -> dict:
-    """Validate and copy one tier-admission result dictionary."""
-
-    if not isinstance(value, dict) or set(value) != ADMISSION_PLAN_FIELDS:
-        raise InvalidRequestError("admission plan must be an AdmissionPlan")
-    outcome = value.get("outcome", ())
-    candidate = value.get("candidate", ())
-    admitted_statement_id = value.get("admitted_statement_id", ())
-    evicted_statement_ids = value.get("evicted_statement_ids", ())
-    residency_changed = value.get("residency_changed", ())
-    lifecycle_changed = value.get("lifecycle_changed", ())
-    valid_types = (
-        isinstance(outcome, AdmissionOutcome)
-        and isinstance(admitted_statement_id, str)
-        and isinstance(evicted_statement_ids, tuple)
-        and isinstance(residency_changed, bool)
-        and isinstance(lifecycle_changed, bool)
-    )
-    if not valid_types:
-        raise InvalidRequestError("admission plan must be an AdmissionPlan")
-    result = admission_plan(
-        outcome,
-        candidate,
-        admitted_statement_id,
-        evicted_statement_ids,
-        residency_changed,
-        lifecycle_changed,
-    )
-    return result
-
-
-def admission_plan_to_dict(value: object) -> dict:
-    """Serialize one validated admission plan without its candidate snapshot."""
-
-    validated = validate_admission_plan(value)
-    candidate = validated.get("candidate", {})
-    outcome = validated.get("outcome", AdmissionOutcome.REJECTED_CAPACITY)
-    result = {
-        "outcome": outcome.value,
-        "candidate_state_generation": candidate.get("state_generation", 0),
-        "admitted_statement_id": validated.get("admitted_statement_id", ""),
-        "evicted_statement_ids": list(validated.get("evicted_statement_ids", ())),
-        "residency_changed": validated.get("residency_changed", False),
-        "lifecycle_changed": validated.get("lifecycle_changed", False),
     }
     return result
 

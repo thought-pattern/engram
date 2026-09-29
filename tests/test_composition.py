@@ -6,9 +6,7 @@ from pytest import fail as pytest_fail, mark as pytest_mark, raises as pytest_ra
 
 from engram.composition import (
     composition_plan,
-    composition_plan_from_json,
     composition_plan_to_dict,
-    composition_plan_to_json,
     composition_step,
     execute_composition_plan,
     graph_composition_operator,
@@ -110,8 +108,6 @@ def internal_relation(
             "trust_category_available": False,
             "supplied_trust": 0.8 if trust_available else 0.0,
             "supplied_trust_available": trust_available,
-            "supplied_trust_version": 1 if trust_available else 0,
-            "supplied_trust_version_available": trust_available,
             "structured_match": 1.0,
             "structured_match_available": True,
             "semantic_similarity": 0.0,
@@ -186,17 +182,16 @@ def execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
     return result
 
 
-def test_plan_codec_carries_only_fixed_predicates_bindings_and_non_time_limits() -> None:
+def test_plan_carries_only_fixed_predicates_bindings_and_non_time_limits() -> None:
     plan = internal_plan()
     serialized = composition_plan_to_dict(plan)
 
-    assert composition_plan_from_json(composition_plan_to_json(plan)) == plan
     assert [step["predicate_id"] for step in plan["steps"]] == ["predicate:founded-by", "predicate:born-in"]
     assert [step["subject_binding"] for step in plan["steps"]] == ["$root", "$hop1"]
     assert "timeout" not in serialized
     assert "cypher" not in serialized
     with pytest_raises(InvalidRequestError):
-        composition_plan_to_json({**plan, "cypher": "MATCH (n) RETURN n"})
+        composition_plan_to_dict({**plan, "cypher": "MATCH (n) RETURN n"})
 
 
 def test_plan_rejects_cartesian_and_cyclic_bindings() -> None:
@@ -570,18 +565,17 @@ def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -
         )
         for position, entry in enumerate(execution["complete_paths"][0])
     )
-    composed = proposition_evidence_record_with_changes(base, {"schema_version": 2, "path": steps})
+    composed = proposition_evidence_record_with_changes(base, {"path": steps})
 
     assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(composed)) == composed
     package = build_evidence_package((composed,))
-    assert package["wire_version"] == 2
     assert evidence_package_from_json(evidence_package_to_json(package)) == package
     assert [validate_proposition_evidence_path_step(step)["proposition_id"] for step in composed["path"]] == [
         "proposition:microsoft-founder",
         "proposition:founder-born-in",
     ]
     with pytest_raises(InvalidRequestError, match="ordered"):
-        proposition_evidence_record_with_changes(base, {"schema_version": 2, "path": tuple(reversed(steps))})
+        proposition_evidence_record_with_changes(base, {"path": tuple(reversed(steps))})
 
 
 def test_cooperative_cancellation_propagates_before_graph_work() -> None:
@@ -699,7 +693,6 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["response"] == "Microsoft — founded by → born in: London."
     assert len(result["proposition_evidence"]) == 1
-    assert result["proposition_evidence"][0]["schema_version"] == 2
     assert tuple(
         validate_proposition_evidence_path_step(step)["proposition_id"] for step in result["proposition_evidence"][0]["path"]
     ) == (
@@ -729,7 +722,6 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     assert [candidate["response"] for candidate in core_result["response_candidates"]] == [
         "Microsoft — founded by → born in: London."
     ]
-    assert core_result["evidence_package"]["wire_version"] == 2
     assert len(core_result["evidence_package"]["records"][0]["path"]) == 2
 
 

@@ -1,7 +1,7 @@
 """Contract tests for the Section 4 resolution substrate."""
 
 from datetime import UTC, datetime
-from json import dumps as json_dumps
+from json import loads as json_loads
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
@@ -22,16 +22,14 @@ from engram.resolution import (
     accounting_observation,
     accounting_observation_from_dict,
     accounting_observation_to_dict,
-    accounting_observation_with_changes,
     budget_consumption,
-    budget_consumption_from_json,
-    budget_consumption_to_json,
+    budget_consumption_from_dict,
+    budget_consumption_to_dict,
     budget_consumption_with_changes,
     build_evidence_package,
     candidate as resolution_candidate,
-    candidate_from_json,
-    candidate_to_json,
-    candidate_with_changes,
+    candidate_from_dict,
+    candidate_to_dict,
     canonical_proposition_references,
     capture_resolution_budget,
     disclosure_decision,
@@ -39,42 +37,28 @@ from engram.resolution import (
     evidence_package_to_dict,
     evidence_reference,
     evidence_reference_from_dict,
-    evidence_reference_from_json,
     evidence_reference_to_dict,
-    evidence_reference_to_json,
-    evidence_reference_with_changes,
     feature_set,
     feature_set_from_dict,
-    feature_set_from_json,
     feature_set_to_dict,
-    feature_set_to_json,
-    feature_set_with_changes,
     freeze_mapping,
     inheritance_provenance,
     proposition_evidence_record,
     proposition_evidence_record_to_dict,
     proposition_trust_inputs,
     proposition_validity_inputs,
-    query_frame_from_json,
-    query_frame_to_json,
+    query_frame_from_dict,
+    query_frame_to_dict,
     query_frame_with_changes,
     resolution_budget_from_dict,
-    resolution_budget_from_json,
     resolution_budget_to_dict,
-    resolution_budget_to_json,
-    resolution_budget_with_changes,
     resolution_result,
     resolution_result_from_dict,
-    resolution_result_from_json,
     resolution_result_to_dict,
-    resolution_result_to_json,
     resolution_result_with_changes,
     resolver_result,
     resolver_result_from_dict,
-    resolver_result_from_json,
     resolver_result_to_dict,
-    resolver_result_to_json,
-    resolver_result_with_changes,
     rewrite_trace_step,
     validate_accounting_observation,
     validate_budget_consumption,
@@ -83,6 +67,7 @@ from engram.resolution import (
     validate_feature_set,
     validate_inheritance_provenance,
     validate_resolution_budget,
+    validate_resolver_result,
     validate_rewrite_trace_step,
 )
 
@@ -143,7 +128,6 @@ def proposition_record() -> dict:
             ownership=PropositionOwnership.PUBLIC,
             basis=DisclosureBasis.PUBLIC_RULE,
             scope=internal_scope(),
-            policy_version="proposition-disclosure-v1",
         ),
         path=("proposition-full",),
         selection_reasons=("canonical_complete", "structured_match"),
@@ -187,10 +171,7 @@ def test_budget_codec_and_measurement_start_are_deterministic() -> None:
     assert type(budget) is dict
     assert budget["started_ns"] == 1_000_000_000
     assert resolution_budget_from_dict(resolution_budget_to_dict(budget)) == budget
-    assert resolution_budget_from_json(resolution_budget_to_json(budget)) == budget
-    assert resolution_budget_to_json(budget) == json_dumps(
-        resolution_budget_to_dict(budget), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
+    assert resolution_budget_from_dict(resolution_budget_to_dict(budget)) == budget
     copied = validate_resolution_budget(budget)
     assert copied == budget and copied is not budget
 
@@ -204,11 +185,11 @@ def test_budget_codec_and_measurement_start_are_deterministic() -> None:
 )
 def test_budget_rejects_invalid_limits(changes, message) -> None:
     with pytest_raises(InvalidRequestError, match=message):
-        resolution_budget_with_changes(internal_budget(), changes)
+        validate_resolution_budget({**internal_budget(), **changes})
 
 
 def test_budget_consumption_codec_and_ledger_exhaustion() -> None:
-    budget = resolution_budget_with_changes(internal_budget(), {"max_candidates": 2, "max_evidence": 1})
+    budget = validate_resolution_budget({**internal_budget(), "max_candidates": 2, "max_evidence": 1})
     ledger = BudgetLedger(budget)
     first = ledger.add(budget_consumption(resolvers=1, candidates=1, evidence=1))
     second = ledger.add(budget_consumption(resolvers=1, candidates=2))
@@ -218,7 +199,7 @@ def test_budget_consumption_codec_and_ledger_exhaustion() -> None:
     assert second["exhausted_dimensions"] == ("candidates",)
     assert ledger.remaining_candidates() == 0
     assert ledger.remaining_evidence() == 0
-    assert budget_consumption_from_json(budget_consumption_to_json(second)) == second
+    assert budget_consumption_from_dict(budget_consumption_to_dict(second)) == second
     copied = validate_budget_consumption(second)
     assert copied == second and copied is not second
 
@@ -280,7 +261,7 @@ def test_frame_codec_preserves_traces_and_isolates_metadata() -> None:
             "rewrite_chain": (rewrite_trace_step("rule-1", "input", "output"),),
         },
     )
-    decoded = query_frame_from_json(query_frame_to_json(frame))
+    decoded = query_frame_from_dict(query_frame_to_dict(frame))
 
     assert decoded == frame
     assert type(decoded["inheritance"][0]) is dict
@@ -313,7 +294,7 @@ def test_feature_set_codec_distinguishes_unavailable_from_zero() -> None:
     serialized = feature_set_to_dict(features)
 
     assert type(features) is dict
-    assert feature_set_from_json(feature_set_to_json(features)) == features
+    assert feature_set_from_dict(feature_set_to_dict(features)) == features
     assert feature_set_from_dict(serialized) == features
     assert features["values"]["exact_match"] == 0.0
     assert "semantic_score" not in features["values"]
@@ -339,17 +320,16 @@ def test_feature_set_rejects_overlap_nonfinite_and_unsorted_absence() -> None:
 
 
 def test_candidate_and_evidence_codecs_preserve_exact_unicode_and_concrete_values() -> None:
-    candidate = candidate_with_changes(internal_candidate(), {"response": "Café ☕ — exact accepted text"})
+    candidate = validate_candidate({**internal_candidate(), "response": "Café ☕ — exact accepted text"})
     reference = internal_evidence()
     serialized_reference = evidence_reference_to_dict(reference)
 
     assert type(candidate) is dict
-    assert candidate_from_json(candidate_to_json(candidate)) == candidate
+    assert candidate_from_dict(candidate_to_dict(candidate)) == candidate
     copied_candidate = validate_candidate(candidate)
     assert copied_candidate == candidate and copied_candidate is not candidate
-    assert evidence_reference_from_json(evidence_reference_to_json(reference)) == reference
+    assert evidence_reference_from_dict(evidence_reference_to_dict(reference)) == reference
     assert evidence_reference_from_dict(serialized_reference) == reference
-    assert "null" not in candidate_to_json(candidate)
 
 
 def test_evidence_reference_is_an_exact_isolated_dictionary() -> None:
@@ -374,13 +354,13 @@ def test_resolver_result_codec_and_state_invariants() -> None:
     result = internal_resolver_result(internal_candidate())
     observation = result["accounting"][0]
 
-    assert resolver_result_from_json(resolver_result_to_json(result)) == result
+    assert resolver_result_from_dict(resolver_result_to_dict(result)) == result
     assert type(observation) is dict
     assert accounting_observation_from_dict(accounting_observation_to_dict(observation)) == observation
     copied = validate_accounting_observation(observation)
     assert copied == observation and copied is not observation
     with pytest_raises(InvalidRequestError, match="non-completed"):
-        resolver_result_with_changes(result, {"state": ResolverState.FAILED})
+        validate_resolver_result({**result, "state": ResolverState.FAILED})
 
 
 def test_resolution_answer_codec_and_invariants() -> None:
@@ -400,16 +380,16 @@ def test_resolution_answer_codec_and_invariants() -> None:
         budget=resolver["consumption"],
     )
 
-    assert resolution_result_from_json(resolution_result_to_json(result)) == result
+    assert resolution_result_from_dict(resolution_result_to_dict(result)) == result
     selected = resolution_result_to_dict(result)["selected_candidate"]
     assert isinstance(selected, dict)
     assert selected["response"] == candidate["response"]
-    lexical = candidate_with_changes(candidate, {"source": CandidateSource.SPARSE})
+    lexical = validate_candidate({**candidate, "source": CandidateSource.SPARSE})
     fused = resolution_result_with_changes(
         result,
         {"selected_candidate": lexical, "response_candidates": (lexical,), "confidence": 0.81},
     )
-    assert resolution_result_from_json(resolution_result_to_json(fused)) == fused
+    assert resolution_result_from_dict(resolution_result_to_dict(fused)) == fused
     with pytest_raises(InvalidRequestError, match="only the selected"):
         resolution_result_with_changes(result, {"selected_candidate": lexical})
     with pytest_raises(InvalidRequestError, match="positive confidence"):
@@ -419,7 +399,7 @@ def test_resolution_answer_codec_and_invariants() -> None:
 
 
 def test_resolution_evidence_and_miss_invariants_use_concrete_empty_candidate() -> None:
-    lexical = candidate_with_changes(internal_candidate(), {"source": CandidateSource.SPARSE})
+    lexical = validate_candidate({**internal_candidate(), "source": CandidateSource.SPARSE})
     evidence_result = resolution_result(
         outcome=ResolutionOutcome.EVIDENCE,
         selected_candidate=empty_candidate(),
@@ -438,10 +418,10 @@ def test_resolution_evidence_and_miss_invariants_use_concrete_empty_candidate() 
         {"outcome": ResolutionOutcome.MISS, "response_candidates": (), "reason_codes": ("no_usable_output",)},
     )
 
-    assert resolution_result_from_json(resolution_result_to_json(evidence_result)) == evidence_result
-    assert resolution_result_from_json(resolution_result_to_json(miss)) == miss
+    assert resolution_result_from_dict(resolution_result_to_dict(evidence_result)) == evidence_result
+    assert resolution_result_from_dict(resolution_result_to_dict(miss)) == miss
     assert resolution_result_to_dict(miss)["selected_candidate"] == {}
-    assert resolution_result_from_json(resolution_result_to_json(miss)) == miss
+    assert resolution_result_from_dict(resolution_result_to_dict(miss)) == miss
     with pytest_raises(InvalidRequestError, match="EVIDENCE requires"):
         resolution_result_with_changes(evidence_result, {"response_candidates": ()})
     with pytest_raises(InvalidRequestError, match="MISS cannot"):
@@ -452,73 +432,33 @@ def test_resolution_evidence_and_miss_invariants_use_concrete_empty_candidate() 
         resolution_result_with_changes(evidence_result, {"confidence": 0.5, "confidence_available": True})
 
 
-def test_contract_loaders_reject_null_unknown_fields_and_unsupported_versions() -> None:
+def test_contract_loaders_reject_null_and_unknown_fields() -> None:
     budget = resolution_budget_to_dict(internal_budget())
     budget["unexpected"] = True
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         resolution_budget_from_dict(budget)
-    with pytest_raises(InvalidRequestError, match="must contain an object"):
-        query_frame_from_json("null")
-    with pytest_raises(InvalidRequestError, match="unsupported candidate schema_version"):
-        candidate_with_changes(internal_candidate(), {"schema_version": 2})
+    with pytest_raises(InvalidRequestError):
+        query_frame_from_dict(json_loads("null"))
 
 
 def test_contracts_enforce_nested_byte_and_collection_bounds() -> None:
     with pytest_raises(InvalidRequestError, match="16384 UTF-8 bytes"):
-        candidate_with_changes(internal_candidate(), {"diagnostics": {"detail": "x" * 16_385}})
+        validate_candidate({**internal_candidate(), "diagnostics": {"detail": "x" * 16_385}})
     with pytest_raises(InvalidRequestError, match="item limit"):
-        resolver_result_with_changes(
-            internal_resolver_result(internal_candidate()), {"candidates": (internal_candidate(),) * 1_001}
-        )
+        validate_resolver_result({**internal_resolver_result(internal_candidate()), "candidates": (internal_candidate(),) * 1_001})
     with pytest_raises(InvalidRequestError, match="limit of 64"):
         budget_consumption_with_changes(
             budget_consumption(), {"exhausted_dimensions": tuple(f"d{index:02d}" for index in range(65))}
         )
 
 
-@pytest_mark.parametrize(
-    "factory",
-    [
-        lambda: resolution_budget_with_changes(internal_budget(), {"schema_version": 3}),
-        lambda: budget_consumption_with_changes(budget_consumption(), {"schema_version": 2}),
-        lambda: query_frame_with_changes(internal_frame(), {"schema_version": 3}),
-        lambda: feature_set_with_changes(feature_set(), {"schema_version": 2}),
-        lambda: evidence_reference_with_changes(internal_evidence(), {"schema_version": 2}),
-        lambda: candidate_with_changes(internal_candidate(), {"schema_version": 2}),
-        lambda: accounting_observation_with_changes(accounting_observation("stmt-1"), {"schema_version": 2}),
-        lambda: resolver_result_with_changes(internal_resolver_result(), {"schema_version": 3}),
-        lambda: resolution_result_with_changes(
-            resolution_result(
-                outcome=ResolutionOutcome.MISS,
-                selected_candidate=empty_candidate(),
-                selected_candidate_available=False,
-                response_candidates=(),
-                evidence=(),
-                confidence=0.0,
-                confidence_available=False,
-                reason_codes=("miss",),
-                frame_diagnostics={},
-                resolver_results=(),
-                budget=budget_consumption(),
-            ),
-            {"schema_version": 3},
-        ),
-    ],
-)
-def test_every_versioned_resolution_contract_rejects_unknown_versions(factory) -> None:
-    with pytest_raises(InvalidRequestError, match="unsupported"):
-        factory()
-
-
 def test_resolver_result_current_field_set_is_exact() -> None:
-    result = resolver_result_with_changes(
-        internal_resolver_result(),
-        {"resolver": "structured_graph", "proposition_evidence": (proposition_record(),)},
+    result = validate_resolver_result(
+        {**internal_resolver_result(), "resolver": "structured_graph", "proposition_evidence": (proposition_record(),)}
     )
 
     assert set(resolver_result_to_dict(result)) == set(
         {
-            "schema_version",
             "resolver",
             "state",
             "reason_code",
@@ -531,7 +471,7 @@ def test_resolver_result_current_field_set_is_exact() -> None:
         }
     )
     assert resolver_result_to_dict(result)["proposition_evidence"] == [proposition_evidence_record_to_dict(proposition_record())]
-    assert resolver_result_from_json(resolver_result_to_json(result)) == result
+    assert resolver_result_from_dict(resolver_result_to_dict(result)) == result
     missing = resolver_result_to_dict(result)
     missing.pop("proposition_evidence")
     with pytest_raises(InvalidRequestError, match="invalid fields"):
@@ -544,7 +484,7 @@ def test_resolver_result_current_field_set_is_exact() -> None:
 
 def test_resolver_result_rejects_mismatched_proposition_evidence_source() -> None:
     with pytest_raises(InvalidRequestError, match="source must match"):
-        resolver_result_with_changes(internal_resolver_result(), {"proposition_evidence": (proposition_record(),)})
+        validate_resolver_result({**internal_resolver_result(), "proposition_evidence": (proposition_record(),)})
 
 
 def test_resolution_result_current_package_fields_are_exact() -> None:
@@ -572,11 +512,10 @@ def test_resolution_result_current_package_fields_are_exact() -> None:
         },
     )
 
-    assert evidence_result["schema_version"] == 1
     assert resolution_result_to_dict(evidence_result)["evidence_package_available"] is True
     assert resolution_result_to_dict(evidence_result)["evidence_package"] == evidence_package_to_dict(package)
-    assert resolution_result_from_json(resolution_result_to_json(miss)) == miss
-    assert resolution_result_from_json(resolution_result_to_json(evidence_result)) == evidence_result
+    assert resolution_result_from_dict(resolution_result_to_dict(miss)) == miss
+    assert resolution_result_from_dict(resolution_result_to_dict(evidence_result)) == evidence_result
 
     missing = resolution_result_to_dict(evidence_result)
     missing.pop("evidence_package")
@@ -591,9 +530,12 @@ def test_resolution_result_current_package_fields_are_exact() -> None:
             miss,
             {
                 "resolver_results": (
-                    resolver_result_with_changes(
-                        internal_resolver_result(),
-                        {"resolver": "structured_graph", "proposition_evidence": (proposition_record(),)},
+                    validate_resolver_result(
+                        {
+                            **internal_resolver_result(),
+                            "resolver": "structured_graph",
+                            "proposition_evidence": (proposition_record(),),
+                        }
                     ),
                 )
             },
@@ -630,8 +572,8 @@ def test_resolution_result_answer_and_miss_package_invariants() -> None:
         evidence_package_available=True,
     )
 
-    assert resolution_result_from_json(resolution_result_to_json(answer)) == answer
-    assert resolution_result_from_json(resolution_result_to_json(available_empty_miss)) == available_empty_miss
+    assert resolution_result_from_dict(resolution_result_to_dict(answer)) == answer
+    assert resolution_result_from_dict(resolution_result_to_dict(available_empty_miss)) == available_empty_miss
     with pytest_raises(InvalidRequestError, match="ANSWER cannot contain"):
         resolution_result_with_changes(
             answer,

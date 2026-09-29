@@ -33,7 +33,7 @@ from engram.identity import build_standalone_identity, scope_key
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = Path("eval/results/feedback/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/feedback/benchmark.json")
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 NOW_TEXT = "2026-08-16T12:00:00Z"
 POLICY_FINGERPRINT = canonical_fingerprint("section6-benchmark-policy")
@@ -90,7 +90,6 @@ def internal_negative_key(index: int) -> dict:
         query_identity=build_standalone_identity(f"negative benchmark request {index}", scope),
         scope=scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
-        normalization_version=1,
         resolver_plan_fingerprint=canonical_fingerprint("exact-only"),
         capability_readiness_fingerprint=canonical_fingerprint("ready"),
         policy_fingerprint=POLICY_FINGERPRINT,
@@ -199,7 +198,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "scale_state_under_64_mib": len(scale_encoded.encode("utf-8")) < 64 * 1024 * 1024,
     }
     result = {
-        "benchmark_version": "section6-feedback-negative-v1.1",
+        "benchmark_id": "section6-feedback-negative",
         "recorded_at": recorded_at(),
         "evaluation_time": NOW_TEXT,
         "source": benchmark_source_state(),

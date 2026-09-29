@@ -1,15 +1,12 @@
 """Section 3 accepted-response artifact and lifecycle contracts."""
 
-from inspect import signature
 from json import loads as json_loads
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import (
-    ARTIFACT_SCHEMA_VERSION,
     MAX_METADATA_DEPTH,
     TERMINAL_LIFECYCLE_STATES,
-    HistoricalKeyReuseReason,
     LifecycleDecisionReason,
     LifecycleOperation,
     LifecycleState,
@@ -21,19 +18,12 @@ from engram.artifacts import (
     artifact_statistics_to_dict,
     cached_response_artifact,
     cached_response_artifact_from_dict,
-    cached_response_artifact_from_json,
     cached_response_artifact_to_dict,
-    cached_response_artifact_to_json,
-    historical_key_reuse_decision,
-    historical_key_reuse_decision_to_dict,
     lifecycle_after_capacity_eviction,
-    lifecycle_base_decision_to_dict,
     lifecycle_base_eligibility,
     lifecycle_transition_decision,
-    lifecycle_transition_decision_to_dict,
     require_lifecycle_transition,
     validate_cached_response_artifact,
-    validate_historical_key_reuse_decision,
     validate_lifecycle_base_decision,
     validate_lifecycle_transition_decision,
 )
@@ -104,12 +94,6 @@ def test_base_eligibility_is_complete_and_tier_independent(state, eligible, reas
     assert type(decision) is dict
     assert decision["direct_answer_eligible"] is eligible
     assert decision["reason"] == reason
-    assert lifecycle_base_decision_to_dict(decision) == {
-        "lifecycle": state.value,
-        "direct_answer_eligible": eligible,
-        "reason": reason.value,
-    }
-    assert tuple(signature(lifecycle_base_eligibility).parameters) == ("lifecycle",)
 
 
 @pytest_mark.parametrize(
@@ -165,67 +149,16 @@ def test_illegal_transition_raises_stable_lifecycle_error() -> None:
         )
 
 
-def test_historical_key_reuse_requires_explicit_expected_owner_and_generation() -> None:
-    assert (
-        historical_key_reuse_decision(
-            explicit_replacement=False,
-            expected_statement_id="stmt-old",
-            expected_generation=4,
-        )["reason"]
-        == HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
-    )
-    assert (
-        historical_key_reuse_decision(
-            explicit_replacement=True,
-            expected_statement_id="",
-            expected_generation=4,
-        )["reason"]
-        == HistoricalKeyReuseReason.EXPECTED_STATEMENT_ID_REQUIRED
-    )
-    assert (
-        historical_key_reuse_decision(
-            explicit_replacement=True,
-            expected_statement_id="stmt-old",
-            expected_generation=0,
-        )["reason"]
-        == HistoricalKeyReuseReason.EXPECTED_GENERATION_REQUIRED
-    )
-    allowed = historical_key_reuse_decision(
-        explicit_replacement=True,
-        expected_statement_id="stmt-old",
-        expected_generation=4,
-    )
-    assert type(allowed) is dict
-    assert allowed["allowed"] is True
-    assert allowed["reason"] == HistoricalKeyReuseReason.ALLOWED_EXPLICIT_REPLACEMENT
-
-
-def test_lifecycle_decision_dictionaries_have_exact_codecs_and_revalidation() -> None:
+def test_lifecycle_decisions_are_revalidated_against_policy() -> None:
     base = lifecycle_base_eligibility(LifecycleState.ACTIVE)
     transition = lifecycle_transition_decision(
         LifecycleState.ACTIVE,
         LifecycleState.RETIRED,
         LifecycleOperation.RETIRE,
     )
-    historical = historical_key_reuse_decision(
-        explicit_replacement=True,
-        expected_statement_id="stmt-old",
-        expected_generation=4,
-    )
 
     assert validate_lifecycle_base_decision(base) == base
     assert validate_lifecycle_base_decision(base) is not base
-    assert lifecycle_transition_decision_to_dict(transition) == {
-        "current": "ACTIVE",
-        "target": "RETIRED",
-        "operation": "RETIRE",
-        "allowed": True,
-        "reason": "legal_transition",
-    }
-    assert historical_key_reuse_decision_to_dict(historical) == {
-        "allowed": True,
-        "reason": "allowed_explicit_replacement",
-    }
 
     malformed_base = dict(base)
     malformed_base["direct_answer_eligible"] = False
@@ -236,11 +169,6 @@ def test_lifecycle_decision_dictionaries_have_exact_codecs_and_revalidation() ->
     malformed_transition["allowed"] = False
     with pytest_raises(InvalidRequestError, match="do not match transition policy"):
         validate_lifecycle_transition_decision(malformed_transition)
-
-    malformed_historical = dict(historical)
-    malformed_historical["reason"] = HistoricalKeyReuseReason.BASE_COMMIT_FORBIDDEN
-    with pytest_raises(InvalidRequestError, match="allowed does not match reason"):
-        validate_historical_key_reuse_decision(malformed_historical)
 
 
 @pytest_mark.parametrize("state", tuple(LifecycleState))
@@ -260,14 +188,6 @@ def test_capacity_eviction_never_changes_lifecycle(state) -> None:
             ),
             "operation must be a LifecycleOperation",
         ),
-        (
-            lambda: historical_key_reuse_decision(
-                explicit_replacement=1,
-                expected_statement_id="stmt-old",
-                expected_generation=1,
-            ),
-            "explicit_replacement must be a boolean",
-        ),
     ],
 )
 def test_lifecycle_boundaries_reject_wrong_concrete_types(call, message) -> None:
@@ -286,21 +206,17 @@ def test_artifact_codec_is_deterministic_and_preserves_exact_unicode() -> None:
         metadata={"z": [1, True, "é"], "a": {"ratio": 0.5}},
     )
 
-    encoded = cached_response_artifact_to_json(original)
-    restored = cached_response_artifact_from_json(encoded)
+    encoded = cached_response_artifact_to_dict(original)
+    restored = cached_response_artifact_from_dict(encoded)
 
     assert restored == original
-    assert type(restored) is dict
-    assert cached_response_artifact_to_json(restored) == encoded
+    assert cached_response_artifact_to_dict(restored) == encoded
     assert restored["response"] == response
-    assert restored["response"].encode("utf-8") == response.encode("utf-8")
-    assert "\\u00e9" not in encoded
-    assert none_paths(cached_response_artifact_to_dict(restored)) == []
+    assert none_paths(encoded) == []
 
 
 def test_artifact_codec_uses_exact_required_fields() -> None:
     data = cached_response_artifact_to_dict(accepted_artifact())
-    assert data["schema_version"] == ARTIFACT_SCHEMA_VERSION
 
     data["extra"] = "forbidden"
     with pytest_raises(InvalidRequestError, match="invalid fields"):
@@ -440,12 +356,3 @@ def test_provenance_and_statistics_codecs_are_exact_and_deterministic() -> None:
 def test_artifact_constructor_rejects_wrong_concrete_types(overrides, message) -> None:
     with pytest_raises(InvalidRequestError, match=message):
         accepted_artifact(**overrides)
-
-
-def test_artifact_json_loader_rejects_malformed_and_non_object_values() -> None:
-    with pytest_raises(InvalidRequestError, match="must be a string"):
-        cached_response_artifact_from_json({})
-    with pytest_raises(InvalidRequestError, match="malformed"):
-        cached_response_artifact_from_json("{")
-    with pytest_raises(InvalidRequestError, match="must contain an object"):
-        cached_response_artifact_from_json("[]")

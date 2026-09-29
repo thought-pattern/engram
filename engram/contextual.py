@@ -4,7 +4,6 @@ from math import isfinite as math_isfinite
 
 from engram.constants import (
     COMPACT_QUERY_FRAME_FIELDS,
-    COMPACT_QUERY_FRAME_SCHEMA_VERSION,
     MAX_CONTEXTUAL_SUBJECTS,
     MAX_CONTEXTUAL_TOPIC_BYTES,
     MAX_CONTEXTUAL_TURN_DISTANCE,
@@ -76,15 +75,8 @@ def compact_query_frame(
     confidence: object,
     temporal_query_value: object = (),
     topic: object = "",
-    schema_version: object = COMPACT_QUERY_FRAME_SCHEMA_VERSION,
 ) -> dict:
     """Build the only query interpretation retained in user context."""
-    if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
-        or schema_version != COMPACT_QUERY_FRAME_SCHEMA_VERSION
-    ):
-        raise InvalidRequestError(f"unsupported compact query frame schema_version: {schema_version}")
     if not isinstance(operator, QueryOperator):
         raise InvalidRequestError("compact query frame operator must be a QueryOperator")
     if not isinstance(expected_object_type, ExpectedObjectType):
@@ -115,7 +107,6 @@ def compact_query_frame(
     if len(qualifier_keys) != len(set(qualifier_keys)):
         raise InvalidRequestError("compact query frame qualifiers must be unique")
     result: dict = {
-        "schema_version": COMPACT_QUERY_FRAME_SCHEMA_VERSION,
         "operator": operator,
         "subjects": validated_subjects,
         "relation": validated_relation,
@@ -148,7 +139,6 @@ def validate_compact_query_frame(value: object) -> dict:
         source_turn=data["source_turn"],
         confidence=data["confidence"],
         topic=data["topic"],
-        schema_version=data["schema_version"],
     )
     return result
 
@@ -156,7 +146,6 @@ def validate_compact_query_frame(value: object) -> dict:
 def compact_query_frame_to_dict(value: object) -> dict:
     frame = validate_compact_query_frame(value)
     result = {
-        "schema_version": frame["schema_version"],
         "operator": frame["operator"].value,
         "subjects": [entity_reference_to_dict(subject) for subject in frame["subjects"]],
         "relation": relation_reference_to_dict(frame["relation"]),
@@ -200,7 +189,6 @@ def compact_query_frame_from_dict(value: object) -> dict:
         source_turn=data["source_turn"],
         confidence=data["confidence"],
         topic=data["topic"],
-        schema_version=data["schema_version"],
     )
     return result
 
@@ -398,8 +386,6 @@ def enrich_query_frame(
         qualifiers=qualifiers,
         lexical_terms=identity["lexical_terms"],
         scope=identity["scope"],
-        normalization_version=identity["normalization_version"],
-        schema_version=identity["schema_version"],
     )
     result = query_frame_with_changes(
         frame,

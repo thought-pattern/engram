@@ -28,7 +28,7 @@ from engram.repository import ArtifactRepository
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark.json")
 PACKAGE_NAMES = (
     "grpcio",
     "grpcio-tools",
@@ -227,9 +227,8 @@ def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[Eng
         config = benchmark_config(corpus_size)
         config["graph"] = graph_config(enabled=False, vector_enabled=False)
         engram = Engram(config=config)
-        selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime-v1")
+        selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
         support_reference = {
-            "schema_version": "support-v1",
             "record_kind": "proposition",
             "id": proposition_id,
             "state_revision": 0,
@@ -316,7 +315,7 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
             "Semantic probe with orthogonal vocabulary",
             request_id=request_id,
             namespace="benchmark",
-            context_fingerprint="runtime-v1",
+            context_fingerprint="runtime",
             limit=10,
         )
         candidate_counts.append(len(proposal.get("candidates", [])))
@@ -394,7 +393,6 @@ def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict
         if fanout <= size
     ]
     result = {
-        "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {

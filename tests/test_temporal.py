@@ -1,7 +1,6 @@
 """Behavioral temporal-query contract and parser tests for EGR-901 and EGR-902."""
 
 from datetime import UTC, datetime
-from json import loads as json_loads
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
@@ -14,7 +13,7 @@ from engram.contextual import (
 )
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.resolution import QueryFrameBuilder, query_frame_from_json, query_frame_to_json
+from engram.resolution import QueryFrameBuilder
 from engram.temporal import parse_temporal_query, temporal_query, temporal_query_from_dict, temporal_query_to_dict
 
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
@@ -134,14 +133,11 @@ def test_temporal_contract_round_trips_and_rejects_inconsistent_bounds() -> None
         )
 
 
-def test_query_frame_keeps_temporal_interpretation_out_of_lexical_terms_and_round_trips() -> None:
+def test_query_frame_keeps_temporal_interpretation_out_of_lexical_terms() -> None:
     frame = internal_frame("Who owned Atlas in 2024?")
 
     assert frame["temporal_query"]["operator"] == TemporalQueryOperator.IN_YEAR
     assert "2024" not in frame["identity"]["lexical_terms"]
-    assert query_frame_from_json(query_frame_to_json(frame)) == frame
-    serialized = json_loads(query_frame_to_json(frame))
-    assert serialized["temporal_query"]["operator"] == "in_year"
 
 
 def test_compact_frame_round_trip_preserves_temporal_query() -> None:

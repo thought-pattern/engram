@@ -71,7 +71,7 @@ target-version = "py312"
 extend-exclude = ["engram/engram_pb2*.py", "engram/engram_pb2*.pyi"]
 
 [tool.pyright]
-include = ["engram", "scripts", "eval", "tests"]
+include = ["engram", "scripts", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 
@@ -90,7 +90,6 @@ combine-as-imports = true
 # Runnable entrypoints put the repo root on sys.path before importing the
 # package, so their package imports are intentionally not at the top of file.
 "scripts/*" = ["E402"]
-"eval/*" = ["E402"]
 # Generated gRPC method names follow the protobuf service contract.
 "engram/grpc_server.py" = ["N802"]
 # These files are compiler output; regenerate them with scripts/regenerate_protocol.py.
@@ -114,7 +113,7 @@ combine_as_imports = true
 skip_glob = ["engram/engram_pb2*"]
 
 [tool.vulture]
-paths = ["engram", "scripts", "eval"]
+paths = ["engram", "scripts"]
 exclude = ["engram/engram_pb2*.py"]
 min_confidence = 65
 ignore_names = ["exc_type", "exc_value", "traceback"]

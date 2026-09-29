@@ -112,7 +112,6 @@ def to_evidence_resolution(value: dict) -> engram_pb2.ResolutionResult:
     if not isinstance(package, dict):
         raise InvalidRequestError("resolution evidence package must be an object")
     result = engram_pb2.ResolutionResult(
-        schema_version=current.get("schema_version", 0),
         outcome=current.get("outcome", ""),
         selected_candidate=current.get("selected_candidate", {}),
         selected_candidate_available=current.get("selected_candidate_available", False),
@@ -126,7 +125,6 @@ def to_evidence_resolution(value: dict) -> engram_pb2.ResolutionResult:
         budget=current.get("budget", {}),
         evidence_package_available=current.get("evidence_package_available", False),
         evidence_package={
-            "wire_version": package.get("wire_version", 0),
             "records": package.get("records", []),
             "retained_count": package.get("retained_count", 0),
             "omitted_count": package.get("omitted_count", 0),

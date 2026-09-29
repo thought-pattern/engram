@@ -689,25 +689,3 @@ class TemplateProcessor:
             text = transformed_text
 
         return text
-
-
-def process_template(
-    template,
-    context: dict,
-    srai_limit: int = 100,
-) -> str:
-    """Process a template with the given context.
-
-    Convenience function that creates a processor and evaluates.
-
-    Args:
-        template: Template to process.
-        context: Evaluation context.
-        srai_limit: Maximum redirect depth.
-
-    Returns:
-        Processed output string.
-    """
-    processor = TemplateProcessor(srai_limit=srai_limit)
-    result = processor.process(template, context)
-    return result

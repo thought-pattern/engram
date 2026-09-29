@@ -17,8 +17,8 @@ from engram.identity import build_scoped_retrieval_key, scope_key, scoped_retrie
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = Path("eval/section11-rewrite-v1.json")
-DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark-2026-08-20.json")
+DEFAULT_CORPUS = Path("eval/section11-rewrite.json")
+DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark.json")
 
 
 def internal_percentile(values: list[float], fraction: float) -> float:
@@ -29,8 +29,8 @@ def internal_percentile(values: list[float], fraction: float) -> float:
 
 def internal_load(path: Path) -> dict[str, object]:
     decoded = json_loads(path.read_text(encoding="utf-8"))
-    if not isinstance(decoded, dict) or decoded.get("schema_version") != 1:
-        raise ValueError("rewrite benchmark corpus must be a schema-1 object")
+    if not isinstance(decoded, dict):
+        raise ValueError("rewrite benchmark corpus must be an object")
     if not isinstance(decoded.get("cases"), list) or not isinstance(decoded.get("gates"), dict):
         raise ValueError("rewrite benchmark corpus must contain cases and gates")
     return decoded
@@ -120,7 +120,6 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
         "false_direct_answer_rate": false_rate <= float(gates["maximum_false_direct_answer_rate"]),
     }
     result = {
-        "schema_version": 1,
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "corpus": {

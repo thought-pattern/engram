@@ -54,7 +54,7 @@ from engram.resolvers import ResolutionAccountingFinalizer, ResolutionOrchestrat
 from engram.responses import AcceptedResponseService
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_OUTPUT = Path("eval/results/evidence/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/evidence/benchmark.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="section7-benchmark")
@@ -112,7 +112,6 @@ def record(index: int) -> dict:
             PropositionOwnership.PUBLIC,
             DisclosureBasis.PUBLIC_RULE,
             SCOPE,
-            "proposition-disclosure-v1",
         ),
         path=(proposition_id,),
         selection_reasons=("canonical_complete", "public", "structured_match"),
@@ -256,8 +255,7 @@ def measure_evidence(samples: int) -> dict[str, object]:
         ),
     }
     result = {
-        "schema_version": 1,
-        "benchmark_version": "section7-evidence-benchmark-current-1",
+        "benchmark_id": "section7-evidence-benchmark",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
         "environment": {"python": platform_python_version(), "platform": platform_platform()},

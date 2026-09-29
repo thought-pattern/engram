@@ -13,10 +13,8 @@ from engram.text import (
     is_known_word,
     lemmatize_word,
     normalize,
-    normalize_with_stemming,
     restore_capture_case,
     stem_text,
-    stem_word,
 )
 
 
@@ -174,39 +172,11 @@ def test_expand_query_spec_example() -> None:
 """Tests for stemming functions."""
 
 
-def test_stemming_stem_word_basic() -> None:
-    """Test basic stemming."""
-    assert stem_word("running") == "run"
-    assert stem_word("cats") == "cat"
-    assert stem_word("jumped") == "jump"
-
-
-def test_stemming_stem_word_case_insensitive() -> None:
-    """Test stemming is case-insensitive."""
-    assert stem_word("Running") == "run"
-    assert stem_word("CATS") == "cat"
-
-
-def test_stemming_stem_word_already_stemmed() -> None:
-    """Test words that are already in stem form."""
-    assert stem_word("run") == "run"
-    assert stem_word("cat") == "cat"
-
-
 def test_stemming_stem_text() -> None:
     """Test stemming entire text."""
     result = stem_text("the cats are running quickly")
     assert "cat" in result
     assert "run" in result
-
-
-def test_stemming_normalize_with_stemming() -> None:
-    """Test combined normalization and stemming."""
-    result = normalize_with_stemming("The CATS are RUNNING!")
-    # Should be lowercase, no punctuation, and stemmed
-    assert "cat" in result
-    assert "run" in result
-    assert "!" not in result
 
 
 """Tests for lemmatization functions."""

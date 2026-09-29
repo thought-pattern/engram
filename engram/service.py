@@ -823,7 +823,6 @@ class EngramCore:
                 frame.get("required_metadata", {}),
                 frame.get("required_source_label", ""),
             ),
-            normalization_version=frame.get("identity", {})["normalization_version"],
             resolver_plan_fingerprint=canonical_fingerprint(resolver_plan),
             capability_readiness_fingerprint=canonical_fingerprint(readiness),
             policy_fingerprint=policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy),
@@ -909,7 +908,6 @@ class EngramCore:
                 budget=signature_budget,
                 configured_resolvers=list(configured_resolvers),
                 accept_exact=accept_exact,
-                rollout_policy_version=rollout["policy_version"],
                 rollout_mode=rollout_mode.value,
             )
             if request_id in self.resolution_requests:
@@ -982,7 +980,6 @@ class EngramCore:
                     ("rollout_disabled",),
                     {
                         "rollout": {
-                            "policy_version": rollout["policy_version"],
                             "mode": rollout_mode.value,
                             "namespace_override": rollout["namespace_override"],
                         }
@@ -1112,7 +1109,6 @@ class EngramCore:
                 generation_available=target["generation_available"],
                 policy_fingerprint=target["policy_fingerprint"],
                 observed_at=observed_at,
-                contract_fingerprint=target["contract_fingerprint"],
                 reason=reason,
             )
             lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
@@ -1165,7 +1161,6 @@ class EngramCore:
             if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64:
                 raise InvalidRequestError("feedback inspection limit must be an integer from 1 through 64")
             result = {
-                "schema_version": 1,
                 "feedback": self.engram.feedback_store.inspect(limit),
                 "negative_resolution": self.negative_resolutions.inspect(limit),
             }
@@ -1602,7 +1597,6 @@ class EngramCore:
                 generation_available=target["generation_available"],
                 policy_fingerprint=target["policy_fingerprint"],
                 observed_at=canonical_utc(self.internal_clock()),
-                contract_fingerprint=target["contract_fingerprint"],
                 reason=reason,
             )
             verdict_feedback_request_id = feedback_mutation_request_id("proposal-verdict", proposal_id)

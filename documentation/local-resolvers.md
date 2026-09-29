@@ -12,7 +12,7 @@ accepted-response candidate. Configuration enables each optional capability sepa
 Retrieval rewrites transform the resolver request representation. Identity, scope,
 temporal inputs, source requirements, accepted text, and AIML behavior remain
 unchanged. Rules come from the packaged
-`rewrite-rules-v1.json` corpus and use escaped exact, prefix, suffix, or token-sequence
+`rewrite-rules.json` corpus and use escaped exact, prefix, suffix, or token-sequence
 matches with one bounded inherited `{subject}` value.
 
 Rules are deterministic and ordered by priority and identity. Depth, expansion,

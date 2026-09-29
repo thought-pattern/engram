@@ -47,8 +47,8 @@ entity and exactly two ordered predicates. The compiler emits only a closed two-
 plan over the one-hop capability. Execution is bounded by request budgets and uses
 the same temporal, trust, visibility, and revalidation rules at both steps.
 
-Composed evidence uses `PropositionEvidenceRecord` schema version 2 and evidence-package
-wire version 2. Its path contains one or two typed steps. Cycles, excessive fan-out,
+A composed `PropositionEvidenceRecord` path holds one or two typed steps instead of
+the Proposition's own ID. Cycles, excessive fan-out,
 ambiguous roots or predicates, conflicting terminal values, incomplete trust, and
 unknown cardinality produce `EVIDENCE` or `MISS`.
 

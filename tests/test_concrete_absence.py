@@ -1,12 +1,8 @@
 """Behavioral checks for concrete absence values at public boundaries."""
 
-from json import dumps as json_dumps, loads as json_loads
+from json import dumps as json_dumps
 
-from pytest import raises as pytest_raises
-
-from engram.config import config_from_dict, config_to_dict, engram_config
 from engram.core import Engram
-from engram.models import session_from_dict, statement_from_dict
 from engram.pipeline import pipeline_result
 from engram.service import EngramCore
 
@@ -33,7 +29,6 @@ def test_representative_outputs_are_recursively_concrete() -> None:
     runtime = core.get_conversation("0")
 
     values = {
-        "config": config_to_dict(engram_config()),
         "status": core.status(),
         "pipeline": pipeline_result("", "none"),
         "fact": fact,
@@ -43,28 +38,3 @@ def test_representative_outputs_are_recursively_concrete() -> None:
 
     assert none_paths(values) == []
     assert "null" not in json_dumps(values, sort_keys=True)
-
-
-def test_null_inputs_are_rejected_at_load_boundaries() -> None:
-    external_null = json_loads("null")
-    with pytest_raises(ValueError, match="must not be null"):
-        statement_from_dict(
-            {
-                "id": "invalid",
-                "text": "Invalid",
-                "tier": "DYNAMIC",
-                "created_at": "2026-01-01T00:00:00+00:00",
-                "introduced_by_user_id": external_null,
-            }
-        )
-    with pytest_raises(ValueError, match="must not be null"):
-        session_from_dict(
-            {
-                "session_id": "invalid",
-                "created_at": "2026-01-01T00:00:00+00:00",
-                "last_active": "2026-01-01T00:00:00+00:00",
-                "metadata": external_null,
-            }
-        )
-    with pytest_raises(ValueError, match="must be an object"):
-        config_from_dict({"graph": external_null})

@@ -19,31 +19,15 @@ from engram.feedback import (
     NegativeResolutionStore,
     canonical_fingerprint,
     constraint_fingerprint,
-    feedback_history_from_json,
-    feedback_history_to_json,
     feedback_observation,
-    feedback_observation_from_dict,
-    feedback_observation_from_json,
-    feedback_observation_relationship_key,
-    feedback_observation_statement_key,
-    feedback_observation_to_dict,
-    feedback_observation_to_json,
-    feedback_observation_with_changes,
     feedback_policy,
     feedback_state,
     feedback_statistics,
     feedback_statistics_from_dict,
-    feedback_statistics_from_json,
     feedback_statistics_to_dict,
-    feedback_statistics_to_json,
     negative_resolution_key,
-    negative_resolution_key_from_json,
-    negative_resolution_key_to_json,
-    negative_resolution_key_with_changes,
-    relationship_feedback_key_from_json,
-    relationship_feedback_key_to_json,
-    statement_feedback_key_from_json,
-    statement_feedback_key_to_json,
+    validate_feedback_observation,
+    validate_negative_resolution_key,
 )
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
 from engram.mutations import mutation_receipt_to_dict
@@ -92,7 +76,6 @@ def test_feedback_statistics_codec_preserves_the_complete_schema() -> None:
     encoded = feedback_statistics_to_dict(statistics)
 
     assert encoded == {
-        "schema_version": 1,
         "candidate_count": 3,
         "accept_count": 2,
         "rejected_quality": 1,
@@ -101,7 +84,6 @@ def test_feedback_statistics_codec_preserves_the_complete_schema() -> None:
         "rejected_policy": 0,
     }
     assert feedback_statistics_from_dict(encoded) == statistics
-    assert feedback_statistics_from_json(feedback_statistics_to_json(statistics)) == statistics
 
 
 def apply(store: FeedbackStore, request_id: str, *values: dict, status=LifecycleHandoffStatus.NOT_APPLICABLE):
@@ -153,7 +135,6 @@ def negative_key(
         query_identity=build_standalone_identity(request, scope),
         scope=scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
-        normalization_version=1,
         resolver_plan_fingerprint=canonical_fingerprint(plan),
         capability_readiness_fingerprint=canonical_fingerprint("ready"),
         policy_fingerprint=canonical_fingerprint("policy"),
@@ -161,40 +142,24 @@ def negative_key(
     return result
 
 
-def test_feedback_contract_round_trip_is_deterministic_and_strict() -> None:
-    value = observation("feedback-1", FeedbackOutcome.REJECTED_CONTEXT, reason="wrong account")
-
-    relationship_key = feedback_observation_relationship_key(value)
-    statement_key = feedback_observation_statement_key(value)
-    assert feedback_observation_from_json(feedback_observation_to_json(value)) == value
-    assert relationship_feedback_key_from_json(relationship_feedback_key_to_json(relationship_key)) == relationship_key
-    assert statement_feedback_key_from_json(statement_feedback_key_to_json(statement_key)) == statement_key
-    malformed = feedback_observation_to_dict(value)
-    malformed["schema_version"] = 2
-    with pytest_raises(InvalidRequestError, match="schema_version"):
-        feedback_observation_from_dict(malformed)
-    with pytest_raises(InvalidRequestError, match="must contain an object"):
-        feedback_observation_from_json("[]")
-
-
 def test_feedback_receipts_apply_once_and_conflicting_retries_fail() -> None:
     store = FeedbackStore()
     value = observation("feedback-1", FeedbackOutcome.ACCEPTED)
 
     first = apply(store, "feedback-1", value)
-    replay = apply(store, "feedback-1", feedback_observation_with_changes(value, {"observed_at": "2026-08-15T12:00:01Z"}))
+    replay = apply(store, "feedback-1", validate_feedback_observation({**value, "observed_at": "2026-08-15T12:00:01Z"}))
 
     assert first["replayed"] is False
     assert replay["replayed"] is True
     assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 1
     with pytest_raises(ConflictError, match="different observation"):
-        apply(store, "feedback-1", feedback_observation_with_changes(value, {"outcome": FeedbackOutcome.REJECTED_QUALITY}))
+        apply(store, "feedback-1", validate_feedback_observation({**value, "outcome": FeedbackOutcome.REJECTED_QUALITY}))
 
 
 def test_feedback_accepts_the_declared_thousand_observation_batch() -> None:
     store = FeedbackStore()
     value = observation("feedback-batch", FeedbackOutcome.ACCEPTED)
-    values = tuple(feedback_observation_with_changes(value, {"reference_id": f"resolution-{index}"}) for index in range(1_000))
+    values = tuple(validate_feedback_observation({**value, "reference_id": f"resolution-{index}"}) for index in range(1_000))
 
     candidate = store.prepare("feedback-batch", values)
 
@@ -249,7 +214,7 @@ def test_feedback_partitions_isolate_scope_query_generation_and_policy() -> None
         observation("a", FeedbackOutcome.REJECTED_CONTEXT),
         observation("b", FeedbackOutcome.REJECTED_CONTEXT, context_fingerprint="account:2"),
         observation("c", FeedbackOutcome.REJECTED_CONTEXT, generation=4),
-        feedback_observation_with_changes(observation("d", FeedbackOutcome.REJECTED_CONTEXT), {"policy_fingerprint": "b" * 64}),
+        validate_feedback_observation({**observation("d", FeedbackOutcome.REJECTED_CONTEXT), "policy_fingerprint": "b" * 64}),
     )
     for index, value in enumerate(values):
         apply(store, f"request-{index}", value)
@@ -274,13 +239,13 @@ def test_history_uses_sample_floor_priors_and_deterministic_aging() -> None:
         apply(
             store,
             f"accepted-{index}",
-            feedback_observation_with_changes(accepted, {"reference_id": f"resolution-{index}"}),
+            validate_feedback_observation({**accepted, "reference_id": f"resolution-{index}"}),
         )
     identity = accepted["query_identity"]
     constraint = accepted["constraint_fingerprint"]
 
     below_floor = store.history(identity, constraint, accepted["statement_id"], 3, POLICY_FINGERPRINT, NOW_TEXT)
-    apply(store, "accepted-4", feedback_observation_with_changes(accepted, {"reference_id": "resolution-4"}))
+    apply(store, "accepted-4", validate_feedback_observation({**accepted, "reference_id": "resolution-4"}))
     available = store.history(identity, constraint, accepted["statement_id"], 3, POLICY_FINGERPRINT, NOW_TEXT)
     aged = store.history(identity, constraint, accepted["statement_id"], 3, POLICY_FINGERPRINT, "2026-10-14T12:00:00Z")
 
@@ -289,7 +254,6 @@ def test_history_uses_sample_floor_priors_and_deterministic_aging() -> None:
     assert available["value"] == pytest_approx(6 / 9)
     assert aged["available"] is False
     assert store.snapshot()["statement_records"][0]["raw"]["accept_count"] == 5
-    assert feedback_history_from_json(feedback_history_to_json(available)) == available
 
 
 def test_feedback_capacity_and_bucket_retention_are_bounded_and_inspectable() -> None:
@@ -342,15 +306,10 @@ def test_negative_store_has_fixed_ttl_capacity_and_exact_isolation() -> None:
     store.admit(second, "2026-08-15T12:01:01Z")
     store.admit(third, "2026-08-15T12:01:02Z")
     assert store.inspect()["evictions"] == 1
-    changed_plan = negative_resolution_key_with_changes(third, {"resolver_plan_fingerprint": canonical_fingerprint("plan-b")})
+    changed_plan = validate_negative_resolution_key({**third, "resolver_plan_fingerprint": canonical_fingerprint("plan-b")})
     assert store.lookup(changed_plan, "2026-08-15T12:01:03Z")["hit"] is False
     assert store.inspect()["invalidations"] >= 1
     store.admit(changed_plan, "2026-08-15T12:01:04Z")
-
-
-def test_negative_contract_round_trips_without_graph_state() -> None:
-    key = negative_key()
-    assert negative_resolution_key_from_json(negative_resolution_key_to_json(key)) == key
 
 
 def test_core_negative_hit_bypasses_resolvers_and_plan_changes_do_not_reuse() -> None:

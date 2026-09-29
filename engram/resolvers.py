@@ -1,7 +1,7 @@
 """Pure resolver adapters, bounded execution, accounting, and baseline policy."""
 
 from hashlib import sha256 as hashlib_sha256
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from json import dumps as json_dumps
 from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
@@ -18,7 +18,6 @@ from engram.constants import (
     ACCOUNTING_FINALIZATION_FIELDS,
     EXACT_RESOLVER_COST_CLASS,
     EXACT_RESOLVER_NAME,
-    EXECUTION_REPORT_FIELDS,
     MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS,
     MAX_PLAN_RESOLVERS,
     MAX_REASON_CODE_BYTES,
@@ -30,9 +29,7 @@ from engram.constants import (
     RESOLUTION_PLAN_ENTRY_FIELDS,
     RESOLUTION_PLAN_FIELDS,
     RESOLVER_BUDGET_FIELDS,
-    RESOLVER_BUDGET_SCHEMA_VERSION,
     RESOLVER_RESERVATION_FIELDS,
-    RESOLVER_RESERVATION_SCHEMA_VERSION,
     SPARSE_RESOLVER_COST_CLASS,
     SPARSE_RESOLVER_NAME,
     STANDALONE_SEMANTIC_RESOLVER_COST_CLASS,
@@ -43,7 +40,7 @@ from engram.constants import (
     SUPPORT_SEMANTIC_RESOLVER_NAME,
     UTILITY_RESOLVER_COST_CLASS,
     UTILITY_RESOLVER_NAME,
-    UTILITY_RESOLVER_VERSION,
+    UTILITY_RESOLVER_PRODUCER,
     CanonicalResolutionStatus,
     CompositionReason,
     ExactLookupOutcome,
@@ -172,13 +169,8 @@ def resolver_budget(
     max_output_bytes: object,
     max_diagnostic_bytes: object,
     max_working_memory_bytes: object,
-    schema_version: object = RESOLVER_BUDGET_SCHEMA_VERSION,
 ) -> dict:
     """Build one read-only bounded lease passed to a resolver."""
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
-        raise InvalidRequestError("resolver budget schema_version must be an integer")
-    if schema_version != RESOLVER_BUDGET_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolver budget schema_version: {schema_version}")
     raw_values = {
         "max_candidates": max_candidates,
         "max_graph_rows": max_graph_rows,
@@ -195,7 +187,6 @@ def resolver_budget(
             raise InvalidRequestError(f"resolver budget {name} must be a nonnegative integer")
         values[name] = raw
     result: dict = {
-        "schema_version": schema_version,
         "max_candidates": values.get("max_candidates", 0),
         "max_graph_rows": values.get("max_graph_rows", 0),
         "max_vector_results": values.get("max_vector_results", 0),
@@ -212,7 +203,6 @@ def validate_resolver_budget(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLVER_BUDGET_FIELDS:
         raise InvalidRequestError("ResolverBudget has invalid fields")
     result = resolver_budget(
-        schema_version=value["schema_version"],
         max_candidates=value["max_candidates"],
         max_graph_rows=value["max_graph_rows"],
         max_vector_results=value["max_vector_results"],
@@ -248,33 +238,13 @@ def resolver_budget_from_dict(value: object) -> dict:
     return result
 
 
-def resolver_budget_to_json(value: object) -> str:
-    payload = resolver_budget_to_dict(value)
-    result = json_dumps(payload, sort_keys=True, separators=(",", ":"))
-    return result
-
-
-def resolver_budget_from_json(value: str) -> dict:
-    try:
-        decoded = json_loads(value)
-    except (TypeError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("ResolverBudget JSON must be valid JSON") from error
-    result = resolver_budget_from_dict(decoded)
-    return result
-
-
 def resolver_reservation(
     resolver: object,
     order: object,
     lease: object,
     consumption: object,
-    schema_version: object = RESOLVER_RESERVATION_SCHEMA_VERSION,
 ) -> dict:
     """Build one inspectable lease and resulting consumption."""
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
-        raise InvalidRequestError("ResolverReservation schema_version must be an integer")
-    if schema_version != RESOLVER_RESERVATION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolver reservation schema_version: {schema_version}")
     if not isinstance(resolver, str) or not resolver or len(resolver.encode("utf-8")) > MAX_RESOLVER_NAME_BYTES:
         raise InvalidRequestError("reservation resolver must be a bounded non-empty string")
     if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order < MAX_PLAN_RESOLVERS:
@@ -285,7 +255,6 @@ def resolver_reservation(
     except InvalidRequestError as error:
         raise InvalidRequestError("reservation lease and consumption have invalid types") from error
     result: dict = {
-        "schema_version": schema_version,
         "resolver": resolver,
         "order": order,
         "lease": validated_lease,
@@ -302,25 +271,13 @@ def validate_resolver_reservation(value: object) -> dict:
         value["order"],
         value["lease"],
         value["consumption"],
-        value["schema_version"],
     )
-    return result
-
-
-def resolver_reservation_with_changes(value: object, changes: object) -> dict:
-    current = validate_resolver_reservation(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_RESERVATION_FIELDS):
-        raise InvalidRequestError("resolver reservation changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_resolver_reservation(updated)
     return result
 
 
 def resolver_reservation_to_dict(value: object) -> dict[str, object]:
     current = validate_resolver_reservation(value)
     result = {
-        "schema_version": current["schema_version"],
         "resolver": current["resolver"],
         "order": current["order"],
         "lease": resolver_budget_to_dict(current["lease"]),
@@ -341,23 +298,7 @@ def resolver_reservation_from_dict(value: object) -> dict:
         value["order"],
         resolver_budget_from_dict(lease),
         budget_consumption_from_dict(consumption),
-        value["schema_version"],
     )
-    return result
-
-
-def resolver_reservation_to_json(value: object) -> str:
-    payload = resolver_reservation_to_dict(value)
-    result = json_dumps(payload, sort_keys=True, separators=(",", ":"))
-    return result
-
-
-def resolver_reservation_from_json(value: str) -> dict:
-    try:
-        decoded = json_loads(value)
-    except (TypeError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("ResolverReservation JSON must be valid JSON") from error
-    result = resolver_reservation_from_dict(decoded)
     return result
 
 
@@ -437,12 +378,6 @@ def validate_resolution_plan(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLUTION_PLAN_FIELDS:
         raise InvalidRequestError("ResolutionPlan has invalid fields")
     result = resolution_plan(value["entries"])
-    return result
-
-
-def resolution_plan_to_dict(value: object) -> dict[str, object]:
-    current = validate_resolution_plan(value)
-    result = trusted_resolution_plan_to_dict(current)
     return result
 
 
@@ -728,7 +663,6 @@ class UtilityResolver:
         evaluation = self.internal_registry.evaluate(frame.get("original_text", ""))
         diagnostics = {
             "plugin_name": evaluation["plugin_name"],
-            "plugin_version": evaluation["plugin_version"],
             "error_code": evaluation["error_code"],
             "operations": evaluation["operations"],
         }
@@ -759,9 +693,7 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        digest = hashlib_sha256(
-            f"{evaluation['plugin_name']}:{evaluation['plugin_version']}:{evaluation['canonical_input']}".encode()
-        ).hexdigest()
+        digest = hashlib_sha256(f"{evaluation['plugin_name']}:{evaluation['canonical_input']}".encode()).hexdigest()
         statement_id = f"utility:{evaluation['plugin_name']}:sha256:{digest}"
         current = resolution_candidate(
             candidate_id=internal_candidate_id(CandidateSource.UTILITY, statement_id, frame.get("diagnostic_id", "")),
@@ -773,10 +705,8 @@ class UtilityResolver:
             scope=frame.get("scope", {}),
             lifecycle=LifecycleState.ACTIVE,
             provenance={
-                "producer": UTILITY_RESOLVER_VERSION,
-                "contract_version": evaluation["contract_version"],
+                "producer": UTILITY_RESOLVER_PRODUCER,
                 "plugin_name": evaluation["plugin_name"],
-                "plugin_version": evaluation["plugin_version"],
                 "canonical_input": evaluation["canonical_input"],
                 "learnable": False,
             },
@@ -1258,7 +1188,7 @@ class StructuredGraphResolver:
         for path in execution["complete_paths"]:
             for entry in path:
                 projection = entry["proposition"]["projection"]
-                if not projection["supplied_trust_available"] or not projection["supplied_trust_version_available"]:
+                if not projection["supplied_trust_available"]:
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.TRUST_UNAVAILABLE.value)
                 if entry["proposition"]["predicate_cardinality"].value == "UNKNOWN":
@@ -1319,7 +1249,6 @@ class StructuredGraphResolver:
                 proposition_evidence_record_with_changes(
                     base,
                     {
-                        "schema_version": 2,
                         "path": path_steps,
                         "selection_reasons": tuple(sorted(reasons)),
                     },
@@ -1341,13 +1270,7 @@ class StructuredGraphResolver:
                 )
                 for entry in selected_path
             )
-            trust_chain = tuple(
-                (
-                    entry["proposition"]["projection"]["supplied_trust"],
-                    entry["proposition"]["projection"]["supplied_trust_version"],
-                )
-                for entry in selected_path
-            )
+            trust_chain = tuple(entry["proposition"]["projection"]["supplied_trust"] for entry in selected_path)
             references = tuple(
                 evidence_reference(
                     evidence_id=proposition_id,
@@ -1662,13 +1585,10 @@ class StructuredGraphResolver:
                             "predicate_cardinality": selection["cardinality"].value,
                             "selection_reason": selection["reason"].value,
                             "supplied_trust": item["projection"]["supplied_trust"],
-                            "supplied_trust_version": item["projection"]["supplied_trust_version"],
                         },
                         diagnostics={
                             "template_id": plan["template_id"].value,
                             "ranking_proposition_ids": selection["ranking_proposition_ids"],
-                            "trust_version": selection["trust_version"],
-                            "trust_version_available": selection["trust_version_available"],
                         },
                     )
                 )
@@ -1721,8 +1641,6 @@ class StructuredGraphResolver:
                 "predicate_cardinality": selection["cardinality"].value,
                 "conflict_proposition_ids": selection["conflict_proposition_ids"],
                 "ranking_proposition_ids": selection["ranking_proposition_ids"],
-                "trust_version": selection["trust_version"],
-                "trust_version_available": selection["trust_version_available"],
             },
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -2179,34 +2097,6 @@ class ResolverRegistry:
         return result
 
 
-def execution_report(
-    results: object,
-    consumption: object,
-    exact_short_circuited: object,
-    reservations: object,
-) -> dict:
-    """Build the raw executor output consumed by orchestration."""
-    if not isinstance(results, tuple):
-        raise InvalidRequestError("execution results must be a tuple of ResolverResult values")
-    if not isinstance(exact_short_circuited, bool):
-        raise InvalidRequestError("execution exact_short_circuited must be a boolean")
-    if not isinstance(reservations, tuple):
-        raise InvalidRequestError("execution reservations must be a tuple")
-    try:
-        validated_results = tuple(validate_resolver_result(value) for value in results)
-        validated_consumption = validate_budget_consumption(consumption)
-        validated_reservations = tuple(validate_resolver_reservation(value) for value in reservations)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("execution budget records are malformed") from error
-    result: dict = {
-        "results": validated_results,
-        "consumption": validated_consumption,
-        "exact_short_circuited": exact_short_circuited,
-        "reservations": validated_reservations,
-    }
-    return result
-
-
 def trusted_execution_report(
     results: tuple[dict, ...],
     consumption: dict,
@@ -2220,47 +2110,6 @@ def trusted_execution_report(
         "exact_short_circuited": exact_short_circuited,
         "reservations": reservations,
     }
-    return result
-
-
-def validate_execution_report(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != EXECUTION_REPORT_FIELDS:
-        raise InvalidRequestError("ExecutionReport has invalid fields")
-    result = execution_report(
-        value["results"],
-        value["consumption"],
-        value["exact_short_circuited"],
-        value["reservations"],
-    )
-    return result
-
-
-def execution_report_with_changes(value: object, changes: object) -> dict:
-    current = validate_execution_report(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(EXECUTION_REPORT_FIELDS):
-        raise InvalidRequestError("execution report changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_execution_report(updated)
-    return result
-
-
-def execution_report_canonical_proposition_evidence(value: object, cooperative_check=()) -> tuple:
-    """Return deterministic Proposition-only evidence without creating candidacy or accounting."""
-    current = validate_execution_report(value)
-    if cooperative_check != () and not callable(cooperative_check):
-        raise InvalidRequestError("cooperative_check must be callable")
-    records = tuple(
-        record
-        for resolver_result in current["results"]
-        if resolver_result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
-        for record in resolver_result["proposition_evidence"]
-    )
-    result = (
-        canonicalize_proposition_evidence(records, cooperative_check)
-        if cooperative_check
-        else canonicalize_proposition_evidence(records)
-    )
     return result
 
 
@@ -2423,14 +2272,6 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         },
     )
     return result
-
-
-def bound_resolver_result(result: dict, lease: dict) -> dict:
-    """Validate a caller-supplied result and enforce one resolver lease."""
-    current = validate_resolver_result(result)
-    current_lease = validate_resolver_budget(lease)
-    bounded = bound_validated_resolver_result(current, current_lease)
-    return bounded
 
 
 class ResolverExecutor:
@@ -2857,7 +2698,6 @@ class ResolutionOrchestrator:
         evidence_working_memory = 0
         orchestration_exhausted = set()
         evidence_diagnostics: dict[str, object] = {
-            "policy_version": self.internal_evidence_policy["policy_version"],
             "available": False,
             "input_count": 0,
             "normalized_count": 0,
@@ -3004,7 +2844,6 @@ class ResolutionOrchestrator:
             compact = {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
                 "proposition_evidence": {
-                    "policy_version": self.internal_evidence_policy["policy_version"],
                     "available": evidence_package_available,
                     "input_count": evidence_diagnostics.get("input_count", 0),
                     "included_count": evidence_diagnostics.get("included_count", 0),
@@ -3145,12 +2984,10 @@ class ResolutionOrchestrator:
                 {
                     "diagnostic_id": frame.get("diagnostic_id", ""),
                     "fusion": {
-                        "policy_version": self.internal_fusion.policy["policy_version"],
                         "candidate_count": decision["report"]["candidate_count"],
                         "output_truncated": True,
                     },
                     "proposition_evidence": {
-                        "policy_version": self.internal_evidence_policy["policy_version"],
                         "available": evidence_package_available,
                         "input_count": evidence_diagnostics.get("input_count", 0),
                         "included_count": evidence_diagnostics.get("included_count", 0),

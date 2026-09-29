@@ -218,3 +218,6 @@ data/nltk_data/
 
 # Pre-provisioned local model artifacts are machine-local and checksum-gated.
 data/artifacts/
+
+# Local evaluation corpora, harnesses, and generated benchmark results.
+eval/

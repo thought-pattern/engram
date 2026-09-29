@@ -1,7 +1,6 @@
 """Current-time disclosure eligibility for response-less Proposition evidence."""
 
 from datetime import datetime
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
@@ -11,10 +10,8 @@ from engram.constants import (
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_VISIBILITY_GRANTS,
-    PROPOSITION_DISCLOSURE_POLICY_VERSION,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
     PROPOSITION_EVIDENCE_PRODUCERS,
-    PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
     SEMANTIC_SIMILARITY_FLOOR_V1,
     SOURCE_AGREEMENT_FLOOR_V1,
     STRUCTURED_MATCH_FLOOR_V1,
@@ -57,7 +54,6 @@ def empty_disclosure_decision() -> dict:
         PropositionOwnership.PUBLIC,
         DisclosureBasis.PUBLIC_RULE,
         EMPTY_SCOPE_KEY,
-        "unavailable",
     )
     return result
 
@@ -77,7 +73,6 @@ def evidence_usefulness_decision(
     proposition_id: object,
     included: object,
     reasons: object,
-    policy_version: object = PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
 ) -> dict:
     """Build one content-free evidence inclusion decision."""
     normalized_proposition_id = require_identifier(
@@ -85,8 +80,6 @@ def evidence_usefulness_decision(
     )
     if not isinstance(included, bool):
         raise InvalidRequestError("evidence usefulness included must be a boolean")
-    if policy_version != PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION:
-        raise InvalidRequestError(f"unsupported evidence usefulness policy_version: {policy_version}")
     if not isinstance(reasons, tuple) or not reasons:
         raise InvalidRequestError("evidence usefulness reasons must be a non-empty tuple")
     if not all(isinstance(reason, EvidenceUsefulnessReason) for reason in reasons):
@@ -113,7 +106,6 @@ def evidence_usefulness_decision(
     if not included and not has_exclusion:
         raise InvalidRequestError("excluded evidence usefulness decision requires an exclusion reason")
     result: dict = {
-        "policy_version": PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
         "proposition_id": normalized_proposition_id,
         "included": included,
         "reasons": normalized_reasons,
@@ -122,7 +114,6 @@ def evidence_usefulness_decision(
 
 
 def evidence_usefulness_policy(
-    policy_version: object = PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
     canonical_completeness_floor: object = CANONICAL_COMPLETENESS_FLOOR_V1,
     structured_match_floor: object = STRUCTURED_MATCH_FLOOR_V1,
     semantic_similarity_floor: object = SEMANTIC_SIMILARITY_FLOOR_V1,
@@ -131,10 +122,6 @@ def evidence_usefulness_policy(
     supplied_trust_floor_available: object = False,
 ) -> dict:
     """Build the frozen hand-authored evidence policy used by release qualification."""
-    if not isinstance(policy_version, str):
-        raise InvalidRequestError("evidence usefulness policy_version must be a string")
-    if policy_version != PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION:
-        raise InvalidRequestError(f"unsupported evidence usefulness policy_version: {policy_version}")
     frozen = {
         "canonical_completeness_floor": (canonical_completeness_floor, CANONICAL_COMPLETENESS_FLOOR_V1),
         "structured_match_floor": (structured_match_floor, STRUCTURED_MATCH_FLOOR_V1),
@@ -160,7 +147,6 @@ def evidence_usefulness_policy(
     if not supplied_trust_floor_available and supplied_trust_floor != 0.0:
         raise InvalidRequestError("unavailable evidence usefulness supplied_trust_floor must be zero")
     result: dict = {
-        "policy_version": PROPOSITION_EVIDENCE_USEFULNESS_POLICY_VERSION,
         "canonical_completeness_floor": normalized_floors.get("canonical_completeness_floor", 0.0),
         "structured_match_floor": normalized_floors.get("structured_match_floor", 0.0),
         "semantic_similarity_floor": normalized_floors.get("semantic_similarity_floor", 0.0),
@@ -174,7 +160,6 @@ def evidence_usefulness_policy(
 def validate_evidence_usefulness_policy(value: object) -> dict:
     data = exact_mapping(value, "EvidenceUsefulnessPolicy", EVIDENCE_USEFULNESS_POLICY_FIELDS)
     result = evidence_usefulness_policy(
-        data["policy_version"],
         data["canonical_completeness_floor"],
         data["structured_match_floor"],
         data["semantic_similarity_floor"],
@@ -182,18 +167,6 @@ def validate_evidence_usefulness_policy(value: object) -> dict:
         data["supplied_trust_floor"],
         data["supplied_trust_floor_available"],
     )
-    return result
-
-
-def evidence_usefulness_policy_with_changes(value: object, changes: object) -> dict:
-    policy = validate_evidence_usefulness_policy(value)
-    if not isinstance(changes, dict):
-        raise InvalidRequestError("evidence usefulness policy changes must be an object")
-    if not set(changes).issubset(EVIDENCE_USEFULNESS_POLICY_FIELDS):
-        raise InvalidRequestError("evidence usefulness policy changes contain an unknown field")
-    updated: dict = dict(policy)
-    updated.update(changes)
-    result = validate_evidence_usefulness_policy(updated)
     return result
 
 
@@ -205,25 +178,6 @@ def evidence_usefulness_policy_to_dict(value: object) -> dict:
 
 def evidence_usefulness_policy_from_dict(value: object) -> dict:
     result = validate_evidence_usefulness_policy(value)
-    return result
-
-
-def evidence_usefulness_policy_to_json(value: object) -> str:
-    payload = evidence_usefulness_policy_to_dict(value)
-    result = json_dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return result
-
-
-def evidence_usefulness_policy_from_json(value: str) -> dict:
-    if not isinstance(value, str):
-        raise InvalidRequestError("EvidenceUsefulnessPolicy JSON must be a string")
-    try:
-        decoded = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError("EvidenceUsefulnessPolicy JSON must be valid JSON") from error
-    if not isinstance(decoded, dict):
-        raise InvalidRequestError("EvidenceUsefulnessPolicy JSON must decode to an object")
-    result = evidence_usefulness_policy_from_dict(decoded)
     return result
 
 
@@ -280,7 +234,6 @@ def evaluate_evidence_usefulness(policy: object, record: object) -> dict:
         validated_record["proposition_id"],
         not exclusions,
         tuple(sorted(reasons, key=lambda reason: reason.value)),
-        validated_policy["policy_version"],
     )
     return result
 
@@ -290,7 +243,6 @@ def visibility_authorization(
     scope: object,
     ownership: object,
     authority_id: object,
-    policy_version: object,
     reason_code: object,
 ) -> dict:
     """Build one trusted exact-scope decision for a non-public ownership category."""
@@ -308,16 +260,12 @@ def visibility_authorization(
     normalized_authority = require_identifier(
         authority_id, "visibility authorization authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
     )
-    normalized_policy = require_identifier(
-        policy_version, "visibility authorization policy_version", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
-    )
     normalized_reason = require_identifier(reason_code, "visibility authorization reason_code", 96)
     result: dict = {
         "allowed": allowed,
         "scope": validated_scope,
         "ownership": ownership,
         "authority_id": normalized_authority,
-        "policy_version": normalized_policy,
         "reason_code": normalized_reason,
     }
     return result
@@ -330,7 +278,6 @@ def validate_visibility_authorization(value: object) -> dict:
         data["scope"],
         data["ownership"],
         data["authority_id"],
-        data["policy_version"],
         data["reason_code"],
     )
     return result
@@ -360,12 +307,9 @@ def validate_visibility_grant(value: object) -> dict:
 class ExactScopeVisibilityAuthority:
     """Configured allow-list that compares complete ScopeKey values by equality."""
 
-    def __init__(self, authority_id: str, policy_version: str, grants: tuple[dict, ...]) -> None:
+    def __init__(self, authority_id: str, grants: tuple[dict, ...]) -> None:
         self.authority_id = require_identifier(
             authority_id, "visibility authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
-        )
-        self.policy_version = require_identifier(
-            policy_version, "visibility policy_version", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
         )
         if not isinstance(grants, tuple):
             raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values")
@@ -394,7 +338,6 @@ class ExactScopeVisibilityAuthority:
             scope,
             ownership,
             self.authority_id,
-            self.policy_version,
             reason_code,
         )
         return result
@@ -805,7 +748,6 @@ class PropositionEligibilityEvaluator:
                 ownership,
                 DisclosureBasis.PUBLIC_RULE,
                 frame.get("scope", {}),
-                PROPOSITION_DISCLOSURE_POLICY_VERSION,
             )
             result = proposition_eligibility_decision(
                 projection,
@@ -845,7 +787,6 @@ class PropositionEligibilityEvaluator:
             ownership,
             DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
             frame.get("scope", {}),
-            authorization["policy_version"],
             authorization["authority_id"],
             True,
         )
@@ -910,30 +851,6 @@ class PropositionEligibilityEvaluator:
         decision = self.evaluate(projection, frame, trusted_frame=trusted_frame)
         result = proposition_eligibility_decision_with_changes(decision, {"revalidated": True})
         return result
-
-
-def revalidate_propositions(
-    projections: tuple[dict, ...],
-    frame: dict,
-    evaluator: PropositionEligibilityEvaluator,
-    current_proposition_projection: object,
-    cooperative_check: object = no_cooperative_check,
-) -> tuple[dict, ...]:
-    """Revalidate a bounded projection batch immediately before package construction."""
-    if not isinstance(projections, tuple) or len(projections) > 1_000:
-        raise InvalidRequestError("Proposition revalidation projections must be a tuple of at most 1000 values")
-    validated_projections = tuple(validate_proposition_projection(projection) for projection in projections)
-    if not isinstance(evaluator, PropositionEligibilityEvaluator):
-        raise InvalidRequestError("Proposition revalidation evaluator must be PropositionEligibilityEvaluator")
-    if not callable(cooperative_check):
-        raise InvalidRequestError("Proposition revalidation cooperative_check must be callable")
-    decisions = []
-    for projection in validated_projections:
-        cooperative_check()
-        decisions.append(evaluator.revalidate(projection, frame, current_proposition_projection))
-    cooperative_check()
-    result = tuple(decisions)
-    return result
 
 
 def proposition_evidence_record(
@@ -1028,8 +945,6 @@ def proposition_evidence_record(
             current["trust_category_available"],
             current["supplied_trust"],
             current["supplied_trust_available"],
-            current["supplied_trust_version"],
-            current["supplied_trust_version_available"],
         ),
         disclosure=decision.get("disclosure", {}),
         path=(current["proposition_id"],),

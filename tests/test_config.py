@@ -2,7 +2,7 @@
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.config import config_from_dict, engram_config, graph_config
+from engram.config import engram_config, graph_config
 from engram.constants import SessionOverflow
 
 """Tests for configuration."""
@@ -100,9 +100,6 @@ def test_engram_config_graph_config_validation() -> None:
 def test_engram_config_engram_config_rejects_falsey_non_object_graph_config(invalid) -> None:
     with pytest_raises(ValueError, match="graph config must be an object"):
         engram_config(graph=invalid)
-
-    with pytest_raises(ValueError, match="serialized graph config must be an object"):
-        config_from_dict({"graph": invalid})
 
 
 def test_engram_config_graph_vector_config() -> None:

@@ -2,7 +2,7 @@
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.config import config_from_dict, config_to_dict, engram_config, rollout_config
+from engram.config import engram_config, rollout_config
 from engram.constants import ResolutionOutcome, RolloutMode
 from engram.core import Engram
 from engram.errors import ConflictError
@@ -35,21 +35,17 @@ def resolve_exact(core: EngramCore, request_id: str, namespace: str = "tenant-a"
     return result
 
 
-def test_rollout_config_round_trip_and_fixed_cardinality_status() -> None:
+def test_rollout_status_has_fixed_cardinality() -> None:
     config = engram_config(
         rollout=rollout_config(
-            policy_version="candidate-7",
             default_mode=RolloutMode.EVIDENCE_ONLY,
             namespaces={"tenant-a": RolloutMode.SHADOW, "tenant-b": RolloutMode.DISABLED},
         )
     )
 
-    restored = config_from_dict(config_to_dict(config))
-    status = EngramCore(Engram(restored)).status()["rollout"]
+    status = EngramCore(Engram(config)).status()["rollout"]
 
-    assert restored == config
     assert status == {
-        "policy_version": "candidate-7",
         "default_mode": "evidence_only",
         "namespace_override_count": 2,
         "namespace_modes": {
@@ -120,12 +116,12 @@ def test_disabled_skips_resolution_and_namespace_override_is_exact() -> None:
     assert artifact["statistics"]["hit_count"] == 0
 
 
-def test_rollout_policy_is_part_of_retry_identity() -> None:
+def test_rollout_mode_is_part_of_retry_identity() -> None:
     core, _ = core_with_exact_response(RolloutMode.EVIDENCE_ONLY)
-    first = resolve_exact(core, "policy-versioned-request")
-    core.engram.config["rollout"]["policy_version"] = "rollout-v2"
+    first = resolve_exact(core, "mode-changed-request")
+    core.engram.config["rollout"]["default_mode"] = RolloutMode.SHADOW
 
     with pytest_raises(ConflictError, match="different input"):
-        resolve_exact(core, "policy-versioned-request")
+        resolve_exact(core, "mode-changed-request")
 
     assert first["outcome"] == ResolutionOutcome.EVIDENCE

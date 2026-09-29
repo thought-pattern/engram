@@ -13,10 +13,6 @@ class IdentityValidationError(InvalidRequestError):
     """An identity contract is malformed or internally inconsistent."""
 
 
-class UnsupportedIdentityVersionError(IdentityValidationError):
-    """An identity contract uses a schema or normalization version not supported here."""
-
-
 class ResourceNotFoundError(ValueError, EngramCoreError):
     """A requested conversation, proposal, or statement does not exist."""
 
@@ -35,7 +31,3 @@ class ResourceExhaustedError(EngramCoreError):
 
 class ResolutionCancelledError(EngramCoreError):
     """A caller cancelled transport-neutral resolution cooperatively."""
-
-
-class RewriteLimitError(EngramCoreError):
-    """A retrieval rewrite bound stopped processing before a fixed point."""

@@ -66,7 +66,6 @@ def test_sparse_document_uses_request_fields_without_response_text_by_default() 
 
     document = sparse_document_from_artifact(accepted)
 
-    assert document["schema_version"] == 1
     assert document["fields"]["response_text"] == ()
     assert document["fields"]["aliases"] == ("libfoo connection reset",)
     assert {"err_conn_reset", "v2.4.1", "api/client.py"}.issubset(document["technical_identifiers"])

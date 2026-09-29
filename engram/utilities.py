@@ -14,7 +14,6 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from engram.constants import (
-    UTILITY_CONTRACT_VERSION,
     UTILITY_MAX_ABSOLUTE_EXPONENT,
     UTILITY_MAX_COLLECTION_ITEM_BYTES,
     UTILITY_MAX_COLLECTION_ITEMS,
@@ -32,7 +31,6 @@ from engram.constants import (
 
 logger = logging_getLogger(__name__)
 
-UTILITY_PLUGIN_VERSION = "1.0.0"
 UTILITY_TZDATA_VERSION = package_version("tzdata")
 UTILITY_ALLOWED_TIMEZONES = {
     "UTC",
@@ -83,9 +81,7 @@ def utility_config(enabled: bool = False, plugins=UTILITY_PLUGIN_NAMES) -> dict:
 
 def internal_contract(name: str, input_schema: str, result_schema: str, errors: tuple[str, ...]) -> dict:
     return {
-        "contract_version": UTILITY_CONTRACT_VERSION,
         "name": name,
-        "version": UTILITY_PLUGIN_VERSION,
         "accepted_frame_types": ("direct_request",),
         "input_schema": input_schema,
         "bounds": {
@@ -679,8 +675,6 @@ def evaluation(
     result = {
         "status": status,
         "plugin_name": plugin_name,
-        "plugin_version": UTILITY_PLUGIN_VERSION if plugin_name else "",
-        "contract_version": UTILITY_CONTRACT_VERSION,
         "response": response,
         "canonical_input": canonical_input,
         "error_code": error_code,
@@ -760,7 +754,6 @@ class UtilityRegistry:
             name: {
                 "enabled": self.enabled and name in self.plugin_names,
                 "ready": self.enabled and name in self.plugin_names,
-                "version": UTILITY_PLUGIN_VERSION,
             }
             for name in UTILITY_PLUGIN_NAMES
         }
@@ -768,7 +761,6 @@ class UtilityRegistry:
         result = {
             "enabled": self.enabled,
             "ready": self.available(),
-            "contract_version": UTILITY_CONTRACT_VERSION,
             "plugins": plugins,
         }
         return result

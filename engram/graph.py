@@ -276,8 +276,6 @@ def proposition_projection(
     trust_category_available: object,
     supplied_trust: object,
     supplied_trust_available: object,
-    supplied_trust_version: object,
-    supplied_trust_version_available: object,
     structured_match: object,
     structured_match_available: object,
     semantic_similarity: object,
@@ -338,14 +336,6 @@ def proposition_projection(
     )
     normalized_trust_available = require_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
     normalized_trust = projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
-    normalized_version_available = require_bool(
-        supplied_trust_version_available, "Proposition projection supplied_trust_version_available"
-    )
-    normalized_version = projection_int(supplied_trust_version, "Proposition projection supplied_trust_version", 0, 2_147_483_647)
-    if not normalized_version_available and normalized_version != 0:
-        raise InvalidRequestError("Proposition projection supplied_trust_version must be zero when unavailable")
-    if normalized_trust_available != normalized_version_available:
-        raise InvalidRequestError("Proposition projection supplied trust value and version availability must match")
     normalized_structured_available = require_bool(structured_match_available, "Proposition projection structured_match_available")
     normalized_structured = projection_score(
         structured_match, normalized_structured_available, "Proposition projection structured_match"
@@ -395,8 +385,6 @@ def proposition_projection(
         "trust_category_available": normalized_trust_category_available,
         "supplied_trust": normalized_trust,
         "supplied_trust_available": normalized_trust_available,
-        "supplied_trust_version": normalized_version,
-        "supplied_trust_version_available": normalized_version_available,
         "structured_match": normalized_structured,
         "structured_match_available": normalized_structured_available,
         "semantic_similarity": normalized_semantic,
@@ -471,14 +459,8 @@ def proposition_projection_from_graph_row(
     valid_to_available = require_bool(value["valid_to_available"], "valid_to_available")
     trust_category_available = require_bool(value["trust_category_available"], "trust_category_available")
     trust_available = require_bool(value["supplied_trust_available"], "supplied_trust_available")
-    version_available = require_bool(value["supplied_trust_version_available"], "supplied_trust_version_available")
     structured_available = require_bool(value["structured_match_available"], "structured_match_available")
     semantic_available = require_bool(value["semantic_similarity_available"], "semantic_similarity_available")
-    raw_version = value["supplied_trust_version"]
-    if not version_available and raw_version is None:
-        supplied_version = 0
-    else:
-        supplied_version = projection_int(raw_version, "supplied_trust_version", 0, 2_147_483_647)
     result = proposition_projection(
         proposition_id=value["proposition_id"],
         subject_entity_id=value["subject_entity_id"],
@@ -500,8 +482,6 @@ def proposition_projection_from_graph_row(
         trust_category_available=trust_category_available,
         supplied_trust=value["supplied_trust"],
         supplied_trust_available=trust_available,
-        supplied_trust_version=supplied_version,
-        supplied_trust_version_available=version_available,
         structured_match=value["structured_match"],
         structured_match_available=structured_available,
         semantic_similarity=value["semantic_similarity"],

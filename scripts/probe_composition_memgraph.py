@@ -147,7 +147,6 @@ def run(config_path: str) -> dict[str, object]:
                 }
             )
         result = {
-            "schema_version": 1,
             "config_path": config_path,
             "entity_lookup": {
                 "elapsed_ms": entity_ms,

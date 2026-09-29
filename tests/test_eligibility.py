@@ -1,7 +1,6 @@
 """Process-memory accepted-response eligibility tests."""
 
 from datetime import UTC, datetime
-from json import loads as json_loads
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
@@ -10,10 +9,7 @@ from engram.eligibility import (
     ContextualExactLookup,
     EligibilityContextCapture,
     eligibility_context,
-    eligibility_context_from_json,
-    eligibility_context_to_json,
     eligibility_decision_context_signature,
-    eligibility_decision_to_dict,
     evaluate_artifact_eligibility,
     validate_eligibility_context,
     validate_eligibility_decision,
@@ -35,21 +31,6 @@ def context(**changes) -> dict:
     values.update(changes)
     result = eligibility_context(**values)
     return result
-
-
-def test_context_is_concrete_and_round_trips_at_the_external_json_boundary() -> None:
-    original = context()
-    encoded = eligibility_context_to_json(original)
-
-    assert eligibility_context_from_json(encoded) == original
-    assert json_loads(encoded) == original
-    assert set(original) == {
-        "schema_version",
-        "evaluation_time",
-        "evaluation_time_available",
-        "namespace",
-        "artifact_repository_available",
-    }
 
 
 def test_factory_captures_one_utc_process_snapshot() -> None:
@@ -145,12 +126,11 @@ def test_validity_interval_is_half_open_and_evaluated_at_request_time(
     assert decision.get("exclusion_reason") == reason
 
 
-def test_active_current_artifact_is_eligible_and_has_stable_external_form() -> None:
+def test_active_current_artifact_is_eligible() -> None:
     decision = evaluate_artifact_eligibility(accepted_artifact(), context())
-    external = eligibility_decision_to_dict(decision)
 
     assert decision.get("direct_answer_eligible") is True
-    assert external.get("exclusion_reason") == "eligible"
+    assert decision.get("exclusion_reason") == "eligible"
     assert eligibility_decision_context_signature(decision) == ("20:2026-08-12T16:00:00Z|4:True|8:tenant-a|4:True")
     assert validate_eligibility_decision(decision) == decision
 
@@ -187,7 +167,6 @@ def test_contextual_exact_lookup_scans_current_artifacts_without_secondary_state
         ({}, "invalid fields"),
         (
             {
-                "schema_version": 1,
                 "evaluation_time": "2026-08-12T12:00:00-04:00",
                 "evaluation_time_available": True,
                 "namespace": "tenant-a",

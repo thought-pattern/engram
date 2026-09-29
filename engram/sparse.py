@@ -10,14 +10,11 @@ from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import sparse_config
 from engram.constants import (
     DEFAULT_STOPWORDS,
-    SPARSE_DOCUMENT_SCHEMA_VERSION,
-    SPARSE_TOKENIZER_VERSION,
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes
 
-MAX_SPARSE_FIELDS = 7
 MAX_SPARSE_FIELD_TEXTS = 65
 MAX_SPARSE_TOKENS_PER_FIELD = 2_048
 MAX_SPARSE_TECHNICAL_IDENTIFIERS = 256
@@ -196,7 +193,6 @@ def sparse_document_from_validated_artifact(
         for name in SPARSE_FIELD_NAMES
     }
     result = {
-        "schema_version": SPARSE_DOCUMENT_SCHEMA_VERSION,
         "statement_id": artifact.get("statement_id", ""),
         "scope": dict(validate_scope_key(artifact.get("scope", {}))),
         "lifecycle": artifact.get("lifecycle", LifecycleState.RETIRED),
@@ -398,7 +394,6 @@ class SparseIndex:
         count = len(documents)
         totals = partition["field_totals"] if partition else dict.fromkeys(SPARSE_FIELD_NAMES, 0)
         state = {
-            "tokenizer_version": SPARSE_TOKENIZER_VERSION,
             "documents": documents,
             "postings": postings,
             "document_frequencies": {term: len(values) for term, values in postings.items()},
@@ -482,7 +477,6 @@ def build_sparse_working_set(
     postings = {term: tuple(sorted(term_postings[term])) for term in sorted(term_postings)}
     averages = {name: (field_totals.get(name, 0) / count if count else 0.0) for name in SPARSE_FIELD_NAMES}
     state = {
-        "tokenizer_version": SPARSE_TOKENIZER_VERSION,
         "documents": dict(sorted(documents.items())),
         "postings": postings,
         "document_frequencies": {term: len(values) for term, values in postings.items()},

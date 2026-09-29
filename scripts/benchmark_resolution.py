@@ -30,7 +30,7 @@ from engram.resolution import (
 from engram.resolvers import ExactResolver, ResolverExecutor, ResolverRegistry, SparseResolver, resolver_budget
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("eval/results/artifacts/section4-benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/artifacts/section4-benchmark.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
 
@@ -206,7 +206,6 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         "peak_traced_memory": peak_bytes <= limits.get("peak_traced_bytes", 0),
     }
     result = {
-        "schema_version": 1,
         "recorded_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "source": benchmark_source_state(),
         "samples": samples,

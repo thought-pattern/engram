@@ -1,13 +1,11 @@
 """Closed contracts and bounded execution for one- and two-hop graph composition."""
 
 from datetime import UTC, datetime
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from re import compile as re_compile
 
 from engram.constants import (
-    COMPOSITION_CONTRACT_SCHEMA_VERSION,
     COMPOSITION_PLAN_FIELDS,
     COMPOSITION_STEP_FIELDS,
     MAX_COMPOSITION_BINDING_BYTES,
@@ -57,14 +55,11 @@ def composition_step(
     object_binding: object,
     expected_object_type: object,
     max_candidates: object = MAX_COMPOSITION_CANDIDATES_PER_STEP,
-    schema_version: object = COMPOSITION_CONTRACT_SCHEMA_VERSION,
 ) -> dict:
     """Build one fixed-predicate linear binding step."""
-    version = internal_integer(schema_version, "composition step schema_version", 1, COMPOSITION_CONTRACT_SCHEMA_VERSION)
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("composition step expected_object_type is unsupported")
     result: dict = {
-        "schema_version": version,
         "branch": internal_integer(branch, "composition step branch", 0, MAX_COMPOSITION_BRANCHES - 1),
         "hop": internal_integer(hop, "composition step hop", 0, MAX_COMPOSITION_HOPS - 1),
         "subject_binding": internal_binding(subject_binding, "composition step subject_binding"),
@@ -102,7 +97,6 @@ def validate_composition_step(value: object) -> dict:
         value["object_binding"],
         value["expected_object_type"],
         value["max_candidates"],
-        value["schema_version"],
     )
     return result
 
@@ -111,28 +105,6 @@ def composition_step_to_dict(value: object) -> dict:
     step = validate_composition_step(value)
     result: dict = dict(step)
     result["expected_object_type"] = step["expected_object_type"].value
-    return result
-
-
-def composition_step_from_dict(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != COMPOSITION_STEP_FIELDS:
-        raise InvalidRequestError("CompositionStep has invalid fields")
-    try:
-        expected = ExpectedObjectType(require_text(value["expected_object_type"], "composition step expected_object_type", 16))
-    except ValueError as error:
-        raise InvalidRequestError("composition step expected_object_type is unsupported") from error
-    result = composition_step(
-        value["branch"],
-        value["hop"],
-        value["subject_binding"],
-        value["subject_entity_id"],
-        value["predicate_id"],
-        value["predicate_label"],
-        value["object_binding"],
-        expected,
-        value["max_candidates"],
-        value["schema_version"],
-    )
     return result
 
 
@@ -150,10 +122,8 @@ def composition_plan(
     max_branches: object = MAX_COMPOSITION_BRANCHES,
     max_candidates_per_step: object = MAX_COMPOSITION_CANDIDATES_PER_STEP,
     max_path_propositions: object = MAX_COMPOSITION_PATH_PROPOSITIONS,
-    schema_version: object = COMPOSITION_CONTRACT_SCHEMA_VERSION,
 ) -> dict:
     """Build one closed graph plan and reject underconstrained or cyclic bindings."""
-    version = internal_integer(schema_version, "composition plan schema_version", 1, COMPOSITION_CONTRACT_SCHEMA_VERSION)
     if not isinstance(operator, GraphCompositionOperator):
         raise InvalidRequestError("composition plan operator is unsupported")
     if not isinstance(steps, tuple) or not steps:
@@ -247,7 +217,6 @@ def composition_plan(
     } and not final_types.issubset({ExpectedObjectType.NUMBER, ExpectedObjectType.DATE}):
         raise InvalidRequestError("composition ordered aggregates require NUMBER or DATE terminal values")
     result: dict = {
-        "schema_version": version,
         "operator": operator,
         "root_entity_id": root_id,
         "root_label": require_text(root_label, "composition plan root_label", maximum_bytes=MAX_COMPOSITION_TEXT_BYTES),
@@ -280,7 +249,6 @@ def validate_composition_plan(value: object) -> dict:
         max_branches=value["max_branches"],
         max_candidates_per_step=value["max_candidates_per_step"],
         max_path_propositions=value["max_path_propositions"],
-        schema_version=value["schema_version"],
     )
     return result
 
@@ -288,7 +256,6 @@ def validate_composition_plan(value: object) -> dict:
 def composition_plan_to_dict(value: object) -> dict:
     plan = validate_composition_plan(value)
     result = {
-        "schema_version": plan["schema_version"],
         "operator": plan["operator"].value,
         "root_entity_id": plan["root_entity_id"],
         "root_label": plan["root_label"],
@@ -302,51 +269,6 @@ def composition_plan_to_dict(value: object) -> dict:
         "max_candidates_per_step": plan["max_candidates_per_step"],
         "max_path_propositions": plan["max_path_propositions"],
     }
-    return result
-
-
-def composition_plan_from_dict(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != COMPOSITION_PLAN_FIELDS:
-        raise InvalidRequestError("CompositionPlan has invalid fields")
-    try:
-        operator = GraphCompositionOperator(require_text(value["operator"], "composition plan operator", 16))
-    except ValueError as error:
-        raise InvalidRequestError("composition plan operator is unsupported") from error
-    raw_steps = value["steps"]
-    raw_aggregation = value["aggregation_inputs"]
-    if not isinstance(raw_steps, list) or not isinstance(raw_aggregation, list):
-        raise InvalidRequestError("serialized composition plan collections must be lists")
-    result = composition_plan(
-        operator,
-        value["root_entity_id"],
-        value["root_label"],
-        tuple(composition_step_from_dict(step) for step in raw_steps),
-        value["terminal_binding"],
-        aggregation_inputs=tuple(raw_aggregation),
-        descending=value["descending"],
-        max_hops=value["max_hops"],
-        max_rows=value["max_rows"],
-        max_branches=value["max_branches"],
-        max_candidates_per_step=value["max_candidates_per_step"],
-        max_path_propositions=value["max_path_propositions"],
-        schema_version=value["schema_version"],
-    )
-    return result
-
-
-def composition_plan_to_json(value: object) -> str:
-    result = json_dumps(composition_plan_to_dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return result
-
-
-def composition_plan_from_json(value: object) -> dict:
-    if not isinstance(value, str):
-        raise InvalidRequestError("CompositionPlan JSON must be a string")
-    try:
-        data = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError("CompositionPlan JSON is invalid") from error
-    result = composition_plan_from_dict(data)
     return result
 
 

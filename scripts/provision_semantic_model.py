@@ -55,7 +55,6 @@ def main() -> int:
     destination = Path(args.destination)
     manifest_path = destination.parent / f"{destination.name}.engram-model.json"
     expected_identity = {
-        "schema_version": 1,
         "model_id": DEFAULT_MODEL_ID,
         "model_version": args.revision,
         "license_id": DEFAULT_LICENSE,

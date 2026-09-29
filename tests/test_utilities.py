@@ -7,11 +7,11 @@ from string import ascii_letters as string_ascii_letters, digits as string_digit
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import utilities as utility_module
-from engram.config import config_from_dict, config_to_dict, engram_config, load_config
+from engram.config import engram_config, load_config
 from engram.constants import UTILITY_MAX_COLLECTION_ITEMS, UTILITY_PLUGIN_NAMES, CandidateSource
 from engram.core import Engram
 from engram.fusion import EngramCandidateAuthority
-from engram.resolution import ResolutionOutcome, candidate_with_changes, validate_query_frame
+from engram.resolution import ResolutionOutcome, validate_candidate, validate_query_frame
 from engram.service import EngramCore
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config
 
@@ -182,8 +182,6 @@ def test_bounded_random_inputs_never_escape_the_closed_result_contract() -> None
         assert set(result) == {
             "status",
             "plugin_name",
-            "plugin_version",
-            "contract_version",
             "response",
             "canonical_input",
             "error_code",
@@ -205,14 +203,6 @@ def test_unexpected_plugin_failure_is_contained(monkeypatch) -> None:
 
     assert result["status"] == "failed"
     assert result["error_code"] == "plugin_failure"
-
-
-def test_config_round_trip_preserves_independent_plugin_selection() -> None:
-    config = engram_config(utility=utility_config(enabled=True, plugins=("arithmetic_v1", "version_v1")))
-
-    restored = config_from_dict(config_to_dict(config))
-
-    assert restored["utility"] == config["utility"]
 
 
 def test_yaml_config_loads_selected_plugins_and_ignores_unknown_keys(tmp_path) -> None:
@@ -270,7 +260,7 @@ def test_authority_reexecutes_plugin_and_rejects_a_forged_response() -> None:
         )
         frame = validate_query_frame(core.resolution_requests["utility-authority"]["frame"])
         candidate = result["resolver_results"][0]["candidates"][0]
-        forged = candidate_with_changes(candidate, {"response": "true"})
+        forged = validate_candidate({**candidate, "response": "true"})
         authority = EngramCandidateAuthority(engram)
 
         authentic = authority(candidate, frame)

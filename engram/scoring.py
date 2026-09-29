@@ -175,57 +175,6 @@ def calculate_average_hit_rate(
     return average
 
 
-def score_statement(
-    statement: dict,
-    query_keywords: list[str],
-    keyword_index: dict[str, dict],
-    total_statements: int,
-    weight_base: float,
-    weight_recency: float,
-    weight_hit_rate: float,
-    recency_half_life_seconds: float,
-    synonyms=(),
-    current_time=(),
-) -> float:
-    """Calculate the calibrated score for a statement against a query.
-
-    Formula:
-        score = overlap * (wb + wr * recency + wh * hit_rate) / (wb + wr + wh)
-                + priority
-
-    The relevance term is 0.0 - 1.0 regardless of the configured weights; the
-    statement's priority is added on top so priority >= 1 is an absolute
-    override among matching statements.
-
-    Args:
-        statement: The statement to score.
-        query_keywords: Keywords from the query.
-        keyword_index: Keyword index with statistics.
-        total_statements: Total statements in the store (for IDF).
-        weight_base: Base score weight.
-        weight_recency: Recency weight.
-        weight_hit_rate: Hit rate weight.
-        recency_half_life_seconds: Half-life for the recency decay.
-        synonyms: Optional map of query keyword -> tuple of synonyms.
-
-    Returns:
-        Numeric score (0.0 when the statement does not match; higher = better).
-    """
-    result = score_statement_components(
-        statement,
-        query_keywords,
-        keyword_index,
-        total_statements,
-        weight_base,
-        weight_recency,
-        weight_hit_rate,
-        recency_half_life_seconds,
-        synonyms,
-        current_time,
-    )["score"]
-    return result
-
-
 def score_statement_components(
     statement: dict,
     query_keywords: list[str],

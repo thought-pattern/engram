@@ -13,7 +13,7 @@ from engram.scoring import (
     calculate_recency,
     keyword_idf,
     keyword_match_weights,
-    score_statement,
+    score_statement_components,
 )
 
 """Tests for inverse document frequency weighting."""
@@ -179,7 +179,7 @@ def test_calculate_average_hit_rate_without_observations_is_bounded_and_consiste
 
 
 def score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), total=1):
-    result = score_statement(
+    result = score_statement_components(
         statement=stmt,
         query_keywords=query_keywords,
         keyword_index=dict(keyword_index or ()),
@@ -189,7 +189,7 @@ def score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), t
         weight_hit_rate=0.2,
         recency_half_life_seconds=604800.0,
         synonyms=synonyms,
-    )
+    )["score"]
     return result
 
 
@@ -252,7 +252,7 @@ def test_score_statement_priority_ignored_without_overlap() -> None:
 def test_score_statement_custom_weights_still_calibrated() -> None:
     # Weights that do not sum to 1.0 are normalized by the formula.
     stmt = statement("Test statement", keywords=["test"])
-    score = score_statement(
+    score = score_statement_components(
         statement=stmt,
         query_keywords=["test"],
         keyword_index={},
@@ -261,5 +261,5 @@ def test_score_statement_custom_weights_still_calibrated() -> None:
         weight_recency=1.0,
         weight_hit_rate=1.0,
         recency_half_life_seconds=604800.0,
-    )
+    )["score"]
     assert 0.0 < score <= 1.0

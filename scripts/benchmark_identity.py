@@ -16,7 +16,7 @@ if str(REPOSITORY) not in sys_path:
 from engram.identity import build_scoped_retrieval_key, build_standalone_identity, normalize_retrieval_key, scope_key
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("eval/results/identity/benchmark-2026-08-19.json")
+DEFAULT_OUTPUT = Path("eval/results/identity/benchmark.json")
 REQUESTS = (
     "When was Ada Lovelace born?",
     "Where was Ada Lovelace born?",
@@ -57,7 +57,7 @@ def internal_measure(operation: object, iterations: int) -> dict:
 
 def run_benchmark(iterations: int, memory_objects: int) -> dict:
     sequence = [0]
-    scope = scope_key("benchmark", "identity-v1")
+    scope = scope_key("benchmark", "identity")
 
     def next_request() -> str:
         request = REQUESTS[sequence[0] % len(REQUESTS)]
@@ -75,7 +75,6 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
     assert len(identities) == memory_objects
 
     result = {
-        "artifact_schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {

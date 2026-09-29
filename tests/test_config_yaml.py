@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pytest import raises as pytest_raises
 
-from engram.config import config_from_dict, config_to_dict, engram_config, graph_config, load_config
+from engram.config import engram_config, load_config
 from engram.constants import SessionOverflow
 
 SCRATCH = Path(__file__).resolve().parent
@@ -97,14 +97,6 @@ def test_load_config_ignores_an_unknown_conversation_key(tmp_path):
     cfg = load_config(internal_write(tmp_path, "conversation:\n  persona: Mara\n  bot_name: Mara\n"))
     assert cfg["conversation"]["bot_name"] == "Mara"
     assert "persona" not in cfg["conversation"]
-
-
-def test_config_from_dict_ignores_unknown_keys():
-    expected = engram_config(graph=graph_config(port=7777))
-    serialized = config_to_dict(expected)
-    serialized["retired_setting"] = True
-    serialized["graph"] = {**serialized["graph"], "deployment_mode": "anything"}
-    assert config_from_dict(serialized) == expected
 
 
 def test_load_config_conversation_blank_bot_name_raises(tmp_path):

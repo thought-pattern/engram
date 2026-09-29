@@ -1,12 +1,8 @@
 {
-  "schema_version": 1,
   "corpus_id": "engram-retrieval-reductions",
-  "corpus_version": 1,
   "rules": [
     {
-      "schema_version": 1,
       "rule_id": "contraction-cannot",
-      "rule_version": 1,
       "category": "contractions",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "can't", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "cannot",
@@ -16,9 +12,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored English reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "contraction-do-not",
-      "rule_version": 1,
       "category": "contractions",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "don't", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "do not",
@@ -28,9 +22,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored English reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "contraction-what-is",
-      "rule_version": 1,
       "category": "contractions",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "what's", "min_tokens": 2, "max_tokens": 128, "required_operators": ["what"], "requires_inherited_subject": false},
       "output_template": "what is",
@@ -40,9 +32,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored English reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "question-could-you-tell-me",
-      "rule_version": 1,
       "category": "question_normalization",
       "input_constraints": {"match_mode": "prefix", "pattern": "could you tell me", "min_tokens": 5, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -52,9 +42,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored question normalization", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "question-can-you-tell-me",
-      "rule_version": 1,
       "category": "question_normalization",
       "input_constraints": {"match_mode": "prefix", "pattern": "can you tell me", "min_tokens": 5, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -64,9 +52,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored question normalization", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "question-i-would-like-to-know",
-      "rule_version": 1,
       "category": "question_normalization",
       "input_constraints": {"match_mode": "prefix", "pattern": "i would like to know", "min_tokens": 6, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -76,9 +62,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored question normalization", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "paraphrase-at-what-time",
-      "rule_version": 1,
       "category": "paraphrase_reduction",
       "input_constraints": {"match_mode": "prefix", "pattern": "at what time", "min_tokens": 4, "max_tokens": 128, "required_operators": ["when"], "requires_inherited_subject": false},
       "output_template": "when",
@@ -88,9 +72,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored paraphrase reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "paraphrase-in-what-place",
-      "rule_version": 1,
       "category": "paraphrase_reduction",
       "input_constraints": {"match_mode": "prefix", "pattern": "in what place", "min_tokens": 4, "max_tokens": 128, "required_operators": ["where"], "requires_inherited_subject": false},
       "output_template": "where",
@@ -100,9 +82,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored paraphrase reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "paraphrase-which-person-created",
-      "rule_version": 1,
       "category": "paraphrase_reduction",
       "input_constraints": {"match_mode": "prefix", "pattern": "which person created", "min_tokens": 4, "max_tokens": 128, "required_operators": ["which"], "requires_inherited_subject": false},
       "output_template": "who created",
@@ -112,9 +92,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored paraphrase reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "synonym-customer-assistance",
-      "rule_version": 1,
       "category": "synonym_classes",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "customer assistance", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "customer support",
@@ -124,9 +102,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored narrow synonym class", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "synonym-help-desk",
-      "rule_version": 1,
       "category": "synonym_classes",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "help desk", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "support center",
@@ -136,9 +112,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored narrow synonym class", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "synonym-sign-in",
-      "rule_version": 1,
       "category": "synonym_classes",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "sign in", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "login",
@@ -148,9 +122,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored narrow synonym class", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "repair-sorry-i-meant",
-      "rule_version": 1,
       "category": "conversational_repair",
       "input_constraints": {"match_mode": "prefix", "pattern": "sorry i meant", "min_tokens": 4, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -160,9 +132,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored conversational repair", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "repair-no-wait-i-meant",
-      "rule_version": 1,
       "category": "conversational_repair",
       "input_constraints": {"match_mode": "prefix", "pattern": "no wait i meant", "min_tokens": 5, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -172,9 +142,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored conversational repair", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "repair-let-me-rephrase",
-      "rule_version": 1,
       "category": "conversational_repair",
       "input_constraints": {"match_mode": "prefix", "pattern": "let me rephrase", "min_tokens": 4, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "",
@@ -184,9 +152,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored conversational repair", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "pronoun-what-about-it",
-      "rule_version": 1,
       "category": "pronoun_transformations",
       "input_constraints": {"match_mode": "exact", "pattern": "what about it", "min_tokens": 3, "max_tokens": 6, "required_operators": ["what"], "requires_inherited_subject": true},
       "output_template": "what about {subject}",
@@ -196,9 +162,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored contextual pronoun reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "pronoun-and-where-is-it",
-      "rule_version": 1,
       "category": "pronoun_transformations",
       "input_constraints": {"match_mode": "exact", "pattern": "and where is it", "min_tokens": 4, "max_tokens": 7, "required_operators": ["where"], "requires_inherited_subject": true},
       "output_template": "where is {subject}",
@@ -208,9 +172,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored contextual pronoun reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "pronoun-who-created-it",
-      "rule_version": 1,
       "category": "pronoun_transformations",
       "input_constraints": {"match_mode": "exact", "pattern": "who created it", "min_tokens": 3, "max_tokens": 6, "required_operators": ["who"], "requires_inherited_subject": true},
       "output_template": "who created {subject}",
@@ -220,9 +182,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored contextual pronoun reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "context-and-its-status",
-      "rule_version": 1,
       "category": "context_dependent_reductions",
       "input_constraints": {"match_mode": "exact", "pattern": "and its status", "min_tokens": 3, "max_tokens": 6, "required_operators": [], "requires_inherited_subject": true},
       "output_template": "what is {subject} status",
@@ -232,9 +192,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored contextual reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "context-what-about-that",
-      "rule_version": 1,
       "category": "context_dependent_reductions",
       "input_constraints": {"match_mode": "exact", "pattern": "what about that", "min_tokens": 3, "max_tokens": 6, "required_operators": ["what"], "requires_inherited_subject": true},
       "output_template": "what about {subject}",
@@ -244,9 +202,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored contextual reduction", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "technical-http-status-code",
-      "rule_version": 1,
       "category": "technical_phrasing",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "http status code", "min_tokens": 3, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "http code",
@@ -256,9 +212,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored technical phrasing normalization", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "technical-exception-message",
-      "rule_version": 1,
       "category": "technical_phrasing",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "exception message", "min_tokens": 2, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "error message",
@@ -268,9 +222,7 @@
       "provenance": {"author": "Engram project", "origin": "independently authored technical phrasing normalization", "license": "Apache-2.0", "created_at": "2026-08-20"}
     },
     {
-      "schema_version": 1,
       "rule_id": "technical-software-version-number",
-      "rule_version": 1,
       "category": "technical_phrasing",
       "input_constraints": {"match_mode": "token_sequence", "pattern": "software version number", "min_tokens": 3, "max_tokens": 128, "required_operators": [], "requires_inherited_subject": false},
       "output_template": "software version",

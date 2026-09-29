@@ -3,7 +3,7 @@
 from engram.constants import NEGATIVE, NEUTRAL, POSITIVE
 from engram.core import Engram
 from engram.sentiment import sentiment_label, sentiment_scores
-from engram.template import process_template, template_context
+from engram.template import TemplateProcessor, template_context
 
 
 def test_sentiment_label_positive():
@@ -59,20 +59,20 @@ def test_sentiment_scores_empty_neutral_scores():
 def test_sentiment_template_transform_transform_positive():
     """{sentiment:...} resolves to a label string."""
 
-    assert process_template("{sentiment:i love it}", template_context()) == POSITIVE
+    assert TemplateProcessor().process("{sentiment:i love it}", template_context()) == POSITIVE
 
 
 def test_sentiment_template_transform_transform_negative():
     """{sentiment:...} labels negative content."""
 
-    assert process_template("{sentiment:this is horrible}", template_context()) == NEGATIVE
+    assert TemplateProcessor().process("{sentiment:this is horrible}", template_context()) == NEGATIVE
 
 
 def test_sentiment_template_transform_transform_resolves_star_first():
     """{sentiment:{star1}} analyzes the captured wildcard."""
 
     ctx = template_context(stars=["delighted"])
-    assert process_template("{sentiment:{star1}}", ctx) == POSITIVE
+    assert TemplateProcessor().process("{sentiment:{star1}}", ctx) == POSITIVE
 
 
 """Integration tests for sentiment-routed responses in Engram."""
