@@ -86,9 +86,11 @@ python -m spacy download en_core_web_sm
 
 ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
 maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon). They are managed
-centrally by `engram/nltk_data.py`, which stores them in the Engram checkout's
-`data/nltk_data` directory (gitignored) and puts that absolute directory first
-on NLTK's search path regardless of the process working directory. Startup
+centrally by `engram/nltk_data.py`. In a source checkout it stores them in the
+checkout's `data/nltk_data` directory (gitignored) and puts that absolute
+directory first on NLTK's search path regardless of the process working
+directory. An installed package uses NLTK's standard locations instead (the
+`NLTK_DATA` environment variable, `~/nltk_data`, and so on). Startup
 preflight fails with a bounded readiness error when a required dataset is
 missing. The setup command above provisions serving data.
 
@@ -528,7 +530,7 @@ fail to find a more specific match.
 
 ## Knowledge Graph schema administration
 
-ENGRAM can recall canonical facts from an optional MemGraph store. Runtime
+ENGRAM can recall canonical facts from an optional graph database. Runtime
 graph operations are reads and do not issue writes. Graph readiness is reported
 separately from local service readiness. During conversation and resolution, a
 graph connection, query, or optional vector-index failure contributes no graph
@@ -539,38 +541,23 @@ the failed operation and exception type, and leaves out the exception text.
 Administrative schema commands still report database unavailability to the
 operator.
 
-For a standalone Engram-managed Memgraph, apply only Engram's independently
-installable corrected recall schema:
+Engram either has a graph with a compatible schema or it does not. A graph is
+compatible when it has every index and constraint in `engram/schema.cypher`; it may
+have more. Startup checks this and fails if a needed definition is missing.
+Local Engram operation without graph recall is unaffected.
 
 ```bash
-python scripts/setup_schema.py --check
-python scripts/setup_schema.py --apply
-python scripts/setup_schema.py --verify
-python scripts/verify_schema.py --deployment standalone
-python scripts/reset_schema.py          # dry-run only; empty graph required
+python scripts/setup_schema.py --check    # validate engram/schema.cypher; no database
+python scripts/verify_schema.py           # check a graph is compatible (read-only)
+python scripts/setup_schema.py --apply    # create the schema on an empty graph
+python scripts/setup_schema.py --verify   # same check as verify_schema.py
+python scripts/reset_schema.py            # dry-run only; empty graph required
 python scripts/reset_schema.py --apply
 ```
 
-For a Tapestry-managed Memgraph, never run Engram's installer or reset command.
-Tapestry owns that deployment's DDL. Verify it through Engram's catalog verifier:
-
-```bash
-python scripts/verify_schema.py --deployment tapestry_managed
-```
-
-Standalone mode requires Engram ownership and an exact catalog.
-`tapestry_managed` requires Tapestry ownership, state `accepted`, matching
-representation/support/scratch contracts, and every
-Engram-required catalog definition while allowing the Tapestry superset. Crossed
-owners, mixed metadata, partial catalogs, unavailable reads, and invalid
-vector shapes fail closed. Static `--check` needs no configuration, Tapestry
-checkout, service, or database.
-
-Engram's graph-facing queries, decoders, and accepted-response support values
-use the current Proposition/Assertion contracts. Managed startup requires the
-configured Tapestry graph to be in its administrative `accepted` state and
-fails closed otherwise. Local Engram operation without graph recall is
-unaffected.
+The installer and reset commands refuse a graph that holds any data. Engram's
+graph-facing queries, decoders, and accepted-response support values use the
+current Proposition/Assertion contracts.
 
 Configure the connection in `config.yml`:
 
@@ -581,7 +568,6 @@ graph:
   username: ""
   password: ""
   enabled: true
-  deployment_mode: tapestry_managed
   visibility_scope:
     kind: global
     company_id: {}
@@ -599,7 +585,7 @@ graph:
 ```
 
 Supply the configured database account through runtime configuration. It may be
-the same write-capable account used by Tapestry; Engram's managed runtime simply
+a write-capable account; Engram's runtime simply
 does not issue graph writes. The [graph retrieval guide](documentation/graph-retrieval.md)
 defines canonical identity, relation paths, temporal/conflict handling, vector
 support, availability, and timing behavior.

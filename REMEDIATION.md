@@ -20,7 +20,7 @@ magnitude, not benchmarks. Effort is a rough size: **S** (a day or less),
 | R2 | Service-surface security | Medium | M | Scoped by D1 (2026-09-28) |
 | R3 | Request-size contract (16 KB accepted, 4 KB identity) | Medium | S | Yes: resolve limit |
 | R4 | Conversation-engine semantics | Medium | M | Yes: topic order |
-| R5 | Resolution sizing after durable accounting | Medium | S | No |
+| R5 | Resolution sizing after durable accounting | Medium | S | **Done** (2026-09-28) |
 | R6 | Graph database operations | Low / Medium | M | No |
 | R7 | Engineering pipeline | Medium | M | Partly |
 | R8 | Code structure | Medium | M–L | No |
@@ -297,8 +297,8 @@ documentation, and R2.5's missing-path error) are not planned.
   client-certificate option. The documentation leaves authorization to the
   deployer.
 - **Options.**
-  - **A. Trusted caller only.** Engram runs behind a trusted service (for
-    example Tapestry) on loopback or a private network. Document it, keep the
+  - **A. Trusted caller only.** Engram runs behind a trusted service on
+    loopback or a private network. Document it, keep the
     loopback default, and refuse non-loopback binds unless a flag
     acknowledges it.
   - **B. Direct clients.** Add a server interceptor that authenticates each
@@ -517,6 +517,28 @@ documentation, and R2.5's missing-path error) are not planned.
   durable write.
 - **Acceptance.** A test at the size boundary shows either success, or failure
   with no accounting change.
+- **Status (2026-09-28): done.** Reproduced first: with `max_output_bytes` of
+  4,096 and 8,192, a 16-byte window of response sizes (2,126–2,141 and
+  6,222–6,237) raised "minimum resolution result exceeds max_output_bytes"
+  after the write had already counted the candidate. The window is where
+  dropping `resolver_results` stops being enough. After the write the result
+  grew by 16 bytes: the `output_bytes` exhausted dimension (+14), the
+  diagnostic and working-memory byte counts (+3), and `candidacy_applied`
+  turning true (−1).
+  - The orchestrator now fits the result before the write. The budget is
+    computed once, and everything the write can still settle is sized at its
+    widest: output bytes at the output limit, working memory at its limit, and
+    the accounting flags as `false`. A result that cannot fit fails before the
+    write, with no accounting change.
+  - After the write only the accounting flags and the output-size fixed point
+    change, and neither can grow the result. The size check there stays as an
+    internal invariant.
+  - `elapsed_ns` is measured just before the write, so it no longer includes
+    the write itself. Diagnostics compacted for size no longer gain an
+    accounting block after the write.
+  - `test_resolution_never_fails_after_accounting_at_the_output_boundary` scans
+    sizes up to the limit and checks every byte where the result's shape
+    changes. It fails on the old code at both limits.
 
 ---
 
@@ -530,6 +552,20 @@ documentation, and R2.5's missing-path error) are not planned.
   against a populated standalone graph.
 - **Recommendation.** Version the schema catalog and add forward migrations
   that are verified by digest after they run.
+- **Status (2026-09-28): partly superseded.** Decision: Engram either has a
+  graph with a compatible schema or it does not, and knows nothing about who
+  manages the graph. Compatibility is checked, never version numbers.
+  `schema.cypher` stays the definition of the application schema.
+  - The deployment modes, the ownership and contract metadata checks, and the
+    schema digest are gone. A graph is compatible when it has every index and
+    constraint in `schema.cypher`; extra definitions are fine.
+  - Startup only checks compatibility and never changes the schema. A vector
+    index is matched on name, label, property, type, dimension, and metric;
+    its capacity and scalar kind are storage sizing and are not compared.
+  - Still open: the installer and reset need an empty graph, so a new
+    definition in `schema.cypher` makes an existing graph incompatible until it
+    is added by hand. Forward migrations, applied by compatibility rather than
+    by digest, would close that gap.
 
 ### R6.2 `schema.cypher` is not packaged
 
@@ -539,6 +575,17 @@ documentation, and R2.5's missing-path error) are not planned.
   preflight. (Plausible; not yet reproduced from a wheel.)
 - **Recommendation.** Move `schema.cypher` into the package, add it to
   `package-data`, and load it with `importlib.resources`.
+- **Status (2026-09-28): done.** The file is now `engram/schema.cypher`, listed
+  in `package-data`, and read through `schema_catalog.packaged_schema()` by
+  startup, the schema scripts, and the tests.
+  - The NLTK data directory had the same flaw, and worse: importing Engram
+    created `data/nltk_data` next to the installed package. A source checkout
+    (recognized by its `pyproject.toml`) still uses its gitignored
+    `data/nltk_data`; an installed package now leaves NLTK's standard locations
+    in charge and creates nothing.
+  - Verified with a built wheel installed outside the checkout: the schema is
+    in the wheel and found at runtime, it validates, and import creates no
+    directories.
 
 ---
 

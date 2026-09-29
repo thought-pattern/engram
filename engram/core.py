@@ -315,12 +315,13 @@ _SUBSTITUTION_KEYS = {"contractions", "person", "person2", "gender", "custom"}
 def read_substitution_file(path: str) -> dict[str, dict[str, str]]:
     """Read optional contraction, person, gender, and custom substitution tables."""
     data = read_json_object(path, "substitution")
-    unknown = set(data) - _SUBSTITUTION_KEYS
+    unknown = sorted(str(key) for key in data if key not in _SUBSTITUTION_KEYS)
     if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"substitution file {path} has unknown keys: {names}")
+        logger.warning("Ignoring unknown substitution table(s) in %s: %s", path, ", ".join(unknown))
     result = {}
     for key, value in data.items():
+        if key not in _SUBSTITUTION_KEYS:
+            continue
         if not isinstance(value, dict):
             raise ValueError(f"substitution file {path} tables must be objects of strings")
         table = {}
@@ -476,7 +477,6 @@ class Engram:
                 port=graph_config["port"],
                 username=graph_config["username"],
                 password=graph_config.get("password", ""),
-                deployment_mode=graph_config.get("deployment_mode", ""),
                 visibility_scope=graph_config.get("visibility_scope", {}),
             )
         if graph_config.get("vector_enabled"):

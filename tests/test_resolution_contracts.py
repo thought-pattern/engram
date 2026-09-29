@@ -103,7 +103,7 @@ def internal_frame() -> dict:
         "What's PostgreSQL?",
         internal_scope(),
         required_metadata={"channel": "support"},
-        required_source_label="tapestry:released",
+        required_source_label="released",
         diagnostic_seed="request-1",
         budget=internal_budget(),
     )

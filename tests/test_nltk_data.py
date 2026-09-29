@@ -50,3 +50,24 @@ def test_ensure_explicit_bootstrap_can_download(monkeypatch: pytest_MonkeyPatch)
 
     assert nltk_data.ensure_resource("corpora/missing", "missing", download=True) is True
     assert len(calls) == 1
+
+
+def test_a_checkout_keeps_nltk_data_in_its_own_directory(tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    assert nltk_data.local_data_dir(tmp_path) == str(tmp_path / "data" / "nltk_data")
+
+
+def test_an_installed_package_leaves_nltk_locations_alone(tmp_path, monkeypatch: pytest_MonkeyPatch) -> None:
+    """Without a checkout nothing is created next to the package, and NLTK chooses the download directory."""
+    assert nltk_data.local_data_dir(tmp_path) == ""
+    monkeypatch.setattr(nltk_data, "local_data_dir", lambda: "")
+    before = list(nltk_runtime_data.path)
+    assert configure_path() == ""
+    assert nltk_runtime_data.path == before
+
+    availability = iter((False, True))
+    calls = []
+    monkeypatch.setattr(nltk_data, "is_available", lambda internal_path: next(availability))
+    monkeypatch.setattr(nltk_data, "nltk_download", lambda *args, **kwargs: calls.append(kwargs))
+    assert nltk_data.ensure_resource("corpora/missing", "missing", download=True) is True
+    assert calls[0]["download_dir"] is None

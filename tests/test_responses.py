@@ -146,7 +146,7 @@ def test_learn_response_accepts_regulator_answer_as_dynamic_memory() -> None:
         "regulator",
         "tenant-a",
         "",
-        "tapestry:regulator",
+        "regulator",
         {},
     )
 
@@ -167,7 +167,7 @@ def test_idk_is_never_learned() -> None:
             "regulator",
             "tenant-a",
             "",
-            "tapestry:regulator",
+            "regulator",
             {},
         )
 

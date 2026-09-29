@@ -1,16 +1,9 @@
-// Engram standalone corrected recall schema
+// Engram recall schema
 // Memgraph 3.9 Cypher DDL
 //
-// Schema owner: engram
-// Representation contract: tapestry-ke-representation-v1
-// Engram support contract: tapestry-engram-support-v1
-//
-// Apply only to an empty standalone Engram Memgraph with:
+// The definitions Engram needs from a knowledge graph. A graph is compatible
+// when it has all of them; it may have more. To create them on an empty graph:
 //   python3 scripts/setup_schema.py --apply
-//
-// A Tapestry-managed Memgraph receives only the root Tapestry installer.
-// Engram verifies that catalog in tapestry_managed mode and never applies this
-// file to it.
 
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT EXISTS (n.component);
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT n.component IS UNIQUE;

@@ -3,6 +3,7 @@
 Configurations are plain dictionaries returned by validating normalizers.
 """
 
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from os import path as os_path
 
@@ -11,6 +12,8 @@ from yaml import safe_load as yaml_safe_load
 from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, RolloutMode, SessionOverflow
 from engram.scope import validate_visibility_scope
 from engram.utilities import utility_config
+
+logger = logging_getLogger(__name__)
 
 EMPTY_SPARSE_CONFIG = EMPTY_CONFIG
 EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
@@ -26,7 +29,6 @@ def graph_config(
     username: str = "",
     password: str = "",
     enabled: bool = False,
-    deployment_mode: str = "",
     visibility_scope: dict = EMPTY_CONFIG,
     vector_enabled: bool = False,
     vector_index_name: str = "proposition_embeddings",
@@ -40,8 +42,8 @@ def graph_config(
 ) -> dict:
     """Build a Knowledge Graph connection configuration dict.
 
-    Connects to a Bolt graph database with the neo4j driver over host/port,
-    matching the Tapestry knowledge-graph connection interface.
+    Connects to a Bolt graph database with the neo4j driver over host/port.
+    Startup checks that the graph's schema is compatible with Engram's.
     """
     if not isinstance(host, str) or not host.strip():
         raise ValueError("graph host must be a non-empty string")
@@ -53,14 +55,6 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
-    if not isinstance(deployment_mode, str) or deployment_mode not in {
-        "",
-        "standalone",
-        "tapestry_managed",
-    }:
-        raise ValueError("graph deployment_mode must be standalone or tapestry_managed")
-    if enabled and deployment_mode not in {"standalone", "tapestry_managed"}:
-        raise ValueError("enabled graph requires an explicit deployment_mode")
     scope = validate_visibility_scope(visibility_scope)
     if not isinstance(vector_enabled, bool):
         raise ValueError("graph vector_enabled must be a boolean")
@@ -103,7 +97,6 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
-        "deployment_mode": deployment_mode,
         "visibility_scope": scope,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),
@@ -531,55 +524,55 @@ def config_to_dict(config: dict) -> dict:
     return data
 
 
+SECTION_BUILDERS = (
+    ("graph", graph_config),
+    ("sparse", sparse_config),
+    ("semantic", semantic_config),
+    ("reranker", reranker_config),
+    ("rollout", rollout_config),
+    ("utility", utility_config),
+    ("conversation", conversation_config),
+)
+
+
+def known_keys(values: object, allowed: set, section: str, source: str) -> dict:
+    """Keep only the keys this release reads.
+
+    An extra or stale key is dropped rather than stopping startup; each one is
+    logged so a misspelled setting is still visible.
+    """
+    label = f"{section} config" if section else "config"
+    if not isinstance(values, dict):
+        raise ValueError(f"{label} in {source} must be an object")
+    unknown = sorted(str(key) for key in values if key not in allowed)
+    if unknown:
+        logger.warning("Ignoring unknown %s key(s) in %s: %s", label, source, ", ".join(unknown))
+    result = {key: value for key, value in values.items() if key in allowed}
+    return result
+
+
 def config_from_dict(data: dict) -> dict:
     """Rebuild a validated config dict from its JSON-ready form.
 
     Inverse of ``config_to_dict``: enum values are mapped back to their enums,
     the stopword list back to a set, and nested sections revalidated. Seed paths
-    are kept as stored. Missing keys fall back to ``engram_config`` defaults.
+    are kept as stored. Missing keys fall back to ``engram_config`` defaults, and
+    unknown keys are ignored.
     """
     if not isinstance(data, dict):
         raise ValueError("serialized config must be an object")
-    params = dict(data)
+    source = "serialized config"
+    params = known_keys(data, set(engram_config()), "", source)
     if "session_overflow" in params:
         params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
     if "stopwords" in params:
         params["stopwords"] = set(params.get("stopwords", set()))
-    if "graph" in params:
-        if not isinstance(params.get("graph", {}), dict):
-            raise ValueError("serialized graph config must be an object")
-        if params.get("graph", {}):
-            params["graph"] = graph_config(**params.get("graph", {}))
-    if "sparse" in params:
-        if not isinstance(params.get("sparse", {}), dict):
-            raise ValueError("serialized sparse config must be an object")
-        if params.get("sparse", {}):
-            params["sparse"] = sparse_config(**params.get("sparse", {}))
-    if "semantic" in params:
-        if not isinstance(params.get("semantic", {}), dict):
-            raise ValueError("serialized semantic config must be an object")
-        if params.get("semantic", {}):
-            params["semantic"] = semantic_config(**params.get("semantic", {}))
-    if "reranker" in params:
-        if not isinstance(params.get("reranker", {}), dict):
-            raise ValueError("serialized reranker config must be an object")
-        if params.get("reranker", {}):
-            params["reranker"] = reranker_config(**params.get("reranker", {}))
-    if "rollout" in params:
-        if not isinstance(params.get("rollout", {}), dict):
-            raise ValueError("serialized rollout config must be an object")
-        if params.get("rollout", {}):
-            params["rollout"] = rollout_config(**params.get("rollout", {}))
-    if "utility" in params:
-        if not isinstance(params.get("utility", {}), dict):
-            raise ValueError("serialized utility config must be an object")
-        if params.get("utility", {}):
-            params["utility"] = utility_config(**params.get("utility", {}))
-    if "conversation" in params:
-        if not isinstance(params.get("conversation", {}), dict):
-            raise ValueError("serialized conversation config must be an object")
-        if params.get("conversation", {}):
-            params["conversation"] = conversation_config(**params.get("conversation", {}))
+    for name, builder in SECTION_BUILDERS:
+        if name in params:
+            if not isinstance(params.get(name, {}), dict):
+                raise ValueError(f"serialized {name} config must be an object")
+            if params.get(name, {}):
+                params[name] = builder(**known_keys(params.get(name, {}), set(builder()), name, source))
     config = engram_config(**params)
     return config
 
@@ -592,8 +585,8 @@ def load_config(path: str = "config.yml") -> dict:
     and nested mappings are built with their section normalizers. Conversation
     file paths are resolved against this file's directory and stored absolute.
     A missing file, a directory, or a non-file raises ValueError naming that
-    path and this file. An unknown key raises ValueError naming the key and
-    the file -- a config typo should fail loudly, not be dropped.
+    path and this file. An unknown key is ignored and logged, so a stale or
+    extra setting cannot stop startup.
 
     Args:
         path: Path to the YAML configuration file.
@@ -606,110 +599,19 @@ def load_config(path: str = "config.yml") -> dict:
         return config
 
     with open(path, encoding="utf-8") as f:
-        data = yaml_safe_load(f)
-    if not data:
+        loaded = yaml_safe_load(f)
+    if not loaded:
         config = engram_config()
         return config
 
+    data = known_keys(loaded, set(engram_config()), "", path)
     if "session_overflow" in data:
         data["session_overflow"] = SessionOverflow(data["session_overflow"])
-    if "graph" in data and data["graph"]:
-        graph_keys = {
-            "host",
-            "port",
-            "username",
-            "password",
-            "enabled",
-            "deployment_mode",
-            "visibility_scope",
-            "vector_enabled",
-            "vector_index_name",
-            "vector_model",
-            "vector_model_path",
-            "vector_dimension",
-            "vector_limit",
-            "vector_support_scan_limit",
-            "vector_min_similarity",
-            "vector_weight",
-        }
-        unknown_graph = set(data["graph"]) - graph_keys
-        if unknown_graph:
-            raise ValueError(
-                f"Unknown graph config key(s) in {path}: {', '.join(sorted(unknown_graph))} "
-                f"(expected: {', '.join(sorted(graph_keys))})"
-            )
-        data["graph"] = graph_config(**data["graph"])
-    if "sparse" in data and data["sparse"]:
-        sparse_keys = {
-            "enabled",
-            "include_response_text",
-            "max_query_terms",
-            "max_posting_visits",
-            "max_prefix_expansions",
-        }
-        unknown_sparse = set(data["sparse"]) - sparse_keys
-        if unknown_sparse:
-            raise ValueError(
-                f"Unknown sparse config key(s) in {path}: {', '.join(sorted(unknown_sparse))} "
-                f"(expected: {', '.join(sorted(sparse_keys))})"
-            )
-        data["sparse"] = sparse_config(**data["sparse"])
-    if "semantic" in data and data["semantic"]:
-        semantic_keys = set(semantic_config())
-        unknown_semantic = set(data["semantic"]) - semantic_keys
-        if unknown_semantic:
-            raise ValueError(
-                f"Unknown semantic config key(s) in {path}: {', '.join(sorted(unknown_semantic))} "
-                f"(expected: {', '.join(sorted(semantic_keys))})"
-            )
-        data["semantic"] = semantic_config(**data["semantic"])
-    if "reranker" in data and data["reranker"]:
-        reranker_keys = set(reranker_config())
-        unknown_reranker = set(data["reranker"]) - reranker_keys
-        if unknown_reranker:
-            raise ValueError(
-                f"Unknown reranker config key(s) in {path}: {', '.join(sorted(unknown_reranker))} "
-                f"(expected: {', '.join(sorted(reranker_keys))})"
-            )
-        data["reranker"] = reranker_config(**data["reranker"])
-    if "rollout" in data and data["rollout"]:
-        rollout_keys = set(rollout_config())
-        unknown_rollout = set(data["rollout"]) - rollout_keys
-        if unknown_rollout:
-            raise ValueError(
-                f"Unknown rollout config key(s) in {path}: {', '.join(sorted(unknown_rollout))} "
-                f"(expected: {', '.join(sorted(rollout_keys))})"
-            )
-        data["rollout"] = rollout_config(**data["rollout"])
-    if "utility" in data and data["utility"]:
-        utility_keys = set(utility_config())
-        unknown_utility = set(data["utility"]) - utility_keys
-        if unknown_utility:
-            raise ValueError(
-                f"Unknown utility config key(s) in {path}: {', '.join(sorted(unknown_utility))} "
-                f"(expected: {', '.join(sorted(utility_keys))})"
-            )
-        data["utility"] = utility_config(**data["utility"])
+    for name, builder in SECTION_BUILDERS:
+        if name != "conversation" and name in data and data[name]:
+            data[name] = builder(**known_keys(data[name], set(builder()), name, path))
     if "conversation" in data and data["conversation"]:
-        if not isinstance(data["conversation"], dict):
-            raise ValueError(f"conversation config in {path} must be an object")
-        conversation_keys = {
-            "bot_name",
-            "seed_files",
-            "duplicate_policy",
-            "set_files",
-            "map_files",
-            "properties_file",
-            "predicate_file",
-            "substitution_file",
-        }
-        unknown_conversation = set(data["conversation"]) - conversation_keys
-        if unknown_conversation:
-            raise ValueError(
-                f"Unknown conversation config key(s) in {path}: {', '.join(sorted(unknown_conversation))} "
-                f"(expected: {', '.join(sorted(conversation_keys))})"
-            )
-        section = dict(data["conversation"])
+        section = known_keys(data["conversation"], set(conversation_config()), "conversation", path)
         if "seed_files" in section:
             section["seed_files"] = resolve_conversation_path_list(section["seed_files"], path, "seed_files", "seed file")
         if "set_files" in section:
@@ -725,8 +627,5 @@ def load_config(path: str = "config.yml") -> dict:
                 section[key] = resolve_conversation_optional_file(section[key], path, key, kind)
         data["conversation"] = conversation_config(**section)
 
-    try:
-        config = engram_config(**data)
-    except TypeError as err:
-        raise ValueError(f"Unknown config key in {path}: {err}") from err
+    config = engram_config(**data)
     return config

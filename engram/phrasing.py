@@ -22,8 +22,7 @@ calls spaCy, so those phrase even if the model is unavailable; everything
 else degrades to a bare active verb rather than crashing -- ENGRAM's recall
 is best-effort.
 
-This is presentation only. ENGRAM keeps its own copy of the frame logic;
-it does not depend on Tapestry.
+This is presentation only. ENGRAM keeps its own copy of the frame logic.
 """
 
 from engram.constants import FRAME_OVERRIDES, VOWELS

@@ -18,7 +18,7 @@ SOURCE_FILES = (
     "pyproject.toml",
     "requirements.txt",
     "config.example.yml",
-    "schema.cypher",
+    "engram/schema.cypher",
 )
 
 

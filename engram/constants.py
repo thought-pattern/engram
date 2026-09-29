@@ -10,7 +10,6 @@ cycle.
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from hashlib import sha256 as hashlib_sha256
-from pathlib import Path
 from re import IGNORECASE as IGNORECASE, compile as re_compile, escape as re_escape
 
 # =============================================================================
@@ -2195,8 +2194,6 @@ class AdmissionOutcome(StrEnum):
 # =============================================================================
 # NLTK data
 # =============================================================================
-
-NLTK_DATA_DIR = str(Path(__file__).resolve().parent.parent / "data" / "nltk_data")
 
 # Required packages as (find_path, download_name) pairs. find_path is what
 # nltk.data.find expects; download_name is what nltk.download expects.

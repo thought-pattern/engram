@@ -652,7 +652,7 @@ def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
         basis=DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
         scope=scope_key(namespace="support", context_fingerprint="tenant:acme"),
         policy_version="proposition-disclosure-v1",
-        authority="tapestry-visibility-v3",
+        authority="visibility-authority-v3",
         authority_available=True,
     )
     record = change_record(internal_record(), disclosure=disclosure)

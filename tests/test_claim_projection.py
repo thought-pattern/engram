@@ -86,7 +86,7 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
 
 
 def test_projection_accepts_available_zero_trust_revision() -> None:
-    """Tapestry trust revisions are non-negative and begin at zero."""
+    """Trust revisions are non-negative and begin at zero."""
     row = internal_row()
     row["supplied_trust_version"] = 0
 

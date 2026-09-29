@@ -22,7 +22,6 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
-from pathlib import Path
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
@@ -61,6 +60,7 @@ from engram.constants import (
 )
 from engram.errors import InvalidRequestError
 from engram.schema_admin import verify_schema
+from engram.schema_catalog import packaged_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
 
 logger = logging_getLogger(__name__)
@@ -938,9 +938,9 @@ class MemGraphConnection:
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
     def execute_admin(self, statement: str, parameters=()) -> list:
-        """Run one schema administration statement for the standalone tooling.
+        """Run one schema administration statement for the schema tooling.
 
-        Unlike ``execute`` it permits DDL and metadata writes and raises the
+        Unlike ``execute`` it permits DDL and raises the
         driver's own error, so an operator sees why a statement failed.
         Runtime reads never use it.
         """
@@ -1112,17 +1112,14 @@ def connect_graph(
     port: int = 7687,
     username: str = "",
     password: str = "",
-    deployment_mode: str = "",
     visibility_scope=(),
 ) -> MemGraphConnection:
-    """Connect to the graph database and verify its deployment schema.
+    """Connect to the graph database and check that its schema is compatible.
 
-    The connection and deployment-specific schema preflight are attempted
-    immediately. An unreachable or invalid graph fails startup rather
-    than presenting an empty query result as graph readiness.
+    The connection and schema check are attempted immediately. An
+    unreachable or incompatible graph fails startup rather than presenting
+    an empty query result as graph readiness.
     """
-    if deployment_mode not in {"standalone", "tapestry_managed"}:
-        raise ValueError("enabled graph requires an explicit deployment mode")
     client = MemGraphConnection(
         host=host,
         port=port,
@@ -1133,8 +1130,7 @@ def connect_graph(
     if not client.connect():
         client.disconnect()
         raise RuntimeError(f"graph database is unavailable at {host}:{port}")
-    schema_path = Path(__file__).resolve().parents[1] / "schema.cypher"
-    report = verify_schema(client, schema_path, deployment_mode)
+    report = verify_schema(client, packaged_schema())
     if not report.get("valid", False):
         client.disconnect()
         raise RuntimeError(f"graph database schema preflight failed: {report}")

@@ -134,22 +134,21 @@ conversation:
 
 # --- Knowledge graph (optional) ---
 # Graph database connection over Bolt with Cypher queries (for example Memgraph
-# or Neo4j), matching the Tapestry knowledge-graph interface. Standalone DDL
-# uses: python scripts/setup_schema.py --apply
-# A Tapestry-managed graph uses only the read-only verify_schema.py gate.
+# or Neo4j). The graph's schema must include every definition in engram/schema.cypher;
+# it may have more. To create them on an empty graph:
+# python scripts/setup_schema.py --apply
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
 # The graph database is optional: set enabled: false to run without it. When
-# enabled, it must be reachable and pass its schema preflight at startup, or
+# enabled, it must be reachable and have a compatible schema at startup, or
 # startup fails. A graph read that fails later returns no rows and is logged, while
 # Engram's local retrieval and conversation paths continue.
 graph:
-  host: localhost
+  host: 192.168.100.13
   port: 7687
   username: ""
   password: ""
-  enabled: false
-  deployment_mode: "" # standalone or tapestry_managed when enabled
+  enabled: true
   visibility_scope:
     kind: global
     company_id: {}

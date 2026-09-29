@@ -214,7 +214,7 @@ def test_historical_queries_reuse_the_same_exact_scope_visibility_decision() -> 
     )
     frame = internal_frame(request="What was the status in 2024?")
     authority = ExactScopeVisibilityAuthority(
-        "tapestry-visibility",
+        "visibility-authority",
         "visibility-v3",
         (visibility_grant(frame["scope"], PropositionOwnership.COMPANY),),
     )
@@ -299,7 +299,7 @@ def test_private_proposition_requires_configured_exact_scope_and_ownership() -> 
     frame = internal_frame()
     unavailable = PropositionEligibilityEvaluator().evaluate(projection, frame)
     authority = ExactScopeVisibilityAuthority(
-        "tapestry-visibility",
+        "visibility-authority",
         "visibility-v3",
         (visibility_grant(frame["scope"], PropositionOwnership.COMPANY),),
     )
@@ -310,7 +310,7 @@ def test_private_proposition_requires_configured_exact_scope_and_ownership() -> 
     assert unavailable["reason"] == PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
     assert allowed["eligible"] is True
     assert allowed["reason"] == PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
-    assert allowed["disclosure"]["authority"] == "tapestry-visibility"
+    assert allowed["disclosure"]["authority"] == "visibility-authority"
     assert allowed["disclosure"]["scope"] == frame["scope"]
     assert wrong_context["reason"] == PropositionEligibilityReason.VISIBILITY_DENIED
     assert wrong_ownership["reason"] == PropositionEligibilityReason.VISIBILITY_DENIED

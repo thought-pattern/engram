@@ -1,4 +1,4 @@
-"""Shared Tapestry/Engram graph visibility-scope contract."""
+"""Graph visibility-scope contract."""
 
 
 def validate_visibility_scope(value) -> dict:

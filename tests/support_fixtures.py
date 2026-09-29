@@ -17,12 +17,12 @@ GLOBAL_VISIBILITY = {
 }
 
 ASSERTION_REFERENCE_A = {
-    "schema_version": "tapestry-engram-support-v1",
+    "schema_version": "support-v1",
     "record_kind": "assertion",
     "id": "ast_" + "a" * 64,
     "state_revision": 0,
     "support_revision": {},
-    "representation_contract": "tapestry-ke-representation-v1",
+    "representation_contract": "representation-v1",
     "visibility_scope": GLOBAL_VISIBILITY,
     "dependency_state_digest": "dep_" + "a" * 64,
 }
@@ -98,7 +98,7 @@ def accepted_artifact(**overrides) -> dict:
         "valid_until_available": False,
         "superseded_by": "",
         "provenance": artifact_provenance(
-            source_label="tapestry:released",
+            source_label="released",
             caller_id="regulator-a",
             accepted_at="2026-08-12T16:00:00Z",
         ),

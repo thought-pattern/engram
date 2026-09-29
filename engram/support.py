@@ -1,11 +1,11 @@
-"""Opaque Tapestry support-reference contract implemented by Engram.
+"""Opaque support references.
 
 Engram validates structure for safe storage and transport. It does not
-interpret epistemic state; Tapestry performs current-state validation.
+interpret epistemic state; the producer performs current-state validation.
+A reference is accepted on its shape, not on the contract versions it names.
 """
 
-SUPPORT_CONTRACT = "tapestry-engram-support-v1"
-REPRESENTATION_CONTRACT = "tapestry-ke-representation-v1"
+MAX_CONTRACT_NAME_LENGTH = 128
 SUPPORT_REFERENCE_FIELDS = {
     "schema_version",
     "record_kind",
@@ -24,6 +24,14 @@ def support_text(value, name: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str) or (not allow_empty and not value):
         raise ValueError(f"{name} must be a non-empty string")
     return value
+
+
+def support_contract_name(value, name: str) -> str:
+    """Validate a contract identifier the producer names, whatever its version."""
+    text = support_text(value, name)
+    if len(text) > MAX_CONTRACT_NAME_LENGTH:
+        raise ValueError(f"{name} exceeds {MAX_CONTRACT_NAME_LENGTH} characters")
+    return text
 
 
 def support_revision(value, name: str) -> int:
@@ -63,13 +71,14 @@ def validate_support_visibility(value) -> dict:
 
 
 def validate_support_reference(value) -> dict:
-    """Validate and defensively copy one opaque Tapestry support reference."""
+    """Validate and defensively copy one opaque support reference."""
     if not isinstance(value, dict) or set(value) != SUPPORT_REFERENCE_FIELDS:
         raise ValueError("support reference has an invalid shape")
-    if value.get("schema_version", "") != SUPPORT_CONTRACT:
-        raise ValueError("support reference schema_version is unsupported")
-    if value.get("representation_contract", "") != REPRESENTATION_CONTRACT:
-        raise ValueError("support reference representation contract is unsupported")
+    schema_version = support_contract_name(value.get("schema_version", ""), "support schema_version")
+    representation_contract = support_contract_name(
+        value.get("representation_contract", ""),
+        "support representation_contract",
+    )
     kind = support_text(value.get("record_kind", ""), "support record_kind")
     if kind not in {"assertion", "proposition"}:
         raise ValueError("support record_kind is not registered")
@@ -87,12 +96,12 @@ def validate_support_reference(value) -> dict:
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
     result = {
-        "schema_version": SUPPORT_CONTRACT,
+        "schema_version": schema_version,
         "record_kind": kind,
         "id": identifier,
         "state_revision": state_revision,
         "support_revision": proposition_revision,
-        "representation_contract": REPRESENTATION_CONTRACT,
+        "representation_contract": representation_contract,
         "visibility_scope": validate_support_visibility(value.get("visibility_scope", {})),
         "dependency_state_digest": digest,
     }

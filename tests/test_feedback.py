@@ -129,7 +129,7 @@ def artifact(statement_id: str = "stmt-artifact") -> dict:
         valid_until="",
         valid_until_available=False,
         superseded_by="",
-        provenance=artifact_provenance("tapestry:test", "regulator", NOW_TEXT),
+        provenance=artifact_provenance("test-source", "regulator", NOW_TEXT),
         statistics=artifact_statistics(),
         metadata={"approved": True},
     )

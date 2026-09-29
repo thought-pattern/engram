@@ -143,7 +143,7 @@ Adds one shared, unattributed fact and preserves user conversation context.
 | `text` | required | One non-empty fact string. |
 | `source_label` | `""` | Opaque caller-owned provenance label. |
 
-Use this for research or tool facts. Cache Actor answers with
+Use this for research or tool facts. Cache complete answers with
 `engram_learn_response`. The result contains ID, text, patterns, attribution,
 and source label.
 
@@ -259,18 +259,18 @@ Input:
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "required_metadata": {
-    "actor_version": "actor-7",
+    "model_version": "model-7",
     "policy_version": "regulator-4"
   },
-  "required_source_label": "tapestry:actor",
+  "required_source_label": "support-answers",
   "limit": 1
 }
 ```
 
 `namespace` and `context_fingerprint` are exact-match scope keys. Empty values
 match only entries carrying empty scope values. `required_metadata` applies
-exact top-level matches to the stored `tapestry` metadata, and
-`required_source_label` optionally filters provenance. This permits Actor,
+exact top-level matches to the metadata stored with each response, and
+`required_source_label` optionally filters provenance. This permits model,
 prompt, source-data, tool-set, and policy version isolation before regulation.
 
 Output:
@@ -293,13 +293,12 @@ Output:
       "created_at": "2026-07-19T12:00:00+00:00",
       "hit_count": 3,
       "query_count": 5,
-      "source_label": "tapestry:actor",
+      "source_label": "support-answers",
       "introduced_by_user_id": "",
       "metadata": {
-        "tapestry": {
-          "namespace": "support",
-          "context_fingerprint": "account-tier:pro"
-        }
+        "model_version": "model-7",
+        "prompt_version": "support-12",
+        "policy_version": "regulator-4"
       }
     }
   ],
@@ -342,8 +341,8 @@ artifact before its owner can retire it.
 
 ### `engram_learn_response`
 
-Caches a completed Actor answer. Empty output and a normalized complete value
-of `IDK` are rejected.
+Caches a completed answer. Empty output and a normalized complete value
+of `IDK` are rejected. `source_label` defaults to `unknown`.
 
 ```json
 {
@@ -353,9 +352,9 @@ of `IDK` are rejected.
   "user_id": "Robin",
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
-  "source_label": "tapestry:actor",
+  "source_label": "support-answers",
   "metadata": {
-    "actor_version": "actor-7",
+    "model_version": "model-7",
     "prompt_version": "support-12",
     "policy_version": "regulator-4"
   }
@@ -365,7 +364,7 @@ of `IDK` are rejected.
 The result returns `learned`, `statement_id`, `action` (`created` or
 `rejected_capacity`), scope, provenance, and `idempotent`. A canonical or alias collision
 in the same exact scope names the existing owner and is rejected; the
-transport-neutral supersession operation handles replacement. Actor responses remain shared knowledge
+transport-neutral supersession operation handles replacement. Learned responses remain shared knowledge
 (`introduced_by_user_id` is `""`), while the calling user's previous-response
 context is updated. `request_id` makes retries idempotent and conflicting reuse
 is an error.
@@ -402,13 +401,13 @@ identical resolutions therefore record exactly one accepted hit.
 
 | Condition | Client behavior |
 | --- | --- |
-| MCP server unavailable | Bypass Engram and invoke the Actor. |
+| MCP server unavailable | Bypass Engram and answer without the cache. |
 | `engram_start` fails | Fix configuration or bypass Engram before sending turns. |
 | Conversation tool times out | Treat the turn result as unknown and inspect before retrying a mutating call. |
 | `engram_finish` fails | Keep the conversation active and retry the read-only report request. |
 | `engram_stop` fails | Surface the lifecycle failure. |
-| Regulated-cache call fails | Return the Actor response. |
-| Regulator unavailable | Invoke the Actor. |
+| Regulated-cache call fails | Return the answer produced without the cache. |
+| Regulator unavailable | Answer without the cache. |
 
 A failed tool call returns either an Engram error's own message, written for
 the caller, or `internal Engram failure`. The full exception is in the server

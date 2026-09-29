@@ -106,7 +106,7 @@ def artifact(
     aliases: tuple[str, ...] = ("Explain Engram",),
     namespace: str = "tenant-a",
     lifecycle: LifecycleState = LifecycleState.ACTIVE,
-    source_label: str = "tapestry:released",
+    source_label: str = "released",
     support_references: tuple[dict, ...] = (),
     metadata=(),
 ) -> dict:
@@ -266,7 +266,7 @@ def test_exact_adapter_preserves_alias_origin_text_and_hard_filters() -> None:
         engine,
         "Explain Engram",
         required_metadata={"approved": True},
-        required_source_label="tapestry:released",
+        required_source_label="released",
     )
 
     result = ExactResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -2027,6 +2027,60 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     assert result["budget"]["output_bytes"] == encoded_size
     assert "output_truncated" in result["reason_codes"]
     assert "output_bytes" in result["budget"]["exhausted_dimensions"]
+
+
+@pytest_mark.parametrize("max_output_bytes", (4_096, 8_192))
+def test_resolution_never_fails_after_accounting_at_the_output_boundary(max_output_bytes: int) -> None:
+    statement_id = "stmt-candidate"
+    engine = engine_with_artifacts(artifact(statement_id, namespace=""))
+    finalizer = accounting_finalizer(engine)
+    selected_budget = capture_resolution_budget(lambda: START_NS, max_output_bytes=max_output_bytes)
+    query_frame = frame(engine, namespace="", budget=selected_budget)
+    request_ids = iter(range(1_000_000))
+
+    def resolve(response_bytes: int) -> dict:
+        found = candidate(statement_id, response="x" * response_bytes)
+        resolver = FakeResolver(
+            "large",
+            resolver_result(
+                "large",
+                ResolverState.COMPLETED,
+                candidates=(found,),
+                accounting=(accounting_observation(statement_id),),
+            ),
+        )
+        orchestrator = ResolutionOrchestrator(
+            ResolverRegistry((resolver,)),
+            ResolverExecutor(lambda: START_NS),
+            finalizer,
+            CandidateFusionEngine(authority=permissive_candidate_authority),
+        )
+        result, _ = orchestrator.resolve(query_frame, f"request-boundary-{next(request_ids)}")
+        return result
+
+    def check(response_bytes: int) -> tuple:
+        """Assert R5 for one size and return the result's shape."""
+        before = engine.response_repository.get_artifact(statement_id)
+        try:
+            result = resolve(response_bytes)
+        except InvalidRequestError:
+            assert engine.response_repository.get_artifact(statement_id) == before
+            return ("failed",)
+        encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
+        assert encoded_size <= max_output_bytes
+        assert result["budget"]["output_bytes"] == encoded_size
+        shape = (result["reason_codes"], len(result["resolver_results"]), len(result["response_candidates"]))
+        return shape
+
+    # Growth after the write shows up where one trimming step stops being enough, so
+    # scan coarsely and check every size between two scanned sizes whose shapes differ.
+    step = 16
+    shapes = {response_bytes: check(response_bytes) for response_bytes in range(1, max_output_bytes + 1, step)}
+    scanned = sorted(shapes)
+    for previous, current in zip(scanned, scanned[1:], strict=False):
+        if shapes[previous] != shapes[current]:
+            for response_bytes in range(previous + 1, current):
+                check(response_bytes)
 
 
 def test_json_array_bytes_matches_encoding_every_prefix() -> None:

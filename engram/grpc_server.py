@@ -338,7 +338,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def LearnResponse(self, request: engram_pb2.LearnResponseRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        source_label = request.source_label or "tapestry:actor"
+        source_label = request.source_label or "unknown"
         message = self.invoke(
             context,
             lambda: to_struct(

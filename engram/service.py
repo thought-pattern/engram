@@ -1693,7 +1693,7 @@ class EngramCore:
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Create one DYNAMIC ACTIVE response artifact through base commit."""

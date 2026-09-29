@@ -23,10 +23,10 @@ receipts, reports, turn diagnostics, or process counters. The running process is
 the complete lifetime of those values. Optional Memgraph access supplies recall
 reads and is not Engram-owned response or conversation state.
 
-When graph recall is enabled, startup verifies the selected deployment mode and
-schema before publishing readiness. A Tapestry deployment uses Tapestry's graph
-schema. An independent Engram deployment installs the current Engram recall
-subset through the separate administrative schema command.
+When graph recall is enabled, startup checks that the graph's schema is
+compatible before publishing readiness: it must have every definition in
+`engram/schema.cypher`, and it may have more. The separate administrative schema
+command can create that schema on an empty graph.
 
 During request resolution, a graph connection, query, or optional vector-index
 failure contributes no graph result. If no local resolver supplies a result,
@@ -104,7 +104,7 @@ names every top-level unified result field, while bounded candidate, evidence,
 diagnostic, resolver, and budget records remain core-owned structures carried
 through `Struct` fields.
 
-Regenerate after changing the Tapestry-dictated contract:
+Regenerate after changing the contract:
 
 ```bash
 python -m pip install -e ".[dev]"

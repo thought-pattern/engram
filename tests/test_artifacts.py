@@ -63,7 +63,7 @@ def accepted_artifact(**overrides) -> dict:
         "valid_until_available": False,
         "superseded_by": "",
         "provenance": artifact_provenance(
-            source_label="tapestry:released",
+            source_label="released",
             caller_id="regulator-a",
             accepted_at="2026-08-12T16:00:00Z",
         ),

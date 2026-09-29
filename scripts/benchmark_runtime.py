@@ -229,12 +229,12 @@ def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[Eng
         engram = Engram(config=config)
         selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime-v1")
         support_reference = {
-            "schema_version": "tapestry-engram-support-v1",
+            "schema_version": "support-v1",
             "record_kind": "proposition",
             "id": proposition_id,
             "state_revision": 0,
             "support_revision": 0,
-            "representation_contract": "tapestry-ke-representation-v1",
+            "representation_contract": "representation-v1",
             "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
             "dependency_state_digest": "dep_" + "a" * 64,
         }

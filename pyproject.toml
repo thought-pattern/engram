@@ -60,7 +60,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["*.proto", "*.pyi", "data/*.json"]
+engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}

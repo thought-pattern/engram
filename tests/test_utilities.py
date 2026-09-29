@@ -215,17 +215,17 @@ def test_config_round_trip_preserves_independent_plugin_selection() -> None:
     assert restored["utility"] == config["utility"]
 
 
-def test_yaml_config_loads_selected_plugins_and_rejects_unknown_keys(tmp_path) -> None:
+def test_yaml_config_loads_selected_plugins_and_ignores_unknown_keys(tmp_path) -> None:
     selected = tmp_path / "selected.yml"
     selected.write_text("utility:\n  enabled: true\n  plugins: [arithmetic_v1, version_v1]\n", encoding="utf-8")
-    invalid = tmp_path / "invalid.yml"
-    invalid.write_text("utility:\n  enabled: false\n  module: os\n", encoding="utf-8")
+    unknown = tmp_path / "unknown.yml"
+    unknown.write_text("utility:\n  enabled: false\n  module: os\n", encoding="utf-8")
 
     loaded = load_config(str(selected))
 
     assert loaded["utility"] == utility_config(enabled=True, plugins=("arithmetic_v1", "version_v1"))
-    with pytest_raises(ValueError, match="module"):
-        load_config(str(invalid))
+    # An unknown key never reaches the utility settings, so it cannot name a module to load.
+    assert load_config(str(unknown))["utility"] == utility_config(enabled=False)
 
 
 def test_core_resolves_utility_without_learning_or_accounting() -> None:

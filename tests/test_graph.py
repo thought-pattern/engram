@@ -370,14 +370,7 @@ def test_template_graph_operations_graph_query_list_format():
 def read_only_graph_wiring_engram_with_graph(client):
     """An ENGRAM with the graph enabled and a mock client injected."""
     with patch("engram.core.connect_graph", return_value=client) as connect_graph:
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
     connect_graph.assert_called_once()
     return engram
 
@@ -417,14 +410,7 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
     client = MockGraphClient()
     client.available = False
     with patch("engram.core.connect_graph", return_value=client):
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
 
     assert engram.component_status["graph"] == {"enabled": True, "ready": False}
     assert engram.graph_query("RETURN 1") == []
@@ -434,14 +420,7 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
 def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_component_readiness():
     client = MockGraphClient()
     with patch("engram.core.connect_graph", return_value=client):
-        engram = Engram(
-            config=engram_config(
-                graph=graph_config(
-                    enabled=True,
-                    deployment_mode="tapestry_managed",
-                )
-            )
-        )
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
 
     core = EngramCore(engram)
 
@@ -563,7 +542,6 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
     config = engram_config(
         graph=graph_config(
             enabled=True,
-            deployment_mode="tapestry_managed",
             vector_enabled=True,
         )
     )
@@ -595,7 +573,6 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     config = engram_config(
         graph=graph_config(
             enabled=True,
-            deployment_mode="tapestry_managed",
             vector_enabled=True,
             vector_weight=0.75,
         )
@@ -612,7 +589,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         "Why did Rome fall?",
         "Rome declined through overlapping political and military pressures.",
         request_id="learn-1",
-        namespace="tapestry",
+        namespace="support",
         context_fingerprint="local-v1",
         metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
@@ -620,7 +597,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     proposal = core.propose(
         "zygomatic quasar lattice",
         request_id="proposal-1",
-        namespace="tapestry",
+        namespace="support",
         context_fingerprint="local-v1",
     )
 

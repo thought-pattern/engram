@@ -177,7 +177,7 @@ class TurnRecordingCore(EngramCore):
 def test_the_core_asks_the_graph_to_reconnect_once_a_turn_is_over() -> None:
     graph = ReconnectCountingGraph()
     with patch("engram.core.connect_graph", return_value=graph):
-        engram = Engram(config=engram_config(graph=graph_config(enabled=True, deployment_mode="tapestry_managed")))
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
     core = TurnRecordingCore(engram)
     try:
         core.start_conversation(user_id="user-1")

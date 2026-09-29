@@ -163,10 +163,10 @@ class MCPConversationService:
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache an Actor response without implicitly replacing existing knowledge."""
+        """Cache a response without implicitly replacing existing knowledge."""
         with self.lock:
             core, _ = self.require_active()
             result = core.learn_response(
@@ -308,10 +308,10 @@ class EngramMCPServer(MCPServer):
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache one non-IDK Actor response with scope and provenance."""
+        """Cache one non-IDK response with scope and provenance."""
         result = self.conversation_service.learn_response(
             request=request,
             response=response,

@@ -2628,6 +2628,21 @@ def accounting_finalization_to_dict(value: object) -> dict[str, object]:
     return result
 
 
+def accounting_diagnostics(finalization: dict, compact: bool) -> dict[str, object]:
+    """Report accounting in resolution diagnostics; the compact form omits statement ids."""
+    if compact:
+        result = {
+            "candidate_count": len(finalization["candidate_statement_ids"]),
+            "accepted_present": bool(finalization["accepted_statement_id"]),
+            "candidacy_applied": finalization["candidacy_applied"],
+            "success_applied": finalization["success_applied"],
+            "idempotent": finalization["idempotent"],
+        }
+    else:
+        result = accounting_finalization_to_dict(finalization)
+    return result
+
+
 def accounting_signature(results: tuple[dict, ...], accepted_statement_id: str) -> str:
     """Return the retry identity for one stable accounting observation set."""
     stable_results = []
@@ -2968,13 +2983,12 @@ class ResolutionOrchestrator:
         preview_ids = tuple(
             sorted({observation["statement_id"] for result in execution["results"] for observation in result["accounting"]})
         )
-        accounting_preview = accounting_finalization(
-            preview_ids,
-            accepted_statement_id,
-            False,
-            False,
-            False,
+        budget_limits = frame.get("budget", {})
+        output_limit = budget_limits.get("max_output_bytes", 0)
+        working_memory_bytes = (
+            execution["consumption"]["working_memory_bytes"] + decision["working_memory_bytes"] + evidence_working_memory
         )
+        output_truncated = False
         evidence_diagnostics.update(
             {
                 "available": evidence_package_available,
@@ -3011,6 +3025,92 @@ class ResolutionOrchestrator:
             result = marker if json_size(marker) <= remaining else {}
             return result
 
+        def sized_accounting(compact: bool) -> dict[str, object]:
+            """Report accounting as wide as the accounting write can make it.
+
+            The write always applies candidacy and decides only the success and replay
+            flags. JSON ``false`` is wider than ``true``, so those flags are sized as false,
+            and the compact form is sized as if nothing were accepted.
+            """
+            finalization = accounting_finalization(
+                preview_ids,
+                "" if compact else accepted_statement_id,
+                True,
+                False,
+                False,
+            )
+            result = accounting_diagnostics(finalization, compact)
+            return result
+
+        def sync_evidence_diagnostics() -> None:
+            evidence_diagnostics.update(
+                {
+                    "available": evidence_package_available,
+                    "retained_count": evidence_package["retained_count"],
+                    "omitted_count": evidence_package["omitted_count"],
+                    "truncated": evidence_package["truncated"],
+                }
+            )
+            visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
+            if isinstance(visible_evidence_diagnostics, dict):
+                for name in ("available", "retained_count", "omitted_count"):
+                    if name in visible_evidence_diagnostics:
+                        visible_evidence_diagnostics[name] = evidence_diagnostics.get(name, False)
+
+        def complete_consumption(elapsed_ns: int, reserve: bool) -> dict:
+            """Return the result's resource use for its current diagnostics and evidence package.
+
+            With ``reserve``, the values settled only after the accounting write are sized at
+            their widest: output bytes at the output limit and working memory at its limit.
+            """
+            exhausted = set(execution["consumption"]["exhausted_dimensions"]).union(orchestration_exhausted)
+            if output_truncated:
+                exhausted.add("output_bytes")
+            if decision["report"].get("budget_exhausted", "") == "fusion_memory_exhausted":
+                exhausted.add("working_memory_bytes")
+            package_evidence_bytes = (
+                len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
+            )
+            evidence_count = minimal_evidence_count + evidence_package["retained_count"]
+            evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
+            if evidence_count > budget_limits["max_evidence"]:
+                exhausted.add("evidence")
+            if evidence_bytes > budget_limits["max_evidence_bytes"]:
+                exhausted.add("evidence_bytes")
+            frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
+            diagnostic_bytes = execution["consumption"]["diagnostic_bytes"] + frame_diagnostic_bytes
+            if diagnostic_bytes > budget_limits["max_diagnostic_bytes"]:
+                exhausted.add("diagnostic_bytes")
+            if working_memory_bytes > budget_limits["max_working_memory_bytes"]:
+                exhausted.add("working_memory_bytes")
+            if reserve:
+                output_bytes = output_limit
+                reported_working_memory = budget_limits["max_working_memory_bytes"]
+                if output_limit > budget_limits["max_working_memory_bytes"]:
+                    exhausted.add("working_memory_bytes")
+            else:
+                output_bytes = 0
+                reported_working_memory = min(working_memory_bytes, budget_limits["max_working_memory_bytes"])
+            result = budget_consumption_with_changes(
+                execution["consumption"],
+                {
+                    "elapsed_ns": elapsed_ns,
+                    "evidence": evidence_count,
+                    "evidence_bytes": min(evidence_bytes, budget_limits["max_evidence_bytes"]),
+                    "output_bytes": output_bytes,
+                    "diagnostic_bytes": min(diagnostic_bytes, budget_limits["max_diagnostic_bytes"]),
+                    "working_memory_bytes": reported_working_memory,
+                    "exhausted_dimensions": tuple(sorted(exhausted)),
+                },
+            )
+            return result
+
+        def sized_output_bytes(elapsed_ns: int) -> int:
+            """Encode the result as large as it can be once accounting is written."""
+            value = trusted_resolution_result(**result_fields, budget=complete_consumption(elapsed_ns, True))
+            result = len(trusted_resolution_result_to_json(value).encode("utf-8"))
+            return result
+
         frame_diagnostics = bound_frame_diagnostics(
             {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
@@ -3018,7 +3118,7 @@ class ResolutionOrchestrator:
                 "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution["reservations"]],
                 "fusion": decision["report"],
                 "proposition_evidence": evidence_diagnostics,
-                "accounting": accounting_finalization_to_dict(accounting_preview),
+                "accounting": sized_accounting(False),
             }
         )
         resolver_results = tuple(
@@ -3041,9 +3141,11 @@ class ResolutionOrchestrator:
             "evidence_package_available": evidence_package_available,
             "evidence_package": evidence_package,
         }
-        result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-        output_limit = frame.get("budget", {}).get("max_output_bytes", 0)
-        if len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+        # Nothing may fail or grow after the accounting write, so the result is fitted to the
+        # output limit here. Trimming sizes against the widest elapsed time, because the real
+        # one is measured just before the write.
+        if sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+            output_truncated = True
             append_reason("output_truncated")
             frame_diagnostics = bound_frame_diagnostics(
                 {
@@ -3062,13 +3164,7 @@ class ResolutionOrchestrator:
                         "omitted_count": evidence_package["omitted_count"],
                         "output_truncated": True,
                     },
-                    "accounting": {
-                        "candidate_count": len(accounting_preview["candidate_statement_ids"]),
-                        "accepted_present": False,
-                        "candidacy_applied": accounting_preview["candidacy_applied"],
-                        "success_applied": accounting_preview["success_applied"],
-                        "idempotent": accounting_preview["idempotent"],
-                    },
+                    "accounting": sized_accounting(True),
                     "output_truncated": True,
                 }
             )
@@ -3078,16 +3174,11 @@ class ResolutionOrchestrator:
                     "frame_diagnostics": frame_diagnostics,
                 }
             )
-            result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while resolver_results and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+            while resolver_results and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 resolver_results = resolver_results[:-1]
                 result_fields["resolver_results"] = resolver_results
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while (
-                evidence_package.get("records", ())
-                and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit
-            ):
+            while evidence_package.get("records", ()) and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 evidence_package = build_evidence_package(
                     package_source_records,
@@ -3095,17 +3186,15 @@ class ResolutionOrchestrator:
                     max_bytes=package_byte_limit,
                 )
                 result_fields["evidence_package"] = evidence_package
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while response_evidence and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+                sync_evidence_diagnostics()
+            while response_evidence and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 response_evidence = response_evidence[:-1]
                 result_fields["evidence"] = response_evidence
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while response_candidates and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+            while response_candidates and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 response_candidates = response_candidates[:-1]
                 result_fields["response_candidates"] = response_candidates
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
             if outcome == ResolutionOutcome.ANSWER and not response_candidates:
                 outcome = ResolutionOutcome.MISS
                 selected = empty_candidate()
@@ -3120,95 +3209,34 @@ class ResolutionOrchestrator:
                 outcome = ResolutionOutcome.MISS
                 append_reason("no_usable_output_after_truncation")
 
-        evidence_diagnostics.update(
+        sync_evidence_diagnostics()
+        result_fields.update(
             {
-                "available": evidence_package_available,
-                "retained_count": evidence_package["retained_count"],
-                "omitted_count": evidence_package["omitted_count"],
-                "truncated": evidence_package["truncated"],
+                "outcome": outcome,
+                "selected_candidate": selected,
+                "selected_candidate_available": selected_available,
+                "confidence": confidence,
+                "confidence_available": confidence_available,
+                "reason_codes": tuple(reason_codes),
             }
         )
-        visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
-        if isinstance(visible_evidence_diagnostics, dict):
-            for name in ("available", "retained_count", "omitted_count"):
-                if name in visible_evidence_diagnostics:
-                    visible_evidence_diagnostics[name] = evidence_diagnostics.get(name, False)
-
-        run_cooperative_check(cooperative_check)
-        finalization = self.internal_accounting.finalize(request_id, execution["results"], accepted_statement_id)
-        if frame_diagnostics:
-            final_accounting_diagnostics: object
-            if "output_truncated" in reason_codes:
-                final_accounting_diagnostics = {
-                    "candidate_count": len(finalization["candidate_statement_ids"]),
-                    "accepted_present": bool(finalization["accepted_statement_id"]),
-                    "candidacy_applied": finalization["candidacy_applied"],
-                    "success_applied": finalization["success_applied"],
-                    "idempotent": finalization["idempotent"],
-                }
-            else:
-                final_accounting_diagnostics = accounting_finalization_to_dict(finalization)
-            revised_diagnostics = dict(frame_diagnostics)
-            revised_diagnostics["accounting"] = final_accounting_diagnostics
-            frame_diagnostics = bound_frame_diagnostics(revised_diagnostics)
-
-        exhausted = set(execution["consumption"]["exhausted_dimensions"]).union(orchestration_exhausted)
-        if "output_truncated" in reason_codes:
-            exhausted.add("output_bytes")
-        fusion_exhaustion = decision["report"].get("budget_exhausted", "")
-        if fusion_exhaustion == "fusion_memory_exhausted":
-            exhausted.add("working_memory_bytes")
-        package_evidence_bytes = (
-            len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
-        )
-        evidence_count = minimal_evidence_count + evidence_package["retained_count"]
-        evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
-        if evidence_count > frame.get("budget", {})["max_evidence"]:
-            exhausted.add("evidence")
-        if evidence_bytes > frame.get("budget", {})["max_evidence_bytes"]:
-            exhausted.add("evidence_bytes")
-        frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
-        diagnostic_bytes = execution["consumption"]["diagnostic_bytes"] + frame_diagnostic_bytes
-        if diagnostic_bytes > frame.get("budget", {})["max_diagnostic_bytes"]:
-            exhausted.add("diagnostic_bytes")
-        working_memory_bytes = (
-            execution["consumption"]["working_memory_bytes"] + decision["working_memory_bytes"] + evidence_working_memory
-        )
-        if working_memory_bytes > frame.get("budget", {})["max_working_memory_bytes"]:
-            exhausted.add("working_memory_bytes")
         elapsed_ns = execution["consumption"]["elapsed_ns"]
         if frame.get("budget", {})["started_ns"]:
             current_ns = resolver_clock_ns(self.internal_clock_ns)
             if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
                 raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
             elapsed_ns = max(elapsed_ns, max(0, current_ns - frame.get("budget", {})["started_ns"]))
-        consumption = budget_consumption_with_changes(
-            execution["consumption"],
-            {
-                "elapsed_ns": elapsed_ns,
-                "evidence": evidence_count,
-                "evidence_bytes": min(evidence_bytes, frame.get("budget", {})["max_evidence_bytes"]),
-                "output_bytes": 0,
-                "diagnostic_bytes": min(diagnostic_bytes, frame.get("budget", {})["max_diagnostic_bytes"]),
-                "working_memory_bytes": min(working_memory_bytes, frame.get("budget", {})["max_working_memory_bytes"]),
-                "exhausted_dimensions": tuple(sorted(exhausted)),
-            },
-        )
-        result_fields.update(
-            {
-                "outcome": outcome,
-                "selected_candidate": selected,
-                "selected_candidate_available": selected_available,
-                "response_candidates": response_candidates,
-                "evidence": response_evidence,
-                "confidence": confidence,
-                "confidence_available": confidence_available,
-                "reason_codes": tuple(reason_codes),
-                "frame_diagnostics": frame_diagnostics,
-                "resolver_results": resolver_results,
-                "evidence_package": evidence_package,
-            }
-        )
+        if sized_output_bytes(elapsed_ns) > output_limit:
+            raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
+
+        run_cooperative_check(cooperative_check)
+        finalization = self.internal_accounting.finalize(request_id, execution["results"], accepted_statement_id)
+        # The write settles only the accounting flags, each sized at its widest above, so the
+        # result below is no larger than the one just checked.
+        if "accounting" in frame_diagnostics:
+            frame_diagnostics = {**frame_diagnostics, "accounting": accounting_diagnostics(finalization, output_truncated)}
+            result_fields["frame_diagnostics"] = frame_diagnostics
+        consumption = complete_consumption(elapsed_ns, False)
         for _ in range(8):
             result = trusted_resolution_result(**result_fields, budget=consumption)
             encoded_size = len(trusted_resolution_result_to_json(result).encode("utf-8"))
@@ -3231,6 +3259,6 @@ class ResolutionOrchestrator:
             consumption = updated_consumption
         result = trusted_resolution_result(**result_fields, budget=consumption)
         if len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
-            raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
+            raise RuntimeError("resolution result outgrew the output size checked before accounting")
         result = result, finalization
         return result
