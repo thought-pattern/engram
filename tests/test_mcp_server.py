@@ -2,6 +2,7 @@
 
 from asyncio import run as asyncio_run
 from json import loads as json_loads
+from logging import WARNING
 from pathlib import Path
 from sys import executable as sys_executable
 
@@ -11,10 +12,31 @@ from pytest import raises as pytest_raises
 
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import EngramMCPServer, MCPConversationService
+from scripts.run_section3_mcp_conformance import evaluate_turn, run_length_encode_passes
 
 from .test_relation import RelationGraph
 
 REPOSITORY = Path(__file__).resolve().parent.parent
+
+
+def complete_turn_event() -> dict:
+    return {
+        "turn": 1,
+        "input": "hello",
+        "response": "Hello!",
+        "user_id": "Protocol Agent",
+        "source": "pattern",
+        "score": 1.0,
+        "pattern": "HELLO",
+        "captured": [],
+        "dialogue_act": "greeting",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
+        "elapsed_seconds": 0.001,
+        "context_changes": {},
+        "learned_statements": [],
+    }
 
 
 def tool_json(result) -> dict:
@@ -24,6 +46,55 @@ def tool_json(result) -> dict:
     value = json_loads(result.content[0].text)
     assert isinstance(value, dict)
     return value
+
+
+def test_tool_failures_are_logged_in_full_and_clients_see_only_stable_messages(caplog) -> None:
+    secret = "private-internal-failure-detail"
+
+    class FailingService:
+        def send(self, text: str) -> dict:
+            del text
+            raise RuntimeError(secret)
+
+        def inspect(self) -> dict:
+            raise LifecycleError("no active conversation; call engram_start first")
+
+    server = EngramMCPServer(service=FailingService())
+
+    async def exercise() -> tuple:
+        async with Client(server) as client:
+            failed = await client.call_tool("engram_send", {"text": "hello"})
+            refused = await client.call_tool("engram_inspect", {})
+        return failed, refused
+
+    with caplog.at_level(WARNING, logger="engram.mcp_server"):
+        failed, refused = asyncio_run(exercise())
+
+    assert failed.is_error is True
+    assert "internal Engram failure" in failed.content[0].text
+    assert secret not in failed.content[0].text
+    assert refused.is_error is True
+    assert "no active conversation; call engram_start first" in refused.content[0].text
+    assert secret in caplog.text
+
+
+def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:
+    evaluation = evaluate_turn(complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
+
+    assert evaluation.get("passed") is True
+    assert evaluation.get("failed_checks") == []
+    assert evaluation.get("response_bytes") == 6
+    assert "Hello!" not in str(evaluation)
+
+
+def test_turn_evaluation_run_length_encoding_preserves_order() -> None:
+    encoded = run_length_encode_passes([{"passed": True}, {"passed": True}, {"passed": False}, {"passed": True}])
+
+    assert encoded == [
+        {"bit": "1", "turns": 2},
+        {"bit": "0", "turns": 1},
+        {"bit": "1", "turns": 1},
+    ]
 
 
 def test_service_requires_an_explicit_lifecycle() -> None:
@@ -98,6 +169,67 @@ def test_stop_discards_responses_conversations_and_receipts() -> None:
     core, _ = service.require_active()
     assert proposal.get("candidates") == []
     assert core.engram.mutation_receipts.next_sequence == 1
+
+
+def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    service = MCPConversationService()
+
+    service.start(user_id="Alice")
+    service.send("Hello")
+    report = service.finish()
+    service.stop()
+
+    assert report.get("summary", {}).get("exchanges") == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> None:
+    service = MCPConversationService()
+    service.start(user_id="Regulator")
+    learned = service.learn_response(
+        "When is support open?",
+        "Nine to five.",
+        "learn-1",
+        namespace="support",
+    )
+    replay = service.learn_response(
+        "When is support open?",
+        "Nine to five.",
+        "learn-1",
+        namespace="support",
+    )
+    proposal = service.propose(
+        "When is support open?",
+        "proposal-1",
+        namespace="support",
+    )
+    resolved = service.resolve(
+        proposal.get("proposal_id", ""),
+        "accepted",
+        learned.get("statement_id", ""),
+    )
+    retired = service.retire_response(
+        learned.get("statement_id", ""),
+        "support changed",
+        "retire-1",
+    )
+
+    assert replay.get("idempotent") is True
+    assert resolved.get("resolved") is True
+    assert retired.get("retired") is True
+
+
+def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
+    service = MCPConversationService()
+    service.start(user_id="Alice", initial_bot_text="Initial context.")
+    before = service.inspect().get("session", {})
+
+    fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
+    after = service.inspect().get("session", {})
+
+    assert fact.get("source_label") == "research"
+    assert after == before
 
 
 def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
@@ -241,7 +373,7 @@ def test_mcp_query_uses_shared_graph_resolution(tmp_path, monkeypatch) -> None:
         monkeypatch.setattr("engram.core.connect_graph", lambda **internal_kwargs: graph)
         config = tmp_path / "graph.yml"
         config.write_text(
-            "graph:\n  enabled: true\n  deployment_mode: tapestry_managed\n",
+            "graph:\n  enabled: true\n",
             encoding="utf-8",
         )
         async with Client(EngramMCPServer()) as client:

@@ -32,7 +32,7 @@ from engram.conversation_seed import load_conversation_pairs
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns-2026-08-12.json")
+DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns.json")
 PREFERENCE_CONTINUITY_SEED = REPOSITORY / "eval" / "fixtures" / "preference-continuity-mcp-seed.json"
 CONTEXT_RECALL_MESSAGES = (
     "Sushi is good.",
@@ -320,7 +320,6 @@ async def internal_run(
             "reranker_model_version": reranker_status.get("model_version", ""),
             "utility_enabled": utility_active,
             "utility_ready": utility_status.get("ready", False),
-            "utility_contract_version": utility_status.get("contract_version", ""),
             "utility_plugins": utility_status.get("plugins", {}),
         },
         "server": {"name": server_name, "version": server_version},

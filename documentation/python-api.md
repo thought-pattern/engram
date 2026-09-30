@@ -1,8 +1,7 @@
-# Engram Python API v1
+# Engram Python API
 
 **Status:** Current transport-neutral mapping contract
 **Owner:** Engram project
-**Result schema:** `ResolutionResult` schema version 1
 
 ## Boundary
 
@@ -21,6 +20,10 @@ stop; finish remains report-only. A failed initialization restores the prior
 session before propagating its error. Named identities retain their exact
 nonblank labels and reusable context; shared facts and accepted responses are
 not deleted by conversation teardown.
+Starting `"0"` returns a `conversation_token`; `chat`, `inspect_conversation`,
+`finish_conversation`, and `stop_conversation` for `"0"` must pass it as
+`conversation_token` or raise `ConversationOwnershipError`. An unknown-user
+conversation idle for 300 seconds no longer blocks a new start.
 
 ## Process lifetime and static startup data
 
@@ -86,7 +89,7 @@ until the driver returns. Graph I/O isolation keeps unrelated local requests and
 status available during that call.
 
 `resolve_request` also applies the process configuration's exact namespace rollout
-selection. The policy version and selected mode participate in retry identity.
+selection. The selected mode participates in retry identity.
 When graph access is enabled, `structured_graph` remains in every resolver plan,
 including caller-supplied plans and every rollout mode. `disabled` executes
 resolution and suppresses its result to `MISS`; `shadow` executes resolution while
@@ -98,7 +101,7 @@ graph through resolver selection; graph participation is disabled only by
 `graph.enabled: false`.
 The configured graph resolver runs before local exact-answer short-circuiting and
 uses the evaluation time captured by the shared request clock.
-`core.status()["rollout"]` reports the policy version, default mode, override count,
+`core.status()["rollout"]` reports the default mode, override count,
 and fixed per-mode counts aggregated across namespaces.
 
 ## Result access
@@ -124,8 +127,8 @@ proposition_records = result["evidence_package"]["records"]
 ```
 
 `resolution_result_to_dict`, `resolution_result_to_json`, and their strict
-decoders preserve schema version 1, concrete absence, exact accepted text,
-bounded evidence, and unsupported-version rejection. Full Proposition records occur
+decoders preserve concrete absence, exact accepted text, and
+bounded evidence. Full Proposition records occur
 inside `evidence_package`; fusion authorizes an Engram answer.
 
 The compact previous query frame supplies session context; the repository owns
@@ -174,16 +177,21 @@ created. Python, gRPC and MCP use this same core operation.
 
 ## Operational telemetry
 
-`EngramCore.operational_telemetry()` returns the fixed-cardinality schema-version 1
-process aggregate. `core.status()["telemetry"]` returns the same information alongside
+`EngramCore.operational_telemetry()` returns the fixed-cardinality process
+aggregate. `core.status()["telemetry"]` returns the same information alongside
 readiness. It includes outcomes, fixed resolver contributions and states, observed
 latency buckets, budget/resource consumption, fixed Regulator outcomes, and graph
 consultation/hit/miss/failure counters through fixed aggregate keys.
 
 ## Verification
 
-- `tests/test_service.py` covers the shared core's public request, response,
-  restart, cancellation, and close lifecycle.
+- `tests/test_service.py` covers mapping-only identity and budget absence,
+  authoritative identity input, exact result fields, keyed candidate feedback,
+  malformed boundary values, and the shared core's restart and close lifecycle.
+- `tests/test_resolution_contracts.py` covers deterministic codecs, exact
+  fields, schema rejection, concrete absence, and outcome invariants.
+- `tests/test_resolvers.py` covers response candidates, full Proposition packages,
+  accounting, bounded execution, cancellation, and fail-soft dependency behavior.
 - `tests/test_grpc_server.py` and `tests/test_mcp_server.py` cover the public
   transport adapters and their process lifecycle.
 - `tests/test_service.py` proves transient cancellation and identical request-ID retry.

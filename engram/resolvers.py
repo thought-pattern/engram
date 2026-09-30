@@ -1,7 +1,8 @@
 """Pure resolver adapters, bounded execution, accounting, and baseline policy."""
 
 from hashlib import sha256 as hashlib_sha256
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
+from json import dumps as json_dumps
+from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
 from engram.artifacts import LifecycleState
@@ -17,7 +18,6 @@ from engram.constants import (
     ACCOUNTING_FINALIZATION_FIELDS,
     EXACT_RESOLVER_COST_CLASS,
     EXACT_RESOLVER_NAME,
-    EXECUTION_REPORT_FIELDS,
     MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS,
     MAX_PLAN_RESOLVERS,
     MAX_REASON_CODE_BYTES,
@@ -29,9 +29,7 @@ from engram.constants import (
     RESOLUTION_PLAN_ENTRY_FIELDS,
     RESOLUTION_PLAN_FIELDS,
     RESOLVER_BUDGET_FIELDS,
-    RESOLVER_BUDGET_SCHEMA_VERSION,
     RESOLVER_RESERVATION_FIELDS,
-    RESOLVER_RESERVATION_SCHEMA_VERSION,
     SPARSE_RESOLVER_COST_CLASS,
     SPARSE_RESOLVER_NAME,
     STANDALONE_SEMANTIC_RESOLVER_COST_CLASS,
@@ -42,7 +40,7 @@ from engram.constants import (
     SUPPORT_SEMANTIC_RESOLVER_NAME,
     UTILITY_RESOLVER_COST_CLASS,
     UTILITY_RESOLVER_NAME,
-    UTILITY_RESOLVER_VERSION,
+    UTILITY_RESOLVER_PRODUCER,
     CanonicalResolutionStatus,
     CompositionReason,
     ExactLookupOutcome,
@@ -91,7 +89,6 @@ from engram.resolution import (
     evidence_reference_to_dict,
     feature_set,
     proposition_evidence_path_step,
-    proposition_evidence_record_to_dict,
     proposition_evidence_record_with_changes,
     resolver_result,
     resolver_result_to_dict,
@@ -109,6 +106,8 @@ from engram.resolution import (
     validate_resolver_result,
 )
 from engram.utilities import UtilityRegistry
+
+logger = logging_getLogger(__name__)
 
 
 def resolver_contract(value: object) -> tuple[str, CostClass, object, object]:
@@ -171,13 +170,8 @@ def resolver_budget(
     max_output_bytes: object,
     max_diagnostic_bytes: object,
     max_working_memory_bytes: object,
-    schema_version: object = RESOLVER_BUDGET_SCHEMA_VERSION,
 ) -> dict:
     """Build one read-only bounded lease passed to a resolver."""
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
-        raise InvalidRequestError("resolver budget schema_version must be an integer")
-    if schema_version != RESOLVER_BUDGET_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolver budget schema_version: {schema_version}")
     raw_values = {
         "max_candidates": max_candidates,
         "max_graph_rows": max_graph_rows,
@@ -194,7 +188,6 @@ def resolver_budget(
             raise InvalidRequestError(f"resolver budget {name} must be a nonnegative integer")
         values[name] = raw
     result: dict = {
-        "schema_version": schema_version,
         "max_candidates": values.get("max_candidates", 0),
         "max_graph_rows": values.get("max_graph_rows", 0),
         "max_vector_results": values.get("max_vector_results", 0),
@@ -211,7 +204,6 @@ def validate_resolver_budget(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLVER_BUDGET_FIELDS:
         raise InvalidRequestError("ResolverBudget has invalid fields")
     result = resolver_budget(
-        schema_version=value["schema_version"],
         max_candidates=value["max_candidates"],
         max_graph_rows=value["max_graph_rows"],
         max_vector_results=value["max_vector_results"],
@@ -247,33 +239,13 @@ def resolver_budget_from_dict(value: object) -> dict:
     return result
 
 
-def resolver_budget_to_json(value: object) -> str:
-    payload = resolver_budget_to_dict(value)
-    result = json_dumps(payload, sort_keys=True, separators=(",", ":"))
-    return result
-
-
-def resolver_budget_from_json(value: str) -> dict:
-    try:
-        decoded = json_loads(value)
-    except (TypeError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("ResolverBudget JSON must be valid JSON") from error
-    result = resolver_budget_from_dict(decoded)
-    return result
-
-
 def resolver_reservation(
     resolver: object,
     order: object,
     lease: object,
     consumption: object,
-    schema_version: object = RESOLVER_RESERVATION_SCHEMA_VERSION,
 ) -> dict:
     """Build one inspectable lease and resulting consumption."""
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
-        raise InvalidRequestError("ResolverReservation schema_version must be an integer")
-    if schema_version != RESOLVER_RESERVATION_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported resolver reservation schema_version: {schema_version}")
     if not isinstance(resolver, str) or not resolver or len(resolver.encode("utf-8")) > MAX_RESOLVER_NAME_BYTES:
         raise InvalidRequestError("reservation resolver must be a bounded non-empty string")
     if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order < MAX_PLAN_RESOLVERS:
@@ -284,7 +256,6 @@ def resolver_reservation(
     except InvalidRequestError as error:
         raise InvalidRequestError("reservation lease and consumption have invalid types") from error
     result: dict = {
-        "schema_version": schema_version,
         "resolver": resolver,
         "order": order,
         "lease": validated_lease,
@@ -301,25 +272,13 @@ def validate_resolver_reservation(value: object) -> dict:
         value["order"],
         value["lease"],
         value["consumption"],
-        value["schema_version"],
     )
-    return result
-
-
-def resolver_reservation_with_changes(value: object, changes: object) -> dict:
-    current = validate_resolver_reservation(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(RESOLVER_RESERVATION_FIELDS):
-        raise InvalidRequestError("resolver reservation changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_resolver_reservation(updated)
     return result
 
 
 def resolver_reservation_to_dict(value: object) -> dict[str, object]:
     current = validate_resolver_reservation(value)
     result = {
-        "schema_version": current["schema_version"],
         "resolver": current["resolver"],
         "order": current["order"],
         "lease": resolver_budget_to_dict(current["lease"]),
@@ -340,23 +299,7 @@ def resolver_reservation_from_dict(value: object) -> dict:
         value["order"],
         resolver_budget_from_dict(lease),
         budget_consumption_from_dict(consumption),
-        value["schema_version"],
     )
-    return result
-
-
-def resolver_reservation_to_json(value: object) -> str:
-    payload = resolver_reservation_to_dict(value)
-    result = json_dumps(payload, sort_keys=True, separators=(",", ":"))
-    return result
-
-
-def resolver_reservation_from_json(value: str) -> dict:
-    try:
-        decoded = json_loads(value)
-    except (TypeError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("ResolverReservation JSON must be valid JSON") from error
-    result = resolver_reservation_from_dict(decoded)
     return result
 
 
@@ -395,12 +338,6 @@ def validate_resolution_plan_entry(value: object) -> dict:
         value["available"],
         value["reason_code"],
     )
-    return result
-
-
-def resolution_plan_entry_to_dict(value: object) -> dict[str, object]:
-    current = validate_resolution_plan_entry(value)
-    result = trusted_resolution_plan_entry_to_dict(current)
     return result
 
 
@@ -445,12 +382,6 @@ def validate_resolution_plan(value: object) -> dict:
     return result
 
 
-def resolution_plan_to_dict(value: object) -> dict[str, object]:
-    current = validate_resolution_plan(value)
-    result = trusted_resolution_plan_to_dict(current)
-    return result
-
-
 def trusted_resolution_plan_to_dict(current: dict) -> dict[str, object]:
     """Serialize a plan already produced or validated by this module."""
     entries = [trusted_resolution_plan_entry_to_dict(entry) for entry in current.get("entries", ())]
@@ -481,6 +412,17 @@ def json_size(value: object) -> int:
             allow_nan=False,
         ).encode("utf-8")
     )
+    return result
+
+
+def json_array_bytes(item_bytes: int, count: int) -> int:
+    """Return ``json_size`` of a list from its items' total size, or 0 for an empty list.
+
+    Compact JSON adds two brackets and one comma between items, so trimming
+    can keep a running total instead of re-encoding the remaining list.
+    ``json_array_size`` is the same rule over a list of item sizes.
+    """
+    result = 2 + item_bytes + count - 1 if count else 0
     return result
 
 
@@ -560,6 +502,39 @@ def exhausted_result(name: str, dimensions: tuple[str, ...]) -> dict:
 def memory_exhausted_result(name: str) -> dict:
     result = exhausted_result(name, ("working_memory_bytes",))
     return result
+
+
+COMPOSITION_NOT_APPLICABLE_REASONS = frozenset(
+    {
+        CompositionReason.IDENTITY_MISS.value,
+        CompositionReason.UNSUPPORTED_QUERY.value,
+        CompositionReason.UNDERCONSTRAINED.value,
+    }
+)
+
+
+def composition_not_applicable(result: dict) -> bool:
+    """Return whether a composition result only says the request is not two-hop.
+
+    The subject resolved, but no two-predicate plan compiled. A subject miss
+    or ambiguity is a real answer from the graph and is not retried.
+    """
+    diagnostics = result.get("diagnostics", {})
+    selected = diagnostics.get("entity_status", "") == CanonicalResolutionStatus.SELECTED.value
+    outcome = result.get("reason_code", "") in COMPOSITION_NOT_APPLICABLE_REASONS and selected
+    return outcome
+
+
+def with_prior_graph_rows(result: dict, prior_rows: int) -> dict:
+    """Add graph rows spent by an earlier path of the same resolver call."""
+    if not prior_rows:
+        return result
+    consumption = trusted_budget_consumption_with_changes(
+        result["consumption"],
+        {"graph_rows": result["consumption"]["graph_rows"] + prior_rows},
+    )
+    updated = trusted_resolver_result_with_changes(result, {"consumption": consumption})
+    return updated
 
 
 class ExactResolver:
@@ -700,7 +675,6 @@ class UtilityResolver:
         evaluation = self.internal_registry.evaluate(frame.get("original_text", ""))
         diagnostics = {
             "plugin_name": evaluation["plugin_name"],
-            "plugin_version": evaluation["plugin_version"],
             "error_code": evaluation["error_code"],
             "operations": evaluation["operations"],
         }
@@ -731,9 +705,7 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        digest = hashlib_sha256(
-            f"{evaluation['plugin_name']}:{evaluation['plugin_version']}:{evaluation['canonical_input']}".encode()
-        ).hexdigest()
+        digest = hashlib_sha256(f"{evaluation['plugin_name']}:{evaluation['canonical_input']}".encode()).hexdigest()
         statement_id = f"utility:{evaluation['plugin_name']}:sha256:{digest}"
         current = resolution_candidate(
             candidate_id=internal_candidate_id(CandidateSource.UTILITY, statement_id, frame.get("diagnostic_id", "")),
@@ -745,10 +717,8 @@ class UtilityResolver:
             scope=frame.get("scope", {}),
             lifecycle=LifecycleState.ACTIVE,
             provenance={
-                "producer": UTILITY_RESOLVER_VERSION,
-                "contract_version": evaluation["contract_version"],
+                "producer": UTILITY_RESOLVER_PRODUCER,
                 "plugin_name": evaluation["plugin_name"],
-                "plugin_version": evaluation["plugin_version"],
                 "canonical_input": evaluation["canonical_input"],
                 "learnable": False,
             },
@@ -1211,14 +1181,16 @@ class StructuredGraphResolver:
             )
             return result
 
+        checked_frame = validate_query_frame(frame)
         execution = execute_composition_plan(
             plan,
             query,
-            lambda projection: self.internal_eligibility_evaluator.evaluate(projection, frame),
+            lambda projection: self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True),
             lambda projection: self.internal_eligibility_evaluator.revalidate(
                 projection,
-                frame,
+                checked_frame,
                 self.internal_engram.current_proposition_projection,
+                trusted_frame=True,
             ),
             check,
         )
@@ -1228,7 +1200,7 @@ class StructuredGraphResolver:
         for path in execution["complete_paths"]:
             for entry in path:
                 projection = entry["proposition"]["projection"]
-                if not projection["supplied_trust_available"] or not projection["supplied_trust_version_available"]:
+                if not projection["supplied_trust_available"]:
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.TRUST_UNAVAILABLE.value)
                 if entry["proposition"]["predicate_cardinality"].value == "UNKNOWN":
@@ -1254,7 +1226,9 @@ class StructuredGraphResolver:
             if not path:
                 continue
             terminal = path[-1]
-            base = proposition_evidence_record(terminal["proposition"]["projection"], terminal["decision"], frame, self.name)
+            base = proposition_evidence_record(
+                terminal["proposition"]["projection"], terminal["decision"], frame, self.name, trusted=True
+            )
             aggregation_inputs = plan["aggregation_inputs"]
             path_steps = tuple(
                 proposition_evidence_path_step(
@@ -1287,7 +1261,6 @@ class StructuredGraphResolver:
                 proposition_evidence_record_with_changes(
                     base,
                     {
-                        "path_kind": "composed",
                         "path": path_steps,
                         "selection_reasons": tuple(sorted(reasons)),
                     },
@@ -1309,13 +1282,7 @@ class StructuredGraphResolver:
                 )
                 for entry in selected_path
             )
-            trust_chain = tuple(
-                (
-                    entry["proposition"]["projection"]["supplied_trust"],
-                    entry["proposition"]["projection"]["supplied_trust_version"],
-                )
-                for entry in selected_path
-            )
+            trust_chain = tuple(entry["proposition"]["projection"]["supplied_trust"] for entry in selected_path)
             references = tuple(
                 evidence_reference(
                     evidence_id=proposition_id,
@@ -1364,13 +1331,16 @@ class StructuredGraphResolver:
             )
 
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
         while candidates and output_bytes > budget.get("max_output_bytes", 0):
@@ -1511,10 +1481,11 @@ class StructuredGraphResolver:
         retained: list[tuple[dict, dict, float, bool]] = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
+        checked_frame = validate_query_frame(frame)
         for item in results:
             check()
             projection = item["projection"]
-            initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+            initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
             if not initial["eligible"]:
                 reason = initial["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
@@ -1522,7 +1493,7 @@ class StructuredGraphResolver:
             if graph_rows >= budget.get("max_graph_rows", 0):
                 break
             decision = self.internal_eligibility_evaluator.revalidate(
-                projection, frame, self.internal_engram.current_proposition_projection
+                projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
             graph_rows += 1
             if decision["revalidated"]:
@@ -1541,7 +1512,7 @@ class StructuredGraphResolver:
         records = []
         ambiguous_result = not selection["direct_answer"]
         for item, decision, type_match, type_match_available in retained:
-            base = proposition_evidence_record(item["projection"], decision, frame, self.name)
+            base = proposition_evidence_record(item["projection"], decision, frame, self.name, trusted=True)
             values = dict(base["features"]["values"])
             values.update({"entity_match": subject["score"], "relation_match": predicate["score"]})
             unavailable = set(base["features"]["unavailable"])
@@ -1614,24 +1585,24 @@ class StructuredGraphResolver:
                             "predicate_cardinality": selection["cardinality"].value,
                             "selection_reason": selection["reason"].value,
                             "supplied_trust": item["projection"]["supplied_trust"],
-                            "supplied_trust_version": item["projection"]["supplied_trust_version"],
                         },
                         diagnostics={
                             "template_id": plan["template_id"].value,
                             "ranking_proposition_ids": selection["ranking_proposition_ids"],
-                            "trust_version": selection["trust_version"],
-                            "trust_version_available": selection["trust_version_available"],
                         },
                     )
                 )
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
         while candidates and output_bytes > budget.get("max_output_bytes", 0):
@@ -1670,8 +1641,6 @@ class StructuredGraphResolver:
                 "predicate_cardinality": selection["cardinality"].value,
                 "conflict_proposition_ids": selection["conflict_proposition_ids"],
                 "ranking_proposition_ids": selection["ranking_proposition_ids"],
-                "trust_version": selection["trust_version"],
-                "trust_version_available": selection["trust_version_available"],
             },
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -1716,14 +1685,24 @@ class StructuredGraphResolver:
             result = exhausted_result(self.name, dimensions)
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
+        composition_rows = 0
         try:
             composition_result = self.internal_composition_result(frame, budget, started, cooperative_check)
-            if composition_result:
+            if composition_result and not composition_not_applicable(composition_result[0]):
                 result = composition_result[0]
                 return result
+            if composition_result:
+                # "of" and "'s" also appear in one-hop questions. When the
+                # subject resolved but no two-hop path compiled, the one-hop
+                # and structured paths answer from the rows still unspent.
+                composition_rows = composition_result[0]["consumption"]["graph_rows"]
+                budget = resolver_budget_with_changes(
+                    budget,
+                    {"max_graph_rows": max(0, budget.get("max_graph_rows", 0) - composition_rows)},
+                )
             relation_result = self.internal_relation_result(frame, budget, started, cooperative_check)
             if relation_result:
-                result = relation_result[0]
+                result = with_prior_graph_rows(relation_result[0], composition_rows)
                 return result
             projections = self.internal_engram.structured_proposition_projections(
                 frame.get("resolved_text", ""),
@@ -1737,15 +1716,16 @@ class StructuredGraphResolver:
         records = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
+        checked_frame = validate_query_frame(frame)
         for projection in projections:
             run_cooperative_check(cooperative_check)
-            initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+            initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
             if not initial["eligible"]:
                 reason = initial["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             decision = self.internal_eligibility_evaluator.revalidate(
-                projection, frame, self.internal_engram.current_proposition_projection
+                projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
             if decision["revalidated"]:
                 revalidation_rows += 1
@@ -1753,19 +1733,23 @@ class StructuredGraphResolver:
                 reason = decision["reason"].value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
-            records.append(proposition_evidence_record(projection, decision, frame, self.name))
+            records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
         records.sort(key=lambda record: record["proposition_id"])
         exhausted = set()
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_size([proposition_evidence_record_to_dict(record) for record in records]) if records else 0
+            result = json_array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         while records and record_bytes() > budget.get("max_output_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("output_bytes")
         working_memory = json_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
         if working_memory > budget.get("max_working_memory_bytes", 0):
@@ -1785,7 +1769,7 @@ class StructuredGraphResolver:
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
-                graph_rows=len(projections) + revalidation_rows,
+                graph_rows=composition_rows + len(projections) + revalidation_rows,
                 evidence=len(records),
                 evidence_bytes=evidence_bytes,
                 output_bytes=evidence_bytes,
@@ -1957,9 +1941,10 @@ class SupportSemanticResolver:
         exhausted = set()
         remaining_evidence = max(0, budget.get("max_evidence", 0) - evidence_count)
         if proposition_capacity and remaining_evidence:
+            checked_frame = validate_query_frame(frame)
             for projection in projections:
                 run_cooperative_check(cooperative_check)
-                initial = self.internal_eligibility_evaluator.evaluate(projection, frame)
+                initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
                 if not initial["eligible"]:
                     reason = initial["reason"].value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
@@ -1969,7 +1954,7 @@ class SupportSemanticResolver:
                     break
                 revalidation_attempts += 1
                 decision = self.internal_eligibility_evaluator.revalidate(
-                    projection, frame, self.internal_engram.current_proposition_projection
+                    projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
                 )
                 if decision["revalidated"]:
                     revalidation_rows += 1
@@ -1977,52 +1962,51 @@ class SupportSemanticResolver:
                     reason = decision["reason"].value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
-                records.append(proposition_evidence_record(projection, decision, frame, self.name))
+                records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
                 if len(records) >= remaining_evidence:
                     break
         records.sort(key=lambda record: record["proposition_id"])
 
-        def evidence_values() -> list[dict[str, object]]:
-            result = [evidence_reference_to_dict(reference) for candidate in candidates for reference in candidate["evidence"]] + [
-                proposition_evidence_record_to_dict(record) for record in records
-            ]
-            return result
+        # Candidates are fixed while records are trimmed, so their sizes are
+        # computed once and each record's size is subtracted as it goes.
+        reference_sizes = [
+            json_size(evidence_reference_to_dict(reference)) for candidate in candidates for reference in candidate["evidence"]
+        ]
+        candidate_sizes = [json_size(candidate_to_dict(candidate)) for candidate in candidates]
+        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_total = sum(record_sizes)
 
         def evidence_bytes() -> int:
-            values = evidence_values()
-            result = json_size(values) if values else 0
+            result = json_array_bytes(sum(reference_sizes) + record_total, len(reference_sizes) + len(records))
             return result
 
         def output_bytes() -> int:
-            values = [candidate_to_dict(candidate) for candidate in candidates] + [
-                proposition_evidence_record_to_dict(record) for record in records
-            ]
-            result = json_size(values) if values else 0
+            result = json_array_bytes(sum(candidate_sizes) + record_total, len(candidate_sizes) + len(records))
             return result
 
         while records and evidence_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
         while records and output_bytes() > budget.get("max_output_bytes", 0):
             records.pop()
+            record_total -= record_sizes.pop()
             exhausted.add("output_bytes")
-        working_memory = (
-            working_size(graph_rows)
-            + working_size(projections)
-            + working_size(matches)
-            + working_size(candidates)
-            + working_size(records)
+        fixed_working_memory = (
+            working_size(graph_rows) + working_size(projections) + working_size(matches) + working_size(candidates)
         )
+        # working_size counts a shared object once, in list order, so each
+        # record's share is fixed by the records before it and dropping from
+        # the end subtracts exactly that share.
+        record_visited = {id(records)}
+        record_shares = [working_size(record, record_visited) for record in records]
+        record_working = 64 + sum(record_shares)
+        working_memory = fixed_working_memory + record_working
         while records and working_memory > budget.get("max_working_memory_bytes", 0):
             records.pop()
+            record_working -= record_shares.pop()
             exhausted.add("working_memory_bytes")
-            working_memory = (
-                working_size(graph_rows)
-                + working_size(projections)
-                + working_size(matches)
-                + working_size(candidates)
-                + working_size(records)
-            )
+            working_memory = fixed_working_memory + record_working
         if working_memory > budget.get("max_working_memory_bytes", 0):
             result = memory_exhausted_result(self.name)
             return result
@@ -2096,7 +2080,8 @@ class ResolverRegistry:
             availability_failed = False
             try:
                 available = bool(selected and cost_allowed and resolver_available(available_operation, frame))
-            except Exception:
+            except Exception as error:
+                logger.warning("Resolver %s availability check failed", name, exc_info=error)
                 available = False
                 availability_failed = True
             reason = ""
@@ -2115,34 +2100,6 @@ class ResolverRegistry:
         return result
 
 
-def execution_report(
-    results: object,
-    consumption: object,
-    exact_short_circuited: object,
-    reservations: object,
-) -> dict:
-    """Build the raw executor output consumed by orchestration."""
-    if not isinstance(results, tuple):
-        raise InvalidRequestError("execution results must be a tuple of ResolverResult values")
-    if not isinstance(exact_short_circuited, bool):
-        raise InvalidRequestError("execution exact_short_circuited must be a boolean")
-    if not isinstance(reservations, tuple):
-        raise InvalidRequestError("execution reservations must be a tuple")
-    try:
-        validated_results = tuple(validate_resolver_result(value) for value in results)
-        validated_consumption = validate_budget_consumption(consumption)
-        validated_reservations = tuple(validate_resolver_reservation(value) for value in reservations)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("execution budget records are malformed") from error
-    result: dict = {
-        "results": validated_results,
-        "consumption": validated_consumption,
-        "exact_short_circuited": exact_short_circuited,
-        "reservations": validated_reservations,
-    }
-    return result
-
-
 def trusted_execution_report(
     results: tuple[dict, ...],
     consumption: dict,
@@ -2156,47 +2113,6 @@ def trusted_execution_report(
         "exact_short_circuited": exact_short_circuited,
         "reservations": reservations,
     }
-    return result
-
-
-def validate_execution_report(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != EXECUTION_REPORT_FIELDS:
-        raise InvalidRequestError("ExecutionReport has invalid fields")
-    result = execution_report(
-        value["results"],
-        value["consumption"],
-        value["exact_short_circuited"],
-        value["reservations"],
-    )
-    return result
-
-
-def execution_report_with_changes(value: object, changes: object) -> dict:
-    current = validate_execution_report(value)
-    if not isinstance(changes, dict) or not set(changes).issubset(EXECUTION_REPORT_FIELDS):
-        raise InvalidRequestError("execution report changes contain invalid fields")
-    updated: dict[str, object] = dict(current)
-    updated.update(changes)
-    result = validate_execution_report(updated)
-    return result
-
-
-def execution_report_canonical_proposition_evidence(value: object, cooperative_check=()) -> tuple:
-    """Return deterministic Proposition-only evidence without creating candidacy or accounting."""
-    current = validate_execution_report(value)
-    if cooperative_check != () and not callable(cooperative_check):
-        raise InvalidRequestError("cooperative_check must be callable")
-    records = tuple(
-        record
-        for resolver_result in current["results"]
-        if resolver_result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
-        for record in resolver_result["proposition_evidence"]
-    )
-    result = (
-        canonicalize_proposition_evidence(records, cooperative_check)
-        if cooperative_check
-        else canonicalize_proposition_evidence(records)
-    )
     return result
 
 
@@ -2361,14 +2277,6 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
     return result
 
 
-def bound_resolver_result(result: dict, lease: dict) -> dict:
-    """Validate a caller-supplied result and enforce one resolver lease."""
-    current = validate_resolver_result(result)
-    current_lease = validate_resolver_budget(lease)
-    bounded = bound_validated_resolver_result(current, current_lease)
-    return bounded
-
-
 class ResolverExecutor:
     """Sequential bounded fail-soft executor for one deterministic plan."""
 
@@ -2446,6 +2354,7 @@ class ResolverExecutor:
             except ResolutionCancelledError:
                 raise
             except Exception as error:
+                logger.warning("Resolver %s failed", resolver_name, exc_info=error)
                 finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
                 result = resolver_result(
@@ -2461,6 +2370,7 @@ class ResolverExecutor:
                 try:
                     current_raw = validate_resolver_result(raw)
                 except InvalidRequestError as error:
+                    logger.warning("Resolver %s returned an invalid result", resolver_name, exc_info=error)
                     result = resolver_result(
                         resolver=resolver_name,
                         state=ResolverState.FAILED,
@@ -2556,6 +2466,21 @@ def accounting_finalization_to_dict(value: object) -> dict[str, object]:
     return result
 
 
+def accounting_diagnostics(finalization: dict, compact: bool) -> dict[str, object]:
+    """Report accounting in resolution diagnostics; the compact form omits statement ids."""
+    if compact:
+        result = {
+            "candidate_count": len(finalization["candidate_statement_ids"]),
+            "accepted_present": bool(finalization["accepted_statement_id"]),
+            "candidacy_applied": finalization["candidacy_applied"],
+            "success_applied": finalization["success_applied"],
+            "idempotent": finalization["idempotent"],
+        }
+    else:
+        result = accounting_finalization_to_dict(finalization)
+    return result
+
+
 def accounting_signature(results: tuple[dict, ...], accepted_statement_id: str) -> str:
     """Return the retry identity for one stable accounting observation set."""
     stable_results = []
@@ -2647,8 +2572,8 @@ class ResolutionAccountingFinalizer:
                 for observation in resolver_value.get("accounting", ())
             }
             candidate_ids = tuple(sorted(observations))
-            repository_ids = set(self.internal_engram.response_repository.snapshot().get("artifacts", {}))
-            missing_ids = tuple(statement_id for statement_id in candidate_ids if statement_id not in repository_ids)
+            repository = self.internal_engram.response_repository
+            missing_ids = tuple(statement_id for statement_id in candidate_ids if not repository.has_artifact(statement_id))
             if missing_ids:
                 raise InvalidRequestError("observed accepted response no longer exists")
             if accepted_statement_id and accepted_statement_id not in observations:
@@ -2776,7 +2701,6 @@ class ResolutionOrchestrator:
         evidence_working_memory = 0
         orchestration_exhausted = set()
         evidence_diagnostics: dict[str, object] = {
-            "policy_version": self.internal_evidence_policy["policy_version"],
             "available": False,
             "input_count": 0,
             "normalized_count": 0,
@@ -2896,13 +2820,12 @@ class ResolutionOrchestrator:
         preview_ids = tuple(
             sorted({observation["statement_id"] for result in execution["results"] for observation in result["accounting"]})
         )
-        accounting_preview = accounting_finalization(
-            preview_ids,
-            accepted_statement_id,
-            False,
-            False,
-            False,
+        budget_limits = frame.get("budget", {})
+        output_limit = budget_limits.get("max_output_bytes", 0)
+        working_memory_bytes = (
+            execution["consumption"]["working_memory_bytes"] + decision["working_memory_bytes"] + evidence_working_memory
         )
+        output_truncated = False
         evidence_diagnostics.update(
             {
                 "available": evidence_package_available,
@@ -2924,7 +2847,6 @@ class ResolutionOrchestrator:
             compact = {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
                 "proposition_evidence": {
-                    "policy_version": self.internal_evidence_policy["policy_version"],
                     "available": evidence_package_available,
                     "input_count": evidence_diagnostics.get("input_count", 0),
                     "included_count": evidence_diagnostics.get("included_count", 0),
@@ -2939,6 +2861,92 @@ class ResolutionOrchestrator:
             result = marker if json_size(marker) <= remaining else {}
             return result
 
+        def sized_accounting(compact: bool) -> dict[str, object]:
+            """Report accounting as wide as the accounting write can make it.
+
+            The write always applies candidacy and decides only the success and replay
+            flags. JSON ``false`` is wider than ``true``, so those flags are sized as false,
+            and the compact form is sized as if nothing were accepted.
+            """
+            finalization = accounting_finalization(
+                preview_ids,
+                "" if compact else accepted_statement_id,
+                True,
+                False,
+                False,
+            )
+            result = accounting_diagnostics(finalization, compact)
+            return result
+
+        def sync_evidence_diagnostics() -> None:
+            evidence_diagnostics.update(
+                {
+                    "available": evidence_package_available,
+                    "retained_count": evidence_package["retained_count"],
+                    "omitted_count": evidence_package["omitted_count"],
+                    "truncated": evidence_package["truncated"],
+                }
+            )
+            visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
+            if isinstance(visible_evidence_diagnostics, dict):
+                for name in ("available", "retained_count", "omitted_count"):
+                    if name in visible_evidence_diagnostics:
+                        visible_evidence_diagnostics[name] = evidence_diagnostics.get(name, False)
+
+        def complete_consumption(elapsed_ns: int, reserve: bool) -> dict:
+            """Return the result's resource use for its current diagnostics and evidence package.
+
+            With ``reserve``, the values settled only after the accounting write are sized at
+            their widest: output bytes at the output limit and working memory at its limit.
+            """
+            exhausted = set(execution["consumption"]["exhausted_dimensions"]).union(orchestration_exhausted)
+            if output_truncated:
+                exhausted.add("output_bytes")
+            if decision["report"].get("budget_exhausted", "") == "fusion_memory_exhausted":
+                exhausted.add("working_memory_bytes")
+            package_evidence_bytes = (
+                len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
+            )
+            evidence_count = minimal_evidence_count + evidence_package["retained_count"]
+            evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
+            if evidence_count > budget_limits["max_evidence"]:
+                exhausted.add("evidence")
+            if evidence_bytes > budget_limits["max_evidence_bytes"]:
+                exhausted.add("evidence_bytes")
+            frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
+            diagnostic_bytes = execution["consumption"]["diagnostic_bytes"] + frame_diagnostic_bytes
+            if diagnostic_bytes > budget_limits["max_diagnostic_bytes"]:
+                exhausted.add("diagnostic_bytes")
+            if working_memory_bytes > budget_limits["max_working_memory_bytes"]:
+                exhausted.add("working_memory_bytes")
+            if reserve:
+                output_bytes = output_limit
+                reported_working_memory = budget_limits["max_working_memory_bytes"]
+                if output_limit > budget_limits["max_working_memory_bytes"]:
+                    exhausted.add("working_memory_bytes")
+            else:
+                output_bytes = 0
+                reported_working_memory = min(working_memory_bytes, budget_limits["max_working_memory_bytes"])
+            result = budget_consumption_with_changes(
+                execution["consumption"],
+                {
+                    "elapsed_ns": elapsed_ns,
+                    "evidence": evidence_count,
+                    "evidence_bytes": min(evidence_bytes, budget_limits["max_evidence_bytes"]),
+                    "output_bytes": output_bytes,
+                    "diagnostic_bytes": min(diagnostic_bytes, budget_limits["max_diagnostic_bytes"]),
+                    "working_memory_bytes": reported_working_memory,
+                    "exhausted_dimensions": tuple(sorted(exhausted)),
+                },
+            )
+            return result
+
+        def sized_output_bytes(elapsed_ns: int) -> int:
+            """Encode the result as large as it can be once accounting is written."""
+            value = trusted_resolution_result(**result_fields, budget=complete_consumption(elapsed_ns, True))
+            result = len(trusted_resolution_result_to_json(value).encode("utf-8"))
+            return result
+
         frame_diagnostics = bound_frame_diagnostics(
             {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
@@ -2946,7 +2954,7 @@ class ResolutionOrchestrator:
                 "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution["reservations"]],
                 "fusion": decision["report"],
                 "proposition_evidence": evidence_diagnostics,
-                "accounting": accounting_finalization_to_dict(accounting_preview),
+                "accounting": sized_accounting(False),
             }
         )
         resolver_results = tuple(
@@ -2969,20 +2977,20 @@ class ResolutionOrchestrator:
             "evidence_package_available": evidence_package_available,
             "evidence_package": evidence_package,
         }
-        result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-        output_limit = frame.get("budget", {}).get("max_output_bytes", 0)
-        if len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+        # Nothing may fail or grow after the accounting write, so the result is fitted to the
+        # output limit here. Trimming sizes against the widest elapsed time, because the real
+        # one is measured just before the write.
+        if sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+            output_truncated = True
             append_reason("output_truncated")
             frame_diagnostics = bound_frame_diagnostics(
                 {
                     "diagnostic_id": frame.get("diagnostic_id", ""),
                     "fusion": {
-                        "policy_version": self.internal_fusion.policy["policy_version"],
                         "candidate_count": decision["report"]["candidate_count"],
                         "output_truncated": True,
                     },
                     "proposition_evidence": {
-                        "policy_version": self.internal_evidence_policy["policy_version"],
                         "available": evidence_package_available,
                         "input_count": evidence_diagnostics.get("input_count", 0),
                         "included_count": evidence_diagnostics.get("included_count", 0),
@@ -2990,13 +2998,7 @@ class ResolutionOrchestrator:
                         "omitted_count": evidence_package["omitted_count"],
                         "output_truncated": True,
                     },
-                    "accounting": {
-                        "candidate_count": len(accounting_preview["candidate_statement_ids"]),
-                        "accepted_present": False,
-                        "candidacy_applied": accounting_preview["candidacy_applied"],
-                        "success_applied": accounting_preview["success_applied"],
-                        "idempotent": accounting_preview["idempotent"],
-                    },
+                    "accounting": sized_accounting(True),
                     "output_truncated": True,
                 }
             )
@@ -3006,16 +3008,11 @@ class ResolutionOrchestrator:
                     "frame_diagnostics": frame_diagnostics,
                 }
             )
-            result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while resolver_results and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+            while resolver_results and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 resolver_results = resolver_results[:-1]
                 result_fields["resolver_results"] = resolver_results
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while (
-                evidence_package.get("records", ())
-                and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit
-            ):
+            while evidence_package.get("records", ()) and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 evidence_package = build_evidence_package(
                     package_source_records,
@@ -3023,17 +3020,15 @@ class ResolutionOrchestrator:
                     max_bytes=package_byte_limit,
                 )
                 result_fields["evidence_package"] = evidence_package
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while response_evidence and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+                sync_evidence_diagnostics()
+            while response_evidence and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 response_evidence = response_evidence[:-1]
                 result_fields["evidence"] = response_evidence
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
-            while response_candidates and len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
+            while response_candidates and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
                 evidence_check()
                 response_candidates = response_candidates[:-1]
                 result_fields["response_candidates"] = response_candidates
-                result = trusted_resolution_result(**result_fields, budget=execution.get("consumption", {}))
             if outcome == ResolutionOutcome.ANSWER and not response_candidates:
                 outcome = ResolutionOutcome.MISS
                 selected = empty_candidate()
@@ -3048,95 +3043,34 @@ class ResolutionOrchestrator:
                 outcome = ResolutionOutcome.MISS
                 append_reason("no_usable_output_after_truncation")
 
-        evidence_diagnostics.update(
+        sync_evidence_diagnostics()
+        result_fields.update(
             {
-                "available": evidence_package_available,
-                "retained_count": evidence_package["retained_count"],
-                "omitted_count": evidence_package["omitted_count"],
-                "truncated": evidence_package["truncated"],
+                "outcome": outcome,
+                "selected_candidate": selected,
+                "selected_candidate_available": selected_available,
+                "confidence": confidence,
+                "confidence_available": confidence_available,
+                "reason_codes": tuple(reason_codes),
             }
         )
-        visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
-        if isinstance(visible_evidence_diagnostics, dict):
-            for name in ("available", "retained_count", "omitted_count"):
-                if name in visible_evidence_diagnostics:
-                    visible_evidence_diagnostics[name] = evidence_diagnostics.get(name, False)
-
-        run_cooperative_check(cooperative_check)
-        finalization = self.internal_accounting.finalize(request_id, execution["results"], accepted_statement_id)
-        if frame_diagnostics:
-            final_accounting_diagnostics: object
-            if "output_truncated" in reason_codes:
-                final_accounting_diagnostics = {
-                    "candidate_count": len(finalization["candidate_statement_ids"]),
-                    "accepted_present": bool(finalization["accepted_statement_id"]),
-                    "candidacy_applied": finalization["candidacy_applied"],
-                    "success_applied": finalization["success_applied"],
-                    "idempotent": finalization["idempotent"],
-                }
-            else:
-                final_accounting_diagnostics = accounting_finalization_to_dict(finalization)
-            revised_diagnostics = dict(frame_diagnostics)
-            revised_diagnostics["accounting"] = final_accounting_diagnostics
-            frame_diagnostics = bound_frame_diagnostics(revised_diagnostics)
-
-        exhausted = set(execution["consumption"]["exhausted_dimensions"]).union(orchestration_exhausted)
-        if "output_truncated" in reason_codes:
-            exhausted.add("output_bytes")
-        fusion_exhaustion = decision["report"].get("budget_exhausted", "")
-        if fusion_exhaustion == "fusion_memory_exhausted":
-            exhausted.add("working_memory_bytes")
-        package_evidence_bytes = (
-            len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
-        )
-        evidence_count = minimal_evidence_count + evidence_package["retained_count"]
-        evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
-        if evidence_count > frame.get("budget", {})["max_evidence"]:
-            exhausted.add("evidence")
-        if evidence_bytes > frame.get("budget", {})["max_evidence_bytes"]:
-            exhausted.add("evidence_bytes")
-        frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
-        diagnostic_bytes = execution["consumption"]["diagnostic_bytes"] + frame_diagnostic_bytes
-        if diagnostic_bytes > frame.get("budget", {})["max_diagnostic_bytes"]:
-            exhausted.add("diagnostic_bytes")
-        working_memory_bytes = (
-            execution["consumption"]["working_memory_bytes"] + decision["working_memory_bytes"] + evidence_working_memory
-        )
-        if working_memory_bytes > frame.get("budget", {})["max_working_memory_bytes"]:
-            exhausted.add("working_memory_bytes")
         elapsed_ns = execution["consumption"]["elapsed_ns"]
         if frame.get("budget", {})["started_ns"]:
             current_ns = resolver_clock_ns(self.internal_clock_ns)
             if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
                 raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
             elapsed_ns = max(elapsed_ns, max(0, current_ns - frame.get("budget", {})["started_ns"]))
-        consumption = budget_consumption_with_changes(
-            execution["consumption"],
-            {
-                "elapsed_ns": elapsed_ns,
-                "evidence": evidence_count,
-                "evidence_bytes": min(evidence_bytes, frame.get("budget", {})["max_evidence_bytes"]),
-                "output_bytes": 0,
-                "diagnostic_bytes": min(diagnostic_bytes, frame.get("budget", {})["max_diagnostic_bytes"]),
-                "working_memory_bytes": min(working_memory_bytes, frame.get("budget", {})["max_working_memory_bytes"]),
-                "exhausted_dimensions": tuple(sorted(exhausted)),
-            },
-        )
-        result_fields.update(
-            {
-                "outcome": outcome,
-                "selected_candidate": selected,
-                "selected_candidate_available": selected_available,
-                "response_candidates": response_candidates,
-                "evidence": response_evidence,
-                "confidence": confidence,
-                "confidence_available": confidence_available,
-                "reason_codes": tuple(reason_codes),
-                "frame_diagnostics": frame_diagnostics,
-                "resolver_results": resolver_results,
-                "evidence_package": evidence_package,
-            }
-        )
+        if sized_output_bytes(elapsed_ns) > output_limit:
+            raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
+
+        run_cooperative_check(cooperative_check)
+        finalization = self.internal_accounting.finalize(request_id, execution["results"], accepted_statement_id)
+        # The write settles only the accounting flags, each sized at its widest above, so the
+        # result below is no larger than the one just checked.
+        if "accounting" in frame_diagnostics:
+            frame_diagnostics = {**frame_diagnostics, "accounting": accounting_diagnostics(finalization, output_truncated)}
+            result_fields["frame_diagnostics"] = frame_diagnostics
+        consumption = complete_consumption(elapsed_ns, False)
         for _ in range(8):
             result = trusted_resolution_result(**result_fields, budget=consumption)
             encoded_size = len(trusted_resolution_result_to_json(result).encode("utf-8"))
@@ -3159,6 +3093,6 @@ class ResolutionOrchestrator:
             consumption = updated_consumption
         result = trusted_resolution_result(**result_fields, budget=consumption)
         if len(trusted_resolution_result_to_json(result).encode("utf-8")) > output_limit:
-            raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
+            raise RuntimeError("resolution result outgrew the output size checked before accounting")
         result = result, finalization
         return result

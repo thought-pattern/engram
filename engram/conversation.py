@@ -4,15 +4,18 @@
 generation without writing conversation state to disk.
 """
 
+from bisect import bisect_left
 from collections import Counter, deque
 from datetime import UTC, datetime
-from random import getstate as random_getstate, seed as random_seed, setstate as random_setstate
+from random import Random
 from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
 from engram.constants import CONVERSATION_REPORT_VERSION, DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.errors import InvalidRequestError
 from engram.feedback import canonical_utc
+from engram.template import TEMPLATE_RANDOM
 from engram.text import normalize
 
 
@@ -158,19 +161,19 @@ class ConversationRuntime:
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
         if not isinstance(initial_bot_text, str):
-            raise ValueError("initial_bot_text must be a string")
+            raise InvalidRequestError("initial_bot_text must be a string")
         try:
             initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
         except UnicodeEncodeError as error:
-            raise ValueError("initial_bot_text must contain valid Unicode") from error
+            raise InvalidRequestError("initial_bot_text must contain valid Unicode") from error
         if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
-            raise ValueError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
+            raise InvalidRequestError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
         if not isinstance(random_seed, int) or isinstance(random_seed, bool):
-            raise ValueError("random_seed must be an integer")
+            raise InvalidRequestError("random_seed must be an integer")
         if not isinstance(random_seed_present, bool):
-            raise ValueError("random_seed_present must be a boolean")
+            raise InvalidRequestError("random_seed_present must be a boolean")
         if clock != () and not callable(clock):
-            raise ValueError("clock must be callable")
+            raise InvalidRequestError("clock must be callable")
 
         self.engram = engram
         self.user_id = normalized_user_id
@@ -180,7 +183,13 @@ class ConversationRuntime:
         self.random_seed_present = random_seed_present or bool(random_seed)
         self.clock = clock
         self.started_at = utc_now()
-        self.turns: list[dict] = []
+        # Past turns are not kept: responses read the session's bounded
+        # history, not a transcript. The report summary uses running counts,
+        # and inspection shows only the latest turn.
+        self.turn_count = 0
+        self.latest_turn: dict = {}
+        self.source_counts: Counter[str] = Counter()
+        self.catch_all_turns = 0
         self.lock = threading_RLock()
 
         with engram.session_lock:
@@ -202,29 +211,27 @@ class ConversationRuntime:
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("text must be one non-empty string")
+            raise InvalidRequestError("text must be one non-empty string")
         try:
             text_bytes = len(text.encode("utf-8"))
         except UnicodeEncodeError as err:
-            raise ValueError("text must contain valid Unicode") from err
+            raise InvalidRequestError("text must contain valid Unicode") from err
         if text_bytes > MAX_REQUEST_BYTES:
-            raise ValueError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
+            raise InvalidRequestError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
             session = self.engram.sessions.get(self.session_id, {})
             predicates_before = dict(session.get("predicates", {}))
             previous_response_before = session.get("previous_response", "")
-            dynamic_ids_before = {
-                statement.get("id", "")
-                for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
-            }
+            # Statements stored during this turn have a sequence at or after this one.
+            first_new_sequence = self.engram.next_statement_sequence
 
-            turn_number = len(self.turns) + 1
-            random_state = ()
+            turn_number = self.turn_count + 1
+            # A seeded turn draws from its own generator, so other threads keep
+            # the shared one. Seeding by turn keeps a replay deterministic.
+            random_token = ()
             if self.random_seed_present:
-                random_state = random_getstate()
-                random_seed(self.random_seed + turn_number)
+                random_token = TEMPLATE_RANDOM.set(Random(self.random_seed + turn_number))
             started = time_perf_counter()
             try:
                 evaluation_clock = self.clock() if callable(self.clock) else datetime.now(UTC)
@@ -238,16 +245,18 @@ class ConversationRuntime:
                     evaluation_time=canonical_utc(evaluation_clock),
                 )
             finally:
-                if random_state:
-                    random_setstate(random_state)
+                if random_token:
+                    TEMPLATE_RANDOM.reset(random_token)
             elapsed = time_perf_counter() - started
 
             session = self.engram.sessions.get(self.session_id, {})
-            learned = [
-                statement_view(statement)
-                for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC and statement.get("id", "") not in dynamic_ids_before
-            ]
+            with self.engram.statement_lock:
+                first_new = bisect_left(self.engram.statement_sequences, first_new_sequence)
+                learned = [
+                    statement_view(statement)
+                    for statement in self.engram.statements[first_new:]
+                    if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
+                ]
             event = {
                 "turn": turn_number,
                 "input": text,
@@ -271,12 +280,16 @@ class ConversationRuntime:
                 },
                 "learned_statements": learned,
             }
-            self.turns.append(event)
+            self.turn_count = turn_number
+            self.latest_turn = event
+            self.source_counts[event["source"]] += 1
+            if event["pattern"] == "*":
+                self.catch_all_turns += 1
             return event
 
     def inspect(self) -> dict:
         """Return conversation context, learned knowledge, and current metrics."""
-        with self.lock:
+        with self.lock, self.engram.statement_lock:
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
@@ -284,13 +297,13 @@ class ConversationRuntime:
             ]
             result = {
                 "user_id": self.user_id,
-                "turn_count": len(self.turns),
+                "turn_count": self.turn_count,
                 "initial_bot_text": self.initial_bot_text,
                 "session": session_view(self.engram.sessions.get(self.session_id, {})),
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
                 "learned_unique_texts": sorted({statement.get("text", "") for statement in learned}),
-                "latest_turn": self.turns[-1] if self.turns else {},
+                "latest_turn": self.latest_turn,
             }
             return result
 
@@ -298,7 +311,6 @@ class ConversationRuntime:
         """Build the complete machine-readable conversation report."""
         with self.lock:
             snapshot = self.inspect()
-            sources = Counter(turn.get("source", "") for turn in self.turns)
             result = {
                 "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
@@ -308,9 +320,9 @@ class ConversationRuntime:
                 "random_seed": self.random_seed,
                 "random_seed_present": self.random_seed_present,
                 "summary": {
-                    "exchanges": len(self.turns),
-                    "sources": dict(sources),
-                    "catch_all_turns": sum(turn.get("pattern", "") == "*" for turn in self.turns),
+                    "exchanges": self.turn_count,
+                    "sources": dict(self.source_counts),
+                    "catch_all_turns": self.catch_all_turns,
                     "learned_statements": len(snapshot.get("learned_dynamic", [])),
                     "learned_unique_texts": len(snapshot.get("learned_unique_texts", [])),
                 },
@@ -318,6 +330,5 @@ class ConversationRuntime:
                 "metrics_final": snapshot.get("metrics", {}),
                 "session": snapshot.get("session", {}),
                 "learned_dynamic": snapshot.get("learned_dynamic", []),
-                "turns": list(self.turns),
             }
             return result

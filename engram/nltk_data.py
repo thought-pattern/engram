@@ -1,37 +1,59 @@
 """Centralized NLTK data management for ENGRAM.
 
-All NLTK corpora and models used by ENGRAM are stored in a local, gitignored
-``data/nltk_data`` directory at the repository root, so they can be fetched once
-at setup time rather than retrieved during normal runtime. Importing this module
-wires that directory onto NLTK's search path. Downloading is available only
-through an explicit bootstrap request; normal callers perform an offline check.
+In a source checkout, all NLTK corpora and models used by ENGRAM are stored in
+a local, gitignored ``data/nltk_data`` directory at the repository root, so they
+can be fetched once at setup time rather than retrieved during normal runtime.
+Importing this module wires that directory onto NLTK's search path. An installed
+package has no checkout, so NLTK's standard locations apply instead (the
+``NLTK_DATA`` environment variable, ``~/nltk_data``, and so on). Downloading is
+available only through an explicit bootstrap request; normal callers perform an
+offline check.
 
 Run ``python -m engram.nltk_data`` once after installation to pre-fetch
-everything into the local directory.
+everything.
 """
 
 from functools import lru_cache
 from os import makedirs as os_makedirs
+from pathlib import Path
 
 from nltk import data as nltk_data, download as nltk_download
 
-from engram.constants import NLTK_DATA_DIR, REQUIRED_PACKAGES
+from engram.constants import REQUIRED_PACKAGES
+
+SOURCE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def local_data_dir(root: Path = SOURCE_ROOT) -> str:
+    """Return the checkout's NLTK data directory, or "" when Engram is installed.
+
+    A checkout is recognized by its ``pyproject.toml``. Without one, nothing is
+    created next to the installed package and NLTK's standard locations apply.
+    """
+    if (root / "pyproject.toml").is_file():
+        result = str(root / "data" / "nltk_data")
+        return result
+    result = ""
+    return result
 
 
 def configure_path() -> str:
-    """Ensure the local data directory exists and is first on NLTK's path.
+    """Ensure a checkout's data directory exists and is first on NLTK's path.
 
     Inserting the local directory at the front of ``nltk.data.path`` means
     locally bootstrapped data is preferred, while any pre-existing data in the
-    default user location still resolves as a fallback.
+    default user location still resolves as a fallback. An installed package
+    leaves NLTK's path unchanged.
 
     Returns:
-        The local data directory path.
+        The local data directory path, or "" when NLTK's own locations apply.
     """
-    os_makedirs(NLTK_DATA_DIR, exist_ok=True)
-    if NLTK_DATA_DIR not in nltk_data.path:
-        nltk_data.path.insert(0, NLTK_DATA_DIR)
-    return NLTK_DATA_DIR
+    directory = local_data_dir()
+    if directory:
+        os_makedirs(directory, exist_ok=True)
+        if directory not in nltk_data.path:
+            nltk_data.path.insert(0, directory)
+    return directory
 
 
 @lru_cache(maxsize=64)
@@ -70,7 +92,7 @@ def ensure_resource(find_path: str, download_name: str, *, download: bool = Fals
     if not download:
         result = False
         return result
-    nltk_download(download_name, download_dir=NLTK_DATA_DIR, quiet=True)
+    nltk_download(download_name, download_dir=local_data_dir() or None, quiet=True)
     cache_clear = getattr(is_available, "cache_clear", ())
     if callable(cache_clear):
         cache_clear()
@@ -105,7 +127,7 @@ configure_path()
 
 def main() -> int:
     """Bootstrap entry point: download all required NLTK data locally."""
-    print(f"NLTK data directory: {NLTK_DATA_DIR}")
+    print(f"NLTK data directory: {local_data_dir() or 'NLTK default locations'}")
     missing = ensure_nltk_data(download=True)
     if missing:
         print("[WARNING] Could not obtain the following packages:")

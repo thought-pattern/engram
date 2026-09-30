@@ -306,23 +306,6 @@ def get_lemmatizer() -> WordNetLemmatizer:
 
 
 @lru_cache(maxsize=8192)
-def stem_word(word: str) -> str:
-    """Apply Porter stemming to a word.
-
-    Stemming reduces words to their root form by removing suffixes.
-    Example: "running" -> "run", "cats" -> "cat"
-
-    Args:
-        word: Input word.
-
-    Returns:
-        Stemmed word.
-    """
-    stemmed = get_stemmer().stem(word.lower())
-    return stemmed
-
-
-@lru_cache(maxsize=8192)
 def lemmatize_word(word: str, pos: str = "n") -> str:
     """Apply WordNet lemmatization to a word.
 
@@ -416,24 +399,6 @@ def lemmatize_text_spacy(text: str) -> str:
     doc = nlp(text)
     lemmatized = " ".join(token.lemma_.lower() for token in doc)
     return lemmatized
-
-
-@lru_cache(maxsize=4096)
-def normalize_with_stemming(text: str) -> str:
-    """Normalize text and apply stemming for flexible matching.
-
-    Combines standard normalization with stemming to allow
-    matching of different word forms (e.g., "running" matches "run").
-
-    Args:
-        text: Input text.
-
-    Returns:
-        Normalized and stemmed text.
-    """
-    normalized = normalize(text)
-    stemmed = stem_text(normalized)
-    return stemmed
 
 
 @lru_cache(maxsize=1)
@@ -622,6 +587,32 @@ def ensure_wordnet() -> None:
     """Ensure WordNet data is available, fetching into the local data dir."""
 
     initialize_nltk_readers()
+
+
+@lru_cache(maxsize=4096)
+def verb_only_word(word: str) -> bool:
+    """Return whether WordNet records this word only as a verb.
+
+    A capitalized verb such as ``Continue`` is an ordinary word. A name with
+    no WordNet entry, and a word that also has a noun sense, returns False.
+    Existing synsets win over morphological reduction, so ``staying`` stays a
+    verb even though ``stay`` also names a visit.
+    """
+    key = word.casefold()
+    if not key:
+        result = False
+        return result
+    ensure_wordnet()
+    with nltk_reader_lock:
+        synsets = wordnet.synsets(key)
+        if not synsets:
+            lemma = wordnet.morphy(key)
+            if lemma and lemma != key:
+                synsets = wordnet.synsets(lemma)
+        senses = [item.pos() for item in synsets if item is not None]
+        ordinary = bool(senses) and all(sense == "v" for sense in senses)
+    result = ordinary
+    return result
 
 
 @lru_cache(maxsize=4096)

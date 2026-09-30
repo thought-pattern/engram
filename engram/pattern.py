@@ -1,61 +1,109 @@
 """AIML-style pattern matching for ENGRAM.
 
-Supports wildcards:
-    * - matches one or more words (lower priority)
-    _ - matches one or more words (higher priority)
-    # - matches zero or more words (lower priority)
-    ^ - matches zero or more words (higher priority)
+The matcher walks a graphmaster. At each word it tries branches in order and
+backtracks when the rest of the input does not fit:
 
-Pattern priority (highest to lowest):
-    1. topic + that + pattern (most specific context)
-    2. that + pattern
-    3. topic + pattern
-    4. pattern only
-    5. ^ wildcard (0+ words, high priority)
-    6. _ wildcard (1+ words, high priority)
-    7. Exact word match
-    8. # wildcard (0+ words, low priority)
-    9. * wildcard (1+ words, low priority)
+    1. ``$word``
+    2. ``_`` (one or more words, shortest first)
+    3. an exact word
+    4. ``{bot:name}`` from the live bot properties
+    5. ``{set:name}`` from the live word sets
+    6. ``^`` (zero or more words, shortest first)
+    7. ``#`` (zero or more words, shortest first)
+    8. ``*`` (one or more words, shortest first)
 
-More specific patterns (fewer wildcards, more exact words) take precedence.
-Context matching (topic/that) adds priority multipliers.
+Matching follows AIML order: the pattern first, then ``that``, then the
+topic. At the end of a pattern path a matching ``that`` is tried before the
+empty ``that``, and at the end of that a matching topic before the empty
+topic, so a specific pattern outranks any topic's catch-all. The first
+complete path wins.
 
-Stemming support:
-    When enabled, patterns and input are stemmed before matching, allowing
-    "running" to match "run", "cats" to match "cat", etc.
+Captures are kept as positions in the input and joined into text only for the
+chosen category. The walk descends one frame per pattern token, so patterns
+are capped at ``MAX_PATTERN_WORDS`` words to bound its depth.
+
+Stemming and lemmatization remain fallbacks used only when the exact walk
+misses or finds only a pure wildcard. Their captures are the original words.
 """
 
 from functools import lru_cache
 from re import (
     IGNORECASE as IGNORECASE,
     Match as re_Match,
-    Pattern as re_Pattern,
     compile as re_compile,
-    escape as re_escape,
     sub as re_sub,
 )
 
-from engram.constants import THAT_PRIORITY, TOPIC_PRIORITY, WILDCARD_TOKENS
+from engram.constants import MAX_PATTERN_WORDS, WILDCARD_TOKENS
+from engram.substitutions import split_sentences
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
 
-def match_result(
-    matched: bool,
-    pattern: str,
-    score: int,  # Higher = more specific match
-    captured: list[str],  # Text captured by wildcards
-    thatstars=(),  # Captures from that pattern
-    topicstars=(),  # Captures from topic pattern
-) -> dict:
-    """Build a pattern-match result dict."""
-    result = {
-        "matched": matched,
-        "pattern": pattern,
-        "score": score,
-        "captured": captured,
-        "thatstars": list(thatstars or ()),
-        "topicstars": list(topicstars or ()),
-    }
+def break_intra_word_marks(text: str) -> str:
+    """Turn hyphens and underscores inside a word into spaces.
+
+    A wildcard that is the whole token stays a wildcard. ``MIL-STD-498`` and
+    ``MIL_STD_498`` become the same words as ``MIL STD 498``.
+    """
+    pieces = []
+    for word in text.split():
+        if word in {"*", "_", "#", "^"} or (len(word) > 1 and word.startswith("$") and word[1:].isalnum()):
+            pieces.append(word)
+            continue
+        pieces.append(word.replace("-", " ").replace("_", " "))
+    result = " ".join(" ".join(pieces).split())
+    return result
+
+
+def _is_table_name(name: str) -> bool:
+    """Return whether a {set:...} or {bot:...} name is word characters, as normalize_pattern keeps it."""
+    result = bool(name) and name.replace("_", "").isalnum()
+    return result
+
+
+def _named_value(values: dict, name: str, default):
+    """Look up a set or bot property by its pattern name.
+
+    Pattern names are lowercased by ``normalize_pattern``, while set and
+    properties files keep the case they were written in.
+    """
+    if name in values:
+        result = values[name]
+        return result
+    for key, value in values.items():
+        if isinstance(key, str) and key.lower() == name:
+            result = value
+            return result
+    result = default
+    return result
+
+
+def _last_sentence(text: str) -> str:
+    """Return the last sentence of a previous reply, or the whole text.
+
+    As in AIML, ``that`` is the last sentence the bot said, which is where a
+    joined multi-sentence reply ends with its question.
+    """
+    if not text or not text.strip():
+        result = ""
+        return result
+    sentences = split_sentences(text)
+    if sentences:
+        result = sentences[-1]
+        return result
+    result = text.strip()
+    return result
+
+
+def prepare_pattern_text(text: str) -> str:
+    """Normalize user text with the same word breaks patterns use.
+
+    ``normalize`` keeps an intra-word hyphen and drops underscores. Matching
+    breaks both marks first, so a hyphenated question and a spaced pattern
+    share one token sequence. Stored sentences and repetition checks still
+    use ``normalize`` unchanged.
+    """
+    result = normalize(break_intra_word_marks(text))
     return result
 
 
@@ -92,6 +140,7 @@ def normalize_pattern(pattern: str) -> str:
     result = bot_pattern.sub(save_bot, result)
 
     result = result.lower()
+    result = break_intra_word_marks(result)
 
     # Replace wildcards with placeholders (use control chars that won't appear in text)
     result = result.replace("*", "\x01").replace("_", "\x02")
@@ -118,196 +167,10 @@ def normalize_pattern(pattern: str) -> str:
     return result
 
 
-def pattern_to_regex(
-    pattern: str,
-    sets=(),
-    bot_properties=(),
-) -> tuple[re_Pattern, int]:
-    """Convert AIML-style pattern to regex.
-
-    Args:
-        pattern: AIML pattern with *, _, #, ^ wildcards.
-        sets: Optional dictionary of named word sets for {set:name} matching.
-        bot_properties: Optional bot properties for {bot:name} matching.
-
-    Returns:
-        Tuple of (compiled regex, specificity score).
-    """
-    normalized = normalize_pattern(pattern)
-    words = normalized.split()
-
-    if not words:
-        empty_regex = re_compile(r"^$")
-        empty_result = (empty_regex, 0)
-        return empty_result
-
-    regex_parts = []
-    specificity = 0
-    can_be_empty = []
-
-    set_ref_pattern = re_compile(r"^\{set:(\w+)\}$")
-    bot_ref_pattern = re_compile(r"^\{bot:(\w+)\}$")
-
-    for word in words:
-        if word == "^":
-            # ^ matches zero or more words, high priority
-            # Wildcards subtract from specificity so exact matches win
-            # ^ has smallest penalty (highest wildcard priority)
-            regex_parts.append(r"(.*?)")
-            can_be_empty.append(True)
-            specificity -= 1  # Smallest penalty (highest priority wildcard)
-        elif word == "_":
-            # _ matches one or more words, high priority
-            regex_parts.append(r"(.+?)")
-            can_be_empty.append(False)
-            specificity -= 2  # Small penalty (high priority wildcard)
-        elif word == "#":
-            # # matches zero or more words, low priority
-            regex_parts.append(r"(.*?)")
-            can_be_empty.append(True)
-            specificity -= 3  # Larger penalty (low priority wildcard)
-        elif word == "*":
-            # * matches one or more words, lowest priority
-            regex_parts.append(r"(.+?)")
-            can_be_empty.append(False)
-            specificity -= 4  # Largest penalty (lowest priority wildcard)
-        elif set_match := set_ref_pattern.match(word):
-            # {set:name} - match any word from the named set
-            set_name = set_match.group(1)
-            if sets and set_name in sets and sets[set_name]:
-                set_words = [re_escape(w.lower()) for w in sets[set_name]]
-                regex_parts.append(f"({('|'.join(set_words))})")
-            else:
-                # Unknown set - match nothing (use impossible pattern)
-                regex_parts.append(r"(?!.)")
-            can_be_empty.append(False)
-            specificity += 90  # High but less than exact word match
-        elif bot_match := bot_ref_pattern.match(word):
-            # {bot:name} - match the bot property value
-            prop_name = bot_match.group(1)
-            if bot_properties and prop_name in bot_properties:
-                prop_value = bot_properties[prop_name].lower()
-                regex_parts.append(f"({re_escape(prop_value)})")
-            else:
-                # Unknown property - match nothing
-                regex_parts.append(r"(?!.)")
-            can_be_empty.append(False)
-            specificity += 90  # High but less than exact word match
-        elif word.startswith("$"):
-            # Priority word - exact match with highest priority
-            actual_word = word[1:]
-            regex_parts.append(re_escape(actual_word))
-            can_be_empty.append(False)
-            specificity += 1000  # Highest priority for $ words
-        else:
-            # Exact word match
-            regex_parts.append(re_escape(word))
-            can_be_empty.append(False)
-            specificity += 100  # High specificity for exact matches
-
-    # Join with flexible spacing: parts that can be empty (# and ^) get
-    # optional surrounding whitespace, everything else requires a separator.
-    regex_str = r"^\s*"
-    for i, part in enumerate(regex_parts):
-        if i > 0:
-            if can_be_empty[i] or can_be_empty[i - 1]:
-                regex_str += r"\s*"
-            else:
-                regex_str += r"\s+"
-        regex_str += part
-    regex_str += r"\s*$"
-
-    compiled = re_compile(regex_str, IGNORECASE)
-    result = (compiled, specificity)
+def pattern_word_count(pattern: str) -> int:
+    """Return how many graph edges a pattern, that, or topic occupies."""
+    result = len(normalize_pattern(pattern).split())
     return result
-
-
-def match_pattern(pattern: str, text: str) -> dict:
-    """Match text against an AIML-style pattern.
-
-    Args:
-        pattern: AIML pattern (e.g., "HELLO *", "WHAT IS YOUR *")
-        text: User input text.
-
-    Returns:
-        MatchResult indicating if matched and captured groups.
-    """
-    regex, specificity = pattern_to_regex(pattern)
-    normalized_text = normalize(text)
-
-    match = regex.match(normalized_text)
-
-    if match:
-        captured = list(match.groups())
-        matched_result = match_result(
-            matched=True,
-            pattern=pattern,
-            score=specificity,
-            captured=captured,
-        )
-        return matched_result
-
-    unmatched_result = match_result(
-        matched=False,
-        pattern=pattern,
-        score=0,
-        captured=[],
-    )
-    return unmatched_result
-
-
-def find_best_match(patterns: list[tuple[str, str]], text: str) -> tuple:
-    """Find the best matching pattern for input text.
-
-    Args:
-        patterns: List of (pattern, response) tuples.
-        text: User input text.
-
-    Returns:
-        Tuple of (pattern, response, captured), or an empty tuple if no match.
-    """
-    best_match: tuple = ()
-
-    for pattern, response in patterns:
-        result = match_pattern(pattern, text)
-
-        if result["matched"] and (not best_match or result["score"] > best_match[3]):
-            best_match = (pattern, response, result["captured"], result["score"])
-
-    if best_match:
-        best = (best_match[0], best_match[1], best_match[2])
-        return best
-
-    result = ()
-    return result
-
-
-def pattern_entry(
-    pattern: str,
-    response: str,
-    regex,
-    specificity: int,
-    that: str = "",  # Pattern for bot's previous response
-    that_regex=(),
-    that_specificity: int = 0,
-    topic: str = "",  # Topic scope (exact match or pattern)
-    topic_regex=(),
-    topic_specificity: int = 0,
-) -> dict:
-    """Build a pattern entry dict with optional context constraints."""
-    entry = {
-        "pattern": pattern,
-        "response": response,
-        "regex": regex,
-        "specificity": specificity,
-        "that": that,
-        "that_regex": that_regex,
-        "that_specificity": that_specificity,
-        "topic": topic,
-        "topic_regex": topic_regex,
-        "topic_specificity": topic_specificity,
-    }
-    return entry
 
 
 def is_pure_wildcard(pattern: str) -> bool:
@@ -325,8 +188,46 @@ def specific_pattern_result(result: tuple) -> tuple:
     return result
 
 
+class _GraphNode:
+    """One node in a pattern, that, or topic graphmaster."""
+
+    def is_empty(self) -> bool:
+        """Return whether this node holds no category, that or topic segment, or edge."""
+        result = (
+            self.category is None
+            and self.that_root is None
+            and self.topic_root is None
+            and self.underscore is None
+            and self.caret is None
+            and self.hash is None
+            and self.star is None
+            and not self.dollar
+            and not self.atoms
+            and not self.bots
+            and not self.sets
+        )
+        return result
+
+    def __init__(self) -> None:
+        self.dollar: dict[str, _GraphNode] = {}
+        self.underscore: _GraphNode | None = None
+        self.atoms: dict[str, _GraphNode] = {}
+        self.bots: dict[str, _GraphNode] = {}
+        self.sets: dict[str, _GraphNode] = {}
+        self.caret: _GraphNode | None = None
+        self.hash: _GraphNode | None = None
+        self.star: _GraphNode | None = None
+        self.category: dict | None = None
+        self.that_root: _GraphNode | None = None
+        self.topic_root: _GraphNode | None = None
+        self.lemma_dollar: dict[str, list[_GraphNode]] = {}
+        self.stem_dollar: dict[str, list[_GraphNode]] = {}
+        self.lemma_atoms: dict[str, list[_GraphNode]] = {}
+        self.stem_atoms: dict[str, list[_GraphNode]] = {}
+
+
 class PatternMatcher:
-    """AIML-style pattern matcher with indexed patterns and context matching."""
+    """AIML-style pattern matcher. Categories are selected by a graphmaster walk."""
 
     def __init__(
         self,
@@ -347,20 +248,29 @@ class PatternMatcher:
             use_spacy_lemmatization: If True, lemmatize with spaCy's context-aware
                 lemmatizer instead of the WordNet heuristic.
         """
-        self.internal_patterns: list[dict] = []
-        # Index: first word -> list of pattern indices for faster lookup
-        self.first_word_index: dict[str, list[int]] = {}
-        # Index for stemmed first words (when stemming enabled)
-        self.stemmed_first_word_index: dict[str, list[int]] = {}
-        # Index for lemmatized first words (when lemmatization enabled)
-        self.lemmatized_first_word_index: dict[str, list[int]] = {}
-        self.wildcard_patterns: list[int] = []  # Patterns whose first token can match arbitrary input
+        # Entries by insertion id; dict order is insertion order.
+        self.internal_entries: dict[int, dict] = {}
+        self.internal_next_entry_id = 0
+        # (pattern, that, topic) -> entry ids, so removal finds its entry directly.
+        self.internal_entry_ids: dict[tuple[str, str, str], list[int]] = {}
+        # Normalized graph path -> ids of the entries filed there, in insertion
+        # order. The first one owns the leaf; the next takes over when it goes.
+        self.internal_path_claims: dict[tuple[str, str, bool, str], list[int]] = {}
+        # Pattern paths lead to an optional that segment and then an optional
+        # topic segment; a category with neither sits at the pattern leaf.
+        self.default_trie = _GraphNode()
         # Preserve caller-owned dict references, including explicitly empty maps.
         self.internal_sets = sets if isinstance(sets, dict) else {}
         self.internal_bot_properties = bot_properties if isinstance(bot_properties, dict) else {}
         self.internal_use_stemming = use_stemming
         self.internal_use_lemmatization = use_lemmatization
         self.internal_lemmatize = lemmatize_text_spacy if use_spacy_lemmatization else lemmatize_text
+
+    @property
+    def internal_patterns(self) -> list[dict]:
+        """Entries in insertion order."""
+        result = list(self.internal_entries.values())
+        return result
 
     def add_pattern(
         self,
@@ -376,95 +286,310 @@ class PatternMatcher:
             response: Response template.
             that: Optional pattern for bot's previous response.
             topic: Optional topic scope.
+
+        Raises:
+            ValueError: If the pattern, that, or topic exceeds MAX_PATTERN_WORDS.
         """
-        regex, specificity = pattern_to_regex(pattern, self.internal_sets, self.internal_bot_properties)
+        for name, value in (("pattern", pattern), ("that", that), ("topic", topic)):
+            if value and pattern_word_count(value) > MAX_PATTERN_WORDS:
+                raise ValueError(f"{name} exceeds the limit of {MAX_PATTERN_WORDS} words")
+        entry = {
+            "pattern": pattern,
+            "response": response,
+            "that": that or "",
+            "topic": topic or "",
+        }
+        entry_id = self.internal_next_entry_id
+        self.internal_next_entry_id += 1
+        self.internal_entries[entry_id] = entry
+        self.internal_entry_ids.setdefault((entry["pattern"], entry["that"], entry["topic"]), []).append(entry_id)
+        self._index_entry(entry_id, entry)
 
-        that_regex = ()
-        that_specificity = 0
-        if that:
-            that_regex, that_specificity = pattern_to_regex(that, self.internal_sets, self.internal_bot_properties)
+    @staticmethod
+    def _path_key(entry: dict) -> tuple[str, str, bool, str]:
+        """Return the normalized topic, pattern, and that path an entry is filed under."""
+        topic_key = normalize_pattern(entry["topic"]) if entry["topic"] else ""
+        that_key = normalize_pattern(entry["that"]) if entry["that"] else ""
+        result = (topic_key, normalize_pattern(entry["pattern"]), bool(entry["that"]), that_key)
+        return result
 
-        topic_regex = ()
-        topic_specificity = 0
-        if topic:
-            topic_regex, topic_specificity = pattern_to_regex(topic, self.internal_sets, self.internal_bot_properties)
+    @staticmethod
+    def _payload(entry: dict) -> dict:
+        result = {
+            "pattern": entry["pattern"],
+            "response": entry["response"],
+            "that": entry["that"],
+            "topic": entry["topic"],
+        }
+        return result
 
-        entry = pattern_entry(
-            pattern=pattern,
-            response=response,
-            regex=regex,
-            specificity=specificity,
-            that=that,
-            that_regex=that_regex,
-            that_specificity=that_specificity,
-            topic=topic,
-            topic_regex=topic_regex,
-            topic_specificity=topic_specificity,
-        )
+    def _index_entry(self, entry_id: int, entry: dict) -> None:
+        """File one category under its topic, pattern, and that path.
 
-        idx = len(self.internal_patterns)
-        self.internal_patterns.append(entry)
-        self.index_pattern(idx, pattern)
-
-    def index_pattern(self, idx: int, pattern: str) -> bool:
-        """Index a pattern by its first word for faster candidate lookup.
-
-        Args:
-            idx: Index of the pattern entry in _patterns.
-            pattern: The AIML-style pattern to index.
+        The first category to claim a path keeps it. A later copy of the same
+        path waits in the path's claim list and takes over if the first is
+        removed.
         """
-        normalized = normalize_pattern(pattern)
-        words = normalized.split()
-        if not words:
-            return False
+        key = self._path_key(entry)
+        claims = self.internal_path_claims.setdefault(key, [])
+        claims.append(entry_id)
+        if len(claims) == 1:
+            self._category_leaf(key).category = self._payload(entry)
 
-        first = words[0]
-        # Strip $ prefix for indexing ($ is priority operator, not part of the word)
-        index_word = first.lstrip("$")
-        # Treat wildcards and variable references as "any first word"
-        # since they can match multiple possible inputs
-        if first in ("*", "_", "#", "^") or first.startswith("{set:") or first.startswith("{bot:"):
-            self.wildcard_patterns.append(idx)
-            return True
+    def _category_leaf(self, key: tuple[str, str, bool, str]) -> _GraphNode:
+        """Return the node holding a path's category, creating the path if needed."""
+        topic_key, pattern_key, has_that, that_key = key
+        leaf = self._insert_tokens(self.default_trie, pattern_key.split())
+        if has_that:
+            if leaf.that_root is None:
+                leaf.that_root = _GraphNode()
+            leaf = self._insert_tokens(leaf.that_root, that_key.split())
+        if topic_key:
+            if leaf.topic_root is None:
+                leaf.topic_root = _GraphNode()
+            leaf = self._insert_tokens(leaf.topic_root, topic_key.split())
+        return leaf
 
-        if index_word not in self.first_word_index:
-            self.first_word_index[index_word] = []
-        self.first_word_index[index_word].append(idx)
+    def _unindex_entry(self, entry_id: int, entry: dict) -> None:
+        """Take one entry out of the graph, handing its leaf to the next claimant."""
+        key = self._path_key(entry)
+        claims = self.internal_path_claims.get(key, [])
+        if entry_id not in claims:
+            return
+        was_owner = claims[0] == entry_id
+        claims.remove(entry_id)
+        if claims:
+            if was_owner:
+                self._category_leaf(key).category = self._payload(self.internal_entries[claims[0]])
+            return
+        del self.internal_path_claims[key]
+        self._prune_path(key)
 
-        if self.internal_use_stemming:
-            stemmed_first = stem_text(index_word)
-            if stemmed_first not in self.stemmed_first_word_index:
-                self.stemmed_first_word_index[stemmed_first] = []
-            if idx not in self.stemmed_first_word_index[stemmed_first]:
-                self.stemmed_first_word_index[stemmed_first].append(idx)
+    def _prune_path(self, key: tuple[str, str, bool, str]) -> None:
+        """Clear a path's category and drop the nodes that no longer lead anywhere."""
+        topic_key, pattern_key, has_that, that_key = key
+        pattern_path = self._existing_path(self.default_trie, pattern_key.split())
+        if pattern_path is None:
+            return
+        leaf = pattern_path[-1][2] if pattern_path else self.default_trie
+        if has_that:
+            if leaf.that_root is not None:
+                that_path = self._existing_path(leaf.that_root, that_key.split())
+                if that_path is not None:
+                    that_leaf = that_path[-1][2] if that_path else leaf.that_root
+                    self._clear_topic_category(that_leaf, topic_key)
+                    self._prune_edges(that_path)
+                if leaf.that_root.is_empty():
+                    leaf.that_root = None
+        else:
+            self._clear_topic_category(leaf, topic_key)
+        self._prune_edges(pattern_path)
 
+    def _clear_topic_category(self, leaf: _GraphNode, topic_key: str) -> None:
+        """Clear the category below a pattern or that leaf, through its topic segment."""
+        if not topic_key:
+            leaf.category = None
+            return
+        if leaf.topic_root is None:
+            return
+        topic_path = self._existing_path(leaf.topic_root, topic_key.split())
+        if topic_path is not None:
+            topic_leaf = topic_path[-1][2] if topic_path else leaf.topic_root
+            topic_leaf.category = None
+            self._prune_edges(topic_path)
+        if leaf.topic_root.is_empty():
+            leaf.topic_root = None
+
+    def _existing_path(self, root: _GraphNode, words: list[str]) -> list[tuple[_GraphNode, str, _GraphNode]] | None:
+        """Follow existing edges for ``words`` and return (parent, word, child) steps, or None."""
+        path = []
+        node = root
+        for word in words:
+            child = self._existing_edge(node, word)
+            if child is None:
+                return None
+            path.append((node, word, child))
+            node = child
+        return path
+
+    def _existing_edge(self, node: _GraphNode, word: str) -> _GraphNode | None:
+        """Return the child for one pattern token without creating it."""
+        kind, name = self._edge_kind(word)
+        if kind == "underscore":
+            return node.underscore
+        if kind == "caret":
+            return node.caret
+        if kind == "hash":
+            return node.hash
+        if kind == "star":
+            return node.star
+        if kind == "dollar":
+            return node.dollar.get(name)
+        if kind == "bot":
+            return node.bots.get(name)
+        if kind == "set":
+            return node.sets.get(name)
+        result = node.atoms.get(word)
+        return result
+
+    def _prune_edges(self, path: list[tuple[_GraphNode, str, _GraphNode]]) -> None:
+        """Detach empty nodes from the end of a path back toward its root."""
+        for parent, word, child in reversed(path):
+            if not child.is_empty():
+                break
+            self._detach(parent, word, child)
+
+    def _detach(self, parent: _GraphNode, word: str, child: _GraphNode) -> None:
+        """Remove the edge ``word`` from ``parent``, including its fallback index entries."""
+        kind, name = self._edge_kind(word)
+        if kind == "underscore":
+            parent.underscore = None
+        elif kind == "caret":
+            parent.caret = None
+        elif kind == "hash":
+            parent.hash = None
+        elif kind == "star":
+            parent.star = None
+        elif kind == "dollar":
+            parent.dollar.pop(name, None)
+            self._forget_flexible(parent.lemma_dollar, parent.stem_dollar, name, child)
+        elif kind == "bot":
+            parent.bots.pop(name, None)
+        elif kind == "set":
+            parent.sets.pop(name, None)
+        else:
+            parent.atoms.pop(word, None)
+            self._forget_flexible(parent.lemma_atoms, parent.stem_atoms, word, child)
+
+    @staticmethod
+    def _edge_kind(word: str) -> tuple[str, str]:
+        """Classify a pattern token the way ``_edge`` files it."""
+        wildcards = {"_": "underscore", "^": "caret", "#": "hash", "*": "star"}
+        if word in wildcards:
+            result = (wildcards[word], "")
+            return result
+        if len(word) > 1 and word.startswith("$") and word[1:].isalnum():
+            result = ("dollar", word[1:])
+            return result
+        if word.startswith("{bot:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            result = ("bot", word[5:-1])
+            return result
+        if word.startswith("{set:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            result = ("set", word[5:-1])
+            return result
+        result = ("atom", word)
+        return result
+
+    def _insert_tokens(self, root: _GraphNode, words: list[str]) -> _GraphNode:
+        """Walk or create the edges for one pattern and return the leaf."""
+        node = root
+        for word in words:
+            node = self._edge(node, word)
+        return node
+
+    def _edge(self, node: _GraphNode, word: str) -> _GraphNode:
+        """Return the child reached by one pattern token, creating it if needed."""
+        if word == "_":
+            if node.underscore is None:
+                node.underscore = _GraphNode()
+            result = node.underscore
+            return result
+        if word == "^":
+            if node.caret is None:
+                node.caret = _GraphNode()
+            result = node.caret
+            return result
+        if word == "#":
+            if node.hash is None:
+                node.hash = _GraphNode()
+            result = node.hash
+            return result
+        if word == "*":
+            if node.star is None:
+                node.star = _GraphNode()
+            result = node.star
+            return result
+        if len(word) > 1 and word.startswith("$") and word[1:].isalnum():
+            key = word[1:]
+            child = node.dollar.get(key)
+            if child is None:
+                child = _GraphNode()
+                node.dollar[key] = child
+                self._remember_flexible(node.lemma_dollar, node.stem_dollar, key, child)
+            result = child
+            return result
+        if word.startswith("{bot:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            name = word[5:-1]
+            child = node.bots.get(name)
+            if child is None:
+                child = _GraphNode()
+                node.bots[name] = child
+            result = child
+            return result
+        if word.startswith("{set:") and word.endswith("}") and _is_table_name(word[5:-1]):
+            name = word[5:-1]
+            child = node.sets.get(name)
+            if child is None:
+                child = _GraphNode()
+                node.sets[name] = child
+            result = child
+            return result
+        child = node.atoms.get(word)
+        if child is None:
+            child = _GraphNode()
+            node.atoms[word] = child
+            self._remember_flexible(node.lemma_atoms, node.stem_atoms, word, child)
+        result = child
+        return result
+
+    def _forget_flexible(self, lemma_index: dict, stem_index: dict, word: str, child: _GraphNode) -> None:
+        """Drop a detached edge from the lemma and stem fallback indexes."""
+        keys = []
         if self.internal_use_lemmatization:
-            lemma_first = self.internal_lemmatize(index_word)
-            if lemma_first not in self.lemmatized_first_word_index:
-                self.lemmatized_first_word_index[lemma_first] = []
-            if idx not in self.lemmatized_first_word_index[lemma_first]:
-                self.lemmatized_first_word_index[lemma_first].append(idx)
-        return True
+            keys.append((lemma_index, self.internal_lemmatize(word)))
+        if self.internal_use_stemming:
+            keys.append((stem_index, stem_text(word)))
+        for index, key in keys:
+            bucket = index.get(key)
+            if bucket and child in bucket:
+                bucket.remove(child)
+                if not bucket:
+                    del index[key]
+
+    def _remember_flexible(self, lemma_index: dict, stem_index: dict, word: str, child: _GraphNode) -> None:
+        """Index an exact edge under its lemma and stem for the fallback walks."""
+        if self.internal_use_lemmatization:
+            lemma = self.internal_lemmatize(word)
+            bucket = lemma_index.get(lemma)
+            if bucket is None:
+                lemma_index[lemma] = [child]
+            elif child not in bucket:
+                bucket.append(child)
+        if self.internal_use_stemming:
+            stemmed = stem_text(word)
+            bucket = stem_index.get(stemmed)
+            if bucket is None:
+                stem_index[stemmed] = [child]
+            elif child not in bucket:
+                bucket.append(child)
 
     def rebuild_indexes(self) -> None:
-        """Rebuild every first-word index from the current pattern list.
+        """Rebuild the graphmaster from the current entries.
 
-        Entry indices shift when a pattern is removed, so all index buckets are
-        rebuilt from scratch rather than patched in place.
+        Removal updates the graph in place, so this is only needed after the
+        fallback settings change.
         """
-        self.first_word_index.clear()
-        self.stemmed_first_word_index.clear()
-        self.lemmatized_first_word_index.clear()
-        self.wildcard_patterns.clear()
-        for idx, entry in enumerate(self.internal_patterns):
-            self.index_pattern(idx, entry["pattern"])
+        self.default_trie = _GraphNode()
+        self.internal_path_claims = {}
+        for entry_id, entry in self.internal_entries.items():
+            self._index_entry(entry_id, entry)
 
     def remove_pattern(self, pattern: str, that: str = "", topic: str = "") -> bool:
         """Remove the first entry matching (pattern, that, topic).
 
         Called when the statement backing a pattern is evicted or retired, so a
         dead pattern cannot keep matching (and shadowing live patterns) after
-        its statement is gone.
+        its statement is gone. Only that entry's graph path changes.
 
         Args:
             pattern: AIML-style pattern to remove.
@@ -474,13 +599,17 @@ class PatternMatcher:
         Returns:
             True if an entry was removed, False if no entry matched.
         """
-        for i, entry in enumerate(self.internal_patterns):
-            if entry["pattern"] == pattern and entry["that"] == that and entry["topic"] == topic:
-                del self.internal_patterns[i]
-                self.rebuild_indexes()
-                result = True
-                return result
-        result = False
+        key = (pattern, that, topic)
+        entry_ids = self.internal_entry_ids.get(key)
+        if not entry_ids:
+            result = False
+            return result
+        entry_id = entry_ids.pop(0)
+        if not entry_ids:
+            del self.internal_entry_ids[key]
+        entry = self.internal_entries.pop(entry_id)
+        self._unindex_entry(entry_id, entry)
+        result = True
         return result
 
     def match(
@@ -489,160 +618,305 @@ class PatternMatcher:
         that: str = "",
         topic: str = "",
     ) -> tuple:
-        """Find best matching response for input with context.
+        """Find the graphmaster path for input with that and topic context.
+
+        ``that`` is the previous reply. Only its last sentence is matched,
+        and it is prepared with the same hyphen and punctuation rules as the
+        input. Matching follows AIML order: pattern, then that, then topic.
 
         Args:
             text: User input text.
-            that: Bot's previous response (normalized).
-            topic: Current topic.
+            that: Bot's previous response.
+            topic: Current topic predicate.
 
         Returns:
             Tuple of (response, captured, thatstars, topicstars, pattern, topic, that), or ().
         """
-        normalized = normalize(text)
-        words = normalized.split()
-
+        words = prepare_pattern_text(text).split()
         if not words:
             result = ()
             return result
 
-        that_normalized = normalize(that) if that else ""
-        topic_normalized = normalize(topic) if topic else ""
+        that_text = _last_sentence(that)
+        that_words = prepare_pattern_text(that_text).split() if that_text else []
+        topic_words = prepare_pattern_text(topic).split() if topic else []
+        # Captures always come from the prepared words, including in the lemma
+        # and stem walks, whose words line up with these by position.
+        sources = (words, that_words, topic_words)
+        result = self._match_words(words, that_words, topic_words, "exact", sources)
 
-        first_word = words[0]
-        result = self.match_internal(normalized, that_normalized, topic_normalized, first_word, index_kind="exact")
-
-        # A pure-wildcard (catch-all) match must not block the flexible
-        # fallbacks - set it aside and try for something more specific. The
-        # fallback stages ignore pure-wildcard results (via _specific) so they
-        # don't simply re-return the catch-all.
+        # A pure-wildcard match must not block the flexible fallbacks. Set it
+        # aside and try for something more specific. The fallback stages ignore
+        # pure-wildcard results so they do not simply re-return the catch-all.
         catchall = ()
         if result and is_pure_wildcard(result[4]):
             catchall, result = result, ()
 
         if not result and self.internal_use_lemmatization:
-            lemmatized = self.internal_lemmatize(normalized)
-            lemma_first = self.internal_lemmatize(first_word)
             result = specific_pattern_result(
-                self.match_internal(
-                    lemmatized,
-                    that_normalized,
-                    topic_normalized,
-                    lemma_first,
-                    index_kind="lemmatized",
+                self._match_words(
+                    self._flexible_words(words, "lemma"),
+                    self._flexible_words(that_words, "lemma"),
+                    self._flexible_words(topic_words, "lemma"),
+                    "lemma",
+                    sources,
                 )
             )
 
         if not result and self.internal_use_stemming:
-            stemmed = stem_text(normalized)
-            stemmed_first = stem_text(first_word)
             result = specific_pattern_result(
-                self.match_internal(stemmed, that_normalized, topic_normalized, stemmed_first, index_kind="stemmed")
+                self._match_words(
+                    self._flexible_words(words, "stem"),
+                    self._flexible_words(that_words, "stem"),
+                    self._flexible_words(topic_words, "stem"),
+                    "stem",
+                    sources,
+                )
             )
 
         final = result if result else catchall
         return final
 
-    def get_candidate_indices(
-        self,
-        first_word: str,
-        index_kind: str = "exact",
-    ) -> list[int]:
-        """Get pattern indices that could match based on first word.
+    def _flexible_words(self, words: list[str], mode: str) -> list[str]:
+        """Lemmatize or stem prepared words, one output word per input word.
 
-        Args:
-            first_word: First word of input text.
-            index_kind: Which first-word index to use: "exact", "lemmatized",
-                or "stemmed".
-
-        Returns:
-            List of pattern indices to check.
+        The whole text is converted at once so the lemmatizer sees context.
+        If that changes the word count, each word is converted alone, so a
+        capture's position still names the original words.
         """
-        candidates: set[int] = set()
+        converted = self._convert(" ".join(words), mode).split()
+        if len(converted) == len(words):
+            return converted
+        result = []
+        for word in words:
+            parts = self._convert(word, mode).split()
+            result.append(parts[0] if len(parts) == 1 else word)
+        return result
 
-        candidates.update(self.wildcard_patterns)
+    def _convert(self, text: str, mode: str) -> str:
+        result = self.internal_lemmatize(text) if mode == "lemma" else stem_text(text)
+        return result
 
-        if index_kind == "stemmed":
-            candidates.update(self.stemmed_first_word_index.get(first_word, []))
-        elif index_kind == "lemmatized":
-            candidates.update(self.lemmatized_first_word_index.get(first_word, []))
-        else:
-            candidates.update(self.first_word_index.get(first_word, []))
-
-        ordered = sorted(candidates)
-        return ordered
-
-    def match_internal(
+    def _match_words(
         self,
-        normalized: str,
-        that_normalized: str,
-        topic_normalized: str,
-        first_word: str,
-        index_kind: str = "exact",
+        words: list[str],
+        that_words: list[str],
+        topic_words: list[str],
+        mode: str,
+        sources: tuple[list[str], list[str], list[str]],
     ) -> tuple:
-        """Internal matching logic.
+        """Walk the pattern, then its that segment, then its topic segment.
 
-        Args:
-            normalized: Normalized input text.
-            that_normalized: Normalized previous response.
-            topic_normalized: Normalized topic.
-            first_word: First word of input (for index lookup).
-            index_kind: Which first-word index to use: "exact", "lemmatized",
-                or "stemmed".
-
-        Returns:
-            Tuple of (response, captured, thatstars, topicstars, pattern, topic, that), or ().
+        ``sources`` are the prepared input, that, and topic words that
+        captures are read from.
         """
-        candidate_indices = self.get_candidate_indices(first_word, index_kind)
-        best: tuple = ()
 
-        for idx in candidate_indices:
-            entry = self.internal_patterns[idx]
-            match = entry["regex"].match(normalized)
-            if not match:
+        def on_pattern(node: _GraphNode, stars: list[tuple[int, int]]) -> tuple:
+            if node.that_root is not None:
+
+                def on_that(that_node: _GraphNode, thatstars: list[tuple[int, int]]) -> tuple:
+                    found = self._topic_category(that_node, stars, thatstars, topic_words, mode, sources)
+                    return found
+
+                matched_that = self._walk(node.that_root, that_words, 0, [], mode, on_that)
+                if matched_that:
+                    return matched_that
+            found = self._topic_category(node, stars, [], topic_words, mode, sources)
+            return found
+
+        found = self._walk(self.default_trie, words, 0, [], mode, on_pattern)
+        return found
+
+    def _topic_category(
+        self,
+        node: _GraphNode,
+        stars: list[tuple[int, int]],
+        thatstars: list[tuple[int, int]],
+        topic_words: list[str],
+        mode: str,
+        sources: tuple[list[str], list[str], list[str]],
+    ) -> tuple:
+        """Take the category below a pattern or that leaf; a matching topic beats no topic."""
+        if node.topic_root is not None:
+
+            def on_topic(topic_node: _GraphNode, topicstars: list[tuple[int, int]]) -> tuple:
+                taken = self._take_category(topic_node, stars, thatstars, topicstars, sources)
+                return taken
+
+            found = self._walk(node.topic_root, topic_words, 0, [], mode, on_topic)
+            if found:
+                return found
+        taken = self._take_category(node, stars, thatstars, [], sources)
+        return taken
+
+    def _take_category(
+        self,
+        node: _GraphNode,
+        stars: list[tuple[int, int]],
+        thatstars: list[tuple[int, int]],
+        topicstars: list[tuple[int, int]],
+        sources: tuple[list[str], list[str], list[str]],
+    ) -> tuple:
+        """Return the match tuple for a leaf category, or empty when the leaf is bare."""
+        category = node.category
+        if not category:
+            result = ()
+            return result
+        words, that_words, topic_words = sources
+        result = (
+            category["response"],
+            [" ".join(words[start:end]) for start, end in stars],
+            [" ".join(that_words[start:end]) for start, end in thatstars],
+            [" ".join(topic_words[start:end]) for start, end in topicstars],
+            category["pattern"],
+            category["topic"],
+            category["that"],
+        )
+        return result
+
+    def _walk(
+        self,
+        node: _GraphNode,
+        words: list[str],
+        pos: int,
+        stars: list[tuple[int, int]],
+        mode: str,
+        on_leaf,
+    ) -> tuple:
+        """Try this node's branches in AIML order. The first path that finishes wins.
+
+        Each capture is a (start, end) span of ``words``.
+        """
+        if pos == len(words):
+            found = on_leaf(node, stars)
+            if found:
+                return found
+            if node.caret is not None:
+                found = self._walk(node.caret, words, pos, stars + [(pos, pos)], mode, on_leaf)
+                if found:
+                    return found
+            if node.hash is not None:
+                found = self._walk(node.hash, words, pos, stars + [(pos, pos)], mode, on_leaf)
+                if found:
+                    return found
+            result = ()
+            return result
+
+        word = words[pos]
+        for child in self._dollar_children(node, word, mode):
+            found = self._walk(child, words, pos + 1, stars, mode, on_leaf)
+            if found:
+                return found
+
+        if node.underscore is not None:
+            for end in range(pos + 1, len(words) + 1):
+                found = self._walk(node.underscore, words, end, stars + [(pos, end)], mode, on_leaf)
+                if found:
+                    return found
+
+        for child in self._atom_children(node, word, mode):
+            found = self._walk(child, words, pos + 1, stars, mode, on_leaf)
+            if found:
+                return found
+
+        for name, child in node.bots.items():
+            expected = self._bound_words(_named_value(self.internal_bot_properties, name, ""), mode)
+            end = self._consume_fixed(words, pos, expected)
+            if end < 0:
                 continue
+            found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
+            if found:
+                return found
 
-            captured = list(match.groups())
-            thatstars: list[str] = []
-            topicstars: list[str] = []
-            score = entry["specificity"]
-
-            if entry["topic"] and entry["topic_regex"]:
-                if not topic_normalized:
+        for name, child in node.sets.items():
+            members = []
+            for raw in _named_value(self.internal_sets, name, ()) or ():
+                member_words = self._bound_words(raw, mode)
+                if member_words:
+                    members.append(member_words)
+            members.sort(key=len, reverse=True)
+            for member_words in members:
+                end = self._consume_fixed(words, pos, member_words)
+                if end < 0:
                     continue
-                topic_match = entry["topic_regex"].match(topic_normalized)
-                if not topic_match:
-                    continue
-                score += TOPIC_PRIORITY + entry["topic_specificity"]
-                topicstars = list(topic_match.groups())
+                found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
+                if found:
+                    return found
 
-            if entry["that"] and entry["that_regex"]:
-                if not that_normalized:
-                    continue
-                that_match = entry["that_regex"].match(that_normalized)
-                if not that_match:
-                    continue
-                score += THAT_PRIORITY + entry["that_specificity"]
-                thatstars = list(that_match.groups())
+        if node.caret is not None:
+            for end in range(pos, len(words) + 1):
+                found = self._walk(node.caret, words, end, stars + [(pos, end)], mode, on_leaf)
+                if found:
+                    return found
 
-            if not best or score > best[4]:
-                best = (
-                    entry["response"],
-                    captured,
-                    thatstars,
-                    topicstars,
-                    score,
-                    entry["pattern"],
-                    entry["topic"],
-                    entry["that"],
-                )
+        if node.hash is not None:
+            for end in range(pos, len(words) + 1):
+                found = self._walk(node.hash, words, end, stars + [(pos, end)], mode, on_leaf)
+                if found:
+                    return found
 
-        if best:
-            # Return (response, captured, thatstars, topicstars, pattern, topic, that)
-            best_result = (best[0], best[1], best[2], best[3], best[5], best[6], best[7])
-            return best_result
+        if node.star is not None:
+            for end in range(pos + 1, len(words) + 1):
+                found = self._walk(node.star, words, end, stars + [(pos, end)], mode, on_leaf)
+                if found:
+                    return found
 
         result = ()
+        return result
+
+    def _dollar_children(self, node: _GraphNode, word: str, mode: str) -> list[_GraphNode]:
+        """Return the priority-word edges that match this input word."""
+        if mode == "lemma":
+            result = list(node.lemma_dollar.get(word, ()))
+            return result
+        if mode == "stem":
+            result = list(node.stem_dollar.get(word, ()))
+            return result
+        child = node.dollar.get(word)
+        if child is None:
+            result = []
+            return result
+        result = [child]
+        return result
+
+    def _atom_children(self, node: _GraphNode, word: str, mode: str) -> list[_GraphNode]:
+        """Return the exact-word edges that match this input word."""
+        if mode == "lemma":
+            result = list(node.lemma_atoms.get(word, ()))
+            return result
+        if mode == "stem":
+            result = list(node.stem_atoms.get(word, ()))
+            return result
+        child = node.atoms.get(word)
+        if child is None:
+            result = []
+            return result
+        result = [child]
+        return result
+
+    def _bound_words(self, value: str, mode: str) -> list[str]:
+        """Prepare a set member or bot property the same way as the input."""
+        prepared = prepare_pattern_text(str(value))
+        if not prepared:
+            result = []
+            return result
+        if mode == "lemma":
+            prepared = self.internal_lemmatize(prepared)
+        elif mode == "stem":
+            prepared = stem_text(prepared)
+        result = prepared.split()
+        return result
+
+    def _consume_fixed(self, words: list[str], pos: int, expected: list[str]) -> int:
+        """Return the index after a fixed word sequence, or -1 when it does not fit."""
+        count = len(expected)
+        if not count or pos + count > len(words):
+            result = -1
+            return result
+        if words[pos : pos + count] != expected:
+            result = -1
+            return result
+        result = pos + count
         return result
 
     def get_patterns(self) -> list[tuple[str, str]]:
@@ -651,7 +925,7 @@ class PatternMatcher:
         Returns:
             List of (pattern, response) tuples.
         """
-        pairs = [(p["pattern"], p["response"]) for p in self.internal_patterns]
+        pairs = [(p["pattern"], p["response"]) for p in self.internal_entries.values()]
         return pairs
 
     def get_patterns_with_context(self) -> list[tuple[str, str, str, str]]:
@@ -660,18 +934,17 @@ class PatternMatcher:
         Returns:
             List of (pattern, response, that, topic) tuples.
         """
-        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self.internal_patterns]
+        entries = [(p["pattern"], p["response"], p["that"], p["topic"]) for p in self.internal_entries.values()]
         return entries
 
     def clear(self) -> None:
         """Remove all patterns."""
-        self.internal_patterns.clear()
-        self.first_word_index.clear()
-        self.stemmed_first_word_index.clear()
-        self.lemmatized_first_word_index.clear()
-        self.wildcard_patterns.clear()
+        self.internal_entries.clear()
+        self.internal_entry_ids.clear()
+        self.internal_path_claims.clear()
+        self.default_trie = _GraphNode()
 
     def __len__(self) -> int:
         """Return number of patterns."""
-        count = len(self.internal_patterns)
+        count = len(self.internal_entries)
         return count

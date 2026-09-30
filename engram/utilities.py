@@ -8,12 +8,12 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
 from importlib.metadata import version as package_version
 from importlib.resources import files
+from logging import getLogger as logging_getLogger
 from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from engram.constants import (
-    UTILITY_CONTRACT_VERSION,
     UTILITY_MAX_ABSOLUTE_EXPONENT,
     UTILITY_MAX_COLLECTION_ITEM_BYTES,
     UTILITY_MAX_COLLECTION_ITEMS,
@@ -29,7 +29,8 @@ from engram.constants import (
     UTILITY_UNIT_PRECISION_DIGITS,
 )
 
-UTILITY_PLUGIN_VERSION = "1.0.0"
+logger = logging_getLogger(__name__)
+
 UTILITY_TZDATA_VERSION = package_version("tzdata")
 UTILITY_ALLOWED_TIMEZONES = {
     "UTC",
@@ -80,9 +81,7 @@ def utility_config(enabled: bool = False, plugins=UTILITY_PLUGIN_NAMES) -> dict:
 
 def internal_contract(name: str, input_schema: str, result_schema: str, errors: tuple[str, ...]) -> dict:
     return {
-        "contract_version": UTILITY_CONTRACT_VERSION,
         "name": name,
-        "version": UTILITY_PLUGIN_VERSION,
         "accepted_frame_types": ("direct_request",),
         "input_schema": input_schema,
         "bounds": {
@@ -676,8 +675,6 @@ def evaluation(
     result = {
         "status": status,
         "plugin_name": plugin_name,
-        "plugin_version": UTILITY_PLUGIN_VERSION if plugin_name else "",
-        "contract_version": UTILITY_CONTRACT_VERSION,
         "response": response,
         "canonical_input": canonical_input,
         "error_code": error_code,
@@ -703,7 +700,8 @@ def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     except UtilityInputError as error:
         result = evaluation("rejected", plugin_name, error_code=error.code)
         return result
-    except Exception:
+    except Exception as error:
+        logger.warning("Utility plugin %s failed", plugin_name, exc_info=error)
         result = evaluation("failed", plugin_name, error_code="plugin_failure")
         return result
     if len(response.encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES:
@@ -756,7 +754,6 @@ class UtilityRegistry:
             name: {
                 "enabled": self.enabled and name in self.plugin_names,
                 "ready": self.enabled and name in self.plugin_names,
-                "version": UTILITY_PLUGIN_VERSION,
             }
             for name in UTILITY_PLUGIN_NAMES
         }
@@ -764,7 +761,6 @@ class UtilityRegistry:
         result = {
             "enabled": self.enabled,
             "ready": self.available(),
-            "contract_version": UTILITY_CONTRACT_VERSION,
             "plugins": plugins,
         }
         return result

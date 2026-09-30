@@ -26,12 +26,12 @@ from scripts.benchmark_metadata import benchmark_source_state
 
 def parse_args() -> argparse_Namespace:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", default="eval/section13-semantic-v1.json")
+    parser.add_argument("--corpus", default="eval/section13-semantic.json")
     parser.add_argument(
         "--manifest",
         default="data/artifacts/models/all-MiniLM-L6-v2-826711e5.engram-model.json",
     )
-    parser.add_argument("--output", default="eval/results/semantic/benchmark-2026-08-22.json")
+    parser.add_argument("--output", default="eval/results/semantic/benchmark.json")
     result = parser.parse_args()
     return result
 
@@ -275,12 +275,10 @@ def main() -> int:
         if value.is_file() and ".cache" not in value.relative_to(model_path).parts
     )
     result = {
-        "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
         "source_state": benchmark_source_state(),
         "corpus": {
             "path": Path(args.corpus).as_posix(),
-            "version": corpus["corpus_version"],
             "query_count": len(corpus["queries"]),
             "evaluation_role": corpus["evaluation_role"],
         },

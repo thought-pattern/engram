@@ -2,7 +2,7 @@
 
 **Status:** Current implemented and qualified contract
 **Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolvers.py`
-**Current policy:** `fusion`, formula version 1
+**Current policy:** the built-in weights and gates below
 
 ## Scope and selection boundary
 
@@ -89,7 +89,7 @@ identity/type mismatches keep a useful candidate at `EVIDENCE`.
 
 ## Formula and decision policy
 
-For every available non-exact, non-margin feature `i`, formula version 1 calculates:
+For every available non-exact, non-margin feature `i`, the formula calculates:
 
 ```text
 weighted_average = sum(weight[i] * value[i]) / sum(weight[i])
@@ -97,9 +97,9 @@ score = exact + (1 - exact) * weighted_average
 ```
 
 The sums include available inputs. `margin` has weight zero because it is
-calculated after ranking. Exact match dominates at `1.0`. The versioned
-weights and gates are serialized in every fusion report and have fingerprint
-`f1c09a8f7e87cca3ac7b1bcf5712b0c7c622ac2988c1a97f41f4dbe400dce72d`.
+calculated after ranking. Exact match dominates at `1.0`. The weights and
+gates are serialized in every fusion report and identified there by their
+policy fingerprint.
 
 The released gates are:
 
@@ -119,6 +119,5 @@ codes come from the closed vocabulary; response text and diagnostics remain data
 
 ## Verification
 
-Candidate resolution and response behavior are exercised through the retained
-core and adapter lifecycle harnesses. The standalone fusion suite was removed;
-native reports retain the selected outcome, eligibility and rejection reasons.
+`tests/test_fusion.py` verifies feature normalization, scoring, eligibility,
+ambiguity, authoritative revalidation, budgets, and stable reasons.

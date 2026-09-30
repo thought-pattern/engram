@@ -22,11 +22,11 @@ from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
     ANONYMOUS_CONVERSATION_LEASE_SECONDS,
     DEFAULT_USER_ID,
-    EARLIEST_UTC,
     EMPTY_CONFIG,
     EMPTY_MAPPING,
     EMPTY_METADATA,
     MAX_ARTIFACT_ID_BYTES,
+    MAX_CACHE_REQUEST_BYTES,
     MAX_CALLER_ID_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_FEEDBACK_REASON_BYTES,
@@ -34,7 +34,6 @@ from engram.constants import (
     MAX_METADATA_STRING_BYTES,
     MAX_NAMESPACE_BYTES,
     MAX_REASON_CODE_BYTES,
-    MAX_REQUEST_BYTES,
     MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_RETIREMENT_BATCH_ENTRIES,
@@ -82,7 +81,13 @@ from engram.feedback import (
     validate_feedback_observation,
 )
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority, fusion_policy, policy_fingerprint
-from engram.identity import build_scoped_retrieval_key, query_identity_to_dict, scope_key, validate_query_identity
+from engram.identity import (
+    build_scoped_retrieval_key,
+    normalize_retrieval_key,
+    query_identity_to_dict,
+    scope_key,
+    validate_query_identity,
+)
 from engram.mutations import mutation_receipt_to_dict
 from engram.repository import tier_admission_policy
 from engram.resolution import (
@@ -119,6 +124,7 @@ from engram.rollout import apply_rollout, rollout_status, select_rollout
 from engram.scope_removal import EngagementResponseRemoval, validate_removal_command
 from engram.telemetry import record_graph_recall, record_regulator_outcome, record_resolution
 from engram.text import normalize
+from engram.validation import require_any_text
 
 LOGGER = logging_getLogger("engram.service")
 
@@ -146,28 +152,21 @@ def feedback_mutation_request_id(kind: str, request_id: str) -> str:
     return result
 
 
-def require_service_text(value: str, name: str, maximum_bytes: int) -> None:
-    """Require a nonempty service-boundary string."""
-    if not isinstance(value, str) or not value.strip():
-        raise InvalidRequestError(f"{name} must be a non-empty string")
-    try:
-        size = len(value.encode("utf-8"))
-    except UnicodeEncodeError as error:
-        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
-    if size > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
+def require_cache_request(request: str) -> None:
+    """Reject a regulated-cache request that cannot become a lookup key, before any other work.
 
-
-def require_service_string(value: str, name: str, maximum_bytes: int) -> None:
-    """Require a concrete service-boundary string, including an empty string."""
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    try:
-        size = len(value.encode("utf-8"))
-    except UnicodeEncodeError as error:
-        raise InvalidRequestError(f"{name} must contain valid Unicode") from error
-    if size > maximum_bytes:
-        raise InvalidRequestError(f"{name} exceeds the UTF-8 limit of {maximum_bytes} bytes")
+    The request is normalized into an exact-match key. Normalization expands
+    contractions and some characters, so the normalized form is checked too.
+    """
+    require_any_text(request, "request", MAX_CACHE_REQUEST_BYTES, blank_is_empty=True)
+    normalized = normalize_retrieval_key(request)
+    if not normalized:
+        raise InvalidRequestError("request must contain searchable text")
+    if len(normalized.encode("utf-8")) > MAX_CACHE_REQUEST_BYTES:
+        raise InvalidRequestError(
+            f"request exceeds the UTF-8 limit of {MAX_CACHE_REQUEST_BYTES} bytes once normalized; "
+            "normalization expands contractions and some characters"
+        )
 
 
 def service_request_signature(**values) -> str:
@@ -232,7 +231,8 @@ class IsolatedGraphClient:
     def __getattr__(self, name: str):
         client = object.__getattribute__(self, "client")
         value = getattr(client, name)
-        if not callable(value) or name == "disconnect":
+        # Lifecycle calls run outside a turn and do no graph I/O on the caller's thread.
+        if not callable(value) or name in {"disconnect", "reconnect_after_turn"}:
             return value
         operation_context = object.__getattribute__(self, "operation_context")
         telemetry_operation = object.__getattribute__(self, "telemetry_operation")
@@ -258,23 +258,6 @@ class IsolatedGraphClient:
             object.__setattr__(self, name, value)
         else:
             setattr(object.__getattribute__(self, "client"), name, value)
-
-
-def service_candidate_result(statement: dict, score: float) -> dict:
-    """Build the transport-neutral proposal view of one response candidate."""
-    result = {
-        "statement_id": statement.get("id", ""),
-        "response": statement.get("text", ""),
-        "score": score,
-        "tier": statement.get("tier", Tier.DYNAMIC).value,
-        "created_at": statement.get("created_at", EARLIEST_UTC).isoformat(),
-        "hit_count": statement.get("hit_count", 0),
-        "query_count": statement.get("query_count", 0),
-        "source_label": statement.get("source_label", ""),
-        "introduced_by_user_id": statement.get("introduced_by_user_id", "") or "",
-        "metadata": deepcopy(statement.get("template", {})),
-    }
-    return result
 
 
 def artifact_candidate_result(artifact: dict, score: float) -> dict:
@@ -310,7 +293,7 @@ def normalize_service_user_id(user_id: str) -> str:
     """Normalize a service user identity and translate boundary errors."""
     try:
         result = sessions.normalize_user_id(user_id)
-        require_service_text(result, "user_id", MAX_CALLER_ID_BYTES)
+        require_any_text(result, "user_id", MAX_CALLER_ID_BYTES, blank_is_empty=True)
         return result
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
@@ -451,7 +434,8 @@ class EngramCore:
             try:
                 selected_engram = Engram(config=config)
             except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+                LOGGER.error("Engram could not start with the supplied configuration", exc_info=error)
+                raise InvalidRequestError("Engram configuration is invalid; the server log has the details") from error
         elif isinstance(engram, Engram):
             if config:
                 raise InvalidRequestError("config cannot be supplied with an existing Engram")
@@ -531,7 +515,11 @@ class EngramCore:
 
     @contextlib_contextmanager
     def resolution_slot(self, request_id: str, user_id: str):
-        """Serialize retry identity and per-user context while permitting unrelated work."""
+        """Serialize retry identity and per-user context while permitting unrelated work.
+
+        A slot spans one turn: a chat exchange or a resolution request. When
+        it ends, a graph connection lost during the turn starts reconnecting.
+        """
         with self.resolution_condition:
             while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
                 self.require_running()
@@ -546,20 +534,49 @@ class EngramCore:
                 self.active_resolution_request_ids.discard(request_id)
                 self.active_resolution_user_ids.discard(user_id)
                 self.resolution_condition.notify_all()
+            self.reconnect_graph_after_turn()
+
+    def reconnect_graph_after_turn(self) -> None:
+        """Let a graph client that lost its connection reconnect now that the turn is over.
+
+        Called when a chat or resolution turn ends, and by the gRPC service
+        after every call. The client reconnects in the background, so the
+        finished turn is not delayed, and its reads fail immediately until the
+        reconnect succeeds. The core lock is not taken, so a response is never
+        held behind other requests.
+        """
+        if self.internal_state != CoreState.RUNNING:
+            return
+        reconnect = getattr(self.engram.graph_client, "reconnect_after_turn", ())
+        if not callable(reconnect):
+            return
+        try:
+            reconnect()
+        except Exception as error:
+            LOGGER.warning("graph reconnect could not start", exc_info=error)
 
     @contextlib_contextmanager
     def graph_operation(self):
-        """Track optional graph I/O and release an owned core-wide lock."""
+        """Track optional graph I/O and release an owned core-wide lock.
+
+        The core lock stays held when this thread is inside an Engram state
+        lock, such as a template graph query rendered under statement_lock.
+        Releasing it there would let another request take the core lock and
+        then wait on that state lock while this thread waits on the core lock.
+        """
         with self.resolution_condition:
             self.require_running()
             self.active_graph_operations += 1
         released = False
         try:
-            try:
-                self.lock.release()
-                released = True
-            except RuntimeError:
-                LOGGER.debug("graph operation began without an owned core lock")
+            if self.engram.holds_state_lock():
+                LOGGER.debug("graph operation keeps the core lock inside an Engram state lock")
+            else:
+                try:
+                    self.lock.release()
+                    released = True
+                except RuntimeError:
+                    LOGGER.debug("graph operation began without an owned core lock")
             yield
         finally:
             if released:
@@ -664,7 +681,7 @@ class EngramCore:
             record_regulator_outcome(self.engram.operational_metrics, outcome)
 
     def candidate_generation(self, statement_id: str, resolution: dict) -> tuple[int, bool]:
-        artifact = self.engram.response_repository.snapshot()["artifacts"].get(statement_id)
+        artifact = self.engram.response_repository.trusted_artifacts().get(statement_id)
         if artifact:
             result = artifact["generation"], True
             return result
@@ -728,9 +745,7 @@ class EngramCore:
         observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict[str, object]:
-        candidate = self.engram.feedback_store.prepare_validated(request_id, observations, lifecycle_status)
-        if not candidate["replayed"]:
-            self.engram.feedback_store.replace_from_snapshot(candidate["after"])
+        candidate = self.engram.feedback_store.apply_validated(request_id, observations, lifecycle_status)
         receipt_value = mutation_receipt_to_dict(candidate["receipt"])
         result = receipt_value["result"]
         if not isinstance(result, dict):
@@ -778,7 +793,7 @@ class EngramCore:
             frame.get("required_source_label", ""),
         )
         policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
-        repository = self.engram.response_repository.snapshot()["artifacts"]
+        repository = self.engram.response_repository.trusted_artifacts()
         values = []
         for statement_id in statement_ids:
             artifact = repository.get(statement_id)
@@ -837,7 +852,6 @@ class EngramCore:
                 frame.get("required_metadata", {}),
                 frame.get("required_source_label", ""),
             ),
-            normalization_version=frame.get("identity", {})["normalization_version"],
             resolver_plan_fingerprint=canonical_fingerprint(resolver_plan),
             capability_readiness_fingerprint=canonical_fingerprint(readiness),
             policy_fingerprint=policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy),
@@ -868,14 +882,14 @@ class EngramCore:
         cancellation_check: object = (),
     ) -> dict:
         """Run one transport-neutral bounded resolution pipeline."""
-        require_service_text(request, "request", MAX_REQUEST_BYTES)
-        require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+        require_cache_request(request)
+        require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         normalized_user_id = normalize_service_user_id(user_id)
         with self.resolution_slot(request_id, normalized_user_id), self.lock:
             self.require_running()
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if not isinstance(identity, dict):
                 raise InvalidRequestError("identity must be an object")
             if not isinstance(budget, dict):
@@ -927,7 +941,6 @@ class EngramCore:
                 budget=signature_budget,
                 configured_resolvers=list(selected_resolvers),
                 accept_exact=accept_exact,
-                rollout_policy_version=rollout["policy_version"],
                 rollout_mode=rollout_mode.value,
             )
             if request_id in self.resolution_requests:
@@ -1015,7 +1028,7 @@ class EngramCore:
                 raise
             except Exception as error:
                 # Negative-cache ownership and lookup are optional optimizations.
-                LOGGER.warning("negative-resolution lookup failed closed: %s", error)
+                LOGGER.warning("negative-resolution lookup failed closed", exc_info=error)
                 negative_key_available = False
                 negative_hit = False
             if negative_hit:
@@ -1038,7 +1051,7 @@ class EngramCore:
                         frame["eligibility_context"]["evaluation_time"],
                     )
                 except Exception as error:
-                    LOGGER.warning("negative-resolution admission failed: %s", error)
+                    LOGGER.warning("negative-resolution admission failed", exc_info=error)
             result = apply_rollout(raw_result, rollout)
             candidate_statement_ids = finalization["candidate_statement_ids"] if rollout_mode != RolloutMode.SHADOW else ()
             candidacy_observations = self.feedback_observations(
@@ -1075,10 +1088,10 @@ class EngramCore:
 
         with self.lock:
             self.require_running()
-            require_service_text(resolution_request_id, "resolution_request_id", MAX_REQUEST_ID_BYTES)
-            require_service_text(feedback_request_id, "feedback_request_id", MAX_REQUEST_ID_BYTES)
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(resolution_request_id, "resolution_request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(feedback_request_id, "feedback_request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             try:
                 verdict = FeedbackOutcome(outcome)
             except (TypeError, ValueError) as error:
@@ -1111,7 +1124,6 @@ class EngramCore:
                 generation_available=target["generation_available"],
                 policy_fingerprint=target["policy_fingerprint"],
                 observed_at=observed_at,
-                contract_fingerprint=target["contract_fingerprint"],
                 reason=reason,
             )
             lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
@@ -1135,9 +1147,11 @@ class EngramCore:
                             "external regulator marked the observed candidate generation stale",
                         )
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
-                    except (ConflictError, ResourceNotFoundError, InvalidRequestError):
+                    except (ConflictError, ResourceNotFoundError, InvalidRequestError) as error:
+                        LOGGER.info("stale-lifecycle handoff conflicted", exc_info=error)
                         lifecycle_status = LifecycleHandoffStatus.CONFLICTED
-                    except MutationCoordinationError:
+                    except MutationCoordinationError as error:
+                        LOGGER.error("stale-lifecycle handoff failed", exc_info=error)
                         lifecycle_status = LifecycleHandoffStatus.FAILED
                 else:
                     lifecycle_status = LifecycleHandoffStatus.PENDING
@@ -1162,7 +1176,6 @@ class EngramCore:
             if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64:
                 raise InvalidRequestError("feedback inspection limit must be an integer from 1 through 64")
             result = {
-                "schema_version": 1,
                 "feedback": self.engram.feedback_store.inspect(limit),
                 "negative_resolution": self.negative_resolutions.inspect(limit),
             }
@@ -1185,17 +1198,16 @@ class EngramCore:
                     self.release_conversation(self.conversations.get(conversation_id))
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
-            try:
-                runtime = ConversationRuntime(
-                    self.engram,
-                    user_id=conversation_id,
-                    initial_bot_text=initial_bot_text,
-                    random_seed=random_seed,
-                    random_seed_present=random_seed_present,
-                    clock=self.internal_clock,
-                )
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            # Request validation raises InvalidRequestError with its own message;
+            # anything else is an internal failure, logged at the transport.
+            runtime = ConversationRuntime(
+                self.engram,
+                user_id=conversation_id,
+                initial_bot_text=initial_bot_text,
+                random_seed=random_seed,
+                random_seed_present=random_seed_present,
+                clock=self.internal_clock,
+            )
             self.conversations[conversation_id] = runtime
             self.conversation_activity[conversation_id] = time_monotonic()
             snapshot = runtime.inspect()
@@ -1252,10 +1264,7 @@ class EngramCore:
         with self.resolution_slot(operation_id, conversation_id), self.lock:
             self.require_running()
             runtime = self.owned_conversation(conversation_id, conversation_token)
-            try:
-                result = runtime.send(text)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            result = runtime.send(text)
             return result
 
     def inspect_conversation(self, user_id: str, conversation_token: str = "") -> dict:
@@ -1272,12 +1281,9 @@ class EngramCore:
         """Add one unattributed shared fact without changing user context."""
         with self.lock:
             self.require_running()
-            require_service_text(text, "text", MAX_RESPONSE_BYTES)
-            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
-            try:
-                statement_id = self.engram.add_fact(text, source_label=source_label)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            require_any_text(text, "text", MAX_RESPONSE_BYTES, blank_is_empty=True)
+            require_any_text(source_label, "source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
+            statement_id = self.engram.add_fact(text, source_label=source_label)
             result = statement_view(self.engram.get_statement(statement_id))
             return result
 
@@ -1307,8 +1313,8 @@ class EngramCore:
         """Set one caller-owned predicate on a user context."""
         with self.lock:
             self.require_running()
-            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
-            require_service_string(value, "value", MAX_METADATA_STRING_BYTES)
+            require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
+            require_any_text(value, "value", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
@@ -1318,8 +1324,8 @@ class EngramCore:
         """Read one caller-owned predicate from a user context."""
         with self.lock:
             self.require_running()
-            require_service_text(name, "name", MAX_METADATA_KEY_BYTES)
-            require_service_string(default, "default", MAX_METADATA_STRING_BYTES)
+            require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
+            require_any_text(default, "default", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
             if not session:
@@ -1338,7 +1344,8 @@ class EngramCore:
                 result = self.internal_component_status["vector"]["ready"] and self.internal_component_status["vector"]["enabled"]
                 return result
             except Exception as error:
-                raise InvalidRequestError(f"unable to initialize vector recall: {error}") from error
+                LOGGER.error("Vector recall could not be initialized", exc_info=error)
+                raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from error
 
     def maintain_engagement(self, value: dict) -> dict:
         """Trusted administrative pause, physical purge and explicit resumption."""
@@ -1427,7 +1434,7 @@ class EngramCore:
                 try:
                     disconnect()
                 except Exception as error:
-                    LOGGER.warning("graph client disconnect failed while closing Engram: %s", error)
+                    LOGGER.warning("graph client disconnect failed while closing Engram", exc_info=error)
             self.internal_state = CoreState.CLOSED
             self.resolution_condition.notify_all()
             result = True
@@ -1448,11 +1455,11 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(request, "request", MAX_REQUEST_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES)
+            require_cache_request(request)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(required_source_label, "required_source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
                 raise InvalidRequestError("limit must be an integer from 1 through 10")
             if not isinstance(required_metadata, dict):
@@ -1488,7 +1495,7 @@ class EngramCore:
                 diagnostic_seed=f"proposal:{request_id}",
             )
             feedback_policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
-            response_artifacts = self.engram.response_repository.snapshot()["artifacts"]
+            response_artifacts = self.engram.response_repository.trusted_artifacts()
 
             def artifact_matches_scope(artifact: dict) -> bool:
                 statement_id = str(artifact.get("statement_id", ""))
@@ -1644,10 +1651,10 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(outcome, "outcome", MAX_REASON_CODE_BYTES)
-            require_service_string(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_string(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(outcome, "outcome", MAX_REASON_CODE_BYTES, allow_empty=True)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             if outcome not in REGULATOR_OUTCOMES:
                 supported = ", ".join(sorted(REGULATOR_OUTCOMES))
                 raise InvalidRequestError(f"outcome must be one of: {supported}")
@@ -1673,7 +1680,13 @@ class EngramCore:
             current_artifact: dict = {}
             if outcome == "accepted":
                 current_artifact = self.engram.response_repository.get_artifact(statement_id)
-                if current_artifact.get("response", "") != candidate_responses.get(statement_id, ""):
+                # The same text survives a retire, supersede, or invalidation,
+                # so an accepted verdict also requires the artifact to be ACTIVE.
+                # Generation is not compared: proposal accounting advances it.
+                if (
+                    current_artifact.get("response", "") != candidate_responses.get(statement_id, "")
+                    or getattr(current_artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
+                ):
                     raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
             observations = record["candidacy_observations"]
             if not isinstance(observations, tuple):
@@ -1693,7 +1706,6 @@ class EngramCore:
                 generation_available=target["generation_available"],
                 policy_fingerprint=target["policy_fingerprint"],
                 observed_at=canonical_utc(self.internal_clock()),
-                contract_fingerprint=target["contract_fingerprint"],
                 reason=reason,
             )
             verdict_feedback_request_id = feedback_mutation_request_id("proposal-verdict", proposal_id)
@@ -1744,19 +1756,19 @@ class EngramCore:
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Create one DYNAMIC ACTIVE response artifact through base commit."""
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(request, "request", MAX_REQUEST_BYTES)
-            require_service_text(response, "response", MAX_RESPONSE_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(namespace, "namespace", MAX_NAMESPACE_BYTES)
-            require_service_string(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES)
-            require_service_string(source_label, "source_label", MAX_SOURCE_LABEL_BYTES)
+            require_cache_request(request)
+            require_any_text(response, "response", MAX_RESPONSE_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
+            require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
+            require_any_text(source_label, "source_label", MAX_SOURCE_LABEL_BYTES, allow_empty=True)
             if normalize(response) == "idk":
                 raise InvalidRequestError("IDK is not a cacheable response")
             if not isinstance(metadata, dict):
@@ -1821,9 +1833,9 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
-            require_service_string(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+            require_any_text(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             current = self.engram.response_repository.get_artifact(statement_id)
             mutation = self.response_mutations.supersede_response(
                 statement_id,
@@ -1842,9 +1854,9 @@ class EngramCore:
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            require_service_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES)
-            require_service_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES)
-            require_service_text(request_id, "request_id", MAX_REQUEST_ID_BYTES)
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, blank_is_empty=True)
+            require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
             try:
                 current = self.engram.response_repository.get_artifact(statement_id)
             except ResourceNotFoundError as err:
@@ -1916,9 +1928,9 @@ class EngramCore:
             if not isinstance(record_ids, list) or not record_ids:
                 raise InvalidRequestError("record_ids must be a non-empty list")
             for identifier in record_ids:
-                require_service_text(identifier, "record_id", MAX_ARTIFACT_ID_BYTES)
+                require_any_text(identifier, "record_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
             wanted = set(record_ids)
-            artifacts = self.engram.response_repository.snapshot().get("artifacts", {})
+            artifacts = self.engram.response_repository.trusted_artifacts()
             statement_ids = sorted(
                 identifier
                 for identifier, artifact in artifacts.items()
@@ -1942,9 +1954,9 @@ class EngramCore:
                 statement_id = entry.get("statement_id", "")
                 reason = entry.get("reason", "")
                 request_id = entry.get("request_id", "")
-                require_service_text(statement_id, "statement_id", RETIREMENT_FIELD_BYTE_LIMITS.get("statement_id", 0))
-                require_service_text(reason, "reason", RETIREMENT_FIELD_BYTE_LIMITS.get("reason", 0))
-                require_service_text(request_id, "request_id", RETIREMENT_FIELD_BYTE_LIMITS.get("request_id", 0))
+                require_any_text(statement_id, "statement_id", RETIREMENT_FIELD_BYTE_LIMITS.get("statement_id", 0), blank_is_empty=True)
+                require_any_text(reason, "reason", RETIREMENT_FIELD_BYTE_LIMITS.get("reason", 0), blank_is_empty=True)
+                require_any_text(request_id, "request_id", RETIREMENT_FIELD_BYTE_LIMITS.get("request_id", 0), blank_is_empty=True)
                 validated_entries.append(
                     {
                         "statement_id": statement_id,

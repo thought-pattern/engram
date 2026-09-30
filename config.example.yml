@@ -3,6 +3,10 @@
 # Copy this file to config.yml and edit it:  cp config.example.yml config.yml
 # config.yml is gitignored (local config); this template is tracked. Any setting
 # you omit falls back to its built-in default (shown below).
+# A host that supplies settings in memory through engram.config.config_from_dict,
+# such as Tapestry's managed server, starts from the config.yml at the repository
+# root and overrides it: its top-level values replace this file's, and its
+# sections (graph, conversation, ...) override this file's sections key by key.
 
 # --- Capacity ---
 capacity: 10000 # Maximum DYNAMIC statements
@@ -83,7 +87,6 @@ reranker:
 # The default preserves normal regulated answers. Exact namespace overrides may
 # use: disabled, shadow, evidence_only, regulated_direct_answer, or rollback.
 rollout:
-  policy_version: rollout
   default_mode: regulated_direct_answer
   namespaces: {}
 
@@ -108,21 +111,48 @@ polish_responses: true # Repair casing in pattern-path responses
 # --- Fallback ---
 fallback_response: "" # Response when nothing matches ("" = no fallback)
 
+# --- Conversation ---
+# Seed files load once at startup, in the order listed. Paths are relative to
+# this file. Leave the list empty for a silent process. To run as a social
+# bot, list the corpus files here. Keep the catch-all pattern in one file.
+# engram/data/seed.json holds the catch-all "*" pattern, so every input gets a
+# pattern reply and the keyword retrieval and LLM fallbacks never run. An enabled
+# graph still answers questions and commands before the pattern reply.
+# duplicate_policy defaults to error, which rejects a repeated pattern.
+# Set it to last when a later file should replace that same pattern, or
+# first to keep the earlier pair. Different patterns are kept either way.
+conversation:
+  bot_name: ENGRAM
+  # duplicate_policy: last   # error (default), last, or first
+  seed_files: []
+  # To run as a social bot, replace the line above with a list:
+  # seed_files:
+  #   - engram/data/seed.json
+  #   - engram/data/software_development.json
+  # AIML tables load before the categories. Leave them unset until a file exists.
+  # set_files: []            # JSON object: set name -> list of words
+  # map_files: []            # JSON object: map name -> object of strings
+  # properties_file: ""      # flat bot properties; bot_name still wins
+  # predicate_file: ""       # defaults copied into each new session
+  # substitution_file: ""    # optional contractions, person, person2, gender, custom
+
 # --- Knowledge graph (optional) ---
-# MemGraph connection (pymgclient), matching the Tapestry knowledge-graph
-# interface. Standalone DDL uses: python scripts/setup_schema.py --apply
-# A Tapestry-managed graph uses only the read-only verify_schema.py gate.
+# Graph database connection over Bolt with Cypher queries (for example Memgraph
+# or Neo4j). The graph's schema must include every definition in engram/schema.cypher;
+# it may have more. To create them on an empty graph:
+# python scripts/setup_schema.py --apply
 # Runtime queries are read-only. The password is never saved with cache state;
 # supply it through this external runtime configuration.
-# MemGraph remains optional when enabled. An unavailable graph reports not ready
-# and is skipped while Engram's local retrieval and conversation paths continue.
+# The graph database is optional: set enabled: false to run without it. When
+# enabled, it must be reachable and have a compatible schema at startup, or
+# startup fails. A graph read that fails later returns no rows and is logged, while
+# Engram's local retrieval and conversation paths continue.
 graph:
-  host: localhost
+  host: 192.168.100.13
   port: 7687
   username: ""
   password: ""
-  enabled: false
-  deployment_mode: "" # standalone or tapestry_managed when enabled
+  enabled: true
   visibility_scope:
     kind: global
     company_id: {}

@@ -3,6 +3,7 @@
 from enum import StrEnum
 from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
+from logging import getLogger as logging_getLogger
 from re import (
     IGNORECASE as IGNORECASE,
     UNICODE as UNICODE,
@@ -16,11 +17,11 @@ from time import perf_counter_ns as time_perf_counter_ns
 from unicodedata import normalize as unicodedata_normalize
 
 from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
-from engram.errors import InvalidRequestError, RewriteLimitError
+from engram.errors import InvalidRequestError
 from engram.resolution import query_frame_with_changes, rewrite_trace_step, validate_query_frame
+from engram.validation import require_any_text
 
-REWRITE_RULE_SCHEMA_VERSION = 1
-REWRITE_CORPUS_SCHEMA_VERSION = 1
+logger = logging_getLogger(__name__)
 MAX_REWRITE_RULES = 256
 MAX_REWRITE_RULE_ID_BYTES = 96
 MAX_REWRITE_PATTERN_BYTES = 512
@@ -33,9 +34,7 @@ DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
 
 RULE_FIELDS = set(
     {
-        "schema_version",
         "rule_id",
-        "rule_version",
         "category",
         "input_constraints",
         "output_template",
@@ -56,7 +55,7 @@ INPUT_FIELDS = set(
     }
 )
 PROVENANCE_FIELDS = set({"author", "origin", "license", "created_at"})
-CORPUS_FIELDS = set({"schema_version", "corpus_id", "corpus_version", "rules"})
+CORPUS_FIELDS = set({"corpus_id", "rules"})
 SAFE_TEMPLATE_FIELDS = set({"subject"})
 TOKEN_RE = re_compile(r"[^\W_]+(?:['’][^\W_]+)?", UNICODE)
 
@@ -95,10 +94,8 @@ def internal_mapping(value: object, name: str, fields: set[str]) -> dict[str, ob
 
 
 def internal_text(value: object, name: str, maximum: int, *, empty: bool = False) -> str:
-    if not isinstance(value, str) or (not empty and not value.strip()) or len(value.encode("utf-8")) > maximum:
-        qualifier = "bounded string" if empty else "bounded non-empty string"
-        raise InvalidRequestError(f"{name} must be a {qualifier}")
-    result = value.strip()
+    """Validate rewrite corpus text and return it trimmed."""
+    result = require_any_text(value, name, maximum, allow_empty=empty, blank_is_empty=True).strip()
     return result
 
 
@@ -122,8 +119,6 @@ def internal_tokens(value: str) -> tuple[str, ...]:
 def rewrite_rule(value: object) -> dict:
     """Validate and copy one exact version-1 rule record."""
     data = internal_mapping(value, "RewriteRule", RULE_FIELDS)
-    if data["schema_version"] != REWRITE_RULE_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported rewrite rule schema_version: {data['schema_version']}")
     constraint_data = internal_mapping(data["input_constraints"], "RewriteInputConstraints", INPUT_FIELDS)
     provenance_data = internal_mapping(data["provenance"], "RewriteProvenance", PROVENANCE_FIELDS)
     try:
@@ -166,9 +161,7 @@ def rewrite_rule(value: object) -> dict:
         "created_at": internal_text(provenance_data["created_at"], "rewrite provenance created_at", 40),
     }
     result: dict = {
-        "schema_version": REWRITE_RULE_SCHEMA_VERSION,
         "rule_id": internal_text(data["rule_id"], "rewrite rule_id", MAX_REWRITE_RULE_ID_BYTES),
-        "rule_version": internal_integer(data["rule_version"], "rewrite rule_version", 1, 1_000_000),
         "category": internal_text(data["category"], "rewrite category", 64),
         "input_constraints": constraint,
         "output_template": template,
@@ -185,31 +178,6 @@ def rewrite_rule(value: object) -> dict:
     return result
 
 
-def rewrite_rule_to_dict(value: object) -> dict[str, object]:
-    """Serialize one validated rule to plain JSON-ready values."""
-    rule = rewrite_rule(value)
-    result = {
-        "schema_version": rule["schema_version"],
-        "rule_id": rule["rule_id"],
-        "rule_version": rule["rule_version"],
-        "category": rule["category"],
-        "input_constraints": {
-            "match_mode": rule["input_constraints"]["match_mode"].value,
-            "pattern": rule["input_constraints"]["pattern"],
-            "min_tokens": rule["input_constraints"]["min_tokens"],
-            "max_tokens": rule["input_constraints"]["max_tokens"],
-            "required_operators": [value.value for value in rule["input_constraints"]["required_operators"]],
-            "requires_inherited_subject": rule["input_constraints"]["requires_inherited_subject"],
-        },
-        "output_template": rule["output_template"],
-        "priority": rule["priority"],
-        "scope": rule["scope"].value,
-        "max_applications": rule["max_applications"],
-        "provenance": dict(rule["provenance"]),
-    }
-    return result
-
-
 def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
     """Load one exact corpus document without accepting unknown fields."""
     try:
@@ -217,18 +185,15 @@ def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
     except (TypeError, json_JSONDecodeError) as error:
         raise InvalidRequestError("rewrite corpus must be valid JSON") from error
     data = internal_mapping(decoded, "RewriteCorpus", CORPUS_FIELDS)
-    if data["schema_version"] != REWRITE_CORPUS_SCHEMA_VERSION:
-        raise InvalidRequestError(f"unsupported rewrite corpus schema_version: {data['schema_version']}")
     internal_text(data["corpus_id"], "rewrite corpus_id", 128)
-    internal_integer(data["corpus_version"], "rewrite corpus_version", 1, 1_000_000)
     raw_rules = data["rules"]
     if not isinstance(raw_rules, list) or not 1 <= len(raw_rules) <= MAX_REWRITE_RULES:
         raise InvalidRequestError(f"rewrite corpus rules must contain 1 through {MAX_REWRITE_RULES} items")
     rules = tuple(rewrite_rule(rule) for rule in raw_rules)
-    identities = tuple((rule["rule_id"], rule["rule_version"]) for rule in rules)
+    identities = tuple(rule["rule_id"] for rule in rules)
     if len(set(identities)) != len(identities):
         raise InvalidRequestError("rewrite corpus contains duplicate rule identity/version pairs")
-    result = tuple(sorted(rules, key=lambda rule: (-rule["priority"], rule["rule_id"], rule["rule_version"])))
+    result = tuple(sorted(rules, key=lambda rule: (-rule["priority"], rule["rule_id"])))
     return result
 
 
@@ -300,12 +265,8 @@ class RewriteEngine:
             raise InvalidRequestError("rewrite rules must be a tuple")
         if not 1 <= len(rules) <= MAX_REWRITE_RULES:
             raise InvalidRequestError(f"rewrite rules must contain 1 through {MAX_REWRITE_RULES} items")
-        self.rules = tuple(
-            sorted(
-                (rewrite_rule(rule) for rule in rules), key=lambda rule: (-rule["priority"], rule["rule_id"], rule["rule_version"])
-            )
-        )
-        rule_identities = tuple((rule["rule_id"], rule["rule_version"]) for rule in self.rules)
+        self.rules = tuple(sorted((rewrite_rule(rule) for rule in rules), key=lambda rule: (-rule["priority"], rule["rule_id"])))
+        rule_identities = tuple(rule["rule_id"] for rule in self.rules)
         if len(set(rule_identities)) != len(rule_identities):
             raise InvalidRequestError("rewrite rules must have unique identity/version pairs")
         self.max_depth = internal_integer(max_depth, "rewrite max_depth", 1, MAX_TRACE_STEPS)
@@ -357,7 +318,7 @@ class RewriteEngine:
                 break
             candidates = []
             for rule in self.rules:
-                identity = (rule["rule_id"], rule["rule_version"])
+                identity = rule["rule_id"]
                 if applications.get(identity, 0) >= rule["max_applications"]:
                     continue
                 if eligible(rule, current, operator, selected_subject, inherited_subject):
@@ -378,9 +339,9 @@ class RewriteEngine:
             if signature in seen:
                 stop_reason = RewriteStopReason.CYCLE
                 break
-            identity = (rule["rule_id"], rule["rule_version"])
+            identity = rule["rule_id"]
             applications[identity] = applications.get(identity, 0) + 1
-            chain.append((f"{rule['rule_id']}@{rule['rule_version']}", current, output))
+            chain.append((rule["rule_id"], current, output))
             current = output
             seen.add(signature)
         else:
@@ -404,7 +365,13 @@ def apply_rewrites_to_frame(
     engine: RewriteEngine,
     cooperative_check: object = (),
 ) -> dict:
-    """Populate the reserved QueryFrame trace without changing authoritative identity."""
+    """Populate the reserved QueryFrame trace without changing authoritative identity.
+
+    Only a complete fixed point reaches resolver planning. A chain stopped by
+    a depth, expansion, cycle, output, or time limit is discarded and the
+    frame keeps its original representation, so an optional rewrite cannot
+    fail the request.
+    """
     frame = validate_query_frame(value)
     inherited_subject = any(item["field_name"] == "subjects" for item in frame["inheritance"])
     subject = frame["identity"]["entities"][0]["surface"] if frame["identity"]["entities"] else ""
@@ -416,7 +383,9 @@ def apply_rewrites_to_frame(
         cooperative_check=cooperative_check,
     )
     if execution["stop_reason"] != RewriteStopReason.FIXED_POINT:
-        raise RewriteLimitError(f"rewrite stopped at {execution['stop_reason'].value} before reaching a fixed point")
+        logger.info("Rewrite stopped at %s; resolving the original representation", execution["stop_reason"].value)
+        result = frame
+        return result
     trace = tuple(rewrite_trace_step(rule_id, input_text, output_text) for rule_id, input_text, output_text in execution["chain"])
     result = query_frame_with_changes(frame, {"resolved_text": execution["final_text"], "rewrite_chain": trace})
     return result

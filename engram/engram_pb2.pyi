@@ -213,7 +213,6 @@ class ResolveEvidenceRequest(Message):
     ) -> None: ...
 
 class EvidencePackage(Message):
-    wire_version: int
     records: RepeatedCompositeFieldContainer[Struct]
     retained_count: int
     omitted_count: int
@@ -222,7 +221,6 @@ class EvidencePackage(Message):
 
     def __init__(
         self,
-        wire_version: int = ...,
         records: object = ...,
         retained_count: int = ...,
         omitted_count: int = ...,
@@ -231,7 +229,6 @@ class EvidencePackage(Message):
     ) -> None: ...
 
 class ResolutionResult(Message):
-    schema_version: int
     outcome: str
     selected_candidate: Struct
     selected_candidate_available: bool
@@ -248,7 +245,6 @@ class ResolutionResult(Message):
 
     def __init__(
         self,
-        schema_version: int = ...,
         outcome: str = ...,
         selected_candidate: object = ...,
         selected_candidate_available: bool = ...,

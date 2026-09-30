@@ -1,7 +1,7 @@
 """Independent static and live catalog contracts for Engram Memgraph DDL."""
 
-from hashlib import sha256
-from pathlib import Path
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
 
 ORDINARY_INDEX_PATTERN = re_compile(
@@ -106,16 +106,9 @@ REQUIRED_VECTOR_INDEXES = {
 }
 
 
-def schema_file_digest(path: Path) -> str:
-    """Return the full SHA-256 digest of one schema file."""
-    result = sha256(path.read_bytes()).hexdigest()
-    return result
-
-
-def schema_ddl_digest(path: Path) -> str:
-    """Digest only normalized executable DDL, excluding comments and layout."""
-    statements = cypher_statements(path.read_text(encoding="utf-8"))
-    result = sha256((";\n".join(statements) + ";").encode("utf-8")).hexdigest()
+def packaged_schema() -> Traversable:
+    """Return Engram's schema file as installed with the package."""
+    result = files("engram").joinpath("schema.cypher")
     return result
 
 
@@ -294,7 +287,7 @@ def validate_catalog_uniqueness(catalog: dict) -> None:
 
 
 def validate_schema_contract(text: str) -> dict:
-    """Validate the corrected standalone Engram schema."""
+    """Validate Engram's schema against the definitions recall depends on."""
     catalog = schema_catalog(text)
     indexed = catalog_keys(catalog, "ordinary_indexes")
     constraints = catalog_keys(catalog, "constraints")
@@ -433,22 +426,40 @@ def catalog_keys(catalog: dict, group: str) -> set[tuple]:
     raise ValueError(f"catalog group is unsupported: {group}")
 
 
-def compare_catalogs(expected: dict, actual: dict, allow_superset: bool = False) -> dict:
-    """Compare every live-exposed catalog field with one static schema."""
-    missing = {}
-    unexpected = {}
-    for group in ("ordinary_indexes", "text_indexes", "constraints", "vector_indexes"):
-        expected_keys = catalog_keys(expected, group)
-        actual_keys = catalog_keys(actual, group)
-        if expected_keys - actual_keys:
-            missing[group] = sorted(expected_keys - actual_keys)
-        if actual_keys - expected_keys and not allow_superset:
-            unexpected[group] = sorted(actual_keys - expected_keys)
+def compatibility_keys(catalog: dict, group: str) -> set[tuple]:
+    """Return the keys a live graph must match for Engram's queries to work.
+
+    A vector index's capacity and scalar kind size its storage; queries behave
+    the same whatever they are, so they are left out.
+    """
+    if group != "vector_indexes":
+        result = catalog_keys(catalog, group)
+        return result
     result = {
-        "valid": not missing and not unexpected,
+        (
+            value.get("name", ""),
+            value.get("label", ""),
+            value.get("property", ""),
+            value.get("index_type", ""),
+            value.get("dimension", 0),
+            value.get("metric", ""),
+        )
+        for value in catalog.get(group, [])
+    }
+    return result
+
+
+def compare_catalogs(expected: dict, actual: dict) -> dict:
+    """Report what a live catalog lacks for compatibility; extra definitions are fine."""
+    missing = {}
+    for group in ("ordinary_indexes", "text_indexes", "constraints", "vector_indexes"):
+        absent = compatibility_keys(expected, group) - compatibility_keys(actual, group)
+        if absent:
+            missing[group] = sorted(absent)
+    result = {
+        "valid": not missing,
         "missing": missing,
-        "unexpected": unexpected,
-        "static_only_vector_fields": ("requested_capacity", "resize_coefficient"),
+        "vector_fields_not_compared": ("requested_capacity", "effective_capacity", "scalar_kind", "resize_coefficient"),
     }
     return result
 

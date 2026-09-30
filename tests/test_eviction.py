@@ -1,5 +1,6 @@
 """Integration tests for process-memory LRU eviction."""
 
+from engram import eviction
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
@@ -79,3 +80,57 @@ def test_pattern_cleanup_retire_statement_removes_pattern() -> None:
 
     assert engram.pattern_query("retire me") == ()
     assert "RETIRE ME" not in engram.pattern_to_statement
+
+
+def test_evicting_every_carrier_of_a_shared_pattern_leaves_no_dead_entry() -> None:
+    engram = Engram()
+    engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
+    first = engram.store("First.", pattern="SHARED PATTERN", tier=Tier.DYNAMIC)
+    engram.store("Second.", pattern="SHARED PATTERN", tier=Tier.DYNAMIC)
+
+    assert engram.retire_statement(first)
+    assert engram.pattern_query("shared pattern")[2] == "Second."
+    assert eviction.clear_dynamic(engram) == 1
+
+    # A leftover entry would still win the walk and answer with nothing.
+    assert len(engram.pattern_matcher) == 1
+    assert engram.pattern_query("shared pattern")[2] == "Fallback."
+
+
+def test_lru_heap_evicts_what_a_full_scan_would() -> None:
+    from random import Random
+
+    from engram.models import record_statement_hit
+
+    def scan_choice(engram: Engram) -> str:
+        def key(item: tuple[int, dict]) -> tuple:
+            idx, statement = item
+            last_hit = statement.get("last_hit", False)
+            result = (last_hit or statement.get("created_at", False), 1 if last_hit else 0, idx)
+            return result
+
+        result = min(eviction.get_eviction_candidates(engram), key=key)[1]["id"]
+        return result
+
+    random = Random(20260928)
+    engram = Engram(config=engram_config(capacity=1_000_000))
+    engram.store("Static.", pattern="STATIC *", tier=Tier.STATIC)
+    for index in range(40):
+        engram.store(f"Fact {index}.", pattern=f"FACT {index}", tier=Tier.DYNAMIC)
+    for step in range(200):
+        dynamic = sorted(engram.dynamic_statement_ids)
+        action = random.random()
+        if action < 0.35 and dynamic:
+            record_statement_hit(engram.statement_by_id[random.choice(dynamic)])
+        elif action < 0.55:
+            engram.store(f"Later fact {step}.", pattern=f"LATER {step}", tier=Tier.DYNAMIC)
+        elif action < 0.65 and dynamic:
+            assert engram.retire_statement(random.choice(dynamic))
+        elif dynamic:
+            expected = scan_choice(engram)
+            assert eviction.evict_dynamic(engram)
+            assert expected not in engram.statement_by_id
+            assert set(engram.dynamic_statement_ids) == set(dynamic) - {expected}
+        positions = engram.statement_index
+        assert all(engram.statements[position]["id"] == statement_id for statement_id, position in positions.items())
+        assert all(engram.statement_position(statement_id) == position for statement_id, position in positions.items())

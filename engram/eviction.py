@@ -1,6 +1,6 @@
 """Least-recently-used eviction for ENGRAM process memory."""
 
-from datetime import datetime
+from heapq import heappop as heapq_heappop, heapreplace as heapq_heapreplace
 
 from engram.constants import Tier
 
@@ -39,7 +39,24 @@ def evict_statement_at(engram, idx: int) -> bool:
         return result
 
     stmt = engram.statements[idx]
+    detach_statement(engram, stmt)
 
+    # Positions come from the store-order sequence, so nothing is renumbered.
+    # The statement's LRU heap entry is dropped when it reaches the top.
+    statement_id = stmt.get("id", "")
+    engram.statements.pop(idx)
+    engram.statement_sequences.pop(idx)
+    del engram.statement_by_id[statement_id]
+    del engram.statement_sequence[statement_id]
+    engram.dynamic_statement_ids.discard(statement_id)
+
+    engram.eviction_count += 1
+    result = True
+    return result
+
+
+def detach_statement(engram, stmt: dict) -> None:
+    """Remove a statement's keywords and patterns, leaving the statement list alone."""
     # Remove from keyword indices
     with engram.keyword_lock:
         for kw in stmt.get("keywords", []):
@@ -49,41 +66,55 @@ def evict_statement_at(engram, idx: int) -> bool:
                 if not engram.keywords[kw].get("statement_ids", []):
                     del engram.keywords[kw]
 
-    # Remove primary and alias patterns from the matcher. A surviving statement
-    # carrying the same pattern keeps it registered and becomes the map target.
+    # store() registered one matcher entry per pattern, so exactly one goes.
+    # A surviving statement carrying the same pattern keeps its own entry and
+    # becomes the map target. Keeping this entry for a survivor instead would
+    # leave a dead entry behind once the last carrier is evicted.
     for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])]:
         if not pattern:
             continue
-        survivors = [
-            s
-            for s in engram.statements
-            if s.get("id", "") != stmt.get("id", "")
-            and (s.get("pattern", "") == pattern or pattern in s.get("pattern_aliases", []))
-            and s.get("that", False) == stmt.get("that", False)
-            and s.get("topic", "") == stmt.get("topic", "")
+        carriers = [
+            engram.statement_by_id[statement_id]
+            for statement_id in engram.pattern_statements.get(pattern, ())
+            if statement_id != stmt.get("id", "")
         ]
-        if not survivors:
-            engram.pattern_matcher.remove_pattern(pattern, that=stmt.get("that", False), topic=stmt.get("topic", ""))
+        survivors = [
+            s for s in carriers if s.get("that", False) == stmt.get("that", False) and s.get("topic", "") == stmt.get("topic", "")
+        ]
+        engram.pattern_matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
         if engram.pattern_to_statement.get(pattern, False) == stmt.get("id", ""):
             del engram.pattern_to_statement[pattern]
             if survivors:
                 engram.pattern_to_statement[pattern] = survivors[0].get("id", "")
 
-    # Remove from statement list and update index
-    del engram.statement_index[stmt.get("id", "")]
-    engram.statements.pop(idx)
+    for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])]:
+        carriers = engram.pattern_statements.get(pattern)
+        if carriers and stmt.get("id", "") in carriers:
+            carriers.remove(stmt.get("id", ""))
+            if not carriers:
+                del engram.pattern_statements[pattern]
 
-    # Rebuild indices after removal
-    for i, s in enumerate(engram.statements):
-        engram.statement_index[s.get("id", "")] = i
 
-    engram.eviction_count += 1
-    result = True
+def lru_entry(statement: dict, sequence: int) -> tuple:
+    """Return a DYNAMIC statement's LRU heap entry: its eviction key, then its id.
+
+    The key is (last used, whether it was ever hit, store order). Equal
+    timestamps keep store order, as list positions did.
+    """
+    last_hit = statement.get("last_hit", False)
+    last_used = last_hit or statement.get("created_at", False)
+    result = (last_used, 1 if last_hit else 0, sequence, statement.get("id", ""))
     return result
 
 
 def evict_dynamic(engram) -> bool:
     """Evict the least-recently-used DYNAMIC statement.
+
+    The heap holds one entry per DYNAMIC statement, recorded when it was
+    stored or last checked. Hits only move a statement's key later, so an
+    entry whose key is still current at the top of the heap is the true
+    minimum; a stale entry is refreshed and pushed back, and an entry for a
+    removed statement is dropped.
 
     Args:
         engram: Engram instance.
@@ -92,22 +123,23 @@ def evict_dynamic(engram) -> bool:
         True if a statement was evicted, False if no candidates available.
     """
 
-    candidates = get_eviction_candidates(engram)
-    if not candidates:
-        result = False
-        return result
-
-    def lru_key(item: tuple[int, dict]) -> tuple[datetime, int, str]:
-        _, statement = item
-        last_hit = statement.get("last_hit", False)
-        last_used = last_hit or statement.get("created_at", False)
-        key = (last_used, 1 if last_hit else 0, str(statement.get("id", "")))
-        return key
-
-    target_idx = min(candidates, key=lru_key)[0]
-
-    evicted = evict_statement_at(engram, target_idx)
-    return evicted
+    heap = engram.dynamic_lru
+    while heap:
+        entry = heap[0]
+        statement_id = entry[3]
+        sequence = entry[2]
+        if statement_id not in engram.dynamic_statement_ids or engram.statement_sequence.get(statement_id) != sequence:
+            heapq_heappop(heap)
+            continue
+        current = lru_entry(engram.statement_by_id[statement_id], sequence)
+        if current != entry:
+            heapq_heapreplace(heap, current)
+            continue
+        heapq_heappop(heap)
+        evicted = evict_statement_at(engram, engram.statement_position(statement_id))
+        return evicted
+    result = False
+    return result
 
 
 def evict(engram) -> bool:
@@ -138,10 +170,23 @@ def clear_dynamic(engram) -> int:
     Returns:
         Number of statements removed.
     """
-    count = 0
     with engram.mutation_lock, engram.statement_lock:
-        while True:
-            if not evict_dynamic(engram):
-                break
-            count += 1
+        dynamic = [stmt for stmt in engram.statements if stmt.get("tier", "") == Tier.DYNAMIC]
+        for stmt in dynamic:
+            detach_statement(engram, stmt)
+        # One pass over the list instead of one eviction scan per statement.
+        kept = [
+            (stmt, sequence)
+            for stmt, sequence in zip(engram.statements, engram.statement_sequences, strict=True)
+            if stmt.get("tier", "") != Tier.DYNAMIC
+        ]
+        engram.statements[:] = [stmt for stmt, _ in kept]
+        engram.statement_sequences[:] = [sequence for _, sequence in kept]
+        for stmt in dynamic:
+            del engram.statement_by_id[stmt.get("id", "")]
+            del engram.statement_sequence[stmt.get("id", "")]
+        engram.dynamic_statement_ids.clear()
+        engram.dynamic_lru.clear()
+        engram.eviction_count += len(dynamic)
+        count = len(dynamic)
     return count

@@ -7,8 +7,6 @@ from time import monotonic_ns as time_monotonic_ns
 from engram.config import reranker_config
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 
-RERANKER_CONTRACT_VERSION = 1
-RERANKER_IMPLEMENTATION = "transparent_logistic"
 RERANKER_FEATURES = (
     "base_score",
     "exact",
@@ -87,7 +85,6 @@ class TransparentLogisticReranker:
                 "ready": self.enabled,
                 "implementation": self.settings["implementation"],
                 "model_version": self.settings["model_version"],
-                "contract_version": RERANKER_CONTRACT_VERSION,
                 "requests": self.internal_requests,
                 "completed": self.internal_completed,
                 "fallbacks": self.internal_fallbacks,

@@ -3,6 +3,7 @@
 Configurations are plain dictionaries returned by validating normalizers.
 """
 
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from os import path as os_path
 
@@ -12,11 +13,16 @@ from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, RolloutMode, Sessi
 from engram.scope import validate_visibility_scope
 from engram.utilities import utility_config
 
+logger = logging_getLogger(__name__)
+
 EMPTY_SPARSE_CONFIG = EMPTY_CONFIG
 EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
 EMPTY_RERANKER_CONFIG = EMPTY_CONFIG
 EMPTY_ROLLOUT_CONFIG = EMPTY_CONFIG
 EMPTY_UTILITY_CONFIG = EMPTY_CONFIG
+EMPTY_CONVERSATION_CONFIG = EMPTY_CONFIG
+# The config.yml beside the engram package: the repository root in a source checkout.
+DEFAULT_CONFIG_PATH = os_path.join(os_path.dirname(os_path.dirname(os_path.abspath(__file__))), "config.yml")
 
 
 def graph_config(
@@ -25,7 +31,6 @@ def graph_config(
     username: str = "",
     password: str = "",
     enabled: bool = False,
-    deployment_mode: str = "",
     visibility_scope: dict = EMPTY_CONFIG,
     vector_enabled: bool = False,
     vector_index_name: str = "proposition_embeddings",
@@ -39,8 +44,8 @@ def graph_config(
 ) -> dict:
     """Build a Knowledge Graph connection configuration dict.
 
-    Connects to MemGraph with the pymgclient driver over host/port, matching
-    the Tapestry knowledge-graph connection interface.
+    Connects to a Bolt graph database with the neo4j driver over host/port.
+    Startup checks that the graph's schema is compatible with Engram's.
     """
     if not isinstance(host, str) or not host.strip():
         raise ValueError("graph host must be a non-empty string")
@@ -52,14 +57,6 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
-    if not isinstance(deployment_mode, str) or deployment_mode not in {
-        "",
-        "standalone",
-        "tapestry_managed",
-    }:
-        raise ValueError("graph deployment_mode must be standalone or tapestry_managed")
-    if enabled and deployment_mode not in {"standalone", "tapestry_managed"}:
-        raise ValueError("enabled graph requires an explicit deployment_mode")
     scope = validate_visibility_scope(visibility_scope)
     if not isinstance(vector_enabled, bool):
         raise ValueError("graph vector_enabled must be a boolean")
@@ -102,7 +99,6 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
-        "deployment_mode": deployment_mode,
         "visibility_scope": scope,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),
@@ -255,13 +251,10 @@ def reranker_config(
 
 
 def rollout_config(
-    policy_version: str = "rollout",
     default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
     namespaces: dict = EMPTY_CONFIG,
 ) -> dict:
     """Build the small namespace rollout policy used by unified resolution."""
-    if not isinstance(policy_version, str) or not policy_version.strip():
-        raise ValueError("rollout policy_version must be a non-empty string")
     if not isinstance(default_mode, RolloutMode):
         try:
             default_mode = RolloutMode(default_mode)
@@ -278,10 +271,103 @@ def rollout_config(
         except (TypeError, ValueError) as error:
             raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from error
     result: dict = {
-        "policy_version": policy_version.strip(),
         "default_mode": default_mode,
         "namespaces": selected_namespaces,
     }
+    return result
+
+
+def conversation_path_list(entries, label: str) -> list:
+    """Return stripped paths from a conversation file list."""
+    if isinstance(entries, str) or not isinstance(entries, (list, tuple)):
+        raise ValueError(f"conversation {label} must be a list of strings")
+    paths = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(f"conversation {label} entries must be non-empty strings")
+        paths.append(entry.strip())
+    return paths
+
+
+def conversation_optional_path(entry, label: str) -> str:
+    """Return one optional conversation path. Blank means the file is unused."""
+    if not isinstance(entry, str):
+        raise ValueError(f"conversation {label} must be a string")
+    result = entry.strip()
+    return result
+
+
+def conversation_config(
+    bot_name: str = "ENGRAM",
+    seed_files: list | tuple = (),
+    duplicate_policy: str = "error",
+    set_files: list | tuple = (),
+    map_files: list | tuple = (),
+    properties_file: str = "",
+    predicate_file: str = "",
+    substitution_file: str = "",
+) -> dict:
+    """Build the conversation persona and the files loaded at startup.
+
+    An empty ``seed_files`` list loads no categories. Paths stored here are
+    used as given; ``load_config`` resolves paths from a YAML file before this
+    runs. Set, map, property, predicate, and substitution files load before
+    the categories. This function does not require the files to exist.
+
+    ``duplicate_policy`` is ``error``, ``last``, or ``first``. ``error`` rejects
+    a repeated pattern before anything is stored. ``last`` keeps the later
+    file's pair. ``first`` keeps the earlier pair.
+    """
+    if not isinstance(bot_name, str) or not bot_name.strip():
+        raise ValueError("conversation bot_name must be a non-empty string")
+    if duplicate_policy not in {"error", "last", "first"}:
+        raise ValueError("conversation duplicate_policy must be error, last, or first")
+    config = {
+        "bot_name": bot_name.strip(),
+        "seed_files": conversation_path_list(seed_files, "seed_files"),
+        "duplicate_policy": duplicate_policy,
+        "set_files": conversation_path_list(set_files, "set_files"),
+        "map_files": conversation_path_list(map_files, "map_files"),
+        "properties_file": conversation_optional_path(properties_file, "properties_file"),
+        "predicate_file": conversation_optional_path(predicate_file, "predicate_file"),
+        "substitution_file": conversation_optional_path(substitution_file, "substitution_file"),
+    }
+    return config
+
+
+def resolve_conversation_path_list(entries, config_path: str, key: str, kind: str) -> list:
+    """Resolve a list of conversation files against the YAML file's directory.
+
+    Absolute entries stay absolute. A missing file, a directory, or any other
+    non-file raises an error that names the path and the config file.
+    """
+    if isinstance(entries, str) or not isinstance(entries, (list, tuple)):
+        raise ValueError(f"conversation {key} in {config_path} must be a list of strings")
+    config_directory = os_path.dirname(os_path.abspath(config_path))
+    resolved = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(f"conversation {key} in {config_path} must contain non-empty strings")
+        raw_path = entry.strip()
+        if os_path.isabs(raw_path):
+            candidate = os_path.abspath(raw_path)
+        else:
+            candidate = os_path.abspath(os_path.join(config_directory, raw_path))
+        if not os_path.isfile(candidate):
+            raise ValueError(f"conversation {kind} {candidate} listed in {config_path} is missing or is not a file")
+        resolved.append(candidate)
+    return resolved
+
+
+def resolve_conversation_optional_file(entry, config_path: str, key: str, kind: str) -> str:
+    """Resolve one optional conversation file. A blank entry stays blank."""
+    if not isinstance(entry, str):
+        raise ValueError(f"conversation {key} in {config_path} must be a string")
+    if not entry.strip():
+        result = ""
+        return result
+    resolved = resolve_conversation_path_list([entry], config_path, key, kind)
+    result = resolved[0]
     return result
 
 
@@ -327,6 +413,8 @@ def engram_config(
     rollout: dict = EMPTY_ROLLOUT_CONFIG,
     # Allow-listed deterministic utility operations
     utility: dict = EMPTY_UTILITY_CONFIG,
+    # Persona name, categories, and AIML tables loaded once at startup
+    conversation: dict = EMPTY_CONVERSATION_CONFIG,
 ) -> dict:
     """Build (and validate) a configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
@@ -341,6 +429,8 @@ def engram_config(
         raise ValueError("rollout config must be an object")
     if not isinstance(utility, dict):
         raise ValueError("utility config must be an object")
+    if not isinstance(conversation, dict):
+        raise ValueError("conversation config must be an object")
     if capacity < 1:
         raise ValueError("capacity must be at least 1")
     if max_sessions < 1:
@@ -396,81 +486,123 @@ def engram_config(
         "reranker": reranker_config(**reranker) if reranker else reranker_config(),
         "rollout": rollout_config(**rollout) if rollout else rollout_config(),
         "utility": utility_config(**utility) if utility else utility_config(),
+        "conversation": conversation_config(**conversation) if conversation else conversation_config(),
     }
     return config
 
 
-def config_to_dict(config: dict) -> dict:
-    """Serialize a config dict to a JSON-ready dictionary.
+SECTION_BUILDERS = (
+    ("graph", graph_config),
+    ("sparse", sparse_config),
+    ("semantic", semantic_config),
+    ("reranker", reranker_config),
+    ("rollout", rollout_config),
+    ("utility", utility_config),
+    ("conversation", conversation_config),
+)
 
-    Enums are written by value and the stopword set as a sorted list, so the
-    result round-trips through JSON. Graph credentials are runtime-only and
-    deliberately omitted because runtime credentials are not configuration exports.
+
+def known_keys(values: object, allowed: set, section: str, source: str) -> dict:
+    """Keep only the keys this release reads.
+
+    An extra or stale key is dropped rather than stopping startup; each one is
+    logged so a misspelled setting is still visible.
     """
-    data = dict(config)
-    data["session_overflow"] = config.get("session_overflow", SessionOverflow.REJECT).value
-    data["stopwords"] = sorted(config.get("stopwords", set()))
-    graph = config.get("graph", {}) or {}
-    data["graph"] = {key: value for key, value in graph.items() if key != "password"}
-    data["sparse"] = dict(config.get("sparse", {}) or sparse_config())
-    data["semantic"] = dict(config.get("semantic", {}) or semantic_config())
-    data["reranker"] = dict(config.get("reranker", {}) or reranker_config())
-    rollout = config.get("rollout", {}) or rollout_config()
-    data["rollout"] = {
-        "policy_version": rollout["policy_version"],
-        "default_mode": rollout["default_mode"].value,
-        "namespaces": {namespace: mode.value for namespace, mode in rollout["namespaces"].items()},
-    }
-    data["utility"] = dict(config.get("utility", {}) or utility_config())
-    data.get("utility", {})["plugins"] = list(data.get("utility", {})["plugins"])
+    label = f"{section} config" if section else "config"
+    if not isinstance(values, dict):
+        raise ValueError(f"{label} in {source} must be an object")
+    unknown = sorted(str(key) for key in values if key not in allowed)
+    if unknown:
+        logger.warning("Ignoring unknown %s key(s) in %s: %s", label, source, ", ".join(unknown))
+    result = {key: value for key, value in values.items() if key in allowed}
+    return result
+
+
+def read_config_mapping(path: str) -> dict:
+    """Read one YAML configuration file into the keys this release reads.
+
+    A missing or empty file is an empty mapping. Top-level and section keys are
+    filtered with ``known_keys``, and conversation file paths are resolved
+    against this file's directory and stored absolute, so the mapping no longer
+    depends on the file's location. Values are not yet validated.
+    """
+    if not os_path.exists(path):
+        result: dict = {}
+        return result
+    with open(path, encoding="utf-8") as handle:
+        loaded = yaml_safe_load(handle)
+    if not loaded:
+        result = {}
+        return result
+    data = known_keys(loaded, set(engram_config()), "", path)
+    for name, builder in SECTION_BUILDERS:
+        if name in data and data.get(name):
+            data[name] = known_keys(data.get(name), set(builder()), name, path)
+    section = data.get("conversation") or {}
+    if section:
+        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
+            if key in section:
+                section[key] = resolve_conversation_path_list(section.get(key), path, key, kind)
+        for key, kind in (
+            ("properties_file", "properties file"),
+            ("predicate_file", "predicate file"),
+            ("substitution_file", "substitution file"),
+        ):
+            if key in section:
+                section[key] = resolve_conversation_optional_file(section.get(key), path, key, kind)
     return data
 
 
-def config_from_dict(data: dict) -> dict:
-    """Rebuild a validated config dict from its JSON-ready form.
+def validated_config(data: dict, source: str) -> dict:
+    """Build a validated config dict from a config.yml-shaped mapping.
 
-    Inverse of ``config_to_dict``: enum values are mapped back to their enums,
-    the stopword list back to a set, and the graph section revalidated through
-    ``graph_config``. Missing keys fall back to ``engram_config`` defaults.
+    ``session_overflow`` may be its string value and ``stopwords`` any
+    collection of words. Nested mappings are built with their section
+    normalizers; missing keys fall back to the ``engram_config`` defaults.
     """
-    if not isinstance(data, dict):
-        raise ValueError("serialized config must be an object")
-    params = dict(data)
+    params = known_keys(data, set(engram_config()), "", source)
     if "session_overflow" in params:
         params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
     if "stopwords" in params:
         params["stopwords"] = set(params.get("stopwords", set()))
-    if "graph" in params:
-        if not isinstance(params.get("graph", {}), dict):
-            raise ValueError("serialized graph config must be an object")
-        if params.get("graph", {}):
-            params["graph"] = graph_config(**params.get("graph", {}))
-    if "sparse" in params:
-        if not isinstance(params.get("sparse", {}), dict):
-            raise ValueError("serialized sparse config must be an object")
-        if params.get("sparse", {}):
-            params["sparse"] = sparse_config(**params.get("sparse", {}))
-    if "semantic" in params:
-        if not isinstance(params.get("semantic", {}), dict):
-            raise ValueError("serialized semantic config must be an object")
-        if params.get("semantic", {}):
-            params["semantic"] = semantic_config(**params.get("semantic", {}))
-    if "reranker" in params:
-        if not isinstance(params.get("reranker", {}), dict):
-            raise ValueError("serialized reranker config must be an object")
-        if params.get("reranker", {}):
-            params["reranker"] = reranker_config(**params.get("reranker", {}))
-    if "rollout" in params:
-        if not isinstance(params.get("rollout", {}), dict):
-            raise ValueError("serialized rollout config must be an object")
-        if params.get("rollout", {}):
-            params["rollout"] = rollout_config(**params.get("rollout", {}))
-    if "utility" in params:
-        if not isinstance(params.get("utility", {}), dict):
-            raise ValueError("serialized utility config must be an object")
-        if params.get("utility", {}):
-            params["utility"] = utility_config(**params.get("utility", {}))
+    for name, builder in SECTION_BUILDERS:
+        section = params.get(name, {})
+        if name in params and section:
+            params[name] = builder(**known_keys(section, set(builder()), name, source))
     config = engram_config(**params)
+    return config
+
+
+def config_from_dict(data: dict, base_path: str = DEFAULT_CONFIG_PATH) -> dict:
+    """Build a validated config from Engram's config.yml overridden by a host mapping.
+
+    For a host, such as Tapestry, that supplies Engram's settings in memory.
+    The configuration file at ``base_path`` (by default the ``config.yml``
+    beside the ``engram`` package) is read first, with its conversation paths
+    resolved against that file. ``data`` then overrides it: a top-level value
+    replaces the file's value, and a section such as ``graph`` or
+    ``conversation`` overrides the file's section key by key. Paths in ``data``
+    are used as given. A missing file, or an empty ``base_path``, leaves only
+    the ``engram_config`` defaults underneath. An unknown key is ignored and
+    logged, except the retired ``graph.deployment_mode``, which existing hosts
+    still send and which is dropped without a warning.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("config must be an object")
+    source = "config mapping"
+    merged = read_config_mapping(base_path) if base_path else {}
+    overrides = known_keys(data, set(engram_config()), "", source)
+    graph = overrides.get("graph", {})
+    if isinstance(graph, dict) and "deployment_mode" in graph:
+        overrides["graph"] = {key: value for key, value in graph.items() if key != "deployment_mode"}
+    sections = {name for name, _ in SECTION_BUILDERS}
+    for key, value in overrides.items():
+        current = merged.get(key, {})
+        if key in sections and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **value}
+        else:
+            merged[key] = value
+    config = validated_config(merged, source)
     return config
 
 
@@ -479,9 +611,11 @@ def load_config(path: str = "config.yml") -> dict:
 
     A missing or empty file returns the ``engram_config`` defaults. Scalar keys
     map straight through; ``session_overflow`` is given by its string value,
-    and a ``graph`` mapping is built with ``graph_config``.
-    An unknown key raises ValueError naming the key and the file -- a config
-    typo should fail loudly, not be dropped.
+    and nested mappings are built with their section normalizers. Conversation
+    file paths are resolved against this file's directory and stored absolute.
+    A missing file, a directory, or a non-file raises ValueError naming that
+    path and this file. An unknown key is ignored and logged, so a stale or
+    extra setting cannot stop startup.
 
     Args:
         path: Path to the YAML configuration file.
@@ -489,98 +623,5 @@ def load_config(path: str = "config.yml") -> dict:
     Returns:
         A validated config dict.
     """
-    if not os_path.exists(path):
-        config = engram_config()
-        return config
-
-    with open(path, encoding="utf-8") as f:
-        data = yaml_safe_load(f)
-    if not data:
-        config = engram_config()
-        return config
-
-    if "session_overflow" in data:
-        data["session_overflow"] = SessionOverflow(data["session_overflow"])
-    if "graph" in data and data["graph"]:
-        graph_keys = {
-            "host",
-            "port",
-            "username",
-            "password",
-            "enabled",
-            "deployment_mode",
-            "visibility_scope",
-            "vector_enabled",
-            "vector_index_name",
-            "vector_model",
-            "vector_model_path",
-            "vector_dimension",
-            "vector_limit",
-            "vector_support_scan_limit",
-            "vector_min_similarity",
-            "vector_weight",
-        }
-        unknown_graph = set(data["graph"]) - graph_keys
-        if unknown_graph:
-            raise ValueError(
-                f"Unknown graph config key(s) in {path}: {', '.join(sorted(unknown_graph))} "
-                f"(expected: {', '.join(sorted(graph_keys))})"
-            )
-        data["graph"] = graph_config(**data["graph"])
-    if "sparse" in data and data["sparse"]:
-        sparse_keys = {
-            "enabled",
-            "include_response_text",
-            "max_query_terms",
-            "max_posting_visits",
-            "max_prefix_expansions",
-        }
-        unknown_sparse = set(data["sparse"]) - sparse_keys
-        if unknown_sparse:
-            raise ValueError(
-                f"Unknown sparse config key(s) in {path}: {', '.join(sorted(unknown_sparse))} "
-                f"(expected: {', '.join(sorted(sparse_keys))})"
-            )
-        data["sparse"] = sparse_config(**data["sparse"])
-    if "semantic" in data and data["semantic"]:
-        semantic_keys = set(semantic_config())
-        unknown_semantic = set(data["semantic"]) - semantic_keys
-        if unknown_semantic:
-            raise ValueError(
-                f"Unknown semantic config key(s) in {path}: {', '.join(sorted(unknown_semantic))} "
-                f"(expected: {', '.join(sorted(semantic_keys))})"
-            )
-        data["semantic"] = semantic_config(**data["semantic"])
-    if "reranker" in data and data["reranker"]:
-        reranker_keys = set(reranker_config())
-        unknown_reranker = set(data["reranker"]) - reranker_keys
-        if unknown_reranker:
-            raise ValueError(
-                f"Unknown reranker config key(s) in {path}: {', '.join(sorted(unknown_reranker))} "
-                f"(expected: {', '.join(sorted(reranker_keys))})"
-            )
-        data["reranker"] = reranker_config(**data["reranker"])
-    if "rollout" in data and data["rollout"]:
-        rollout_keys = set(rollout_config())
-        unknown_rollout = set(data["rollout"]) - rollout_keys
-        if unknown_rollout:
-            raise ValueError(
-                f"Unknown rollout config key(s) in {path}: {', '.join(sorted(unknown_rollout))} "
-                f"(expected: {', '.join(sorted(rollout_keys))})"
-            )
-        data["rollout"] = rollout_config(**data["rollout"])
-    if "utility" in data and data["utility"]:
-        utility_keys = set(utility_config())
-        unknown_utility = set(data["utility"]) - utility_keys
-        if unknown_utility:
-            raise ValueError(
-                f"Unknown utility config key(s) in {path}: {', '.join(sorted(unknown_utility))} "
-                f"(expected: {', '.join(sorted(utility_keys))})"
-            )
-        data["utility"] = utility_config(**data["utility"])
-
-    try:
-        config = engram_config(**data)
-    except TypeError as err:
-        raise ValueError(f"Unknown config key in {path}: {err}") from err
+    config = validated_config(read_config_mapping(path), path)
     return config

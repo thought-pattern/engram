@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only schema and ownership verification for either Engram deployment."""
+"""Read-only check that a graph's schema is compatible with Engram's."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from pathlib import Path
@@ -9,12 +9,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys_path:
     sys_path.insert(0, str(REPO_ROOT))
 
-SCHEMA_FILE = REPO_ROOT / "schema.cypher"
-
-
 from engram.config import load_config
+from engram.constants import GRAPH_ADMIN_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
+from engram.schema_catalog import packaged_schema
+
+SCHEMA_FILE = packaged_schema()
 
 
 def connection_settings(config_path: str, host: str, port: int) -> dict:
@@ -31,14 +32,8 @@ def connection_settings(config_path: str, host: str, port: int) -> dict:
 
 
 def main() -> None:
-    """Verify the explicitly selected deployment without issuing writes."""
-    parser = argparse_ArgumentParser(description="Verify Engram's Memgraph contract")
-    parser.add_argument(
-        "--deployment",
-        required=True,
-        choices=("standalone", "tapestry_managed"),
-        help="select the expected graph owner and acceptance state",
-    )
+    """Check compatibility without issuing writes."""
+    parser = argparse_ArgumentParser(description="Check that a graph's schema is compatible with Engram's")
     parser.add_argument("--host", default="", help="override Memgraph host")
     parser.add_argument("--port", type=int, default=0, help="override Memgraph port")
     parser.add_argument(
@@ -50,11 +45,11 @@ def main() -> None:
     arguments = parser.parse_args()
 
     settings = connection_settings(arguments.config, arguments.host, arguments.port)
-    connection = MemGraphConnection(**settings)
+    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     try:
         if not connection.connect():
-            raise RuntimeError(f"Memgraph is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
-        report = verify_schema(connection, SCHEMA_FILE, arguments.deployment)
+            raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
+        report = verify_schema(connection, SCHEMA_FILE)
         print(report)
         sys_exit(0 if report.get("valid", False) else 1)
     except Exception as error:

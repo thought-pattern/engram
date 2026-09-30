@@ -2,16 +2,45 @@
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from copy import deepcopy
+from functools import wraps as functools_wraps
+from logging import getLogger as logging_getLogger
 from sys import argv as sys_argv
 from threading import RLock as threading_RLock
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
 from engram.constants import EMPTY_METADATA, VERSION
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
-from engram.errors import ConflictError, LifecycleError
+from engram.errors import ConflictError, EngramCoreError, LifecycleError
 from engram.service import EngramCore, normalize_service_user_id
+
+logger = logging_getLogger(__name__)
+
+
+def guarded_tool(operation):
+    """Log a failed tool call in full and give the client only a stable message.
+
+    The MCP SDK passes a ``ToolError``'s message to the client and keeps any
+    other exception's text on the server. Engram's own errors, whose messages
+    are written for callers, become ``ToolError``s; everything else becomes
+    "internal Engram failure".
+    """
+
+    @functools_wraps(operation)
+    def guarded(*args, **kwargs):
+        try:
+            result = operation(*args, **kwargs)
+            return result
+        except EngramCoreError as error:
+            logger.warning("Engram MCP tool %s was refused", operation.__name__, exc_info=error)
+            raise ToolError(str(error)) from None
+        except Exception as error:
+            logger.error("Engram MCP tool %s failed", operation.__name__, exc_info=error)
+            raise ToolError("internal Engram failure") from None
+
+    return guarded
 
 
 class MCPConversationService:
@@ -58,7 +87,10 @@ class MCPConversationService:
             conversation_user_id = normalize_service_user_id(user_id)
             core = EngramCore(config=config)
             try:
-                core.engram.load_static_data(deepcopy(self.static_pairs))
+                # Seed files named by the configuration load when the core
+                # starts; the adapter's static data applies only without them.
+                if not (config.get("conversation") or {}).get("seed_files"):
+                    core.engram.load_static_data(deepcopy(self.static_pairs))
                 started = core.start_conversation(
                     user_id=conversation_user_id,
                     initial_bot_text=initial_bot_text,
@@ -185,10 +217,10 @@ class MCPConversationService:
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache an Actor response without implicitly replacing existing knowledge."""
+        """Cache a response without implicitly replacing existing knowledge."""
         with self.lock:
             core, _ = self.require_active()
             result = core.learn_response(
@@ -238,18 +270,21 @@ class EngramMCPServer(MCPServer):
             ),
         )
         self.conversation_service = service or MCPConversationService()
-        self.tool()(self.engram_start)
-        self.tool()(self.engram_send)
-        self.tool()(self.engram_inspect)
-        self.tool()(self.engram_add_fact)
-        self.tool()(self.engram_finish)
-        self.tool()(self.engram_stop)
-        self.tool()(self.engram_query)
-        self.tool()(self.engram_propose)
-        self.tool()(self.engram_resolve)
-        self.tool()(self.engram_learn_response)
-        self.tool()(self.engram_retire_response)
-        self.tool()(self.engram_retire_responses)
+        for operation in (
+            self.engram_start,
+            self.engram_send,
+            self.engram_inspect,
+            self.engram_add_fact,
+            self.engram_finish,
+            self.engram_stop,
+            self.engram_query,
+            self.engram_propose,
+            self.engram_resolve,
+            self.engram_learn_response,
+            self.engram_retire_response,
+            self.engram_retire_responses,
+        ):
+            self.tool()(guarded_tool(operation))
 
     def engram_start(
         self,
@@ -366,10 +401,10 @@ class EngramMCPServer(MCPServer):
         user_id: str = "0",
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "tapestry:actor",
+        source_label: str = "unknown",
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache one non-IDK Actor response with scope and provenance."""
+        """Cache one non-IDK response with scope and provenance."""
         result = self.conversation_service.learn_response(
             request=request,
             response=response,

@@ -23,11 +23,20 @@ rollback.
 
 ## Fielded sparse retrieval
 
-For each request, the fielded BM25 scorer builds bounded working documents directly
-from the current active accepted-response artifact snapshot. It reads canonical
-requests, aliases, entities, relation, keywords, and technical identifiers. Response
-text is included only when explicitly configured. Its working documents and
-postings belong to that request and are discarded with its result.
+The fielded BM25 scorer searches the current active accepted-response artifacts in
+the request's scope. It reads canonical requests, aliases, entities, relation,
+keywords, and technical identifiers. Response text is included only when explicitly
+configured.
+
+Engram keeps a sparse index per scope: each active artifact's document, postings, and
+field-length totals, which give the same document frequencies and average lengths as
+building them from scratch. Before each search the index is synced to the artifact
+snapshot being searched. Artifacts are compared by identity; one whose indexed content
+(retrieval, query identity, scope, lifecycle, and response text when included) changed
+is re-indexed, while one whose only change is its statistics is not. A search reads
+postings for its own terms only, so its cost follows the query rather than the store,
+and the working-memory budget charges the per-search state it builds. Tests compare
+index-backed results with a full rebuild through random adds, removals, and changes.
 
 The scorer combines fixed field weights with bounded phrase, proximity, prefix,
 character-trigram, and exact technical-identifier signals. Set `sparse.enabled: false`
@@ -44,10 +53,12 @@ version, payload checksum, license, backend, and dimension. Provision explicitly
 python scripts/provision_semantic_model.py
 ```
 
-Each request embeds the bounded current artifact snapshot and performs exact cosine
-comparison within configured record and scan limits. The embeddings are
-request-local working values. Artifact, checksum, model, or dimension failure
-affects only semantic retrieval.
+Each request compares the query with every representation in the bounded current
+artifact snapshot, using exact cosine similarity within configured record and scan
+limits. A representation's embedding record is cached by artifact identity, in the
+same way as sparse documents, so only new or changed representations are encoded;
+record, scan, and memory budgets are still checked before any encoding. Artifact,
+checksum, model, or dimension failure affects only semantic retrieval.
 
 The optional `transparent_logistic` reranker scores only the already fused bounded
 shortlist with fixed visible coefficients. Failure preserves
@@ -69,6 +80,5 @@ Disable `utility.enabled` or remove one configured plugin to roll back.
 
 `core.status()["components"]` reports enablement and readiness for sparse,
 semantic, reranker, and utility components through fixed identifiers.
-Resolver dispatch is exercised through the retained core and adapter lifecycle
-harnesses; the former resolver-only test modules are no longer part of the
-Engram test inventory.
+Relevant coverage is in `tests/test_rewrite.py`, `tests/test_sparse.py`,
+`tests/test_semantic.py`, `tests/test_reranking.py`, and `tests/test_utilities.py`.

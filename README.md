@@ -36,8 +36,10 @@ state. Python callers and the MCP and gRPC adapters invoke that core. The lower-
 access is enabled, every interface uses the same graph-aware resolution and
 conversation behavior; adapters cannot select a graph-bypassing mode.
 
-A new process loads its current provided STATIC data once, before serving, with
-`Engram.load_static_data`. Static data is startup input, not recovered Engram
+A new process loads its current provided STATIC data once, before serving.
+When `conversation.seed_files` lists seed files, startup reads them and calls
+`Engram.load_static_data` once. Callers can still pass a pair list to that
+method on a fresh Engram. Static data is startup input, not recovered Engram
 state. Restart begins with no dynamic accepted responses, learned conversational
 statements or facts, sessions, proposals, mutation receipts, reports, turn
 diagnostics, or counters inherited from the previous process.
@@ -92,9 +94,11 @@ python -m spacy download en_core_web_sm
 
 ENGRAM uses several NLTK datasets (punkt, averaged_perceptron_tagger,
 maxent_ne_chunker, words, wordnet, omw-1.4, vader_lexicon). They are managed
-centrally by `engram/nltk_data.py`, which stores them in the Engram checkout's
-`data/nltk_data` directory (gitignored) and puts that absolute directory first
-on NLTK's search path regardless of the process working directory. Startup
+centrally by `engram/nltk_data.py`. In a source checkout it stores them in the
+checkout's `data/nltk_data` directory (gitignored) and puts that absolute
+directory first on NLTK's search path regardless of the process working
+directory. An installed package uses NLTK's standard locations instead (the
+`NLTK_DATA` environment variable, `~/nltk_data`, and so on). Startup
 preflight fails with a bounded readiness error when a required dataset is
 missing. The setup command above provisions serving data.
 
@@ -144,6 +148,10 @@ entities, dialogue-act histories, and pronoun context. Facts learned from either
 conversation enter the shared statement store with `introduced_by_user_id` and
 remain globally retrievable. Each learned fact occupies
 one statement, with alternate question phrasings stored as matcher aliases.
+A newer fact about the same subject replaces the learned one, so re-teaching
+changes the answer; seed statements and hand-stored statements are never
+replaced. Patterns are limited to 64 words (`MAX_PATTERN_WORDS`), and a fact
+whose subject is longer is not learned.
 
 Research and tool output enter the same shared store with source provenance:
 
@@ -213,6 +221,16 @@ config = engram_config(
 )
 
 engram = Engram(config=config)
+```
+
+A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI and gRPC server do when the list is left empty; the MCP server instead loads its packaged conversational corpus unless told otherwise (see [MCP Agent Interface](#mcp-agent-interface)). List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored. Patterns count as repeated when they match the same path, so `HELLO` and `hello!`, or `MIL-STD-498` and `MIL STD 498`, are the same pattern. Set `conversation.duplicate_policy` to `last` or `first` to keep one of them instead.
+
+```yaml
+conversation:
+  bot_name: "ENGRAM"
+  seed_files:
+    - engram/data/seed.json
+    - engram/data/software_development.json
 ```
 
 Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic
@@ -325,12 +343,12 @@ feedback, lifecycle, and error behavior.
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance |
+| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; `replace_learned` retires DYNAMIC statements on the same pattern, that, and topic |
 | `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
-| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match with separate turn context, learned-fact attribution, and optional timestamped graph fallback; returns `(statement, captured, response)` or `()` |
+| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, learned-fact attribution, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
-| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance                                                                     |
+| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance; replaces the learned fact already stored for its subject           |
 | `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve user context                                                  |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
@@ -441,7 +459,8 @@ engram-mcp
 Both commands load Engram's packaged conversational corpus by default. Use
 `--static-data /trusted/path/conversation.json` to select another host-owned
 corpus, or `--no-static-data` for an intentionally empty cache-only process.
-Conversational corpora must contain a `*` catch-all.
+Conversational corpora must contain a `*` catch-all. A configuration that names
+`conversation.seed_files` loads those files instead of the adapter's corpus.
 
 MCP owns one active conversation. An omitted or empty `user_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
@@ -468,6 +487,13 @@ engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
 # Or from a checkout:
 python -m engram.grpc_server --bind 127.0.0.1:50051
 ```
+
+A host that builds the configuration in memory calls
+`engram.config.config_from_dict(mapping)`. It starts from the repository-root
+`config.yml`, with its seed and table paths resolved against that file, and
+applies the mapping on top: top-level values replace the file's, and sections
+such as `graph` override the file's section key by key. Tapestry's managed
+server starts this way, so the seed files named in `config.yml` load under it.
 
 One unversioned `engram` protobuf package supplies conversation, cache, and
 unified evidence-resolution services from the same library contract. See
@@ -539,8 +565,7 @@ produce confirmation or contradiction responses. With spaCy,
 Copulas retain their surface form, prepositions become relations, and action
 verbs use their lemma. NER supplies `subject_type` and `obj_type` when available.
 `learn_user_facts` controls conversational learning; `use_spacy_facts` selects
-the relational extractor. Both extractor APIs return their actual fact records;
-the standalone fixed-sentence comparison script has been removed.
+the relational extractor. Both extractor APIs return their actual fact records.
 
 ### Optional spaCy matching/retrieval enhancements
 
@@ -558,13 +583,16 @@ fail to find a more specific match.
 
 ## Knowledge Graph schema administration
 
-ENGRAM can recall canonical facts from an optional MemGraph store. Runtime
+ENGRAM can recall canonical facts from an optional graph database. Runtime
 graph operations are reads and do not issue writes. Graph readiness is reported
-separately from local service readiness. During resolution, a graph connection,
-query, or optional vector-index failure contributes no graph result. If no local
-resolver supplies a result, Engram returns the same `MISS` it returns after a
-successful graph query with no rows; component diagnostics may still report the
-graph failure.
+separately from local service readiness. During conversation and resolution, a
+graph connection, query, or optional vector-index failure contributes no graph
+result and stays out of the user-visible response. If no local resolver supplies
+a result, Engram returns the same `MISS`, or an empty chat reply, that it
+returns after a successful graph query with no rows. The process log records
+the failed operation and exception type, and leaves out the exception text.
+Administrative schema commands still report database unavailability to the
+operator.
 
 When `graph.enabled` is true, the graph participates in every graph-eligible
 request through the shared core across Python, CLI, MCP, gRPC, every rollout
@@ -579,52 +607,30 @@ uses one packaged idiomatic frame inventory shared as data with Tapestry.
 Literal labels cannot add format fields; the existing grammar and unavailable
 model fallback remain independent of Tapestry's Research parser policy.
 
-For a standalone Engram-managed Memgraph, apply only Engram's independently
-installable corrected recall schema:
+Engram either has a graph with a compatible schema or it does not. A graph is
+compatible when it has every index and constraint in `engram/schema.cypher`; it may
+have more. Startup checks this and fails if a needed definition is missing.
+Local Engram operation without graph recall is unaffected.
 
 ```bash
-python scripts/setup_schema.py --check
-python scripts/setup_schema.py --apply
-python scripts/setup_schema.py --verify
-python scripts/verify_schema.py --deployment standalone
-python scripts/reset_schema.py          # dry-run only; empty graph required
+python scripts/setup_schema.py --check    # validate engram/schema.cypher; no database
+python scripts/verify_schema.py           # check a graph is compatible (read-only)
+python scripts/setup_schema.py --apply    # create the schema on an empty graph
+python scripts/setup_schema.py --verify   # same check as verify_schema.py
+python scripts/reset_schema.py            # dry-run only; empty graph required
 python scripts/reset_schema.py --apply
 ```
 
-For a Tapestry-managed Memgraph, never run Engram's installer or reset command.
-Tapestry owns that deployment's DDL. Verify it through Engram's catalog verifier:
-
-```bash
-python scripts/verify_schema.py --deployment tapestry_managed
-```
-
-Standalone mode requires Engram ownership and an exact catalog.
-`tapestry_managed` requires Tapestry ownership, state `accepted`, matching
-representation/support/scratch contracts, and every
-Engram-required catalog definition while allowing the Tapestry superset. Crossed
-owners, mixed metadata, partial catalogs, unavailable reads, and invalid
-vector shapes fail closed. Static `--check` needs no configuration, Tapestry
-checkout, service, or database.
-
-For a Tapestry-managed graph, Engram also requires the accepted
-`SchemaRevision.identifier_contract` to be `uuid7` and a nonempty
-`identifier_catalog_id`. It treats that catalog ID and all Tapestry support
-references as opaque text. Tapestry's own readiness check verifies the exact
-catalog binding and UUID spelling; Engram never opens that catalog. The
-standalone Engram schema keeps its existing spelling-neutral ID constraints.
+The installer and reset commands refuse a graph that holds any data. Engram's
+graph-facing queries, decoders, and accepted-response support values use the
+current Proposition/Assertion contracts.
 
 Static schema admission derives allowed labels from Engram's current identity
 contracts and retains its exact text/vector definitions. The statement parser
 preserves quoted strings, backtick identifiers, escapes and literal whitespace;
-only external comments and layout are normalized. Catalog parsing and deployment
-digesting use that same statement sequence, and invalid input rejects before
-installation accesses the graph. Existing schema catalogs and digests are unchanged.
-
-Engram's graph-facing queries, decoders, and accepted-response support values
-use the current Proposition/Assertion contracts. Managed startup requires the
-configured Tapestry graph to be in its administrative `accepted` state and
-fails closed otherwise. Local Engram operation without graph recall is
-unaffected.
+only external comments and layout are normalized. Catalog parsing and live
+comparison use that same statement sequence, and invalid input rejects before
+installation accesses the graph.
 
 Configure the connection in `config.yml`:
 
@@ -635,7 +641,6 @@ graph:
   username: ""
   password: ""
   enabled: true
-  deployment_mode: tapestry_managed
   visibility_scope:
     kind: global
     company_id: {}
@@ -653,26 +658,10 @@ graph:
 ```
 
 Supply the configured database account through runtime configuration. It may be
-the same write-capable account used by Tapestry; Engram's managed runtime simply
+a write-capable account; Engram's runtime simply
 does not issue graph writes. The [graph retrieval guide](documentation/graph-retrieval.md)
 defines canonical identity, relation paths, temporal/conflict handling, vector
 support, availability, and timing behavior.
-
-## Evaluation
-
-`eval/run_eval.py` cycles a corpus of prompts (`eval/corpus.json`) through a
-freshly seeded in-memory Engram instance and
-reports how each prompt is answered:
-
-```bash
-python eval/run_eval.py            # human-readable report
-python eval/run_eval.py --json report.json
-```
-
-Each prompt is classified as a **specific** match (a real, intentional
-pattern), **catch-all** (only the `*` fallback matched - a coverage gap), or
-**fallback** (empty retrieval). The matched pattern shown for each gap indicates
-whether it needs new content or an engine fix.
 
 ## Contributing
 

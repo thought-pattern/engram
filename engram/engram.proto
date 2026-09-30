@@ -141,7 +141,8 @@ message ResolveEvidenceRequest {
 }
 
 message EvidencePackage {
-  uint32 wire_version = 1;
+  reserved 1;
+  reserved "wire_version";
   repeated google.protobuf.Struct records = 2;
   uint32 retained_count = 3;
   uint32 omitted_count = 4;
@@ -150,7 +151,8 @@ message EvidencePackage {
 }
 
 message ResolutionResult {
-  uint32 schema_version = 1;
+  reserved 1;
+  reserved "schema_version";
   string outcome = 2;
   google.protobuf.Struct selected_candidate = 3;
   bool selected_candidate_available = 4;

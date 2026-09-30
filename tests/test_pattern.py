@@ -1,0 +1,1149 @@
+"""Tests for AIML-style pattern matching."""
+
+from engram.pattern import PatternMatcher, normalize_pattern
+
+
+def trie_match(pattern: str, text: str) -> tuple:
+    """Match one pattern with the production graphmaster; () when it misses."""
+    matcher = PatternMatcher()
+    matcher.add_pattern(pattern, "matched")
+    result = matcher.match(text)
+    return result
+
+
+"""Tests for normalize_pattern function."""
+
+
+def test_normalize_pattern_lowercase():
+    assert normalize_pattern("HELLO") == "hello"
+
+
+def test_normalize_pattern_preserve_star_wildcard():
+    assert normalize_pattern("HELLO *") == "hello *"
+
+
+def test_normalize_pattern_preserve_underscore_wildcard():
+    assert normalize_pattern("HELLO _") == "hello _"
+
+
+def test_normalize_pattern_preserve_hash_wildcard():
+    assert normalize_pattern("HELLO #") == "hello #"
+
+
+def test_normalize_pattern_preserve_caret_wildcard():
+    assert normalize_pattern("HELLO ^") == "hello ^"
+
+
+def test_normalize_pattern_multiple_wildcards():
+    assert normalize_pattern("* HELLO *") == "* hello *"
+
+
+def test_normalize_pattern_multiple_zero_wildcards():
+    assert normalize_pattern("# HELLO ^") == "# hello ^"
+
+
+def test_normalize_pattern_remove_punctuation():
+    assert normalize_pattern("HELLO!") == "hello"
+
+
+def test_normalize_pattern_collapse_whitespace():
+    assert normalize_pattern("HELLO   WORLD") == "hello world"
+
+
+def test_normalize_pattern_splits_intra_word_hyphen_and_underscore():
+    assert normalize_pattern("WHAT IS MIL-STD-498") == "what is mil std 498"
+    assert normalize_pattern("WHAT IS MIL STD 498") == "what is mil std 498"
+    assert normalize_pattern("IF_NAME") == "if name"
+    assert normalize_pattern("HELLO _") == "hello _"
+
+
+def test_matching_hyphenated_input_matches_spaced_pattern():
+    result = trie_match("WHAT IS MIL STD 498", "What is MIL-STD-498?")
+    assert result
+
+
+"""Exact words and wildcards."""
+
+
+def test_pattern_exact_word():
+    assert trie_match("HELLO", "hello")
+    assert not trie_match("HELLO", "hello world")
+
+
+def test_pattern_wildcard_star():
+    assert trie_match("HELLO *", "hello world")
+    assert trie_match("HELLO *", "hello there friend")
+    assert not trie_match("HELLO *", "hello")  # * needs at least one word
+
+
+"""Matches and captures."""
+
+
+def test_matching_exact_match():
+    result = trie_match("HELLO", "hello")
+    assert result
+    assert list(result[1]) == []
+
+
+def test_matching_exact_match_case_insensitive():
+    result = trie_match("HELLO", "HeLLo")
+    assert result
+
+
+def test_matching_wildcard_capture():
+    result = trie_match("HELLO *", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
+
+
+def test_matching_wildcard_capture_multiple_words():
+    result = trie_match("HELLO *", "hello there my friend")
+    assert result
+    assert list(result[1]) == ["there my friend"]
+
+
+def test_matching_no_match():
+    result = trie_match("HELLO", "goodbye")
+    assert not result
+
+
+def test_matching_partial_no_match():
+    result = trie_match("HELLO WORLD", "hello")
+    assert not result
+
+
+def test_matching_catchall():
+    result = trie_match("*", "anything at all")
+    assert result
+    assert list(result[1]) == ["anything at all"]
+
+
+def test_matching_wildcard_at_start():
+    result = trie_match("* WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
+
+
+def test_matching_wildcard_in_middle():
+    result = trie_match("HELLO * WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
+
+
+"""Tests for # and ^ wildcards (zero or more words)."""
+
+
+def test_zero_or_more_wildcards_hash_matches_zero_words():
+    """# should match zero words."""
+    result = trie_match("HELLO # WORLD", "hello world")
+    assert result
+    assert list(result[1]) == [""]
+
+
+def test_zero_or_more_wildcards_hash_matches_one_word():
+    """# should match one word."""
+    result = trie_match("HELLO # WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
+
+
+def test_zero_or_more_wildcards_hash_matches_multiple_words():
+    """# should match multiple words."""
+    result = trie_match("HELLO # WORLD", "hello very beautiful world")
+    assert result
+    assert list(result[1]) == ["very beautiful"]
+
+
+def test_zero_or_more_wildcards_caret_matches_zero_words():
+    """^ should match zero words."""
+    result = trie_match("HELLO ^ WORLD", "hello world")
+    assert result
+    assert list(result[1]) == [""]
+
+
+def test_zero_or_more_wildcards_caret_matches_one_word():
+    """^ should match one word."""
+    result = trie_match("HELLO ^ WORLD", "hello beautiful world")
+    assert result
+    assert list(result[1]) == ["beautiful"]
+
+
+def test_zero_or_more_wildcards_hash_at_start():
+    """# at start matches zero or more."""
+    result = trie_match("# WORLD", "world")
+    assert result
+    assert list(result[1]) == [""]
+
+    result = trie_match("# WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
+
+
+def test_zero_or_more_wildcards_hash_at_end():
+    """# at end matches zero or more."""
+    result = trie_match("HELLO #", "hello")
+    assert result
+    assert list(result[1]) == [""]
+
+    result = trie_match("HELLO #", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
+
+
+def test_zero_or_more_wildcards_caret_at_start():
+    """^ at start matches zero or more."""
+    result = trie_match("^ WORLD", "world")
+    assert result
+    assert list(result[1]) == [""]
+
+    result = trie_match("^ WORLD", "hello world")
+    assert result
+    assert list(result[1]) == ["hello"]
+
+
+def test_zero_or_more_wildcards_caret_at_end():
+    """^ at end matches zero or more."""
+    result = trie_match("HELLO ^", "hello")
+    assert result
+    assert list(result[1]) == [""]
+
+    result = trie_match("HELLO ^", "hello world")
+    assert result
+    assert list(result[1]) == ["world"]
+
+
+def test_zero_or_more_wildcards_hash_only_pattern():
+    """# alone should match any words."""
+    result = trie_match("#", "hello world")
+    assert result
+    assert list(result[1]) == ["hello world"]
+
+
+def test_zero_or_more_wildcards_caret_priority_over_hash():
+    """^ should have higher priority than #."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO #", "hash")
+    matcher.add_pattern("HELLO ^", "caret")
+    assert matcher.match("hello world")[0] == "caret"
+
+
+def test_graphmaster_underscore_beats_an_exact_word():
+    """_ is tried before an exact word, and $word is tried before _."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO", "exact")
+    matcher.add_pattern("_", "wide")
+    matcher.add_pattern("$HELLO", "priority")
+
+    priority = matcher.match("hello")
+    assert priority[4] == "$HELLO"
+    assert priority[0] == "priority"
+
+    matcher.remove_pattern("$HELLO")
+    wide = matcher.match("hello")
+    assert wide[4] == "_"
+    assert wide[0] == "wide"
+
+
+def test_graphmaster_exact_word_beats_lower_wildcards():
+    """An exact continuation beats ^ and *, and _ beats that exact continuation."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("HELLO THERE", "exact")
+    matcher.add_pattern("HELLO *", "star")
+    matcher.add_pattern("HELLO ^", "caret")
+
+    exact = matcher.match("hello there")
+    assert exact[4] == "HELLO THERE"
+
+    matcher.add_pattern("HELLO _", "underscore")
+    wide = matcher.match("hello there")
+    assert wide[4] == "HELLO _"
+
+
+def test_graphmaster_specific_pattern_beats_a_topic_catch_all():
+    """AIML order: the pattern is matched before the topic, so a topic cannot promote a wildcard."""
+    matcher = PatternMatcher()
+    matcher.add_pattern(
+        "ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN",
+        "long",
+    )
+    matcher.add_pattern("*", "anything")
+    matcher.add_pattern("*", "in topic", topic="WEATHER")
+    matcher.add_pattern("HELLO", "hello")
+    matcher.add_pattern("HELLO", "hello about weather", topic="WEATHER")
+
+    in_topic = matcher.match("one two three four five six seven eight nine ten eleven", topic="weather")
+    assert in_topic[0] == "long"
+
+    # For the same pattern, a matching topic wins over no topic.
+    assert matcher.match("something else", topic="weather")[0] == "in topic"
+    assert matcher.match("something else")[0] == "anything"
+    assert matcher.match("hello", topic="weather")[0] == "hello about weather"
+    assert matcher.match("hello", topic="sports")[0] == "hello"
+
+
+def test_graphmaster_exact_pattern_beats_a_that_scoped_star():
+    """that is checked after a pattern path, so it cannot promote a wildcard."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("*", "star", that="DO YOU LIKE PIZZA")
+    matcher.add_pattern("HELLO THERE", "exact")
+
+    result = matcher.match("hello there", that="Do you like pizza?")
+    assert result[4] == "HELLO THERE"
+    assert result[0] == "exact"
+
+
+def test_zero_or_more_wildcards_star_requires_one_word():
+    """* still requires at least one word."""
+    result = trie_match("HELLO * WORLD", "hello world")
+    assert not result  # * needs at least one word
+
+
+def test_zero_or_more_wildcards_underscore_requires_one_word():
+    """_ still requires at least one word."""
+    result = trie_match("HELLO _ WORLD", "hello world")
+    assert not result  # _ needs at least one word
+
+
+"""Tests for PatternMatcher with # and ^ wildcards."""
+
+
+def test_pattern_matcher_zero_wildcards_hash_pattern_match():
+    """PatternMatcher should handle # correctly."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO # WORLD", "Hash response")
+
+    result = pm.match("hello world")
+    assert result
+    assert result[0] == "Hash response"
+    assert result[1] == [""]
+
+    result = pm.match("hello beautiful world")
+    assert result
+    assert result[0] == "Hash response"
+    assert result[1] == ["beautiful"]
+
+
+def test_pattern_matcher_zero_wildcards_caret_pattern_match():
+    """PatternMatcher should handle ^ correctly."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO ^ WORLD", "Caret response")
+
+    result = pm.match("hello world")
+    assert result
+    assert result[0] == "Caret response"
+    assert result[1] == [""]
+
+
+def test_pattern_matcher_zero_wildcards_zero_wildcard_priority():
+    """More specific patterns should win over zero wildcards."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO WORLD", "Exact match")
+    pm.add_pattern("HELLO # WORLD", "Hash match")
+    pm.add_pattern("HELLO ^ WORLD", "Caret match")
+
+    # Exact match should win
+    result = pm.match("hello world")
+    assert result[0] == "Exact match"
+
+
+def test_pattern_matcher_zero_wildcards_caret_vs_hash_priority():
+    """^ should win over # for same pattern."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO #", "Hash match")
+    pm.add_pattern("HELLO ^", "Caret match")
+
+    # ^ should win (higher priority)
+    result = pm.match("hello there")
+    assert result[0] == "Caret match"
+
+
+def test_pattern_matcher_zero_wildcards_hash_has_priority_over_star():
+    """# should win over * when both patterns match."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO #", "Zero match")
+    pm.add_pattern("HELLO *", "One match")
+
+    # For "hello" alone, only # matches
+    result = pm.match("hello")
+    assert result[0] == "Zero match"
+
+    result = pm.match("hello world")
+    assert result[0] == "Zero match"
+
+
+"""Tests for PatternMatcher class."""
+
+
+def test_pattern_matcher_add_and_match():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Hello response")
+    result = pm.match("hello")
+    # Returns (response, captured, thatstars, topicstars, pattern, topic, that)
+    assert result == ("Hello response", [], [], [], "HELLO", "", "")
+
+
+def test_pattern_matcher_no_match_returns_none():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Hello response")
+    result = pm.match("goodbye")
+    assert not result
+
+
+def test_pattern_matcher_specificity_priority():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Exact match")
+    pm.add_pattern("HELLO *", "Wildcard match")
+
+    # Exact should win over wildcard when input is just "hello"
+    result = pm.match("hello")
+    assert result == ("Exact match", [], [], [], "HELLO", "", "")
+
+    # Wildcard matches when there's more
+    result = pm.match("hello world")
+    assert result == ("Wildcard match", ["world"], [], [], "HELLO *", "", "")
+
+
+def test_pattern_matcher_more_specific_wins():
+    pm = PatternMatcher()
+    pm.add_pattern("HOW ARE YOU", "Three word match")
+    pm.add_pattern("HOW ARE YOU DOING", "Four word match")
+    pm.add_pattern("HOW ARE YOU *", "Wildcard match")
+
+    result = pm.match("how are you")
+    assert result == ("Three word match", [], [], [], "HOW ARE YOU", "", "")
+
+    result = pm.match("how are you doing")
+    assert result == ("Four word match", [], [], [], "HOW ARE YOU DOING", "", "")
+
+    result = pm.match("how are you feeling")
+    assert result == ("Wildcard match", ["feeling"], [], [], "HOW ARE YOU *", "", "")
+
+
+def test_pattern_matcher_catchall_lowest_priority():
+    pm = PatternMatcher()
+    pm.add_pattern("*", "Catchall")
+    pm.add_pattern("HELLO", "Hello")
+
+    result = pm.match("hello")
+    assert result == ("Hello", [], [], [], "HELLO", "", "")
+
+    result = pm.match("anything else")
+    assert result == ("Catchall", ["anything else"], [], [], "*", "", "")
+
+
+def test_pattern_matcher_len():
+    pm = PatternMatcher()
+    assert len(pm) == 0
+    pm.add_pattern("HELLO", "response")
+    assert len(pm) == 1
+    pm.add_pattern("WORLD", "response")
+    assert len(pm) == 2
+
+
+def test_pattern_matcher_clear():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "response")
+    pm.clear()
+    assert len(pm) == 0
+    assert not pm.match("hello")
+
+
+def test_pattern_matcher_clear_resets_lemmatized_index():
+    """clear() must reset the lemmatized index too, or stale buckets point at recycled indices."""
+    pm = PatternMatcher(use_lemmatization=True)
+    pm.add_pattern("CATS ARE NICE", "old response")
+    pm.clear()
+    pm.add_pattern("DOGS BARK", "new response")
+
+    # A stale 'cat' bucket would route this to the recycled index 0
+    # (now DOGS BARK) or raise; a clean index simply finds no match.
+    assert not pm.match("cats are nice")
+    assert pm.match("dogs bark")[0] == "new response"
+
+
+def test_pattern_matcher_remove_pattern():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "greeting")
+    pm.add_pattern("GOODBYE", "farewell")
+
+    assert pm.remove_pattern("HELLO")
+    assert len(pm) == 1
+    assert not pm.match("hello")
+    # The surviving pattern still matches through the rebuilt index
+    assert pm.match("goodbye")[0] == "farewell"
+
+
+def test_pattern_matcher_remove_pattern_not_found():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "greeting")
+    assert not pm.remove_pattern("MISSING")
+    assert len(pm) == 1
+
+
+def test_pattern_matcher_remove_pattern_respects_context():
+    """Entries are keyed by (pattern, that, topic); removal must not take a sibling."""
+    pm = PatternMatcher()
+    pm.add_pattern("YES", "plain yes")
+    pm.add_pattern("YES", "contextual yes", that="DO YOU AGREE")
+
+    assert pm.remove_pattern("YES", that="DO YOU AGREE")
+    assert len(pm) == 1
+    # The context-free entry survives and still matches
+    assert pm.match("yes")[0] == "plain yes"
+
+
+def test_pattern_matcher_remove_pattern_rebuilds_wildcard_index():
+    pm = PatternMatcher()
+    pm.add_pattern("*", "catchall")
+    pm.add_pattern("HELLO", "greeting")
+
+    assert pm.remove_pattern("HELLO")
+    # Wildcard entry survives at a shifted index and still matches
+    assert pm.match("anything at all")[0] == "catchall"
+
+
+def test_pattern_matcher_get_patterns():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "response1")
+    pm.add_pattern("WORLD", "response2")
+    patterns = pm.get_patterns()
+    assert ("HELLO", "response1") in patterns
+    assert ("WORLD", "response2") in patterns
+
+
+"""Tests for pattern matching with user input containing punctuation."""
+
+
+def test_pattern_matcher_with_punctuation_input_with_exclamation():
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Hello response")
+    result = pm.match("Hello!")
+    assert result == ("Hello response", [], [], [], "HELLO", "", "")
+
+
+def test_pattern_matcher_with_punctuation_input_with_question_mark():
+    pm = PatternMatcher()
+    pm.add_pattern("HOW ARE YOU", "Fine thanks")
+    result = pm.match("How are you?")
+    assert result == ("Fine thanks", [], [], [], "HOW ARE YOU", "", "")
+
+
+def test_pattern_matcher_with_punctuation_input_with_multiple_punctuation():
+    pm = PatternMatcher()
+    pm.add_pattern("WHAT IS YOUR NAME", "I am a bot")
+    result = pm.match("What is your name?!")
+    assert result == ("I am a bot", [], [], [], "WHAT IS YOUR NAME", "", "")
+
+
+"""Tests for context-aware pattern matching (that/topic)."""
+
+
+def test_pattern_matcher_context_matching_topic_filter_matches():
+    """Pattern with topic should match when topic context matches."""
+    pm = PatternMatcher()
+    pm.add_pattern("WHAT IS IT", "Weather topic response", topic="WEATHER")
+    pm.add_pattern("WHAT IS IT", "General response")
+
+    # Without topic context, general response matches
+    result = pm.match("what is it")
+    assert result[0] == "General response"
+
+    # With matching topic, topic-specific pattern wins
+    result = pm.match("what is it", topic="weather")
+    assert result[0] == "Weather topic response"
+
+
+def test_pattern_matcher_context_matching_topic_filter_no_match():
+    """Pattern with topic should not match when topic doesn't match."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Weather hello", topic="WEATHER")
+
+    # No topic set - pattern shouldn't match
+    result = pm.match("hello")
+    assert not result
+
+    # Wrong topic - pattern shouldn't match
+    result = pm.match("hello", topic="sports")
+    assert not result
+
+    # Correct topic - should match
+    result = pm.match("hello", topic="weather")
+    assert result[0] == "Weather hello"
+
+
+def test_pattern_matcher_context_matching_that_filter_matches():
+    """Pattern with that should match when bot's last response matches."""
+    pm = PatternMatcher()
+    pm.add_pattern("YES", "Follow-up response", that="DO YOU LIKE PIZZA")
+    pm.add_pattern("YES", "General yes")
+
+    # Without that context, general response matches
+    result = pm.match("yes")
+    assert result[0] == "General yes"
+
+    # With matching that context, context-specific pattern wins
+    result = pm.match("yes", that="Do you like pizza?")
+    assert result[0] == "Follow-up response"
+
+
+def test_pattern_matcher_that_matches_the_last_sentence_of_a_multi_sentence_reply():
+    pm = PatternMatcher()
+    pm.add_pattern("I LIKE THE *", "Crust follow-up", that="WHAT DO YOU LIKE ABOUT *")
+
+    result = pm.match("I like the crust", that="Hi. What's going on? What do you like about pizza?")
+    assert result[0] == "Crust follow-up"
+    assert not pm.match("I like the crust", that="What do you like about pizza? Hi.")
+
+
+def test_pattern_matcher_context_matching_that_filter_no_match():
+    """Pattern with that should not match when last response doesn't match."""
+    pm = PatternMatcher()
+    pm.add_pattern("YES", "Pizza follow-up", that="DO YOU LIKE PIZZA")
+
+    # No that context - pattern shouldn't match
+    result = pm.match("yes")
+    assert not result
+
+    # Wrong that context - pattern shouldn't match
+    result = pm.match("yes", that="how are you")
+    assert not result
+
+
+def test_pattern_matcher_context_matching_topic_and_that_combined():
+    """Pattern with both topic and that should require both to match."""
+    pm = PatternMatcher()
+    pm.add_pattern("YES", "Full context response", topic="FOOD", that="DO YOU WANT MORE")
+    pm.add_pattern("YES", "Topic only", topic="FOOD")
+    pm.add_pattern("YES", "General yes")
+
+    # Full context wins
+    result = pm.match("yes", topic="food", that="do you want more")
+    assert result[0] == "Full context response"
+
+    # Topic only
+    result = pm.match("yes", topic="food")
+    assert result[0] == "Topic only"
+
+    # No context
+    result = pm.match("yes")
+    assert result[0] == "General yes"
+
+
+def test_pattern_matcher_context_matching_that_wildcard_capture():
+    """Wildcards in that pattern should capture text."""
+    pm = PatternMatcher()
+    pm.add_pattern("YES", "Got thatstar", that="DO YOU LIKE *")
+
+    result = pm.match("yes", that="do you like pizza")
+    assert result
+    assert result[0] == "Got thatstar"
+    assert result[2] == ["pizza"]  # thatstars
+
+
+def test_pattern_matcher_context_matching_topic_wildcard_capture():
+    """Wildcards in topic pattern should capture text."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "Got topicstar", topic="FAVORITE *")
+
+    result = pm.match("hello", topic="favorite food")
+    assert result
+    assert result[0] == "Got topicstar"
+    assert result[3] == ["food"]  # topicstars
+
+
+def test_pattern_matcher_context_matching_context_priority():
+    """More context constraints should give higher priority."""
+    pm = PatternMatcher()
+    pm.add_pattern("HI", "Topic+that", topic="GREETINGS", that="HELLO")
+    pm.add_pattern("HI", "Topic only", topic="GREETINGS")
+    pm.add_pattern("HI", "That only", that="HELLO")
+    pm.add_pattern("HI", "No context")
+
+    # Topic + that wins over topic only
+    result = pm.match("hi", topic="greetings", that="hello")
+    assert result[0] == "Topic+that"
+
+    # Topic only wins over no context
+    result = pm.match("hi", topic="greetings")
+    assert result[0] == "Topic only"
+
+    # That only wins over no context
+    result = pm.match("hi", that="hello")
+    assert result[0] == "That only"
+
+    # No context gets lowest priority response
+    result = pm.match("hi")
+    assert result[0] == "No context"
+
+
+def test_pattern_matcher_context_matching_get_patterns_with_context():
+    """get_patterns_with_context should return all pattern info."""
+    pm = PatternMatcher()
+    pm.add_pattern("HELLO", "response1", that="HI", topic="GREET")
+    pm.add_pattern("WORLD", "response2")
+
+    patterns = pm.get_patterns_with_context()
+    assert ("HELLO", "response1", "HI", "GREET") in patterns
+    assert ("WORLD", "response2", "", "") in patterns
+
+
+"""Tests for {set:name} pattern matching."""
+
+
+def test_set_pattern_matching_set_match_basic():
+    """Test basic set matching."""
+    sets = {"color": ["red", "blue", "green"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("I LIKE {set:color}", "Nice color!")
+
+    result = pm.match("i like blue")
+    assert result
+    assert result[0] == "Nice color!"
+    assert result[1] == ["blue"]
+
+
+def test_set_pattern_matching_set_match_captures_word():
+    """Test that set match captures the matched word."""
+    sets = {"greeting": ["hello", "hi", "hey"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("{set:greeting} THERE", "Greeting received")
+
+    result = pm.match("hello there")
+    assert result
+    assert result[1] == ["hello"]
+
+    result = pm.match("hi there")
+    assert result
+    assert result[1] == ["hi"]
+
+
+def test_set_pattern_matching_set_match_case_insensitive():
+    """Test that set matching is case-insensitive."""
+    sets = {"color": ["red", "blue"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("I LIKE {set:color}", "Color matched")
+
+    result = pm.match("I LIKE RED")
+    assert result
+    assert result[1] == ["red"]
+
+    result = pm.match("i like BLUE")
+    assert result
+    assert result[1] == ["blue"]
+
+
+def test_set_pattern_matching_set_no_match_if_word_not_in_set():
+    """Test that non-set words don't match."""
+    sets = {"color": ["red", "blue"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("I LIKE {set:color}", "Color matched")
+
+    result = pm.match("i like purple")
+    assert not result
+
+
+def test_set_pattern_matching_unknown_set_no_match():
+    """Test that unknown sets don't match anything."""
+    pm = PatternMatcher(sets={})
+    pm.add_pattern("I LIKE {set:unknown}", "Should not match")
+
+    result = pm.match("i like anything")
+    assert not result
+
+
+def test_set_pattern_matching_set_with_wildcards():
+    """Test set matching combined with wildcards."""
+    sets = {"color": ["red", "blue", "green"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("* IS {set:color}", "Color described")
+
+    result = pm.match("the sky is blue")
+    assert result
+    assert result[0] == "Color described"
+    assert result[1] == ["the sky", "blue"]
+
+
+def test_set_pattern_matching_set_priority_vs_wildcard():
+    """Test that set match has higher priority than wildcard."""
+    sets = {"color": ["red", "blue"]}
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("I LIKE {set:color}", "Set match")
+    pm.add_pattern("I LIKE *", "Wildcard match")
+
+    result = pm.match("i like blue")
+    assert result[0] == "Set match"
+
+    result = pm.match("i like purple")
+    assert result[0] == "Wildcard match"
+
+
+def test_set_pattern_matching_multiple_sets_in_pattern():
+    """Test multiple set references in one pattern."""
+    sets = {
+        "color": ["red", "blue"],
+        "size": ["big", "small"],
+    }
+    pm = PatternMatcher(sets=sets)
+    pm.add_pattern("A {set:size} {set:color} BALL", "Matched both")
+
+    result = pm.match("a big red ball")
+    assert result
+    assert result[0] == "Matched both"
+    assert result[1] == ["big", "red"]
+
+
+"""Tests for {bot:name} pattern matching."""
+
+
+def test_bot_pattern_matching_bot_match_basic():
+    """Test basic bot property matching."""
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(bot_properties=bot)
+    pm.add_pattern("YOUR NAME IS {bot:name}", "Yes it is!")
+
+    result = pm.match("your name is testbot")
+    assert result
+    assert result[0] == "Yes it is!"
+
+
+def test_bot_pattern_matching_bot_match_captures_value():
+    """Test that bot match captures the matched value."""
+    bot = {"name": "Alice", "version": "1.0"}
+    pm = PatternMatcher(bot_properties=bot)
+    pm.add_pattern("YOU ARE {bot:name}", "Correct!")
+
+    result = pm.match("you are alice")
+    assert result
+    assert result[1] == ["alice"]
+
+
+def test_bot_pattern_matching_bot_match_case_insensitive():
+    """Test that bot matching is case-insensitive."""
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(bot_properties=bot)
+    pm.add_pattern("HELLO {bot:name}", "Hi!")
+
+    result = pm.match("hello TESTBOT")
+    assert result
+    result = pm.match("HELLO testbot")
+    assert result
+
+
+def test_bot_pattern_matching_unknown_bot_property_no_match():
+    """Test that unknown bot properties don't match."""
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(bot_properties=bot)
+    pm.add_pattern("YOUR {bot:unknown} IS", "Should not match")
+
+    result = pm.match("your something is")
+    assert not result
+
+
+def test_bot_pattern_matching_bot_with_sets_combined():
+    """Test bot properties combined with sets."""
+    sets = {"color": ["red", "blue"]}
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(sets=sets, bot_properties=bot)
+    pm.add_pattern("{bot:name} LIKES {set:color}", "Combined match")
+
+    result = pm.match("testbot likes blue")
+    assert result
+    assert result[0] == "Combined match"
+    assert result[1] == ["testbot", "blue"]
+
+
+"""Tests for normalize_pattern with set/bot references."""
+
+
+def test_normalize_pattern_with_refs_preserve_set_reference():
+    """Test that {set:name} is preserved."""
+    result = normalize_pattern("I LIKE {set:color}!")
+    assert result == "i like {set:color}"
+
+
+def test_normalize_pattern_with_refs_preserve_bot_reference():
+    """Test that {bot:name} is preserved."""
+    result = normalize_pattern("YOU ARE {bot:name}?")
+    assert result == "you are {bot:name}"
+
+
+def test_normalize_pattern_with_refs_preserve_multiple_references():
+    """Test multiple refs are preserved."""
+    result = normalize_pattern("{set:greeting} {bot:name}!")
+    assert result == "{set:greeting} {bot:name}"
+
+
+def test_normalize_pattern_with_refs_refs_with_wildcards():
+    """Test refs combined with wildcards."""
+    result = normalize_pattern("* IS {set:color} AND *")
+    assert result == "* is {set:color} and *"
+
+
+"""Tests for $ priority operator."""
+
+
+def test_priority_operator_normalize_preserves_dollar():
+    """Test that $ prefix is preserved during normalization."""
+    result = normalize_pattern("$WHO IS *")
+    assert result == "$who is *"
+
+
+def test_priority_operator_normalize_multiple_dollar_words():
+    """Test multiple $ words in pattern."""
+    result = normalize_pattern("$HELLO $WORLD")
+    assert result == "$hello $world"
+
+
+def test_priority_operator_dollar_word_matches():
+    """Test that $ word matches correctly."""
+    assert trie_match("$HELLO", "hello")
+    assert not trie_match("$HELLO", "world")
+
+
+def test_priority_operator_dollar_with_regular_words():
+    """Test $ word combined with regular words."""
+    assert trie_match("$WHO IS *", "who is john")
+    assert not trie_match("$WHO IS *", "what is john")
+
+
+def test_priority_operator_matcher_prefers_dollar():
+    """Test that PatternMatcher prefers $ patterns."""
+    matcher = PatternMatcher()
+    matcher.add_pattern("* IS *", "general")
+    matcher.add_pattern("WHO IS *", "regular")
+    matcher.add_pattern("$WHO IS *", "priority")
+
+    result = matcher.match("who is alice")
+    assert result
+    assert result[0] == "priority"
+
+
+def test_priority_operator_dollar_at_end():
+    """Test $ word at end of pattern."""
+    assert trie_match("HELLO $WORLD", "hello world")
+
+
+def test_priority_operator_dollar_captures_wildcards():
+    """Test capturing with $ patterns."""
+    result = trie_match("$WHO IS *", "who is john smith")
+    assert result
+    assert list(result[1]) == ["john smith"]
+
+
+def test_priority_operator_multiple_dollar_words():
+    """Test multiple $ words in same pattern."""
+    assert trie_match("$HELLO $WORLD", "hello world")
+    assert not trie_match("$HELLO $WORLD", "hello there")
+
+
+"""Tests for stemming support in pattern matching."""
+
+
+def test_stemming_support_stemming_disabled_by_default():
+    """Test stemming is disabled by default."""
+    pm = PatternMatcher()
+    pm.add_pattern("RUN", "Running response")
+
+    # Exact match should work
+    result = pm.match("run")
+    assert result
+    # Variant should not match without stemming
+    result = pm.match("running")
+    assert not result
+
+
+def test_stemming_support_stemming_enabled_matches_variants():
+    """Test stemming allows matching word variants."""
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("RUN", "Running response")
+
+    # Exact match should work
+    result = pm.match("run")
+    assert result
+    assert result[0] == "Running response"
+
+    # Variants should match with stemming
+    result = pm.match("running")
+    assert result
+    assert result[0] == "Running response"
+
+    result = pm.match("runs")
+    assert result
+    assert result[0] == "Running response"
+
+
+def test_stemming_support_stemming_with_wildcard_pattern():
+    """Test stemming with wildcards."""
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("I LIKE *", "You like {star1}!")
+
+    result = pm.match("i liked pizza")
+    assert result
+
+
+def test_stemming_support_stemming_exact_match_preferred():
+    """Test exact match is preferred over stemmed match."""
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("RUN", "Exact run")
+    pm.add_pattern("RUNNING", "Exact running")
+
+    # "run" should match "RUN" pattern exactly
+    result = pm.match("run")
+    assert result
+    assert result[0] == "Exact run"
+
+    # "running" should match "RUNNING" pattern exactly
+    result = pm.match("running")
+    assert result
+    assert result[0] == "Exact running"
+
+
+def test_stemming_support_stemming_cats_mammals():
+    """Test stemming with plural nouns."""
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("CAT", "Cats are mammals.")
+
+    result = pm.match("cats")
+    assert result
+    assert result[0] == "Cats are mammals."
+
+
+"""Tests for WordNet lemmatization support in pattern matching."""
+
+
+def test_lemmatization_support_lemmatization_disabled_by_default():
+    """Lemmatization is off unless requested."""
+    pm = PatternMatcher()
+    pm.add_pattern("MOUSE", "A mouse!")
+    assert not pm.match("mice")
+
+
+def test_lemmatization_support_regular_plural_matches():
+    """A regular plural lemmatizes to the singular pattern."""
+    pm = PatternMatcher(use_lemmatization=True)
+    pm.add_pattern("CAT", "A cat!")
+    result = pm.match("cats")
+    assert result
+    assert result[0] == "A cat!"
+
+
+def test_lemmatization_support_irregular_plural_matches():
+    """Lemmatization handles irregular plurals that stemming misses."""
+    pm_lemma = PatternMatcher(use_lemmatization=True, use_stemming=False)
+    pm_lemma.add_pattern("MOUSE", "A mouse!")
+    result = pm_lemma.match("mice")
+    assert result
+    assert result[0] == "A mouse!"
+
+    # Porter stemming cannot bridge mice -> mouse
+    pm_stem = PatternMatcher(use_lemmatization=False, use_stemming=True)
+    pm_stem.add_pattern("MOUSE", "A mouse!")
+    assert not pm_stem.match("mice")
+
+
+def test_lemmatization_support_irregular_verb_matches():
+    """Lemmatization maps irregular verb forms to the base verb."""
+    pm = PatternMatcher(use_lemmatization=True, use_stemming=False)
+    pm.add_pattern("GO", "Going!")
+    result = pm.match("went")
+    assert result
+    assert result[0] == "Going!"
+
+
+def test_lemmatization_support_exact_match_preferred():
+    """Exact matches win over lemmatized matches."""
+    pm = PatternMatcher(use_lemmatization=True)
+    pm.add_pattern("MOUSE", "Exact mouse")
+    pm.add_pattern("MICE", "Exact mice")
+    result = pm.match("mice")
+    assert result
+    assert result[0] == "Exact mice"
+
+
+def test_lemmatization_support_lemmatization_with_wildcard():
+    """Lemmatization works alongside wildcard capture."""
+    pm = PatternMatcher(use_lemmatization=True)
+    pm.add_pattern("I SAW *", "You saw {star1}!")
+    result = pm.match("i saw dogs")
+    assert result
+
+
+"""Short tokens are not stemmed: 'his' must not become the greeting 'hi'."""
+
+
+def test_stemming_false_positives_possessive_does_not_match_greeting():
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("HI *", "Hi there!")
+    assert not pm.match("his name is rex")
+
+
+def test_stemming_false_positives_greeting_still_matches():
+    pm = PatternMatcher(use_stemming=True)
+    pm.add_pattern("HI *", "Hi there!")
+    assert pm.match("hi everyone")[0] == "Hi there!"
+
+
+def test_stemming_false_positives_stemming_fallback_still_works_for_real_inflections():
+    pm = PatternMatcher(use_stemming=True, use_lemmatization=False)
+    pm.add_pattern("CATS ARE GREAT", "Indeed")
+    assert pm.match("cats are great")
+
+
+def graph_size(node, seen=None) -> int:
+    """Count nodes reachable from a graphmaster root, including that and topic subtrees."""
+    seen = set() if seen is None else seen
+    if id(node) in seen:
+        return 0
+    seen.add(id(node))
+    children = [*node.dollar.values(), *node.atoms.values(), *node.bots.values(), *node.sets.values()]
+    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.topic_root) if child]
+    result = 1 + sum(graph_size(child, seen) for child in children)
+    return result
+
+
+def matcher_graph_size(pm: PatternMatcher) -> int:
+    result = graph_size(pm.default_trie)
+    return result
+
+
+def test_removal_in_place_matches_a_full_rebuild():
+    from random import Random
+
+    random = Random(20260927)
+    words = ["HELLO", "WORLD", "HOW", "ARE", "YOU", "*", "_", "#", "^", "$THERE"]
+    thats = ["", "", "DO YOU AGREE", "WHAT DO YOU LIKE *"]
+    topics = ["", "", "PYTHON", "UNIT-TESTING"]
+    probes = ["hello world", "how are you", "hello there you", "yes", "anything at all", "world hello how", "there"]
+    contexts = [("", ""), ("Do you agree?", ""), ("What do you like about pizza?", "python"), ("", "unit testing")]
+    stemming = PatternMatcher(use_stemming=True, use_lemmatization=True)
+    plain = PatternMatcher()
+    added = []
+    for index in range(160):
+        pattern = " ".join(random.choice(words) for _ in range(random.randint(1, 3)))
+        entry = (pattern, f"reply {index}", random.choice(thats), random.choice(topics))
+        added.append(entry)
+        for pm in (stemming, plain):
+            pm.add_pattern(entry[0], entry[1], that=entry[2], topic=entry[3])
+
+    for step in range(120):
+        pattern, _, that, topic = random.choice(added)
+        for pm in (stemming, plain):
+            pm.remove_pattern(pattern, that=that, topic=topic)
+        if step % 20:
+            continue
+        for pm, flags in ((stemming, {"use_stemming": True, "use_lemmatization": True}), (plain, {})):
+            rebuilt = PatternMatcher(**flags)
+            for entry in pm.internal_patterns:
+                rebuilt.add_pattern(entry["pattern"], entry["response"], that=entry["that"], topic=entry["topic"])
+            for probe in probes:
+                for that_text, topic_text in contexts:
+                    assert pm.match(probe, that=that_text, topic=topic_text) == rebuilt.match(
+                        probe, that=that_text, topic=topic_text
+                    ), (probe, that_text, topic_text)
+            # Removed paths are pruned, so the graph is no larger than a rebuild.
+            assert matcher_graph_size(pm) == matcher_graph_size(rebuilt)
+
+    for pattern, _, that, topic in added:
+        plain.remove_pattern(pattern, that=that, topic=topic)
+    assert len(plain) == 0
+    assert matcher_graph_size(plain) == 1

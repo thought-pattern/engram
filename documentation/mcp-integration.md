@@ -4,11 +4,11 @@
 
 Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 stateful conversational process or a Regulator-controlled response cache.
-The eleven tools expose one conversation lifecycle, inspection, explicit
+The twelve tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, in-memory reporting, unified evidence resolution, and a
 two-phase propose/resolve cache interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the gRPC adapter.
-The eleven names, input schemas, defaults, and descriptions are the current MCP
+The twelve names, input schemas, defaults, and descriptions are the current MCP
 interface. Output schemas remain unspecified. `engram_query`, the Python
 `resolve_request` operation, the CLI `query` command, and gRPC `ResolveEvidence`
 all invoke the same unified Proposition-evidence pipeline.
@@ -52,7 +52,9 @@ subsequent tool in that lifecycle.
 
 The stdio process loads the packaged conversational corpus by default. The host
 may select another corpus with `--static-data PATH`, or deliberately start with
-no scripted statements by passing `--no-static-data` for cache-only use. Static
+no scripted statements by passing `--no-static-data` for cache-only use. When
+the `engram_start` configuration names `conversation.seed_files`, those files
+load instead and the adapter's static data is not added. Static
 data is reloaded for each `engram_start`; no MCP tool accepts a transcript,
 report, static-data, or static-refresh path. Dynamic accepted responses,
 learned conversational statements and facts, sessions, proposals, receipts,
@@ -164,7 +166,7 @@ Adds one shared, unattributed fact and preserves user conversation context.
 | `text` | required | One non-empty fact string. |
 | `source_label` | `""` | Opaque caller-owned provenance label. |
 
-Use this for research or tool facts. Cache Actor answers with
+Use this for research or tool facts. Cache complete answers with
 `engram_learn_response`. The result contains ID, text, patterns, attribution,
 and source label.
 
@@ -192,7 +194,7 @@ resolver selection, and `accept_exact` fields have the same contracts documented
 
 If graph access is enabled, the core includes `structured_graph` even when the
 caller supplies a narrower resolver list. Rollout modes control disclosure and
-answer authority, not graph participation. The result is the shared schema-versioned
+answer authority, not graph participation. The result is the shared
 `ANSWER`, `EVIDENCE`, or `MISS` mapping.
 
 `engram_inspect` includes `core_status`, the transport-neutral lifecycle snapshot.
@@ -277,6 +279,12 @@ is the receipt lifetime and retry boundary.
 state changes. The four tools below provide speculative proposal and explicit
 Regulator decision handling.
 
+The `request` given to `engram_propose` and `engram_learn_response` is limited
+to 4,096 UTF-8 bytes, both as written and once normalized (normalization
+expands contractions), because it becomes an exact-match lookup key.
+`engram_send` accepts 16,384 bytes. An oversized request fails before any work
+with a message naming the limit.
+
 ### `engram_propose`
 
 Retrieves candidates, records candidacy, and preserves displayed response
@@ -293,18 +301,18 @@ Input:
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "required_metadata": {
-    "actor_version": "actor-7",
+    "model_version": "model-7",
     "policy_version": "regulator-4"
   },
-  "required_source_label": "tapestry:actor",
+  "required_source_label": "support-answers",
   "limit": 1
 }
 ```
 
 `namespace` and `context_fingerprint` are exact-match scope keys. Empty values
 match only entries carrying empty scope values. `required_metadata` applies
-exact top-level matches to the stored `tapestry` metadata, and
-`required_source_label` optionally filters provenance. This permits Actor,
+exact top-level matches to the metadata stored with each response, and
+`required_source_label` optionally filters provenance. This permits model,
 prompt, source-data, tool-set, and policy version isolation before regulation.
 
 Output:
@@ -327,13 +335,12 @@ Output:
       "created_at": "2026-07-19T12:00:00+00:00",
       "hit_count": 3,
       "query_count": 5,
-      "source_label": "tapestry:actor",
+      "source_label": "support-answers",
       "introduced_by_user_id": "",
       "metadata": {
-        "tapestry": {
-          "namespace": "support",
-          "context_fingerprint": "account-tier:pro"
-        }
+        "model_version": "model-7",
+        "prompt_version": "support-12",
+        "policy_version": "regulator-4"
       }
     }
   ],
@@ -376,8 +383,8 @@ artifact before its owner can retire it.
 
 ### `engram_learn_response`
 
-Caches a completed Actor answer. Empty output and a normalized complete value
-of `IDK` are rejected.
+Caches a completed answer. Empty output and a normalized complete value
+of `IDK` are rejected. `source_label` defaults to `unknown`.
 
 ```json
 {
@@ -387,9 +394,9 @@ of `IDK` are rejected.
   "user_id": "Robin",
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
-  "source_label": "tapestry:actor",
+  "source_label": "support-answers",
   "metadata": {
-    "actor_version": "actor-7",
+    "model_version": "model-7",
     "prompt_version": "support-12",
     "policy_version": "regulator-4"
   }
@@ -399,7 +406,7 @@ of `IDK` are rejected.
 The result returns `learned`, `statement_id`, `action` (`created` or
 `rejected_capacity`), scope, provenance, and `idempotent`. A canonical or alias collision
 in the same exact scope names the existing owner and is rejected; the
-transport-neutral supersession operation handles replacement. Actor responses remain shared knowledge
+transport-neutral supersession operation handles replacement. Learned responses remain shared knowledge
 (`introduced_by_user_id` is `""`), while the calling user's previous-response
 context is updated. `request_id` makes retries idempotent and conflicting reuse
 is an error.
@@ -446,17 +453,21 @@ identical resolutions therefore record exactly one accepted hit.
 
 | Condition | Client behavior |
 | --- | --- |
-| MCP server unavailable | Bypass Engram and invoke the Actor. |
+| MCP server unavailable | Bypass Engram and answer without the cache. |
 | `engram_start` fails | Fix configuration or bypass Engram before sending turns. |
 | Conversation tool times out | Treat the turn result as unknown and inspect before retrying a mutating call. |
 | `engram_finish` fails | Keep the conversation active and retry the read-only report request. |
 | `engram_stop` fails | Surface the lifecycle failure. |
-| Regulated-cache call fails | Return the Actor response. |
-| Regulator unavailable | Invoke the Actor. |
+| Regulated-cache call fails | Return the answer produced without the cache. |
+| Regulator unavailable | Answer without the cache. |
+
+A failed tool call returns either an Engram error's own message, written for
+the caller, or `internal Engram failure`. The full exception is in the server
+log.
 
 ## Verification checklist
 
-- The host can list all eleven tools after startup.
+- The host can list all twelve tools after startup.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
 - `user_id` defaults to `"0"` and preserves explicit case.

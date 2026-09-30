@@ -68,7 +68,7 @@ explicit valid-time or system-time axis. Intervals are lower-inclusive and
 upper-exclusive. Historical direct output requires closed bounds on the requested
 axis. Unqualified requests use the captured evaluation time.
 
-Engram consumes source-calibrated trust and its version exactly as projected from
+Engram consumes source-calibrated trust exactly as projected from
 the Proposition's eligible Assertion basis. Known `MULTI` cardinality yields
 evidence; conflicting `SINGLE` rows abstain.
 
@@ -79,9 +79,8 @@ entity and exactly two ordered predicates. The compiler emits only a closed two-
 plan over the one-hop capability. Execution is bounded by request budgets and uses
 the same temporal, trust, visibility, and revalidation rules at both steps.
 
-Direct and composed evidence use `PropositionEvidenceRecord` schema version 1 and
-evidence-package wire version 1. `path_kind` selects a direct singleton Proposition
-path or a composed path of one or two typed steps. Cycles, excessive fan-out,
+A composed `PropositionEvidenceRecord` path holds one or two typed steps instead of
+the Proposition's own ID. Cycles, excessive fan-out,
 ambiguous roots or predicates, conflicting terminal values, incomplete trust, and
 unknown cardinality produce `EVIDENCE` or `MISS`.
 
@@ -92,13 +91,25 @@ graph connection, query, or optional vector-index failure contributes no result 
 local resolvers continue. If no resolver supplies a result, the outward outcome is the
 same `MISS` returned after a successful graph query with no rows, not a separate
 unavailable resolution outcome. Component diagnostics may still report the graph
-failure. Cooperative cancellation is checked around graph calls, but an executing
-driver call continues until the driver returns.
+failure. Cooperative cancellation is checked around graph calls.
+
+Every graph call, connecting included, is bounded at 500 ms
+(`GRAPH_TIMEOUT_SECONDS`); an overrunning query is cancelled and its connection
+closed. After a timeout or a lost connection, the rest of the turn's graph reads fail
+immediately, so an unresponsive database costs a turn at most one timeout. When the
+turn ends (a chat or resolution request, or any gRPC call), the connection is
+replaced in the background without delaying the response, and graph reads resume
+once it succeeds. A failed reconnect is retried after the next turn. The schema
+scripts use a 30-second limit instead (`GRAPH_ADMIN_TIMEOUT_SECONDS`).
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,
 and latency without retaining request text, entity labels, or graph identifiers.
 
-Graph-backed behavior is exercised through the retained loopback gRPC and MCP
-harnesses (`tests/test_grpc_server.py` and `tests/test_mcp_server.py`), which
-use the existing graph transport fixture and public adapter paths.
+Focused behavior is covered by `tests/test_contextual.py`, `tests/test_temporal.py`,
+`tests/test_composition.py`, `tests/test_claim_projection.py`, and
+`tests/test_claim_eligibility.py`; the last two filenames are retained test-suite
+names, while their executable contracts are Proposition-centered. Graph-backed
+adapter behavior is also exercised through the loopback gRPC and MCP harnesses
+(`tests/test_grpc_server.py` and `tests/test_mcp_server.py`), which use the
+existing graph transport fixture and public adapter paths.

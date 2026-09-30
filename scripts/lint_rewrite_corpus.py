@@ -14,14 +14,14 @@ from engram.constants import QueryOperator
 from engram.rewrite import RewriteEngine, lint_rewrite_corpus, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CASES = Path("eval/section11-rewrite-v1.json")
-DEFAULT_OUTPUT = Path("eval/results/rewrite/lint-2026-08-20.json")
+DEFAULT_CASES = Path("eval/section11-rewrite.json")
+DEFAULT_OUTPUT = Path("eval/results/rewrite/lint.json")
 
 
 def internal_cases(path: Path) -> list[dict[str, object]]:
     decoded = json_loads(path.read_text(encoding="utf-8"))
-    if not isinstance(decoded, dict) or decoded.get("schema_version") != 1 or not isinstance(decoded.get("cases"), list):
-        raise ValueError("rewrite evaluation corpus must be a schema-1 object with cases")
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("cases"), list):
+        raise ValueError("rewrite evaluation corpus must be an object with cases")
     cases = decoded["cases"]
     if not all(isinstance(case, dict) for case in cases):
         raise ValueError("rewrite evaluation cases must be objects")
@@ -69,7 +69,6 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
     counts = Counter(str(finding["code"]) for finding in findings)
     errors = sum(finding["severity"] == "error" for finding in findings)
     result = {
-        "schema_version": 1,
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "inputs": {

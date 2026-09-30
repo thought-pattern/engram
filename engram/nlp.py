@@ -24,7 +24,7 @@ from engram.constants import (
     QUESTION_WORDS,
 )
 from engram.nltk_data import ensure_resource
-from engram.text import is_known_word
+from engram.text import is_known_word, verb_only_word
 
 
 @lru_cache(maxsize=1)
@@ -41,6 +41,37 @@ def ensure_nltk_data() -> None:
     ]
     for path, package in required:
         ensure_resource(path, package)
+
+
+_PROPER_NOUN_TAGS = {"NNP", "NNPS"}
+
+
+def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) -> bool:
+    """Return whether a capitalized span is a name rather than an ordinary verb.
+
+    WordNet verb-only tokens such as ``Continue`` are ordinary words even when
+    a capital makes the tagger call them proper nouns. ``require_tag`` applies
+    the NNP/NNPS gate used for a span that opens the sentence. A capital later
+    in the sentence skips that gate, so a mid-sentence name still counts.
+    """
+    ensure_nltk_data()
+    wanted = surface.split()
+    if not wanted or any(verb_only_word(word) for word in wanted):
+        result = False
+        return result
+    if not require_tag:
+        result = True
+        return result
+    tagged = pos_tag(word_tokenize(text))
+    width = len(wanted)
+    for start in range(0, len(tagged) - width + 1):
+        window = tagged[start : start + width]
+        if [word for word, _pos in window] != wanted:
+            continue
+        result = all(pos in _PROPER_NOUN_TAGS for _word, pos in window)
+        return result
+    result = False
+    return result
 
 
 def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:
@@ -331,67 +362,3 @@ def extract_entities(text: str) -> list[dict]:
             )
 
     return entities
-
-
-def extract_entities_by_type(text: str) -> dict[str, list[str]]:
-    """Extract named entities grouped by type.
-
-    Args:
-        text: Input text to analyze.
-
-    Returns:
-        Dict mapping entity types to lists of entity texts.
-        Example: {"PERSON": ["John Smith"], "GPE": ["New York", "France"]}
-    """
-    entities = extract_entities(text)
-    by_type: dict[str, list[str]] = {}
-
-    for entity in entities:
-        if entity["label"] not in by_type:
-            by_type[entity["label"]] = []
-        if entity["text"] not in by_type.get(entity["label"], []):
-            by_type.get(entity["label"], []).append(entity["text"])
-
-    return by_type
-
-
-def get_people(text: str) -> list[str]:
-    """Extract person names from text.
-
-    Args:
-        text: Input text to analyze.
-
-    Returns:
-        List of person names found.
-    """
-    entities = extract_entities(text)
-    people = [e["text"] for e in entities if e["label"] == "PERSON"]
-    return people
-
-
-def get_places(text: str) -> list[str]:
-    """Extract place names from text.
-
-    Args:
-        text: Input text to analyze.
-
-    Returns:
-        List of place names found (GPE and FACILITY entities).
-    """
-    entities = extract_entities(text)
-    places = [e["text"] for e in entities if e["label"] in ("GPE", "FACILITY", "GSP")]
-    return places
-
-
-def get_organizations(text: str) -> list[str]:
-    """Extract organization names from text.
-
-    Args:
-        text: Input text to analyze.
-
-    Returns:
-        List of organization names found.
-    """
-    entities = extract_entities(text)
-    organizations = [e["text"] for e in entities if e["label"] == "ORGANIZATION"]
-    return organizations

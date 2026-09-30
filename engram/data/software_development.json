@@ -1,0 +1,295 @@
+{
+  "pairs": [
+    {
+      "pattern": "WHAT IS SOFTWARE DEVELOPMENT",
+      "response": "Software development is the path from an agreement about the work to software people can use, and that someone else can maintain. You learn what the system must do, design it, build it, test it, and write down what you learned along the way. The steps can overlap and repeat. Nothing here requires you to finish one step for the whole system before the next step starts."
+    },
+    {
+      "pattern": "TELL ME ABOUT SOFTWARE DEVELOPMENT",
+      "response": "Software development is the path from an agreement about the work to software people can use, and that someone else can maintain. You learn what the system must do, design it, build it, test it, and write down what you learned along the way. The steps can overlap and repeat. Nothing here requires you to finish one step for the whole system before the next step starts."
+    },
+    {
+      "pattern": "EXPLAIN SOFTWARE DEVELOPMENT",
+      "response": "Software development is the path from an agreement about the work to software people can use, and that someone else can maintain. You learn what the system must do, design it, build it, test it, and write down what you learned along the way. The steps can overlap and repeat. Nothing here requires you to finish one step for the whole system before the next step starts."
+    },
+    {
+      "pattern": "WHAT IS MIL STD 498",
+      "response": "MIL-STD-498 is a 1994 checklist for that path. It was written for defense projects, and the useful part is ordinary: which work to do, and which information to write down. It does not choose a programming language or insist on a waterfall. The documents are collected at https://github.com/VCTLabs/MIL-STD-498."
+    },
+    {
+      "pattern": "WHAT IS MILSTD498",
+      "response": "MIL-STD-498 is a 1994 checklist for that path. It was written for defense projects, and the useful part is ordinary: which work to do, and which information to write down. It does not choose a programming language or insist on a waterfall. The documents are collected at https://github.com/VCTLabs/MIL-STD-498."
+    },
+    {
+      "pattern": "WHAT IS STANDARD 498",
+      "response": "MIL-STD-498 is a 1994 checklist for that path. It was written for defense projects, and the useful part is ordinary: which work to do, and which information to write down. It does not choose a programming language or insist on a waterfall. The documents are collected at https://github.com/VCTLabs/MIL-STD-498."
+    },
+    {
+      "pattern": "EXPLAIN MIL STD 498",
+      "response": "MIL-STD-498 is a 1994 checklist for that path. It was written for defense projects, and the useful part is ordinary: which work to do, and which information to write down. It does not choose a programming language or insist on a waterfall. The documents are collected at https://github.com/VCTLabs/MIL-STD-498."
+    },
+    {
+      "pattern": "WHAT ARE THE SOFTWARE DEVELOPMENT ACTIVITIES",
+      "response": "Start by planning the work and setting up the tools. Then learn how people will use the system, what the whole system must do, and what the software itself must do. Design the system, then the software. Build it and test the pieces, then the pieces together, then the software against its own requirements, then the software with the hardware, then the whole system. After that, prepare it for the people who will use it, and for the people who will maintain it. The whole time, keep versions under control, check the work, track problems, and review progress with the customer."
+    },
+    {
+      "pattern": "WHAT ARE THE STEPS IN SOFTWARE DEVELOPMENT",
+      "response": "Start by planning the work and setting up the tools. Then learn how people will use the system, what the whole system must do, and what the software itself must do. Design the system, then the software. Build it and test the pieces, then the pieces together, then the software against its own requirements, then the software with the hardware, then the whole system. After that, prepare it for the people who will use it, and for the people who will maintain it. The whole time, keep versions under control, check the work, track problems, and review progress with the customer."
+    },
+    {
+      "pattern": "WALK ME THROUGH SOFTWARE DEVELOPMENT",
+      "response": "Start by planning the work and setting up the tools. Then learn how people will use the system, what the whole system must do, and what the software itself must do. Design the system, then the software. Build it and test the pieces, then the pieces together, then the software against its own requirements, then the software with the hardware, then the whole system. After that, prepare it for the people who will use it, and for the people who will maintain it. The whole time, keep versions under control, check the work, track problems, and review progress with the customer."
+    },
+    {
+      "pattern": "DOES SOFTWARE DEVELOPMENT HAVE TO BE A WATERFALL",
+      "response": "No. The steps may overlap, repeat, and apply differently to different parts of the software. You describe the way you will actually work, including whether you will deliver in a series of builds. A build is one version that does a stated part of the job."
+    },
+    {
+      "pattern": "DO I HAVE TO USE A WATERFALL",
+      "response": "No. The steps may overlap, repeat, and apply differently to different parts of the software. You describe the way you will actually work, including whether you will deliver in a series of builds. A build is one version that does a stated part of the job."
+    },
+    {
+      "pattern": "WHAT LIFE CYCLE SHOULD I USE",
+      "response": "No. The steps may overlap, repeat, and apply differently to different parts of the software. You describe the way you will actually work, including whether you will deliver in a series of builds. A build is one version that does a stated part of the job."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE BUILD",
+      "response": "A build is a version of the software that does a stated part of what was promised. Planning, requirements, design, construction, and test can all happen inside one build, then again in the next. The development plan names the builds and what each one is for."
+    },
+    {
+      "pattern": "WHAT IS A BUILD IN SOFTWARE DEVELOPMENT",
+      "response": "A build is a version of the software that does a stated part of what was promised. Planning, requirements, design, construction, and test can all happen inside one build, then again in the next. The development plan names the builds and what each one is for."
+    },
+    {
+      "pattern": "WHAT ARE SOFTWARE BUILDS",
+      "response": "A build is a version of the software that does a stated part of what was promised. Planning, requirements, design, construction, and test can all happen inside one build, then again in the next. The development plan names the builds and what each one is for."
+    },
+    {
+      "pattern": "HOW DO I CHOOSE WHICH ACTIVITIES APPLY",
+      "response": "Keep the steps this project needs, and say so when a step does not apply. A tool you will not ship, a database you do not have, or a handoff you will not make can be marked as not part of this work. Different builds can keep different steps. Choose after you know what kind of software this is, who will maintain it, and how you will deliver it."
+    },
+    {
+      "pattern": "WHAT IF A STEP DOES NOT APPLY",
+      "response": "Keep the steps this project needs, and say so when a step does not apply. A tool you will not ship, a database you do not have, or a handoff you will not make can be marked as not part of this work. Different builds can keep different steps. Choose after you know what kind of software this is, who will maintain it, and how you will deliver it."
+    },
+    {
+      "pattern": "HOW DO I CUT THE PROCESS DOWN",
+      "response": "Keep the steps this project needs, and say so when a step does not apply. A tool you will not ship, a database you do not have, or a handoff you will not make can be marked as not part of this work. Different builds can keep different steps. Choose after you know what kind of software this is, who will maintain it, and how you will deliver it."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE DEVELOPMENT PLAN",
+      "response": "The software development plan is where you say how this project will actually run. Name the builds, the steps you will perform, the methods and tools, the standards for requirements, design, code, and tests, the schedule, and who does the work. The customer agrees to that plan. When it changes, they agree again, except for the team's internal schedule and staffing."
+    },
+    {
+      "pattern": "HOW DO I WRITE A SOFTWARE DEVELOPMENT PLAN",
+      "response": "The software development plan is where you say how this project will actually run. Name the builds, the steps you will perform, the methods and tools, the standards for requirements, design, code, and tests, the schedule, and who does the work. The customer agrees to that plan. When it changes, they agree again, except for the team's internal schedule and staffing."
+    },
+    {
+      "pattern": "HOW DO I START A SOFTWARE PROJECT",
+      "response": "The software development plan is where you say how this project will actually run. Name the builds, the steps you will perform, the methods and tools, the standards for requirements, design, code, and tests, the schedule, and who does the work. The customer agrees to that plan. When it changes, they agree again, except for the team's internal schedule and staffing."
+    },
+    {
+      "pattern": "HOW DO I START",
+      "response": "For a small tool, write what it must do in sentences you can check, then name the pieces that cover those sentences. The longer note, with builds, methods, and who approves changes, is the software development plan. Ask for that by name when you want it."
+    },
+    {
+      "pattern": "HOW SHOULD I START",
+      "response": "For a small tool, write what it must do in sentences you can check, then name the pieces that cover those sentences. The longer note, with builds, methods, and who approves changes, is the software development plan. Ask for that by name when you want it."
+    },
+    {
+      "pattern": "HOW DO I BEGIN",
+      "response": "For a small tool, write what it must do in sentences you can check, then name the pieces that cover those sentences. The longer note, with builds, methods, and who approves changes, is the software development plan. Ask for that by name when you want it."
+    },
+    {
+      "pattern": "HOW SHOULD I BEGIN",
+      "response": "For a small tool, write what it must do in sentences you can check, then name the pieces that cover those sentences. The longer note, with builds, methods, and who approves changes, is the software development plan. Ask for that by name when you want it."
+    },
+    {
+      "pattern": "I WANT TO BUILD *",
+      "response": "Say what it has to do, in sentences you can check. Who runs it, what goes in, and what comes out.",
+      "template": {
+        "text": "Say what {star1} has to do, in sentences you can check. Who runs it, what goes in, and what comes out."
+      }
+    },
+    {
+      "pattern": "WHAT PLANS DOES A SOFTWARE PROJECT NEED",
+      "response": "Four plans usually matter. How you will develop the software. How you will test it against its requirements. How you will install it. How you will hand it to the people who will maintain it. The customer approves those plans. Write a plan only for the work this project really has."
+    },
+    {
+      "pattern": "WHICH PLANS DOES THE CUSTOMER APPROVE",
+      "response": "Four plans usually matter. How you will develop the software. How you will test it against its requirements. How you will install it. How you will hand it to the people who will maintain it. The customer approves those plans. Write a plan only for the work this project really has."
+    },
+    {
+      "pattern": "WHAT IS THE SOFTWARE DEVELOPMENT ENVIRONMENT",
+      "response": "Set up the tools you will build with, the setup you will test on, a controlled place where the software and its notes are kept, and a working record for each piece you write. Also say which tools help you build the product but are not part of what you ship."
+    },
+    {
+      "pattern": "WHAT TOOLS DO I NEED TO SET UP",
+      "response": "Set up the tools you will build with, the setup you will test on, a controlled place where the software and its notes are kept, and a working record for each piece you write. Also say which tools help you build the product but are not part of what you ship."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE DEVELOPMENT LIBRARY",
+      "response": "The library is the controlled collection of the software and the information that belongs with it. A development file is the working record for one piece: what it is for, how it was built, and how it was tested. The library is the shelf. The file is the notes on one thing on that shelf."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE DEVELOPMENT FILE",
+      "response": "The library is the controlled collection of the software and the information that belongs with it. A development file is the working record for one piece: what it is for, how it was built, and how it was tested. The library is the shelf. The file is the notes on one thing on that shelf."
+    },
+    {
+      "pattern": "SHOULD I WRITE THINGS DOWN OR DELIVER A DOCUMENT",
+      "response": "Writing the information down is part of the work. Handing the customer a formal copy is a separate choice. The notes can be a document, a file, or what already lives in a design tool. The checklist is the same either way: someone later has to be able to find what was decided."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN NOTES AND A DELIVERABLE",
+      "response": "Writing the information down is part of the work. Handing the customer a formal copy is a separate choice. The notes can be a document, a file, or what already lives in a design tool. The checklist is the same either way: someone later has to be able to find what was decided."
+    },
+    {
+      "pattern": "WHO IS THE CUSTOMER IN A SOFTWARE PROJECT",
+      "response": "The customer is who asked for the software and agrees the plans. The team is who builds it. Users are the people who will use the results. Maintainers are the people who will look after it once development is done, when that is a different group. Those can be four different groups, or some of them can be the same people. Say which is which."
+    },
+    {
+      "pattern": "WHO IS ON A SOFTWARE PROJECT",
+      "response": "The customer is who asked for the software and agrees the plans. The team is who builds it. Users are the people who will use the results. Maintainers are the people who will look after it once development is done, when that is a different group. Those can be four different groups, or some of them can be the same people. Say which is which."
+    },
+    {
+      "pattern": "WHAT IS A REVIEW WITH THE CUSTOMER",
+      "response": "Hold two kinds of review with the customer. A technical review looks at the work itself, such as the requirements or the design. A management review looks at progress, risks, and whether the plan still fits. The development plan says which reviews you will actually hold."
+    },
+    {
+      "pattern": "WHAT IS A PROJECT REVIEW",
+      "response": "Hold two kinds of review with the customer. A technical review looks at the work itself, such as the requirements or the design. A management review looks at progress, risks, and whether the plan still fits. The development plan says which reviews you will actually hold."
+    },
+    {
+      "pattern": "WHAT MEETINGS SHOULD WE HOLD",
+      "response": "Hold two kinds of review with the customer. A technical review looks at the work itself, such as the requirements or the design. A management review looks at progress, risks, and whether the plan still fits. The development plan says which reviews you will actually hold."
+    },
+    {
+      "pattern": "WHAT IS VERSION CONTROL IN A PROJECT",
+      "response": "Name the things you will version. Decide who may change each one, and what a change has to go through. Keep a record of what was proposed and what was done. Check that the software you ship matches what you documented and tested. Then pack and deliver that same version, not a later one that slipped in."
+    },
+    {
+      "pattern": "HOW DO WE CONTROL CHANGES",
+      "response": "Name the things you will version. Decide who may change each one, and what a change has to go through. Keep a record of what was proposed and what was done. Check that the software you ship matches what you documented and tested. Then pack and deliver that same version, not a later one that slipped in."
+    },
+    {
+      "pattern": "WHAT IS KEEPING VERSIONS UNDER CONTROL",
+      "response": "Name the things you will version. Decide who may change each one, and what a change has to go through. Keep a record of what was proposed and what was done. Check that the software you ship matches what you documented and tested. Then pack and deliver that same version, not a later one that slipped in."
+    },
+    {
+      "pattern": "HOW DO I HANDLE A PROBLEM IN THE SOFTWARE",
+      "response": "Write the problem down: who found it, what it affects, how serious it is, and what you decided to do. Track it until a specific version contains the fix, and check that the fix worked. The same loop covers a requested change, not only a defect."
+    },
+    {
+      "pattern": "WHAT IS A PROBLEM REPORT",
+      "response": "Write the problem down: who found it, what it affects, how serious it is, and what you decided to do. Track it until a specific version contains the fix, and check that the fix worked. The same loop covers a requested change, not only a defect."
+    },
+    {
+      "pattern": "HOW DOES A FIX GET CLOSED",
+      "response": "Write the problem down: who found it, what it affects, how serious it is, and what you decided to do. Track it until a specific version contains the fix, and check that the fix worked. The same loop covers a requested change, not only a defect."
+    },
+    {
+      "pattern": "WHAT IS A QUALITY CHECK",
+      "response": "Check products while they are being made, and again when they are finished. Separately, check that the work followed the plan and the agreement. The people doing those checks should not be grading only their own work. The plan says how independent they are."
+    },
+    {
+      "pattern": "WHO CHECKS THE WORK",
+      "response": "Check products while they are being made, and again when they are finished. Separately, check that the work followed the plan and the agreement. The people doing those checks should not be grading only their own work. The plan says how independent they are."
+    },
+    {
+      "pattern": "WHAT DOES QUALITY ASSURANCE MEAN HERE",
+      "response": "Check products while they are being made, and again when they are finished. Separately, check that the work followed the plan and the agreement. The people doing those checks should not be grading only their own work. The plan says how independent they are."
+    },
+    {
+      "pattern": "WHAT ABOUT SAFETY SECURITY AND PRIVACY",
+      "response": "If safety, security, or privacy is part of what this software must get right, give each one its own treatment in the plan. Say how you will build for it, how you will show it was met, and where the evidence will live. Do not leave it as a sentence in a general requirement."
+    },
+    {
+      "pattern": "HOW DO I HANDLE SECURITY AND PRIVACY",
+      "response": "If safety, security, or privacy is part of what this software must get right, give each one its own treatment in the plan. Say how you will build for it, how you will show it was met, and where the evidence will live. Do not leave it as a sentence in a general requirement."
+    },
+    {
+      "pattern": "WHAT ABOUT REUSING SOFTWARE",
+      "response": "Say how you will look for software you can reuse, how you will judge it, and what limits come with it. Also notice when something you are building is worth making reusable for someone else. Record the benefit, the drawback, and the restriction, not only the decision to use it."
+    },
+    {
+      "pattern": "SHOULD WE USE EXISTING SOFTWARE",
+      "response": "Say how you will look for software you can reuse, how you will judge it, and what limits come with it. Also notice when something you are building is worth making reusable for someone else. Record the benefit, the drawback, and the restriction, not only the decision to use it."
+    },
+    {
+      "pattern": "WHAT ABOUT RISKS ON A SOFTWARE PROJECT",
+      "response": "Name the risks you already know and what you will do about each one. Pick a few measures that show whether the work is moving, and look at them in the management reviews. A risk with no response, and a measure nobody looks at, are both just notes."
+    },
+    {
+      "pattern": "HOW DO I TRACK PROGRESS",
+      "response": "Name the risks you already know and what you will do about each one. Pick a few measures that show whether the work is moving, and look at them in the management reviews. A risk with no response, and a measure nobody looks at, are both just notes."
+    },
+    {
+      "pattern": "WHAT IF ANOTHER TEAM IS BUILDING PART OF THIS",
+      "response": "Work you pass to another company still has to follow the same agreement, and your team is responsible for that. When other teams are building other parts of the same system, plan the shared boundaries and the dates with them, not only inside your own work."
+    },
+    {
+      "pattern": "WHAT ABOUT SUBCONTRACTORS",
+      "response": "Work you pass to another company still has to follow the same agreement, and your team is responsible for that. When other teams are building other parts of the same system, plan the shared boundaries and the dates with them, not only inside your own work."
+    },
+    {
+      "pattern": "WHAT IS AN OUTSIDE REVIEWER",
+      "response": "Sometimes the customer asks an outside person to check the work, separate from the team's own testing. Plan how that person sees the products and the activities. Their check is not a substitute for your own tests."
+    },
+    {
+      "pattern": "WHAT IF SOMEONE ELSE CHECKS OUR WORK",
+      "response": "Sometimes the customer asks an outside person to check the work, separate from the team's own testing. Plan how that person sees the products and the activities. Their check is not a substitute for your own tests."
+    },
+    {
+      "pattern": "WHERE CAN I READ THE SOFTWARE DEVELOPMENT CHECKLIST",
+      "response": "The 1994 checklist and its guides are at https://github.com/VCTLabs/MIL-STD-498. The GuideBook folder explains how to choose which parts apply. There are also plain templates for a design description, a user guide, a version description, a test description, and a test report."
+    },
+    {
+      "pattern": "WHERE ARE THE SOFTWARE DEVELOPMENT TEMPLATES",
+      "response": "The 1994 checklist and its guides are at https://github.com/VCTLabs/MIL-STD-498. The GuideBook folder explains how to choose which parts apply. There are also plain templates for a design description, a user guide, a version description, a test description, and a test report."
+    },
+    {
+      "pattern": "PYTHON SOFTWARE DEVELOPMENT",
+      "response": "Python is how you write the program. Around that, you still decide what it must do, how the pieces fit, how you will check it, and what you leave for the next person."
+    },
+    {
+      "pattern": "WHAT IS PYTHON SOFTWARE DEVELOPMENT",
+      "response": "Python is how you write the program. Around that, you still decide what it must do, how the pieces fit, how you will check it, and what you leave for the next person."
+    },
+    {
+      "pattern": "TELL ME ABOUT PYTHON SOFTWARE DEVELOPMENT",
+      "response": "Python is how you write the program. Around that, you still decide what it must do, how the pieces fit, how you will check it, and what you leave for the next person."
+    },
+    {
+      "pattern": "EXPLAIN PYTHON SOFTWARE DEVELOPMENT",
+      "response": "Python is how you write the program. Around that, you still decide what it must do, how the pieces fit, how you will check it, and what you leave for the next person."
+    },
+    {
+      "pattern": "WHAT IS * IN SOFTWARE DEVELOPMENT",
+      "response": "I can walk the path from a plan to software someone can use and maintain.",
+      "template": {
+        "text": "I don't have a separate note on {star1}. Ask about the plan, the requirements, the design, the tests, or the handoff."
+      }
+    },
+    {
+      "pattern": "HOW DO I * IN SOFTWARE DEVELOPMENT",
+      "response": "Tie the task to the step that produces it, and write down the result of that step.",
+      "template": {
+        "text": "For {star1}, name the step. Needs go in requirements. Shape goes in the design. Proof goes in the tests. What users and maintainers receive goes in the delivery."
+      }
+    },
+    {
+      "pattern": "HOW DO YOU * IN SOFTWARE DEVELOPMENT",
+      "response": "Tie the task to the step that produces it, and write down the result of that step.",
+      "template": {
+        "text": "For {star1}, name the step. Needs go in requirements. Shape goes in the design. Proof goes in the tests. What users and maintainers receive goes in the delivery."
+      }
+    },
+    {
+      "pattern": "EXPLAIN * IN SOFTWARE DEVELOPMENT",
+      "response": "I can explain the plan, the requirements, the design, the tests, or the handoff.",
+      "template": {
+        "text": "I can explain {star1} if it is part of the plan, the requirements, the design, the tests, or the handoff. Ask about that step by name."
+      }
+    }
+  ]
+}

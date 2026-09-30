@@ -1,10 +1,12 @@
 """Request-local semantic retrieval over accepted-response artifacts."""
 
-from collections.abc import Iterable
+from collections.abc import Container, Iterable
 from hashlib import sha256 as hashlib_sha256
 from itertools import batched as itertools_batched
+from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite, sqrt as math_sqrt
 from pathlib import Path
+from threading import Lock as threading_Lock
 
 from sentence_transformers import SentenceTransformer
 
@@ -18,11 +20,12 @@ from engram.constants import (
     APPROVED_SEMANTIC_MODEL_ID,
     APPROVED_SEMANTIC_MODEL_VERSION,
     SEMANTIC_ARTIFACT_HASH_VERSION,
-    SEMANTIC_RECORD_SCHEMA_VERSION,
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes
+
+logger = logging_getLogger(__name__)
 
 SEMANTIC_QUERY_WORKING_BYTES_PER_DIMENSION = 32
 SEMANTIC_RECORD_WORKING_BYTES_PER_DIMENSION = 64
@@ -166,13 +169,14 @@ def representation_specs(artifact: dict, settings: dict) -> tuple[dict, ...]:
     return result
 
 
-def scoped_representation_specs(artifacts: tuple[dict, ...], scope: dict, settings: dict):
-    """Yield validated active representation specifications for one request scope."""
+def scoped_representation_specs(artifacts: tuple[dict, ...], scope: dict, settings: dict, trusted_artifacts: bool = False):
+    """Yield (artifact, specification) pairs for active representations in one request scope."""
     for artifact_value in artifacts:
-        artifact = validate_cached_response_artifact(artifact_value)
+        artifact = artifact_value if trusted_artifacts else validate_cached_response_artifact(artifact_value)
         if artifact.get("scope", {}) != scope:
             continue
-        yield from representation_specs(artifact, settings)
+        for spec in representation_specs(artifact, settings):
+            yield artifact, spec
 
 
 def semantic_record_working_bytes(spec: dict, dimension: int) -> int:
@@ -190,7 +194,6 @@ def embedding_record(spec: dict, embedding: tuple[float, ...], identity: dict) -
     text = spec.get("text", "")
     digest = hashlib_sha256(f"{statement_id}\0{generation}\0{origin}\0{ordinal}\0{text}".encode()).hexdigest()
     result = {
-        "schema_version": SEMANTIC_RECORD_SCHEMA_VERSION,
         "representation_id": f"semantic:sha256:{digest}",
         "statement_id": statement_id,
         "generation": generation,
@@ -264,8 +267,15 @@ class StandaloneSemanticRetriever:
                 self.internal_identity = internal_artifact_identity(self.internal_settings, actual_sha256)
                 self.internal_healthy = True
             except Exception as error:
+                logger.warning("Semantic retrieval model is unavailable", exc_info=error)
                 self.internal_healthy = False
                 self.internal_last_error = type(error).__name__
+        # statement_id -> (artifact, {(origin, ordinal): record}). A record is a
+        # pure function of its artifact and this retriever's model, and a
+        # validated artifact never changes in place, so an entry checked by
+        # identity is always current. Similarity is still computed per request.
+        self.internal_record_lock = threading_Lock()
+        self.internal_records: dict[str, tuple[dict, dict[tuple[str, int], dict]]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -300,6 +310,38 @@ class StandaloneSemanticRetriever:
         )
         return result
 
+    def cached_records(self, pairs: tuple[tuple[dict, dict], ...]) -> tuple[dict, ...]:
+        """Return records for (artifact, spec) pairs, encoding only those not already cached."""
+        records: list[dict] = []
+        missing: list[int] = []
+        with self.internal_record_lock:
+            for index, (artifact, spec) in enumerate(pairs):
+                entry = self.internal_records.get(spec.get("statement_id", ""))
+                record = entry[1].get((spec.get("origin", ""), spec.get("ordinal", 0))) if entry and entry[0] is artifact else None
+                records.append(record if record is not None else {})
+                if record is None:
+                    missing.append(index)
+        if missing:
+            computed = self.records(tuple(pairs[index][1] for index in missing))
+            with self.internal_record_lock:
+                for index, record in zip(missing, computed, strict=True):
+                    artifact, spec = pairs[index]
+                    statement_id = spec.get("statement_id", "")
+                    entry = self.internal_records.get(statement_id)
+                    if entry is None or entry[0] is not artifact:
+                        entry = (artifact, {})
+                        self.internal_records[statement_id] = entry
+                    entry[1][(spec.get("origin", ""), spec.get("ordinal", 0))] = record
+                    records[index] = record
+        result = tuple(records)
+        return result
+
+    def retain(self, statement_ids: Container[str]) -> None:
+        """Drop cached records for artifacts that are no longer stored."""
+        with self.internal_record_lock:
+            for statement_id in [value for value in self.internal_records if value not in statement_ids]:
+                del self.internal_records[statement_id]
+
     def search(
         self,
         text: str,
@@ -310,6 +352,7 @@ class StandaloneSemanticRetriever:
         max_vector_results: int,
         max_working_memory_bytes: int,
         cooperative_check: object = (),
+        trusted_artifacts: bool = False,
     ) -> dict:
         if not isinstance(text, str):
             raise InvalidRequestError("semantic query must be a string")
@@ -378,7 +421,11 @@ class StandaloneSemanticRetriever:
 
         corpus_record_count = 0
         largest_record_working_bytes = 0
-        for spec in scoped_representation_specs(artifacts, normalized_scope, settings):
+        # The budget pass keeps its pairs, so the scan below reuses them instead
+        # of deriving (and validating) every specification a second time.
+        pairs: list[tuple[dict, dict]] = []
+        for artifact, spec in scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts):
+            pairs.append((artifact, spec))
             corpus_record_count += 1
             if corpus_record_count > settings.get("max_records", 0):
                 result = {
@@ -434,10 +481,9 @@ class StandaloneSemanticRetriever:
         retained_by_statement: dict[str, dict] = {}
         scanned_records = 0
         peak_working_memory = query_memory
-        specs = scoped_representation_specs(artifacts, normalized_scope, settings)
-        for spec_batch in itertools_batched(specs, batch_capacity):
-            batch_working_bytes = sum(semantic_record_working_bytes(spec, dimension) for spec in spec_batch)
-            records = self.records(spec_batch)
+        for pair_batch in itertools_batched(pairs, batch_capacity):
+            batch_working_bytes = sum(semantic_record_working_bytes(spec, dimension) for _, spec in pair_batch)
+            records = self.cached_records(pair_batch)
             peak_working_memory = max(
                 peak_working_memory,
                 query_memory + batch_working_bytes + len(retained_by_statement) * SEMANTIC_MATCH_WORKING_BYTES,

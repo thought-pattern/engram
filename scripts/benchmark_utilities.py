@@ -21,7 +21,7 @@ from engram.constants import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_CORPUS = Path("eval/section14-utilities-v1.json")
+DEFAULT_CORPUS = Path("eval/section14-utilities.json")
 DEFAULT_OUTPUT_DIRECTORY = Path("eval/results/utilities")
 THREAT_INPUTS = {
     "arithmetic": "calculate __import__('os').system('echo bad')",
@@ -237,7 +237,6 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
     }
     passed = all(checks.values())
     result = {
-        "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
         "plugin_name": plugin_name,
         "contract": next(contract for contract in utility_plugin_contracts() if contract["name"] == plugin_name),
@@ -288,12 +287,11 @@ def main() -> int:
     overall_passed = all(result["gate"]["passed"] for result in results.values()) and not forbidden and default_off
     args.output_directory.mkdir(parents=True, exist_ok=True)
     for name, result in results.items():
-        output = args.output_directory / f"{name.replace('_', '-')}-conformance-2026-08-22.json"
+        output = args.output_directory / f"{name.replace('_', '-')}-conformance.json"
         output.write_text(json_dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = {
-        "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
-        "corpus": {"path": args.corpus.as_posix(), "version": corpus["corpus_version"]},
+        "corpus": {"path": args.corpus.as_posix()},
         "source_state": source_state,
         "fixed_registry": {
             "plugin_names": list(UTILITY_PLUGIN_NAMES),
@@ -318,7 +316,7 @@ def main() -> int:
         },
         "passed": overall_passed,
     }
-    summary_path = args.output_directory / "benchmark-2026-08-22.json"
+    summary_path = args.output_directory / "benchmark.json"
     summary_path.write_text(json_dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json_dumps({"output": summary_path.as_posix(), "passed": overall_passed}, sort_keys=True))
     result = 0 if overall_passed else 1

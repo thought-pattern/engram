@@ -22,8 +22,8 @@ from engram.identity import build_retrieval_representation, build_standalone_ide
 from engram.sparse import search_sparse_artifacts, sparse_document_from_artifact, sparse_tokens
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = Path("eval/section12-sparse-v1.json")
-DEFAULT_OUTPUT = Path("eval/results/sparse/benchmark-2026-08-21.json")
+DEFAULT_CORPUS = Path("eval/section12-sparse.json")
+DEFAULT_OUTPUT = Path("eval/results/sparse/benchmark.json")
 SCALE_DOCUMENTS = 10_000
 SCALE_QUERY_SAMPLES = 200
 
@@ -56,8 +56,8 @@ def internal_measure(operation: object, samples: int) -> dict:
 
 def internal_load(path: Path) -> dict:
     decoded = json_loads(path.read_text(encoding="utf-8"))
-    if not isinstance(decoded, dict) or decoded.get("schema_version") != 1:
-        raise ValueError("sparse benchmark corpus must be a schema-1 object")
+    if not isinstance(decoded, dict):
+        raise ValueError("sparse benchmark corpus must be an object")
     if not isinstance(decoded.get("documents"), list) or not isinstance(decoded.get("queries"), list):
         raise ValueError("sparse benchmark corpus must contain document and query arrays")
     if not isinstance(decoded.get("gates"), dict):
@@ -212,14 +212,14 @@ def internal_relevance(
             top_one += rank == 1
             top_five += rank > 0
             reciprocal_rank += 1.0 / rank if rank else 0.0
-            family.get(group, {})["positive"] += 1
-            family.get(group, {})["top_one"] += rank == 1
-            family.get(group, {})["top_five"] += rank > 0
+            family[group]["positive"] += 1
+            family[group]["top_one"] += rank == 1
+            family[group]["top_five"] += rank > 0
         else:
             negatives += 1
             negative_candidates += bool(ids)
-            family.get(group, {})["negative"] += 1
-            family.get(group, {})["negative_candidate"] += bool(ids)
+            family[group]["negative"] += 1
+            family[group]["negative_candidate"] += bool(ids)
         cases.append(
             {
                 "case_id": raw["case_id"],
@@ -363,7 +363,6 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
             }
         )
     result = {
-        "schema_version": 1,
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "corpus": {

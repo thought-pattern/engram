@@ -1,0 +1,103 @@
+{
+  "pairs": [
+    {
+      "pattern": "WHAT IS SYSTEM DESIGN",
+      "response": "System design has two parts. First, the decisions that apply to the whole system, including behavior you will not control from inside one program. Second, the structure: the parts, software and hardware, and how they fit. Write both down so a later change can see what was chosen and what was only a guess."
+    },
+    {
+      "pattern": "WHAT IS A SYSTEM DESIGN DESCRIPTION",
+      "response": "System design has two parts. First, the decisions that apply to the whole system, including behavior you will not control from inside one program. Second, the structure: the parts, software and hardware, and how they fit. Write both down so a later change can see what was chosen and what was only a guess."
+    },
+    {
+      "pattern": "WHAT ARE SYSTEM WIDE DESIGN DECISIONS",
+      "response": "A system-wide design decision is a choice every part has to live with. That includes how the system behaves as a whole, what it must accept from outside, and the limits placed on the software. Record the choice. A decision that stays in someone's head will be remade by the next person."
+    },
+    {
+      "pattern": "WHAT IS A DESIGN DECISION",
+      "response": "A system-wide design decision is a choice every part has to live with. That includes how the system behaves as a whole, what it must accept from outside, and the limits placed on the software. Record the choice. A decision that stays in someone's head will be remade by the next person."
+    },
+    {
+      "pattern": "WHAT IS A SYSTEM ARCHITECTURE",
+      "response": "The system structure names the parts and how they connect. Some parts are software, some are hardware, some are work a person still does. This is the map you use before you design any one program in detail."
+    },
+    {
+      "pattern": "WHAT IS THE SYSTEM STRUCTURE",
+      "response": "The system structure names the parts and how they connect. Some parts are software, some are hardware, some are work a person still does. This is the map you use before you design any one program in detail."
+    },
+    {
+      "pattern": "WHAT IS SOFTWARE DESIGN",
+      "response": "Software design for one product has three layers. Decisions that apply to the whole product. Then the pieces, their boundaries, and how they run together. Then enough detail on each piece to build it and to test it. Each piece should point back to the requirement it exists to meet."
+    },
+    {
+      "pattern": "WHAT IS A SOFTWARE DESIGN DESCRIPTION",
+      "response": "Software design for one product has three layers. Decisions that apply to the whole product. Then the pieces, their boundaries, and how they run together. Then enough detail on each piece to build it and to test it. Each piece should point back to the requirement it exists to meet."
+    },
+    {
+      "pattern": "WHAT IS SOFTWARE DESIGN IN PRACTICE",
+      "response": "Software design for one product has three layers. Decisions that apply to the whole product. Then the pieces, their boundaries, and how they run together. Then enough detail on each piece to build it and to test it. Each piece should point back to the requirement it exists to meet."
+    },
+    {
+      "pattern": "WHAT IS THE SOFTWARE ARCHITECTURE",
+      "response": "The architecture of a software product names its pieces, the boundaries between them, and the idea of how they execute. A piece is something you can implement and test on its own. Trace each piece to the requirements it covers, so a requirement with no piece, and a piece with no requirement, both show up."
+    },
+    {
+      "pattern": "WHAT ARE SOFTWARE UNITS",
+      "response": "The architecture of a software product names its pieces, the boundaries between them, and the idea of how they execute. A piece is something you can implement and test on its own. Trace each piece to the requirements it covers, so a requirement with no piece, and a piece with no requirement, both show up."
+    },
+    {
+      "pattern": "HOW DO THE PIECES FIT TOGETHER",
+      "response": "The architecture of a software product names its pieces, the boundaries between them, and the idea of how they execute. A piece is something you can implement and test on its own. Trace each piece to the requirements it covers, so a requirement with no piece, and a piece with no requirement, both show up."
+    },
+    {
+      "pattern": "WHAT IS DETAILED DESIGN",
+      "response": "Detailed design specifies each piece far enough that someone can write it and someone else can test it. Include the data it uses, not only the steps. Stop when a competent person could implement it without inventing the missing decisions."
+    },
+    {
+      "pattern": "HOW DETAILED SHOULD A DESIGN BE",
+      "response": "Detailed design specifies each piece far enough that someone can write it and someone else can test it. Include the data it uses, not only the steps. Stop when a competent person could implement it without inventing the missing decisions."
+    },
+    {
+      "pattern": "WHAT IS AN INTERFACE DESIGN",
+      "response": "An interface design says how a boundary is built: what crosses it, and the shape of that exchange. It turns an interface requirement into something you can implement. A software product can have both a design of its insides and a design of its boundaries."
+    },
+    {
+      "pattern": "WHAT IS AN INTERFACE DESIGN DESCRIPTION",
+      "response": "An interface design says how a boundary is built: what crosses it, and the shape of that exchange. It turns an interface requirement into something you can implement. A software product can have both a design of its insides and a design of its boundaries."
+    },
+    {
+      "pattern": "WHAT IS A DATABASE DESIGN",
+      "response": "A database design describes the data the software keeps, from the way people think about it to the way it is actually stored. Write it when the software has a database worth separating from the rest of the design. Otherwise the data can live in the software design."
+    },
+    {
+      "pattern": "WHAT IS A DATABASE DESIGN DESCRIPTION",
+      "response": "A database design describes the data the software keeps, from the way people think about it to the way it is actually stored. Write it when the software has a database worth separating from the rest of the design. Otherwise the data can live in the software design."
+    },
+    {
+      "pattern": "WHAT IS THE DIFFERENCE BETWEEN SOFTWARE DESIGN AND INTERFACE DESIGN",
+      "response": "The software design describes one product: its decisions, its pieces, and the detail of those pieces. The interface design describes a boundary between products, or between software and hardware, or between the system and a person. You often need both."
+    },
+    {
+      "pattern": "HOW DO I DESIGN THE PIECES",
+      "response": "Separate the work into parts you could build and try alone. Note the data passed between them, and which need each part exists to meet."
+    },
+    {
+      "pattern": "HOW DO I DESIGN THE PIECES OF THIS",
+      "response": "Separate the work into parts you could build and try alone. Note the data passed between them, and which need each part exists to meet."
+    },
+    {
+      "pattern": "HOW SHOULD I DESIGN THE PIECES",
+      "response": "Separate the work into parts you could build and try alone. Note the data passed between them, and which need each part exists to meet."
+    },
+    {
+      "pattern": "HOW DO I SPLIT THIS INTO PIECES",
+      "response": "Separate the work into parts you could build and try alone. Note the data passed between them, and which need each part exists to meet."
+    },
+    {
+      "pattern": "I NEED A DESIGN FOR *",
+      "response": "Name the pieces, the data they share, and which need each piece covers.",
+      "template": {
+        "text": "For {star1}, name the pieces, the data they share, and which need each piece covers. Stop when someone else could build a piece without guessing."
+      }
+    }
+  ]
+}

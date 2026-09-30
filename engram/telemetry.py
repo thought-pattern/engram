@@ -9,7 +9,6 @@ from engram.constants import (
     OPERATIONAL_RESOLVER_NAMES,
     OPERATIONAL_RESOLVER_STATES,
     OPERATIONAL_RESOURCE_DIMENSIONS,
-    OPERATIONAL_TELEMETRY_SCHEMA_VERSION,
     REGULATOR_OUTCOMES,
     ResolutionOutcome,
 )
@@ -46,7 +45,6 @@ def operational_telemetry() -> dict:
     }
     resource_metrics = {name: {"total": 0, "max": 0} for name in OPERATIONAL_RESOURCE_DIMENSIONS}
     result = {
-        "schema_version": OPERATIONAL_TELEMETRY_SCHEMA_VERSION,
         "resolution": {
             "requests": 0,
             "executions": 0,

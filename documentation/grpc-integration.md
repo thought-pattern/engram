@@ -26,10 +26,10 @@ receipts, reports, turn diagnostics, or process counters. The running process is
 the complete lifetime of those values. Optional Memgraph access supplies recall
 reads and is not Engram-owned response or conversation state.
 
-When graph recall is enabled, startup verifies the selected deployment mode and
-schema before publishing readiness. A Tapestry deployment uses Tapestry's graph
-schema. An independent Engram deployment installs the current Engram recall
-subset through the separate administrative schema command.
+When graph recall is enabled, startup checks that the graph's schema is
+compatible before publishing readiness: it must have every definition in
+`engram/schema.cypher`, and it may have more. The separate administrative schema
+command can create that schema on an empty graph.
 
 During request resolution, a graph connection, query, or optional vector-index
 failure contributes no graph result. If no local resolver supplies a result,
@@ -107,7 +107,7 @@ names every top-level unified result field, while bounded candidate, evidence,
 diagnostic, resolver, and budget records remain core-owned structures carried
 through `Struct` fields.
 
-Regenerate after changing the Tapestry-dictated contract:
+Regenerate after changing the contract:
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -137,14 +137,35 @@ pinned in `pyproject.toml`.
 | `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata; preserve admitted multiline response text exactly. |
 | `RetireResponse` | Remove one dynamic cached response after its owner establishes staleness. |
 | `RetireResponses` | Retire one bounded ordered group, retaining scalar receipts and per-entry failures. |
+| `ResponsesBySupport` | List ACTIVE accepted-response statement IDs whose support references any given durable record ID. |
 | `MaintainEngagement` | Plan, prepare, physically purge, or resume an exactly scoped administrative operation. |
 | `GetStatus` | Return lifecycle, readiness, component, rollout, and telemetry status. |
+
+Starting unknown user "0" returns a `conversation_token`. `Chat`,
+`InspectConversation`, `FinishConversation`, and `StopConversation` for "0" must
+present that token in their `conversation_token` field or fail with
+`PERMISSION_DENIED`. An unknown-user conversation left idle for 300 seconds no
+longer blocks a new start.
 
 `engram.EngramEvidenceService` provides:
 
 | RPC | Purpose |
 | --- | --- |
 | `ResolveEvidence` | Run unified resolution and return an `ANSWER`, `EVIDENCE`, or `MISS` result with the bounded Proposition package when available. |
+
+### Request limits
+
+| Text | Limit (UTF-8) |
+| --- | --- |
+| `Chat` text | 16,384 bytes (`MAX_REQUEST_BYTES`) |
+| `request` in `ResolveEvidence`, `Propose`, and `LearnResponse` | 4,096 bytes (`MAX_CACHE_REQUEST_BYTES`) |
+
+A regulated-cache request becomes an exact-match lookup key, so its limit is
+the key's. Normalization lowercases the text and expands contractions and some
+characters, so the normalized form must fit too; a request close to the limit
+can exceed it once normalized. Both checks run before any other work and return
+`INVALID_ARGUMENT` with a message naming the limit. A request that normalizes
+to nothing, such as punctuation only, is rejected the same way.
 
 ## Ordered retirement
 
@@ -179,8 +200,7 @@ While paused, `plan` with the same operation and Scope may supply an empty
 dependency array to inspect the existing `maintenance_binding` and `purged`
 state. The coordinator uses that retained binding to recover after graph commit;
 prepare, purge and resume still require the complete exact binding. A conflicting
-nonempty dependency list is rejected. Managed startup also refuses a GraphState
-with unfinished maintenance; restarting is not a substitute for scoped recovery.
+nonempty dependency list is rejected.
 
 This is a trusted administrative mutation, subject to the same access controls
 as other mutation RPCs. Real gRPC tests cover the lifecycle, concurrent draining,
@@ -230,12 +250,17 @@ Core failures map at the transport boundary:
 | `InvalidRequestError` | `INVALID_ARGUMENT` |
 | `ResourceNotFoundError` | `NOT_FOUND` |
 | `ConflictError` | `ABORTED` |
+| `ConversationOwnershipError` | `PERMISSION_DENIED` |
 | `LifecycleError` | `FAILED_PRECONDITION` |
+| `ResourceExhaustedError` (session limit with `session_overflow: reject`) | `RESOURCE_EXHAUSTED` |
 | Cancellation or expired deadline | `CANCELLED` or `DEADLINE_EXCEEDED` |
-| Unexpected adapter failure | `INTERNAL` with a generic client message |
+| Unexpected failure | `INTERNAL` with the message `internal Engram failure` |
 
-Every typed failure supplies `engram-error-type` in trailing metadata. Detailed
-unexpected exceptions remain in server logs.
+Every typed failure supplies `engram-error-type` in trailing metadata. A typed
+failure's message is written for the caller; exception text from anywhere else
+never reaches the client. Every failure is logged on the server in full, with
+its traceback: internal failures at `ERROR`, cancellations at `INFO`, and other
+rejected requests at `WARNING`.
 
 The server registers `grpc.health.v1.Health` for the aggregate empty service
 name, `engram.EngramService`, and `engram.EngramEvidenceService`. It reports
