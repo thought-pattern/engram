@@ -200,7 +200,7 @@ async def internal_run(
             call_started = time_perf_counter_ns()
             expected_turn = index + 1
             graph_probe = bool(memgraph_probe_every and expected_turn % memgraph_probe_every == 0)
-            message = "What is Elias Throrne?" if graph_probe else messages[index % len(messages)]
+            message = "What is Elias Thorne?" if graph_probe else messages[index % len(messages)]
             result = tool_json(await client.call_tool("engram_send", {"text": message}))
             latency_ms = (time_perf_counter_ns() - call_started) / 1_000_000
             latencies_ms.append(latency_ms)

@@ -25,10 +25,10 @@ from scripts.graph_probe_config import materialize_engram_graph_config
 
 DEFAULT_OUTPUT = Path("eval/results/contextual/mcp-memgraph-comparison-2026-08-20.json")
 PROMPTS = (
-    "What is Elias Throrne?",
-    "What was Elias Throrne classified as?",
-    "What does Elias Throrne do?",
-    "Tell me about Elias Throrne.",
+    "What is Elias Thorne?",
+    "What was Elias Thorne classified as?",
+    "What does Elias Thorne do?",
+    "Tell me about Elias Thorne.",
     "What does evaluating mapping[key] for an absent key result in?",
 )
 
@@ -68,7 +68,7 @@ def relation_probe(config_path: str) -> dict:
     """Exercise the Section 8 fixed capabilities and report live turn lengths."""
     engine = Engram(load_config(config_path))
     try:
-        entities, entity_latency = timed(lambda: engine.canonical_entity_matches("Elias Throrne", limit=8))
+        entities, entity_latency = timed(lambda: engine.canonical_entity_matches("Elias Thorne", limit=8))
         predicates, predicate_latency = timed(lambda: engine.canonical_predicate_matches("is a", limit=8))
         relation_rows = []
         relation_latency = 0.0
@@ -81,7 +81,7 @@ def relation_probe(config_path: str) -> dict:
         core = EngramCore(engine)
         resolution, resolution_latency = timed(
             lambda: core.resolve_request(
-                "What was Elias Throrne classified as?",
+                "What was Elias Thorne classified as?",
                 "live-memgraph-relation-probe",
                 user_id="Graph Comparison",
                 configured_resolvers=("structured_graph",),
