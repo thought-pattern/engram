@@ -596,7 +596,9 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
@@ -735,7 +737,9 @@ def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_boun
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
 
     def current_projection(internal_proposition_id):
@@ -780,7 +784,9 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(
@@ -937,7 +943,9 @@ def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkey
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
@@ -983,7 +991,9 @@ def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_ex
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     sparse_candidate = candidate(statement_id)

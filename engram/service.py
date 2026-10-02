@@ -1954,7 +1954,9 @@ class EngramCore:
                 statement_id = entry.get("statement_id", "")
                 reason = entry.get("reason", "")
                 request_id = entry.get("request_id", "")
-                require_any_text(statement_id, "statement_id", RETIREMENT_FIELD_BYTE_LIMITS.get("statement_id", 0), blank_is_empty=True)
+                require_any_text(
+                    statement_id, "statement_id", RETIREMENT_FIELD_BYTE_LIMITS.get("statement_id", 0), blank_is_empty=True
+                )
                 require_any_text(reason, "reason", RETIREMENT_FIELD_BYTE_LIMITS.get("reason", 0), blank_is_empty=True)
                 require_any_text(request_id, "request_id", RETIREMENT_FIELD_BYTE_LIMITS.get("request_id", 0), blank_is_empty=True)
                 validated_entries.append(

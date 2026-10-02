@@ -17,6 +17,7 @@ OTHER_PROPOSITION_ID = "prp_" + "b" * 64
 
 def support_reference(identifier: str) -> dict:
     return {
+        "schema_version": "tapestry-engram-support",
         "record_kind": "proposition",
         "id": identifier,
         "state_revision": 1,

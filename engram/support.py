@@ -10,6 +10,7 @@ from engram.validation import require_any_text
 
 MAX_CONTRACT_NAME_BYTES = 128
 SUPPORT_REFERENCE_FIELDS = {
+    "schema_version",
     "record_kind",
     "id",
     "state_revision",
@@ -61,6 +62,7 @@ def validate_support_reference(value) -> dict:
     """Validate and defensively copy one opaque support reference."""
     if not isinstance(value, dict) or set(value) != SUPPORT_REFERENCE_FIELDS:
         raise ValueError("support reference has an invalid shape")
+    schema_version = require_any_text(value.get("schema_version", ""), "support schema_version", MAX_CONTRACT_NAME_BYTES)
     representation_contract = require_any_text(
         value.get("representation_contract", ""),
         "support representation_contract",
@@ -80,6 +82,7 @@ def validate_support_reference(value) -> dict:
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
     result = {
+        "schema_version": schema_version,
         "record_kind": kind,
         "id": identifier,
         "state_revision": state_revision,

@@ -52,11 +52,12 @@ from engram.service import EngramCore, normalize_service_user_id
 
 LOGGER = getLogger(__name__)
 # Log levels for errors returned to a client: internal failures are errors,
-# cancellations are routine, and anything else the caller caused is a warning.
+# absent resources, cancellations and deadlines are routine caller outcomes.
 REQUEST_ERROR_LOG_LEVELS = {
     grpc_StatusCode.INTERNAL: ERROR,
     grpc_StatusCode.CANCELLED: INFO,
     grpc_StatusCode.DEADLINE_EXCEEDED: INFO,
+    grpc_StatusCode.NOT_FOUND: INFO,
 }
 SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramService"].full_name
 EVIDENCE_SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramEvidenceService"].full_name
@@ -243,10 +244,16 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
         except EngramCoreError as error:
-            # The client gets the error's own message, written for callers;
-            # the log gets the full exception.
+            # Keep expected lifecycle outcomes visible without a fault traceback.
             code = status_code(error, context)
-            LOGGER.log(REQUEST_ERROR_LOG_LEVELS.get(code, WARNING), "Engram gRPC request ended with %s", code.name, exc_info=error)
+            level = REQUEST_ERROR_LOG_LEVELS.get(code, WARNING)
+            LOGGER.log(
+                level,
+                "Engram gRPC request ended with %s (%s)",
+                code.name,
+                type(error).__name__,
+                exc_info=error if level != INFO else False,
+            )
             metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
             context.set_trailing_metadata(tuple(metadata))
             context.abort(code, str(error))

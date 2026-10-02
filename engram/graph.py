@@ -328,7 +328,9 @@ def proposition_projection(
     if normalized_polarity not in {"positive", "negative"}:
         raise InvalidRequestError("Proposition projection polarity is unsupported")
     normalized_modality_family = require_text(modality_family, "Proposition projection modality family", 16, allow_empty=False)
-    normalized_modality_operator = require_text(modality_operator, "Proposition projection modality operator", 32, allow_empty=False)
+    normalized_modality_operator = require_text(
+        modality_operator, "Proposition projection modality operator", 32, allow_empty=False
+    )
     modal_operators = {
         "none": {"none"},
         "alethic": {"possible", "necessary", "impossible"},
