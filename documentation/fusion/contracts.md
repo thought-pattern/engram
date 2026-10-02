@@ -2,7 +2,7 @@
 
 **Status:** Current implemented and qualified contract
 **Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolvers.py`
-**Current policy:** `fusion-v1.0.0`, formula version 1
+**Current policy:** the built-in weights and gates below
 
 ## Scope and selection boundary
 
@@ -38,7 +38,10 @@ from measured zero.
 | `agreement` | Distinct resolver agreement on one statement | deduplication |
 | `margin` | Leading score minus runner-up score | two score-eligible candidates |
 
-The executable definitions, including range and absence text, are the closed `FEATURE_DEFINITIONS` mapping. Tests assert exact coverage of the 12-member `FusionFeature` vocabulary.
+The executable definitions, including range and absence text, are the closed
+`FUSION_FEATURE_DEFINITION_SPECS` mapping. `feature_definitions()` validates
+these definitions and exposes the current `FusionFeature` vocabulary; exact
+field and numeric-bound validation remain in the fusion owner.
 
 ## Resolver-specific normalization
 
@@ -94,9 +97,9 @@ score = exact + (1 - exact) * weighted_average
 ```
 
 The sums include available inputs. `margin` has weight zero because it is
-calculated after ranking. Exact match dominates at `1.0`. The versioned
-weights and gates are serialized in every fusion report and have fingerprint
-`f1c09a8f7e87cca3ac7b1bcf5712b0c7c622ac2988c1a97f41f4dbe400dce72d`.
+calculated after ranking. Exact match dominates at `1.0`. The weights and
+gates are serialized in every fusion report and identified there by their
+policy fingerprint.
 
 The released gates are:
 

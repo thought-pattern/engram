@@ -34,7 +34,7 @@ from engram.constants import (
 from engram.eligibility import evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.evidence import PropositionEligibilityEvaluator
-from engram.feedback import FeedbackStore, constraint_fingerprint
+from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.relation import phrase_relation_result
 from engram.reranking import RERANKER_FEATURES, TransparentLogisticReranker
@@ -407,7 +407,7 @@ class EngramCandidateAuthority:
             "selection_reason",
             "supplied_trust",
         }
-        if set(provenance) != required or provenance.get("producer") != "relation_one_hop_v1":
+        if set(provenance) != required or provenance.get("producer") != "relation_one_hop":
             result = candidate_eligibility(
                 False,
                 False,
@@ -435,7 +435,7 @@ class EngramCandidateAuthority:
             if not isinstance(current_values, tuple) or len(current_values) != 1:
                 raise InvalidRequestError("current relation Proposition is unavailable")
             current = validate_proposition_projection(current_values[0])
-            if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+            if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
                 raise InvalidRequestError("current relation Proposition was not read by ID")
             identity = (
                 current["subject_entity_id"],
@@ -520,7 +520,7 @@ class EngramCandidateAuthority:
             "aggregate_value",
             "aggregate_value_available",
         }
-        if set(provenance) != required or provenance.get("producer") != "graph_composition_v1":
+        if set(provenance) != required or provenance.get("producer") != "graph_composition":
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
@@ -564,7 +564,7 @@ class EngramCandidateAuthority:
                 if not isinstance(current_values, tuple) or len(current_values) != 1:
                     raise InvalidRequestError("composition Proposition is unavailable")
                 current = validate_proposition_projection(current_values[0])
-                if current["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+                if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
                     raise InvalidRequestError("composition Proposition was not read by ID")
                 identity_value = identity_chain[index]
                 trust = trust_chain[index]
@@ -620,13 +620,13 @@ class EngramCandidateAuthority:
     def evaluate(self, candidate: dict, frame: dict) -> dict:
         if (
             candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "relation_one_hop_v1"
+            and candidate.get("provenance", {}).get("producer") == "relation_one_hop"
         ):
             result = self.relation_candidate(candidate, frame)
             return result
         if (
             candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "graph_composition_v1"
+            and candidate.get("provenance", {}).get("producer") == "graph_composition"
         ):
             result = self.composition_candidate(candidate, frame)
             return result
@@ -1653,8 +1653,7 @@ class CandidateFusionEngine:
 
 
 def policy_fingerprint(policy: dict) -> str:
-    """Return a stable release/evidence fingerprint without hidden state."""
+    """Return the current policy identity for reports and feedback suppression."""
     data = fusion_policy_to_dict(policy)
-    encoded = json_dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    result = hashlib_sha256(encoded).hexdigest()
+    result = canonical_fingerprint(data)
     return result

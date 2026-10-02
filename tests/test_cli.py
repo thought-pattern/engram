@@ -13,7 +13,8 @@ def test_query_runs_against_a_fresh_empty_process_cache(tmp_path, capsys) -> Non
     assert main(("--config", str(config), "query", "unknown question")) == 0
 
     payload = json_loads(capsys.readouterr().out)
-    assert payload.get("matches") == []
+    assert payload.get("outcome") == "MISS"
+    assert payload.get("response_candidates") == []
 
 
 def test_cli_no_longer_accepts_disk_state_or_transcript_options() -> None:

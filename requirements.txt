@@ -1,6 +1,7 @@
 # ENGRAM dependencies
 
 PyYAML==6.0.3
+msgpack==1.2.1
 numpy==2.5.3
 sentence-transformers==6.1.0
 

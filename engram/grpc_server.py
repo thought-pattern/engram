@@ -29,9 +29,16 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from engram import engram_pb2, engram_pb2_grpc
 from engram.config import load_config
-from engram.constants import DEFAULT_BIND_ADDRESS, DEFAULT_GRACE_SECONDS, DEFAULT_MAX_WORKERS, GRPC_REGULATOR_OUTCOME_NAMES
+from engram.constants import (
+    DEFAULT_BIND_ADDRESS,
+    DEFAULT_GRACE_SECONDS,
+    DEFAULT_MAX_WORKERS,
+    GRPC_REGULATOR_OUTCOME_NAMES,
+    MAX_RETIREMENT_BATCH_ENTRIES,
+)
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     EngramCoreError,
     InvalidRequestError,
     LifecycleError,
@@ -41,15 +48,16 @@ from engram.errors import (
 )
 from engram.identity import query_identity_from_dict
 from engram.resolution import resolution_budget_from_dict, resolution_result_to_dict
-from engram.service import EngramCore
+from engram.service import EngramCore, normalize_service_user_id
 
 LOGGER = getLogger(__name__)
 # Log levels for errors returned to a client: internal failures are errors,
-# cancellations are routine, and anything else the caller caused is a warning.
+# absent resources, cancellations and deadlines are routine caller outcomes.
 REQUEST_ERROR_LOG_LEVELS = {
     grpc_StatusCode.INTERNAL: ERROR,
     grpc_StatusCode.CANCELLED: INFO,
     grpc_StatusCode.DEADLINE_EXCEEDED: INFO,
+    grpc_StatusCode.NOT_FOUND: INFO,
 }
 SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramService"].full_name
 EVIDENCE_SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramEvidenceService"].full_name
@@ -153,6 +161,9 @@ def status_code(error: EngramCoreError, context: grpc_ServicerContext) -> grpc_S
     if isinstance(error, ConflictError):
         result = grpc_StatusCode.ABORTED
         return result
+    if isinstance(error, ConversationOwnershipError):
+        result = grpc_StatusCode.PERMISSION_DENIED
+        return result
     if isinstance(error, LifecycleError):
         result = grpc_StatusCode.FAILED_PRECONDITION
         return result
@@ -190,6 +201,16 @@ def require_resolution_message(value: protobuf_Message) -> engram_pb2.Resolution
     return value
 
 
+def retirement_entries_from_request(request: engram_pb2.RetireResponsesRequest) -> list:
+    """Bound the external batch before constructing its native entry mappings."""
+    if not 1 <= len(request.entries) <= MAX_RETIREMENT_BATCH_ENTRIES:
+        raise InvalidRequestError(f"retirement entries must contain 1 through {MAX_RETIREMENT_BATCH_ENTRIES} requests")
+    entries = [
+        {"statement_id": entry.statement_id, "reason": entry.reason, "request_id": entry.request_id} for entry in request.entries
+    ]
+    return entries
+
+
 class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
     """Translate protobuf requests into calls on one shared core."""
 
@@ -223,10 +244,16 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
                 raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
         except EngramCoreError as error:
-            # The client gets the error's own message, written for callers;
-            # the log gets the full exception.
+            # Keep expected lifecycle outcomes visible without a fault traceback.
             code = status_code(error, context)
-            LOGGER.log(REQUEST_ERROR_LOG_LEVELS.get(code, WARNING), "Engram gRPC request ended with %s", code.name, exc_info=error)
+            level = REQUEST_ERROR_LOG_LEVELS.get(code, WARNING)
+            LOGGER.log(
+                level,
+                "Engram gRPC request ended with %s (%s)",
+                code.name,
+                type(error).__name__,
+                exc_info=error if level != INFO else False,
+            )
             metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
             context.set_trailing_metadata(tuple(metadata))
             context.abort(code, str(error))
@@ -244,7 +271,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
             context,
             lambda: to_struct(
                 self.core.start_conversation(
-                    user_id=request.user_id,
+                    user_id=normalize_service_user_id(request.user_id),
                     initial_bot_text=request.initial_bot_text,
                     random_seed=random_seed,
                     random_seed_present=random_seed_present,
@@ -255,22 +282,50 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def Chat(self, request: engram_pb2.ChatRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.chat(request.user_id, request.text)))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.chat(
+                    normalize_service_user_id(request.user_id), request.text, conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "Chat")
         return result
 
     def InspectConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.inspect_conversation(request.user_id)))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.inspect_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "InspectConversation")
         return result
 
     def FinishConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.finish_conversation(request.user_id)))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.finish_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "FinishConversation")
         return result
 
     def StopConversation(self, request: engram_pb2.UserRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
-        message = self.invoke(context, lambda: to_struct(self.core.stop_conversation(request.user_id)))
+        message = self.invoke(
+            context,
+            lambda: to_struct(
+                self.core.stop_conversation(
+                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                )
+            ),
+        )
         result = require_struct_message(message, "StopConversation")
         return result
 
@@ -369,10 +424,24 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         result = require_struct_message(message, "RetireResponse")
         return result
 
+    def RetireResponses(self, request: engram_pb2.RetireResponsesRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
+        message = self.invoke(context, lambda: to_struct(self.core.retire_responses(retirement_entries_from_request(request))))
+        result = require_struct_message(message, "RetireResponses")
+        return result
+
+    def ResponsesBySupport(self, request: engram_pb2.ResponsesBySupportRequest, context: grpc_ServicerContext) -> struct_pb2.Struct:
+        message = self.invoke(context, lambda: to_struct(self.core.responses_by_support(list(request.record_ids))))
+        result = require_struct_message(message, "ResponsesBySupport")
+        return result
+
     def GetStatus(self, request: empty_pb2.Empty, context: grpc_ServicerContext) -> struct_pb2.Struct:
         message = self.invoke(context, lambda: to_struct(self.core.status()))
         result = require_struct_message(message, "GetStatus")
         return result
+
+    def MaintainEngagement(self, request: struct_pb2.Struct, context: grpc_ServicerContext) -> struct_pb2.Struct:
+        message = self.invoke(context, lambda: to_struct(self.core.maintain_engagement(contract_from_struct(request))))
+        return require_struct_message(message, "MaintainEngagement")
 
 
 class EngramEvidenceGrpcService(engram_pb2_grpc.EngramEvidenceServiceServicer):

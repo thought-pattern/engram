@@ -14,6 +14,9 @@ services from the same generated modules:
 These are capabilities of one Engram component, not protocol generations. One
 `engram-grpc` process creates one `EngramCore`, registers both services and the
 standard gRPC health service, and closes the core during graceful shutdown.
+`ResolveEvidence` uses the same unified operation as Python `resolve_request`,
+CLI `query`, and MCP `engram_query`. When graph access is enabled, transport and
+rollout selection cannot remove it from a graph-eligible resolution plan.
 
 Engram responses, conversations, proposals, and idempotency records live only
 in bounded process memory. A new service process loads only the STATIC data
@@ -122,18 +125,27 @@ pinned in `pyproject.toml`.
 
 | RPC | Purpose |
 | --- | --- |
-| `StartConversation` | Start one isolated conversation; an empty `user_id` receives a fresh anonymous context. |
+| `StartConversation` | Start one conversation; omitted/empty `user_id` means "0", whose session starts fresh. |
 | `Chat` | Submit one observed conversation turn. |
 | `InspectConversation` | Return one active conversation and core diagnostics. |
 | `FinishConversation` | Return the current process-local report while the conversation remains active. |
-| `StopConversation` | Release one conversation; an anonymous context is deleted. |
+| `StopConversation` | Release one conversation; unknown user "0" also deletes its session. |
 | `AddFact` | Add one process-memory fact with an opaque source label. |
 | `SetPredicate`, `GetPredicate` | Write or read one conversation-scoped value. |
 | `Propose` | Retrieve scoped response candidates and record candidacy. |
 | `Resolve` | Commit one typed Regulator verdict for one concrete candidate. |
-| `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata. |
+| `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata; preserve admitted multiline response text exactly. |
 | `RetireResponse` | Remove one dynamic cached response after its owner establishes staleness. |
+| `RetireResponses` | Retire one bounded ordered group, retaining scalar receipts and per-entry failures. |
+| `ResponsesBySupport` | List ACTIVE accepted-response statement IDs whose support references any given durable record ID. |
+| `MaintainEngagement` | Plan, prepare, physically purge, or resume an exactly scoped administrative operation. |
 | `GetStatus` | Return lifecycle, readiness, component, rollout, and telemetry status. |
+
+Starting unknown user "0" returns a `conversation_token`. `Chat`,
+`InspectConversation`, `FinishConversation`, and `StopConversation` for "0" must
+present that token in their `conversation_token` field or fail with
+`PERMISSION_DENIED`. An unknown-user conversation left idle for 300 seconds no
+longer blocks a new start.
 
 `engram.EngramEvidenceService` provides:
 
@@ -154,6 +166,46 @@ characters, so the normalized form must fit too; a request close to the limit
 can exceed it once normalized. Both checks run before any other work and return
 `INVALID_ARGUMENT` with a message naming the limit. A request that normalizes
 to nothing, such as punctuation only, is rejected the same way.
+
+## Ordered retirement
+
+`RetireResponsesRequest.entries` contains one through ten `RetireResponseRequest`
+messages. The adapter rejects an invalid count before constructing native entry
+mappings. The response is a `Struct` carrying the shared
+[ordered-retirement envelope](python-api.md#ordered-retirement). Request IDs
+remain per-entry idempotency identities; no batch transaction or replay store is
+added.
+
+## Engagement maintenance
+
+`MaintainEngagement` carries a closed `Struct` with `action` (`plan`, `prepare`,
+`purge`, or `resume`), a bounded `operation_id`, an exact native engagement
+`visibility_scope`, and an array of opaque graph `dependency_ids`. The operation,
+scope and normalized dependency set own the pause; a conflicting command fails.
+`plan` is read-only. `prepare` rejects new work and drains active resolution and
+graph-operation slots, moving readiness out of service. `purge` requires that
+pause and deletes matching response artifacts, affected mutation receipts and
+feedback through their existing owners, restoring all three on failure.
+
+Selection includes exact metadata scope, support scope/dependencies and historic
+supersession predecessors. Existing receipts inherit statement/scope bindings
+from affected artifacts, and pruning retains those bindings in the existing
+tombstones. Removal can therefore find affected retained state after the response
+itself was evicted. It creates no removal artifact or tombstone. Unrelated
+artifacts, statistics, feedback and replay state remain unchanged. Drained
+request/proposal caches and unscoped session context are discarded after purge.
+`resume` requires successful local purge; Tapestry owns when to issue it after its
+other store owners have completed. Failure leaves Engram paused for exact retry.
+While paused, `plan` with the same operation and Scope may supply an empty
+dependency array to inspect the existing `maintenance_binding` and `purged`
+state. The coordinator uses that retained binding to recover after graph commit;
+prepare, purge and resume still require the complete exact binding. A conflicting
+nonempty dependency list is rejected.
+
+This is a trusted administrative mutation, subject to the same access controls
+as other mutation RPCs. Real gRPC tests cover the lifecycle, concurrent draining,
+late-request rejection, physical deletion, rollback, eviction/pruning retention,
+peer preservation and retry.
 
 ## Python client example
 
@@ -198,6 +250,7 @@ Core failures map at the transport boundary:
 | `InvalidRequestError` | `INVALID_ARGUMENT` |
 | `ResourceNotFoundError` | `NOT_FOUND` |
 | `ConflictError` | `ABORTED` |
+| `ConversationOwnershipError` | `PERMISSION_DENIED` |
 | `LifecycleError` | `FAILED_PRECONDITION` |
 | `ResourceExhaustedError` (session limit with `session_overflow: reject`) | `RESOURCE_EXHAUSTED` |
 | Cancellation or expired deadline | `CANCELLED` or `DEADLINE_EXCEEDED` |

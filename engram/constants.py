@@ -9,7 +9,10 @@ cycle.
 
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
+from pathlib import Path
 from re import IGNORECASE as IGNORECASE, compile as re_compile, escape as re_escape
+from string import Formatter
+from tomllib import loads as toml_loads
 
 # =============================================================================
 # Package metadata
@@ -20,11 +23,21 @@ from re import IGNORECASE as IGNORECASE, compile as re_compile, escape as re_esc
 # place, and core.py exposes it as the bot's ``version`` property.
 VERSION = "1.2.0"
 DEFAULT_USER_ID = "0"
+# An abandoned anonymous conversation (for example a crashed client) stops blocking new ones after this idle lease.
+ANONYMOUS_CONVERSATION_LEASE_SECONDS = 300.0
 EMPTY_MAPPING = {}
 EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
 PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1_000
+MAX_RETIREMENT_BATCH_ENTRIES = 10
+RETIREMENT_ERROR_MESSAGES = {
+    "not_found": "accepted response artifact not found",
+    "conflict": "retirement conflicts with existing state",
+    "invalid_request": "retirement request is invalid",
+    "lifecycle_unavailable": "retirement is unavailable in the current lifecycle",
+}
+RETIREMENT_FIELD_BYTE_LIMITS = {"statement_id": 256, "reason": 512, "request_id": 256}
 REGULATOR_OUTCOMES = set(
     {
         "accepted",
@@ -52,21 +65,53 @@ DIALOGUE_STATEMENT = "statement"
 DIALOGUE_TOPIC_SHIFT = "topic_shift"
 EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
 VOWELS = set("aeiou")
-FRAME_OVERRIDES = {
-    "precedes": "{s} precedes {o}",
-    "dissolved_date": "{s} was dissolved in {o}",
-    "date_of_birth": "{s} was born on {o}",
-    "date_of_death": "{s} died on {o}",
-    "born_in": "{s} was born in {o}",
-    "inception": "{s} was founded in {o}",
-    "publication_date": "{s} was published on {o}",
-    "point_in_time": "{s} occurred on {o}",
-    "capital_of": "{s} is the capital of {o}",
-    "has_capital": "{s}'s capital is {o}",
-    "present_in_work": "{s} appears in {o}",
-    "award_received": "{s} received {o}",
-    "contains_location": "{s} contains {o}",
-}
+FRAME_OVERRIDES_PATH = Path(__file__).with_name("data") / "fact-phrasing.toml"
+MAX_FRAME_RESOURCE_BYTES = 65536
+MAX_FRAME_OVERRIDES = 256
+MAX_FRAME_TEMPLATE_CHARS = 1024
+
+
+def read_frame_overrides(path: Path) -> dict:
+    """Validate the packaged presentation contract before publishing native frames."""
+    with path.open("rb") as source:
+        payload = source.read(MAX_FRAME_RESOURCE_BYTES + 1)
+    if len(payload) > MAX_FRAME_RESOURCE_BYTES:
+        raise ValueError("Fact-phrasing resource exceeds its byte limit")
+    data = toml_loads(payload.decode("utf-8"))
+    if set(data) != {"frames"}:
+        raise ValueError("Fact-phrasing resource must contain only frames")
+    frames = data.get("frames", {})
+    if not isinstance(frames, dict) or not 1 <= len(frames) <= MAX_FRAME_OVERRIDES:
+        raise ValueError("Fact-phrasing frames must be a nonempty bounded mapping")
+    for key, template in frames.items():
+        if not isinstance(key, str) or not key.strip() or len(key) > MAX_FRAME_TEMPLATE_CHARS:
+            raise ValueError("Fact-phrasing frame key must be a bounded nonempty string")
+        if not isinstance(template, str) or not template.strip() or len(template) > MAX_FRAME_TEMPLATE_CHARS:
+            raise ValueError("Fact-phrasing template must be a bounded nonempty string")
+        fields = []
+        bare_parts = []
+        for literal, field, spec, conversion in Formatter().parse(template):
+            bare_parts.append(literal.replace("{", "{{").replace("}", "}}"))
+            if field is not None:
+                if field not in ("s", "o") or spec or conversion is not None:
+                    raise ValueError("Fact-phrasing template permits only bare subject/object placeholders")
+                fields.append(field)
+                bare_parts.append("{" + field + "}")
+        if fields != ["s", "o"] or "".join(bare_parts) != template:
+            raise ValueError("Fact-phrasing template requires one subject then one object")
+    validated = dict(frames)
+    return validated
+
+
+FRAME_OVERRIDES = read_frame_overrides(FRAME_OVERRIDES_PATH)
+GRAPH_SPO_MEANING_GUARD = (
+    "AND proposition.polarity = 'positive' "
+    "AND proposition.modality_family = 'none' AND proposition.modality_operator = 'none' "
+    "AND size([(proposition)-[:HAS_ARGUMENT]->(argument) | argument]) = 2 "
+    "AND NOT exists((proposition)-[:HAS_QUALIFICATION]->()) "
+    "AND NOT exists((proposition)-[:HAS_CONTEXT]->()) "
+    "AND NOT exists((proposition)-[:HAS_APPLICABILITY_SCOPE]->()) "
+)
 GRAPH_ENTITY_FACTS_QUERY = (
     "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
     "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
@@ -79,7 +124,10 @@ GRAPH_ENTITY_FACTS_QUERY = (
     "OR toLower($name) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
     "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL "
+    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
+    "OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL "
+    "OR datetime($evaluation_time) < assertion.valid_time_end) "
     "AND (proposition.visibility_kind = 'global' "
     "OR ($visibility_kind IN ['company', 'engagement'] "
     "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
@@ -103,7 +151,10 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "OR toLower(coalesce(predicate.label, predicate.canonical_id)) CONTAINS toLower($keyword)) "
     "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL "
+    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
+    "OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL "
+    "OR datetime($evaluation_time) < assertion.valid_time_end) "
     "AND (proposition.visibility_kind = 'global' "
     "OR ($visibility_kind IN ['company', 'engagement'] "
     "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
@@ -117,33 +168,53 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     "LIMIT 3"
 )
 TRIPLE_QUERY_OBJECT = (
-    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), "
-    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
-    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(proposition)-[:USES_PREDICATE]->(p:Predicate), "
+    "(proposition)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE sb.role = 'subject' AND ob.role = 'object' "
     "AND (toLower(s.primary_label) = toLower($subject) "
     "OR toLower($subject) IN [a IN s.aliases | toLower(a)] "
     ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
-    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    + GRAPH_SPO_MEANING_GUARD
+    + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
+    "AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN o.primary_label AS result LIMIT 1"
 )
 TRIPLE_QUERY_SUBJECT = (
-    "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
-    "(c)-[:USES_PREDICATE]->(p:Predicate), "
-    "(c)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
-    "MATCH (c)-[:SUPPORTED_BY]->(a:Assertion) "
+    "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
+    "(proposition)-[:USES_PREDICATE]->(p:Predicate), "
+    "(proposition)-[:HAS_ARGUMENT]->(ob:SemanticBinding)-[:BINDS_ENTITY]->(o:Entity) "
+    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE sb.role = 'subject' AND ob.role = 'object' "
     "AND (toLower(o.primary_label) = toLower($object) "
     "OR toLower($object) IN [a IN o.aliases | toLower(a)] "
     ") "
     "AND (toLower(p.label) = toLower($predicate) "
     "OR toLower($predicate) IN [y IN p.synonyms | toLower(y)]) "
-    "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
-    "AND a.lifecycle_disposition = 'active' AND a.retired_at IS NULL "
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+    + GRAPH_SPO_MEANING_GUARD
+    + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
+    "AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN s.primary_label AS result LIMIT 1"
 )
 MAX_ARTIFACT_ID_BYTES = 256
@@ -593,13 +664,13 @@ UTILITY_RESOLVER_NAME = "utility"
 UTILITY_RESOLVER_COST_CLASS = CostClass.CHEAP
 UTILITY_RESOLVER_PRODUCER = "utility-resolver"
 UTILITY_PLUGIN_NAMES = (
-    "arithmetic_v1",
-    "boolean_v1",
-    "set_v1",
-    "date_time_v1",
-    "unit_conversion_v1",
-    "version_v1",
-    "identifier_v1",
+    "arithmetic",
+    "boolean",
+    "set",
+    "date_time",
+    "unit_conversion",
+    "version",
+    "identifier",
 )
 UTILITY_MAX_INPUT_BYTES = 4_096
 UTILITY_MAX_OUTPUT_BYTES = 2_048
@@ -831,10 +902,10 @@ RESOLVER_BUDGET_FIELDS = set(
     }
 )
 RESOLVER_RESERVATION_FIELDS = set({"resolver", "order", "lease", "consumption"})
-CANONICAL_COMPLETENESS_FLOOR_V1 = 1.0
-STRUCTURED_MATCH_FLOOR_V1 = 1.0
-SEMANTIC_SIMILARITY_FLOOR_V1 = 0.60
-SOURCE_AGREEMENT_FLOOR_V1 = 1.0
+CANONICAL_COMPLETENESS_FLOOR = 1.0
+STRUCTURED_MATCH_FLOOR = 1.0
+SEMANTIC_SIMILARITY_FLOOR = 0.60
+SOURCE_AGREEMENT_FLOOR = 1.0
 MAX_VISIBILITY_GRANTS = 4_096
 # Every runtime graph operation, connecting included, must finish within this
 # time. Schema tooling runs outside the request path and gets longer.
@@ -850,12 +921,28 @@ MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
 MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES = 256
 MAX_PROPOSITION_PROJECTION_TERM_BYTES = 4_096
 MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES = 40
+PROPOSITION_SEMANTIC_PROJECTION_FIELDS = (
+    "polarity",
+    "modality_family",
+    "modality_operator",
+    "argument_count",
+    "qualification_count",
+    "context_count",
+    "applicability_count",
+)
 PROPOSITION_PROJECTION_FIELDS = set(
     {
         "proposition_id",
         "subject_entity_id",
         "predicate_id",
         "object_entity_id",
+        "polarity",
+        "modality_family",
+        "modality_operator",
+        "argument_count",
+        "qualification_count",
+        "context_count",
+        "applicability_count",
         "invalidated_at",
         "invalidated_at_available",
         "system_from",
@@ -918,6 +1005,12 @@ PROPOSITION_PROJECTION_RETURN = (
     "subject.canonical_id AS subject_entity_id, "
     "predicate.canonical_id AS predicate_id, "
     "object.canonical_id AS object_entity_id, "
+    "c.polarity AS polarity, c.modality_family AS modality_family, "
+    "c.modality_operator AS modality_operator, "
+    "size([(c)-[:HAS_ARGUMENT]->(argument) | argument]) AS argument_count, "
+    "size([(c)-[:HAS_QUALIFICATION]->(qualification) | qualification]) AS qualification_count, "
+    "size([(c)-[:HAS_CONTEXT]->(context) | context]) AS context_count, "
+    "size([(c)-[:HAS_APPLICABILITY_SCOPE]->(applicability) | applicability]) AS applicability_count, "
     "CASE WHEN c.lifecycle_disposition = 'invalidated' THEN c.retired_at ELSE null END AS invalidated_at, "
     "c.lifecycle_disposition = 'invalidated' AND c.retired_at IS NOT NULL AS invalidated_at_available, "
     "c.recorded_at AS system_from, c.recorded_at IS NOT NULL AS system_from_available, "
@@ -998,7 +1091,10 @@ VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "AND similarity >= $min_similarity "
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND support.retired_at IS NULL "
+    "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND predicate.canonical_id <> 'generic_relation' "
     "AND (c.visibility_kind = 'global' "
     "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
     "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
@@ -1098,6 +1194,7 @@ RECEIPT_TOMBSTONE_FIELDS = set(
         "request_id",
         "operation",
         "payload_signature",
+        "scope_bindings",
     }
 )
 MUTATION_RECEIPT_FIELDS = set(
@@ -1192,6 +1289,7 @@ class PropositionEligibilityReason(StrEnum):
     VALID_TIME_NOT_YET_CURRENT = "valid_time_not_yet_current"
     VALID_TIME_NO_LONGER_CURRENT = "valid_time_no_longer_current"
     RETRIEVAL_ONLY = "retrieval_only"
+    SEMANTIC_MEANING_UNREPRESENTED = "semantic_meaning_unrepresented"
     VISIBILITY_AUTHORITY_UNAVAILABLE = "visibility_authority_unavailable"
     VISIBILITY_AUTHORITY_FAILED = "visibility_authority_failed"
     VISIBILITY_SCOPE_MISMATCH = "visibility_scope_mismatch"
@@ -1367,6 +1465,8 @@ class CoreState(StrEnum):
     """Lifecycle state of the single owned application core."""
 
     RUNNING = "running"
+    QUIESCING = "quiescing"
+    MAINTENANCE = "maintenance"
     CLOSING = "closing"
     CLOSED = "closed"
 
@@ -1382,11 +1482,11 @@ class SessionOverflow(Enum):
 class PropositionProjectionQuery(StrEnum):
     """Allow-listed fixed query identifiers for full Proposition projection."""
 
-    STRUCTURED_ENTITY_V1 = "structured_entity_proposition_projection_v1"
-    STRUCTURED_KEYWORD_V1 = "structured_keyword_proposition_projection_v1"
-    RELATION_ONE_HOP_V1 = "relation_one_hop_proposition_projection_v1"
-    VECTOR_V1 = "vector_proposition_projection_v1"
-    BY_ID_V1 = "proposition_projection_by_id_v1"
+    STRUCTURED_ENTITY = "structured_entity_proposition_projection"
+    STRUCTURED_KEYWORD = "structured_keyword_proposition_projection"
+    RELATION_ONE_HOP = "relation_one_hop_proposition_projection"
+    VECTOR = "vector_proposition_projection"
+    BY_ID = "proposition_projection_by_id"
 
 
 class CanonicalResolutionStatus(StrEnum):
@@ -1400,7 +1500,7 @@ class CanonicalResolutionStatus(StrEnum):
 class RelationPlanTemplate(StrEnum):
     """Allow-listed internal Section 8 query-plan templates."""
 
-    ONE_HOP_PROPOSITION_V1 = "one_hop_proposition_v1"
+    ONE_HOP_PROPOSITION = "one_hop_proposition"
 
 
 class GraphCompositionOperator(StrEnum):

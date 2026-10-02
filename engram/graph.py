@@ -19,7 +19,7 @@ from asyncio import (
     wait_for as asyncio_wait_for,
 )
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
@@ -34,6 +34,7 @@ from engram.constants import (
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_FIELDS,
     CANONICAL_PREDICATE_MATCH_QUERY,
+    GRAPH_SPO_MEANING_GUARD,
     GRAPH_TIMEOUT_SECONDS,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
@@ -67,7 +68,8 @@ from engram.validation import parse_utc_timestamp, require_bool, require_identif
 logger = logging_getLogger(__name__)
 
 
-VECTOR_SEARCH_PROPOSITIONS_QUERY = """
+VECTOR_SEARCH_PROPOSITIONS_QUERY = (
+    """
     CALL vector_search.search(
         $index_name, $limit, $query_embedding
     ) YIELD node, distance
@@ -83,6 +85,13 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = """
       AND assertion.lifecycle_disposition = 'active'
       AND assertion.retired_at IS NULL
       AND support.retired_at IS NULL
+    """
+    + GRAPH_SPO_MEANING_GUARD
+    + """
+      AND (assertion.valid_time_start IS NULL
+        OR assertion.valid_time_start <= datetime($evaluation_time))
+      AND (assertion.valid_time_end IS NULL
+        OR datetime($evaluation_time) < assertion.valid_time_end)
       AND predicate.canonical_id <> 'generic_relation'
       AND (proposition.visibility_kind = 'global'
         OR ($visibility_kind IN ['company', 'engagement']
@@ -100,6 +109,7 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = """
            similarity
     ORDER BY similarity DESC, proposition.id
 """
+)
 
 FIXED_READ_PROCEDURE_QUERIES = (
     VECTOR_PROPOSITION_PROJECTION_QUERY,
@@ -210,6 +220,16 @@ def projection_object_type(value: object, name: str) -> ExpectedObjectType:
     return result
 
 
+def projection_entity_object_type(value: object, name: str) -> ExpectedObjectType:
+    """Map the graph's open entity taxonomy onto Engram's coarse answer types."""
+    raw = require_text(value, name, 32, allow_empty=False).upper()
+    try:
+        result = ExpectedObjectType(raw)
+    except ValueError:
+        result = ExpectedObjectType.ENTITY
+    return result
+
+
 def projection_cardinality(value: object, name: str) -> PredicateCardinality:
     raw = require_text(value, name, 32, allow_empty=False).upper()
     try:
@@ -232,7 +252,7 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
         ),
         "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
         "edge_surfaces": projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
-        "entity_type": projection_object_type(value["entity_type"], "canonical entity type"),
+        "entity_type": projection_entity_object_type(value["entity_type"], "canonical entity type"),
     }
     return result
 
@@ -260,6 +280,13 @@ def proposition_projection(
     subject_entity_id: object,
     predicate_id: object,
     object_entity_id: object,
+    polarity: object,
+    modality_family: object,
+    modality_operator: object,
+    argument_count: object,
+    qualification_count: object,
+    context_count: object,
+    applicability_count: object,
     invalidated_at: object,
     invalidated_at_available: object,
     system_from: object,
@@ -297,6 +324,25 @@ def proposition_projection(
     normalized_object_id = require_identifier(
         object_entity_id, "Proposition projection object_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
     )
+    normalized_polarity = require_text(polarity, "Proposition projection polarity", 16, allow_empty=False)
+    if normalized_polarity not in {"positive", "negative"}:
+        raise InvalidRequestError("Proposition projection polarity is unsupported")
+    normalized_modality_family = require_text(modality_family, "Proposition projection modality family", 16, allow_empty=False)
+    normalized_modality_operator = require_text(
+        modality_operator, "Proposition projection modality operator", 32, allow_empty=False
+    )
+    modal_operators = {
+        "none": {"none"},
+        "alethic": {"possible", "necessary", "impossible"},
+        "epistemic": {"possible", "probable", "certain"},
+        "deontic": {"obligation", "permission", "prohibition", "recommendation"},
+    }
+    if normalized_modality_operator not in modal_operators.get(normalized_modality_family, set()):
+        raise InvalidRequestError("Proposition projection modality is unsupported")
+    normalized_argument_count = projection_int(argument_count, "Proposition projection argument_count", 0, 1_000_000)
+    normalized_qualification_count = projection_int(qualification_count, "Proposition projection qualification_count", 0, 1_000_000)
+    normalized_context_count = projection_int(context_count, "Proposition projection context_count", 0, 1_000_000)
+    normalized_applicability_count = projection_int(applicability_count, "Proposition projection applicability_count", 0, 1_000_000)
     normalized_invalidated_available = require_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
     normalized_system_from_available = require_bool(system_from_available, "Proposition projection system_from_available")
     normalized_system_to_available = require_bool(system_to_available, "Proposition projection system_to_available")
@@ -356,10 +402,10 @@ def proposition_projection(
         raise InvalidRequestError("Proposition projection vector_index_id is invalid")
     if not normalized_vector_available and normalized_vector_id:
         raise InvalidRequestError("Proposition projection vector_index_id must be empty when unavailable")
-    if projection_id == PropositionProjectionQuery.VECTOR_V1:
+    if projection_id == PropositionProjectionQuery.VECTOR:
         if normalized_structured_available or not normalized_semantic_available or not normalized_vector_available:
             raise InvalidRequestError("vector Proposition projection measurements or index provenance are inconsistent")
-    elif projection_id == PropositionProjectionQuery.BY_ID_V1:
+    elif projection_id == PropositionProjectionQuery.BY_ID:
         if normalized_structured_available or normalized_semantic_available or normalized_vector_available:
             raise InvalidRequestError("by-ID Proposition projection measurements or index provenance are inconsistent")
     elif not normalized_structured_available or normalized_semantic_available or normalized_vector_available:
@@ -369,6 +415,13 @@ def proposition_projection(
         "subject_entity_id": normalized_subject_id,
         "predicate_id": normalized_predicate_id,
         "object_entity_id": normalized_object_id,
+        "polarity": normalized_polarity,
+        "modality_family": normalized_modality_family,
+        "modality_operator": normalized_modality_operator,
+        "argument_count": normalized_argument_count,
+        "qualification_count": normalized_qualification_count,
+        "context_count": normalized_context_count,
+        "applicability_count": normalized_applicability_count,
         "invalidated_at": normalized_invalidated_at,
         "invalidated_at_available": normalized_invalidated_available,
         "system_from": normalized_system_from,
@@ -466,6 +519,13 @@ def proposition_projection_from_graph_row(
         subject_entity_id=value["subject_entity_id"],
         predicate_id=value["predicate_id"],
         object_entity_id=value["object_entity_id"],
+        polarity=value["polarity"],
+        modality_family=value["modality_family"],
+        modality_operator=value["modality_operator"],
+        argument_count=value["argument_count"],
+        qualification_count=value["qualification_count"],
+        context_count=value["context_count"],
+        applicability_count=value["applicability_count"],
         invalidated_at=value["invalidated_at"],
         invalidated_at_available=invalidated_available,
         system_from=value["system_from"],
@@ -528,9 +588,9 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
         raise InvalidRequestError("relation one-hop row has invalid fields")
     projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
     result: dict = {
-        "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP_V1),
+        "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP),
         "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
-        "object_type": projection_object_type(value["object_type"], "relation object type"),
+        "object_type": projection_entity_object_type(value["object_type"], "relation object type"),
         "predicate_cardinality": projection_cardinality(
             value["predicate_cardinality"],
             "relation Predicate cardinality",
@@ -560,7 +620,7 @@ def validate_relation_proposition_projection(value: object) -> dict:
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
-    if result.get("projection", {})["projection_id"] != PropositionProjectionQuery.RELATION_ONE_HOP_V1:
+    if result.get("projection", {}).get("projection_id") != PropositionProjectionQuery.RELATION_ONE_HOP:
         raise InvalidRequestError("relation result requires a relation one-hop projection")
     return result
 
@@ -911,6 +971,7 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 250,
         min_similarity: float = 0.45,
+        evaluation_time: str = "",
     ) -> list:
         """Search active proof-canonical Propositions through one fixed ANN query.
 
@@ -930,6 +991,8 @@ class MemGraphConnection:
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
             raise ValueError("min_similarity must be between 0 and 1")
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "graph vector evaluation time")
         result = self.execute(
             VECTOR_SEARCH_PROPOSITIONS_QUERY,
             {
@@ -937,6 +1000,7 @@ class MemGraphConnection:
                 "limit": limit,
                 "query_embedding": embedding,
                 "min_similarity": float(min_similarity),
+                "evaluation_time": selected_evaluation_time,
             },
         )
         return result
@@ -950,9 +1014,9 @@ class MemGraphConnection:
     ) -> list[dict]:
         """Run one allow-listed structured Proposition projection and strictly decode its rows."""
         term = require_text(value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False)
-        if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY_V1:
+        if projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY:
             query = STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY
-        elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD_V1:
+        elif projection_id == PropositionProjectionQuery.STRUCTURED_KEYWORD:
             query = STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY
         else:
             raise InvalidRequestError("structured Proposition projection query identifier is unsupported")
@@ -1024,6 +1088,7 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 10,
         min_similarity: float = 0.45,
+        evaluation_time: str = "",
     ) -> list[dict]:
         """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties."""
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
@@ -1040,6 +1105,8 @@ class MemGraphConnection:
                 raise InvalidRequestError("Proposition projection embedding must contain finite numeric values")
         row_limit = projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
         similarity = projection_score(min_similarity, True, "Proposition projection min_similarity")
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "Proposition projection vector evaluation time")
         rows = self.execute(
             VECTOR_PROPOSITION_PROJECTION_QUERY,
             {
@@ -1047,9 +1114,10 @@ class MemGraphConnection:
                 "limit": row_limit,
                 "query_embedding": embedding,
                 "min_similarity": similarity,
+                "evaluation_time": selected_evaluation_time,
             },
         )
-        result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR_V1, index_name, row_limit)
+        result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR, index_name, row_limit)
         return result
 
     def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
@@ -1060,7 +1128,7 @@ class MemGraphConnection:
             maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
         )
         rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
-        result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID_V1, "", 1)
+        result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID, "", 1)
         return result
 
 

@@ -24,35 +24,35 @@ def enabled_registry(plugins=UTILITY_PLUGIN_NAMES) -> UtilityRegistry:
 @pytest_mark.parametrize(
     ("query", "plugin", "response"),
     [
-        ("calculate 2 + 3 * 4", "arithmetic_v1", "14"),
-        ("arithmetic (2 + 3) ** 2", "arithmetic_v1", "25"),
-        ("boolean true and not false", "boolean_v1", "true"),
-        ("boolean false or true xor true", "boolean_v1", "false"),
-        ("set union {b,a} and {b,c}", "set_v1", "{a, b, c}"),
-        ("set symmetric difference {a,b} with {b,c}", "set_v1", "{a, c}"),
-        ("date 2024-02-28 plus 1 day", "date_time_v1", "2024-02-29"),
-        ("days between 2026-08-01 and 2026-08-22", "date_time_v1", "21"),
+        ("calculate 2 + 3 * 4", "arithmetic", "14"),
+        ("arithmetic (2 + 3) ** 2", "arithmetic", "25"),
+        ("boolean true and not false", "boolean", "true"),
+        ("boolean false or true xor true", "boolean", "false"),
+        ("set union {b,a} and {b,c}", "set", "{a, b, c}"),
+        ("set symmetric difference {a,b} with {b,c}", "set", "{a, c}"),
+        ("date 2024-02-28 plus 1 day", "date_time", "2024-02-29"),
+        ("days between 2026-08-01 and 2026-08-22", "date_time", "21"),
         (
             "convert time 2026-08-22T14:30:00-04:00 to UTC",
-            "date_time_v1",
+            "date_time",
             "2026-08-22T18:30:00+00:00[UTC]",
         ),
         (
             "convert time 2026-08-22T14:30:00.100000+00:00 to UTC",
-            "date_time_v1",
+            "date_time",
             "2026-08-22T14:30:00.100000+00:00[UTC]",
         ),
-        ("convert 32 F to C", "unit_conversion_v1", "0 C"),
-        ("convert 5 km to mi", "unit_conversion_v1", "3.10685596118667 mi"),
-        ("compare version 1.2.3-alpha.1 and 1.2.3", "version_v1", "1.2.3-alpha.1 < 1.2.3"),
-        ("compare version 1.2.3+first and 1.2.3+second", "version_v1", "1.2.3+first = 1.2.3+second"),
+        ("convert 32 F to C", "unit_conversion", "0 C"),
+        ("convert 5 km to mi", "unit_conversion", "3.10685596118667 mi"),
+        ("compare version 1.2.3-alpha.1 and 1.2.3", "version", "1.2.3-alpha.1 < 1.2.3"),
+        ("compare version 1.2.3+first and 1.2.3+second", "version", "1.2.3+first = 1.2.3+second"),
         (
             "validate uuid 550e8400-e29b-41d4-a716-446655440000",
-            "identifier_v1",
+            "identifier",
             "valid uuid: 550e8400-e29b-41d4-a716-446655440000",
         ),
-        ("validate slug cats-and-sushi", "identifier_v1", "valid slug: cats-and-sushi"),
-        ("validate slug Cats_and_sushi", "identifier_v1", "invalid slug"),
+        ("validate slug cats-and-sushi", "identifier", "valid slug: cats-and-sushi"),
+        ("validate slug Cats_and_sushi", "identifier", "invalid slug"),
     ],
 )
 def test_each_allowlisted_grammar_has_a_deterministic_canonical_result(query: str, plugin: str, response: str) -> None:
@@ -72,21 +72,21 @@ def test_registry_rejects_unknown_dynamic_plugin_names_and_duplicate_configurati
     with pytest_raises(ValueError, match="unknown utility plugins"):
         utility_config(enabled=True, plugins=("pathlib.Path",))
     with pytest_raises(ValueError, match="duplicates"):
-        utility_config(enabled=True, plugins=("arithmetic_v1", "arithmetic_v1"))
+        utility_config(enabled=True, plugins=("arithmetic", "arithmetic"))
     with pytest_raises(ValueError, match="at least one"):
         utility_config(enabled=True, plugins=())
 
 
 def test_default_off_and_independent_plugin_selection() -> None:
     disabled = UtilityRegistry()
-    arithmetic_only = enabled_registry(("arithmetic_v1",))
+    arithmetic_only = enabled_registry(("arithmetic",))
 
     assert disabled.evaluate("calculate 1 + 1")["status"] == "miss"
     assert arithmetic_only.evaluate("calculate 1 + 1")["response"] == "2"
     assert arithmetic_only.evaluate("boolean true")["status"] == "miss"
     health = arithmetic_only.health()
-    assert health["plugins"]["arithmetic_v1"]["ready"] is True
-    assert health["plugins"]["boolean_v1"]["ready"] is False
+    assert health["plugins"]["arithmetic"]["ready"] is True
+    assert health["plugins"]["boolean"]["ready"] is False
 
 
 @pytest_mark.parametrize(
@@ -127,8 +127,8 @@ def test_collection_and_operation_resource_limits_are_hard() -> None:
 
 
 def test_date_time_canonicalization_keeps_distinct_fractional_instants() -> None:
-    first = evaluate_named_utility("convert time 2026-08-22T14:30:00.100000+00:00 to UTC", "date_time_v1")
-    second = evaluate_named_utility("convert time 2026-08-22T14:30:00.900000+00:00 to UTC", "date_time_v1")
+    first = evaluate_named_utility("convert time 2026-08-22T14:30:00.100000+00:00 to UTC", "date_time")
+    second = evaluate_named_utility("convert time 2026-08-22T14:30:00.900000+00:00 to UTC", "date_time")
 
     assert first["status"] == second["status"] == "resolved"
     assert first["canonical_input"] != second["canonical_input"]
@@ -196,10 +196,10 @@ def test_unexpected_plugin_failure_is_contained(monkeypatch) -> None:
         raise RuntimeError("injected")
 
     evaluators = dict(utility_module.UTILITY_EVALUATORS)
-    evaluators["arithmetic_v1"] = fail
+    evaluators["arithmetic"] = fail
     monkeypatch.setattr(utility_module, "UTILITY_EVALUATORS", dict(evaluators))
 
-    result = enabled_registry(("arithmetic_v1",)).evaluate("calculate 1 + 1")
+    result = enabled_registry(("arithmetic",)).evaluate("calculate 1 + 1")
 
     assert result["status"] == "failed"
     assert result["error_code"] == "plugin_failure"
@@ -207,13 +207,13 @@ def test_unexpected_plugin_failure_is_contained(monkeypatch) -> None:
 
 def test_yaml_config_loads_selected_plugins_and_ignores_unknown_keys(tmp_path) -> None:
     selected = tmp_path / "selected.yml"
-    selected.write_text("utility:\n  enabled: true\n  plugins: [arithmetic_v1, version_v1]\n", encoding="utf-8")
+    selected.write_text("utility:\n  enabled: true\n  plugins: [arithmetic, version]\n", encoding="utf-8")
     unknown = tmp_path / "unknown.yml"
     unknown.write_text("utility:\n  enabled: false\n  module: os\n", encoding="utf-8")
 
     loaded = load_config(str(selected))
 
-    assert loaded["utility"] == utility_config(enabled=True, plugins=("arithmetic_v1", "version_v1"))
+    assert loaded["utility"] == utility_config(enabled=True, plugins=("arithmetic", "version"))
     # An unknown key never reaches the utility settings, so it cannot name a module to load.
     assert load_config(str(unknown))["utility"] == utility_config(enabled=False)
 

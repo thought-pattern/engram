@@ -5,16 +5,17 @@ from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
 from engram.constants import (
-    CANONICAL_COMPLETENESS_FLOOR_V1,
+    CANONICAL_COMPLETENESS_FLOOR,
     EMPTY_SCOPE_KEY,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_VISIBILITY_GRANTS,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
     PROPOSITION_EVIDENCE_PRODUCERS,
-    SEMANTIC_SIMILARITY_FLOOR_V1,
-    SOURCE_AGREEMENT_FLOOR_V1,
-    STRUCTURED_MATCH_FLOOR_V1,
+    PROPOSITION_SEMANTIC_PROJECTION_FIELDS,
+    SEMANTIC_SIMILARITY_FLOOR,
+    SOURCE_AGREEMENT_FLOOR,
+    STRUCTURED_MATCH_FLOOR,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
     EvidenceUsefulnessReason,
@@ -114,19 +115,19 @@ def evidence_usefulness_decision(
 
 
 def evidence_usefulness_policy(
-    canonical_completeness_floor: object = CANONICAL_COMPLETENESS_FLOOR_V1,
-    structured_match_floor: object = STRUCTURED_MATCH_FLOOR_V1,
-    semantic_similarity_floor: object = SEMANTIC_SIMILARITY_FLOOR_V1,
-    source_agreement_floor: object = SOURCE_AGREEMENT_FLOOR_V1,
+    canonical_completeness_floor: object = CANONICAL_COMPLETENESS_FLOOR,
+    structured_match_floor: object = STRUCTURED_MATCH_FLOOR,
+    semantic_similarity_floor: object = SEMANTIC_SIMILARITY_FLOOR,
+    source_agreement_floor: object = SOURCE_AGREEMENT_FLOOR,
     supplied_trust_floor: object = 0.0,
     supplied_trust_floor_available: object = False,
 ) -> dict:
     """Build the frozen hand-authored evidence policy used by release qualification."""
     frozen = {
-        "canonical_completeness_floor": (canonical_completeness_floor, CANONICAL_COMPLETENESS_FLOOR_V1),
-        "structured_match_floor": (structured_match_floor, STRUCTURED_MATCH_FLOOR_V1),
-        "semantic_similarity_floor": (semantic_similarity_floor, SEMANTIC_SIMILARITY_FLOOR_V1),
-        "source_agreement_floor": (source_agreement_floor, SOURCE_AGREEMENT_FLOOR_V1),
+        "canonical_completeness_floor": (canonical_completeness_floor, CANONICAL_COMPLETENESS_FLOOR),
+        "structured_match_floor": (structured_match_floor, STRUCTURED_MATCH_FLOOR),
+        "semantic_similarity_floor": (semantic_similarity_floor, SEMANTIC_SIMILARITY_FLOOR),
+        "source_agreement_floor": (source_agreement_floor, SOURCE_AGREEMENT_FLOOR),
     }
     normalized_floors: dict[str, float] = {}
     for name, pair in frozen.items():
@@ -741,6 +742,17 @@ class PropositionEligibilityEvaluator:
         if not projection.get("predicate_canonical", False) or projection.get("predicate_id", "") == "generic_relation":
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.RETRIEVAL_ONLY)
             return result
+        if (
+            projection.get("polarity", "") != "positive"
+            or projection.get("modality_family", "") != "none"
+            or projection.get("modality_operator", "") != "none"
+            or projection.get("argument_count", 0) != 2
+            or projection.get("qualification_count", 0) != 0
+            or projection.get("context_count", 0) != 0
+            or projection.get("applicability_count", 0) != 0
+        ):
+            result = proposition_exclusion_decision(projection, PropositionEligibilityReason.SEMANTIC_MEANING_UNREPRESENTED)
+            return result
 
         ownership = PropositionOwnership(projection.get("ownership_category", PropositionOwnership.PUBLIC))
         if ownership == PropositionOwnership.PUBLIC:
@@ -826,7 +838,7 @@ class PropositionEligibilityEvaluator:
             logger.warning("Proposition revalidation returned an invalid projection", exc_info=error)
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_MISSING)
             return result
-        if projection["projection_id"] != PropositionProjectionQuery.BY_ID_V1:
+        if projection.get("projection_id") != PropositionProjectionQuery.BY_ID:
             result = proposition_exclusion_decision(
                 projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
             )
@@ -844,6 +856,11 @@ class PropositionEligibilityEvaluator:
             projection["object_entity_id"],
         )
         if discovered_identity != current_identity:
+            result = proposition_exclusion_decision(
+                projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
+            )
+            return result
+        if any(discovered.get(field) != projection.get(field) for field in PROPOSITION_SEMANTIC_PROJECTION_FIELDS):
             result = proposition_exclusion_decision(
                 projection, PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT, revalidated=True
             )
@@ -872,15 +889,15 @@ def proposition_evidence_record(
     source = require_identifier(source_resolver, "Proposition evidence source_resolver", 96)
     if source not in PROPOSITION_EVIDENCE_PRODUCERS:
         raise InvalidRequestError("Proposition evidence source_resolver is not an allowed producer")
-    if source == "structured_graph" and discovered.get("projection_id", PropositionProjectionQuery.BY_ID_V1) not in {
-        PropositionProjectionQuery.STRUCTURED_ENTITY_V1,
-        PropositionProjectionQuery.STRUCTURED_KEYWORD_V1,
-        PropositionProjectionQuery.RELATION_ONE_HOP_V1,
+    if source == "structured_graph" and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) not in {
+        PropositionProjectionQuery.STRUCTURED_ENTITY,
+        PropositionProjectionQuery.STRUCTURED_KEYWORD,
+        PropositionProjectionQuery.RELATION_ONE_HOP,
     }:
         raise InvalidRequestError("structured Proposition evidence requires a structured discovery projection")
     if (
         source == "support_semantic"
-        and discovered.get("projection_id", PropositionProjectionQuery.BY_ID_V1) != PropositionProjectionQuery.VECTOR_V1
+        and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) != PropositionProjectionQuery.VECTOR
     ):
         raise InvalidRequestError("semantic Proposition evidence requires a vector discovery projection")
     if (
@@ -904,6 +921,8 @@ def proposition_evidence_record(
     )
     if discovered_identity != current_identity:
         raise InvalidRequestError("Proposition evidence discovery and current canonical identity conflict")
+    if any(discovered.get(field) != current.get(field) for field in PROPOSITION_SEMANTIC_PROJECTION_FIELDS):
+        raise InvalidRequestError("Proposition evidence discovery and current semantic projection conflict")
     values = {"canonical_completeness": 1.0}
     unavailable = ["source_agreement"]
     reasons = [

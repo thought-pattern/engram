@@ -28,7 +28,8 @@ from engram.constants import (
     ReceiptLookupOutcome,
 )
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
-from engram.validation import require_text, require_utc_timestamp
+from engram.support import validate_statement_scope_bindings
+from engram.validation import Characters, require_text, require_utc_timestamp
 
 
 def positive_int(value: object, name: str, maximum: int = 9_223_372_036_854_775_807) -> int:
@@ -52,7 +53,14 @@ def exact_mapping(value: object, name: str, keys: set[str]) -> dict:
     return value
 
 
-def freeze_json(value: object, name: str, depth: int, count: list[int]) -> object:
+def freeze_json(
+    value: object,
+    name: str,
+    depth: int,
+    count: list[int],
+    *,
+    characters: Characters = Characters.TEXT,
+) -> object:
     if depth > MAX_RESULT_DEPTH:
         raise InvalidRequestError(f"{name} exceeds the depth limit of {MAX_RESULT_DEPTH}")
     count[0] += 1
@@ -60,7 +68,13 @@ def freeze_json(value: object, name: str, depth: int, count: list[int]) -> objec
         raise InvalidRequestError(f"{name} exceeds the item limit of {MAX_RESULT_ITEMS}")
     if isinstance(value, (bool, int, str)):
         if isinstance(value, str):
-            text = require_text(value, name, MAX_RESULT_STRING_BYTES, allow_empty=True)
+            text = require_text(
+                value,
+                name,
+                MAX_RESULT_STRING_BYTES,
+                allow_empty=True,
+                characters=characters,
+            )
             return text
         return value
     if isinstance(value, float):
@@ -73,11 +87,27 @@ def freeze_json(value: object, name: str, depth: int, count: list[int]) -> objec
             normalized_key = require_text(key, f"{name} key", MAX_RESULT_KEY_BYTES, allow_empty=False)
             pairs.append((normalized_key, item))
         result = {
-            key: freeze_json(item, f"{name}.{key}", depth + 1, count) for key, item in sorted(pairs, key=lambda pair: pair[0])
+            key: freeze_json(
+                item,
+                f"{name}.{key}",
+                depth + 1,
+                count,
+                characters=characters,
+            )
+            for key, item in sorted(pairs, key=lambda pair: pair[0])
         }
         return result
     if isinstance(value, (list, tuple)):
-        result = tuple(freeze_json(item, f"{name}[{position}]", depth + 1, count) for position, item in enumerate(value))
+        result = tuple(
+            freeze_json(
+                item,
+                f"{name}[{position}]",
+                depth + 1,
+                count,
+                characters=characters,
+            )
+            for position, item in enumerate(value)
+        )
         return result
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
@@ -114,7 +144,13 @@ def canonical_payload_signature(payload: object) -> str:
 
     if not isinstance(payload, dict):
         raise InvalidRequestError("mutation payload must be an object")
-    frozen = freeze_json(payload, "mutation payload", 0, [0])
+    frozen = freeze_json(
+        payload,
+        "mutation payload",
+        0,
+        [0],
+        characters=Characters.LINES,
+    )
     encoded = json_text(thaw_json(frozen)).encode("utf-8")
     if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
         raise InvalidRequestError(f"mutation payload exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
@@ -220,6 +256,11 @@ def mutation_receipt(
         raise InvalidRequestError("mutation result_code must be a MutationResultCode")
     ordered_generations = normalize_artifact_generation_changes(affected_generations)
     frozen_result = freeze_result(result)
+    if "scope_bindings" in frozen_result:
+        try:
+            frozen_result["scope_bindings"] = validate_statement_scope_bindings(frozen_result.get("scope_bindings"))
+        except ValueError as error:
+            raise InvalidRequestError(str(error)) from error
     if not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
     normalized_created_at = require_utc_timestamp(created_at, "mutation receipt created_at")
@@ -357,6 +398,7 @@ def receipt_tombstone(
     request_id: str,
     operation: MutationOperation,
     payload_signature: str,
+    scope_bindings: tuple = (),
 ) -> dict:
     """Build one validated receipt-tombstone dictionary."""
     normalized_sequence = positive_int(sequence, "receipt tombstone sequence")
@@ -364,11 +406,16 @@ def receipt_tombstone(
     if not isinstance(operation, MutationOperation):
         raise InvalidRequestError("mutation operation must be a MutationOperation")
     normalized_signature = internal_signature(payload_signature)
+    try:
+        bindings = validate_statement_scope_bindings(scope_bindings)
+    except ValueError as error:
+        raise InvalidRequestError(str(error)) from error
     result: dict = {
         "sequence": normalized_sequence,
         "request_id": normalized_request_id,
         "operation": operation,
         "payload_signature": normalized_signature,
+        "scope_bindings": bindings,
     }
     return result
 
@@ -384,7 +431,10 @@ def validate_receipt_tombstone(value: object) -> dict:
         raise InvalidRequestError("receipt tombstone fields are malformed")
     if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
         raise InvalidRequestError("receipt tombstone fields are malformed")
-    result = receipt_tombstone(sequence, request_id, operation, payload_signature)
+    scope_bindings = data.get("scope_bindings")
+    if not isinstance(scope_bindings, tuple):
+        raise InvalidRequestError("receipt tombstone scope_bindings must be a tuple")
+    result = receipt_tombstone(sequence, request_id, operation, payload_signature, scope_bindings)
     return result
 
 
@@ -396,6 +446,7 @@ def receipt_tombstone_to_dict(value: object) -> dict:
         "request_id": validated["request_id"],
         "operation": validated["operation"].value,
         "payload_signature": validated["payload_signature"],
+        "scope_bindings": list(validated.get("scope_bindings", ())),
     }
     return result
 
@@ -407,11 +458,14 @@ def receipt_tombstone_from_dict(value: object) -> dict:
         operation = MutationOperation(data["operation"])
     except (TypeError, ValueError) as error:
         raise InvalidRequestError("receipt tombstone contains an unsupported operation") from error
+    if not isinstance(data.get("scope_bindings"), list):
+        raise InvalidRequestError("receipt tombstone scope_bindings must be an array")
     result = receipt_tombstone(
         sequence=positive_int(data["sequence"], "receipt tombstone sequence"),
         request_id=require_text(data["request_id"], "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
         operation=operation,
         payload_signature=internal_signature(data["payload_signature"]),
+        scope_bindings=tuple(data.get("scope_bindings", [])),
     )
     return result
 
@@ -641,6 +695,7 @@ class MutationReceiptLedger:
                 oldest_request_id,
                 oldest["operation"],
                 oldest["payload_signature"],
+                tuple(oldest.get("result", {}).get("scope_bindings", ())),
             )
             self.internal_tombstones[oldest_request_id] = tombstone
         while len(self.internal_tombstones) > self.max_tombstones:

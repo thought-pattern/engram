@@ -439,8 +439,8 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
         "reranker": {
             "enabled": False,
             "ready": False,
-            "implementation": "transparent_logistic_v1",
-            "model_version": "transparent-logistic-v1",
+            "implementation": "transparent_logistic",
+            "model_version": "transparent-logistic",
             "requests": 0,
             "completed": 0,
             "fallbacks": 0,
@@ -451,17 +451,17 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
             "enabled": False,
             "ready": False,
             "plugins": {
-                "arithmetic_v1": {"enabled": False, "ready": False},
-                "boolean_v1": {"enabled": False, "ready": False},
-                "set_v1": {"enabled": False, "ready": False},
-                "date_time_v1": {
+                "arithmetic": {"enabled": False, "ready": False},
+                "boolean": {"enabled": False, "ready": False},
+                "set": {"enabled": False, "ready": False},
+                "date_time": {
                     "enabled": False,
                     "ready": False,
                     "timezone_database_version": UTILITY_TZDATA_VERSION,
                 },
-                "unit_conversion_v1": {"enabled": False, "ready": False},
-                "version_v1": {"enabled": False, "ready": False},
-                "identifier_v1": {"enabled": False, "ready": False},
+                "unit_conversion": {"enabled": False, "ready": False},
+                "version": {"enabled": False, "ready": False},
+                "identifier": {"enabled": False, "ready": False},
             },
         },
     }

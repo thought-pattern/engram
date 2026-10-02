@@ -21,6 +21,8 @@ EMPTY_RERANKER_CONFIG = EMPTY_CONFIG
 EMPTY_ROLLOUT_CONFIG = EMPTY_CONFIG
 EMPTY_UTILITY_CONFIG = EMPTY_CONFIG
 EMPTY_CONVERSATION_CONFIG = EMPTY_CONFIG
+# The config.yml beside the engram package: the repository root in a source checkout.
+DEFAULT_CONFIG_PATH = os_path.join(os_path.dirname(os_path.dirname(os_path.abspath(__file__))), "config.yml")
 
 
 def graph_config(
@@ -217,8 +219,8 @@ def semantic_config(
 
 def reranker_config(
     enabled: bool = False,
-    implementation: str = "transparent_logistic_v1",
-    model_version: str = "transparent-logistic-v1",
+    implementation: str = "transparent_logistic",
+    model_version: str = "transparent-logistic",
     shortlist_size: int = 8,
     max_input_bytes: int = 65_536,
     max_model_time_ms: int = 25,
@@ -226,8 +228,8 @@ def reranker_config(
     """Build the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
         raise ValueError("reranker enabled must be a boolean")
-    if implementation != "transparent_logistic_v1":
-        raise ValueError("reranker implementation must be transparent_logistic_v1")
+    if implementation != "transparent_logistic":
+        raise ValueError("reranker implementation must be transparent_logistic")
     if not isinstance(model_version, str) or not model_version.strip():
         raise ValueError("reranker model_version must be a non-empty string")
     for name, value, maximum in (
@@ -516,6 +518,94 @@ def known_keys(values: object, allowed: set, section: str, source: str) -> dict:
     return result
 
 
+def read_config_mapping(path: str) -> dict:
+    """Read one YAML configuration file into the keys this release reads.
+
+    A missing or empty file is an empty mapping. Top-level and section keys are
+    filtered with ``known_keys``, and conversation file paths are resolved
+    against this file's directory and stored absolute, so the mapping no longer
+    depends on the file's location. Values are not yet validated.
+    """
+    if not os_path.exists(path):
+        result: dict = {}
+        return result
+    with open(path, encoding="utf-8") as handle:
+        loaded = yaml_safe_load(handle)
+    if not loaded:
+        result = {}
+        return result
+    data = known_keys(loaded, set(engram_config()), "", path)
+    for name, builder in SECTION_BUILDERS:
+        if name in data and data.get(name):
+            data[name] = known_keys(data.get(name), set(builder()), name, path)
+    section = data.get("conversation") or {}
+    if section:
+        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
+            if key in section:
+                section[key] = resolve_conversation_path_list(section.get(key), path, key, kind)
+        for key, kind in (
+            ("properties_file", "properties file"),
+            ("predicate_file", "predicate file"),
+            ("substitution_file", "substitution file"),
+        ):
+            if key in section:
+                section[key] = resolve_conversation_optional_file(section.get(key), path, key, kind)
+    return data
+
+
+def validated_config(data: dict, source: str) -> dict:
+    """Build a validated config dict from a config.yml-shaped mapping.
+
+    ``session_overflow`` may be its string value and ``stopwords`` any
+    collection of words. Nested mappings are built with their section
+    normalizers; missing keys fall back to the ``engram_config`` defaults.
+    """
+    params = known_keys(data, set(engram_config()), "", source)
+    if "session_overflow" in params:
+        params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
+    if "stopwords" in params:
+        params["stopwords"] = set(params.get("stopwords", set()))
+    for name, builder in SECTION_BUILDERS:
+        section = params.get(name, {})
+        if name in params and section:
+            params[name] = builder(**known_keys(section, set(builder()), name, source))
+    config = engram_config(**params)
+    return config
+
+
+def config_from_dict(data: dict, base_path: str = DEFAULT_CONFIG_PATH) -> dict:
+    """Build a validated config from Engram's config.yml overridden by a host mapping.
+
+    For a host, such as Tapestry, that supplies Engram's settings in memory.
+    The configuration file at ``base_path`` (by default the ``config.yml``
+    beside the ``engram`` package) is read first, with its conversation paths
+    resolved against that file. ``data`` then overrides it: a top-level value
+    replaces the file's value, and a section such as ``graph`` or
+    ``conversation`` overrides the file's section key by key. Paths in ``data``
+    are used as given. A missing file, or an empty ``base_path``, leaves only
+    the ``engram_config`` defaults underneath. An unknown key is ignored and
+    logged, except the retired ``graph.deployment_mode``, which existing hosts
+    still send and which is dropped without a warning.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("config must be an object")
+    source = "config mapping"
+    merged = read_config_mapping(base_path) if base_path else {}
+    overrides = known_keys(data, set(engram_config()), "", source)
+    graph = overrides.get("graph", {})
+    if isinstance(graph, dict) and "deployment_mode" in graph:
+        overrides["graph"] = {key: value for key, value in graph.items() if key != "deployment_mode"}
+    sections = {name for name, _ in SECTION_BUILDERS}
+    for key, value in overrides.items():
+        current = merged.get(key, {})
+        if key in sections and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **value}
+        else:
+            merged[key] = value
+    config = validated_config(merged, source)
+    return config
+
+
 def load_config(path: str = "config.yml") -> dict:
     """Build a config dict from a YAML file.
 
@@ -533,38 +623,5 @@ def load_config(path: str = "config.yml") -> dict:
     Returns:
         A validated config dict.
     """
-    if not os_path.exists(path):
-        config = engram_config()
-        return config
-
-    with open(path, encoding="utf-8") as f:
-        loaded = yaml_safe_load(f)
-    if not loaded:
-        config = engram_config()
-        return config
-
-    data = known_keys(loaded, set(engram_config()), "", path)
-    if "session_overflow" in data:
-        data["session_overflow"] = SessionOverflow(data["session_overflow"])
-    for name, builder in SECTION_BUILDERS:
-        if name != "conversation" and name in data and data[name]:
-            data[name] = builder(**known_keys(data[name], set(builder()), name, path))
-    if "conversation" in data and data["conversation"]:
-        section = known_keys(data["conversation"], set(conversation_config()), "conversation", path)
-        if "seed_files" in section:
-            section["seed_files"] = resolve_conversation_path_list(section["seed_files"], path, "seed_files", "seed file")
-        if "set_files" in section:
-            section["set_files"] = resolve_conversation_path_list(section["set_files"], path, "set_files", "set file")
-        if "map_files" in section:
-            section["map_files"] = resolve_conversation_path_list(section["map_files"], path, "map_files", "map file")
-        for key, kind in (
-            ("properties_file", "properties file"),
-            ("predicate_file", "predicate file"),
-            ("substitution_file", "substitution file"),
-        ):
-            if key in section:
-                section[key] = resolve_conversation_optional_file(section[key], path, key, kind)
-        data["conversation"] = conversation_config(**section)
-
-    config = engram_config(**data)
+    config = validated_config(read_config_mapping(path), path)
     return config

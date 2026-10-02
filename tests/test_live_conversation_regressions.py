@@ -1,18 +1,13 @@
 """Regressions taken directly from the adaptive MCP conversation."""
 
-from json import loads as json_loads
-from pathlib import Path
-
 from engram import pipeline
+from engram.conversation_seed import load_bundled_conversation_pairs
 from engram.core import Engram
-
-SEED_PATH = Path(__file__).resolve().parent.parent / "data" / "seed.json"
 
 
 def seeded_engram() -> Engram:
     engram = Engram()
-    seed = json_loads(SEED_PATH.read_text(encoding="utf-8"))
-    engram.load_static_data(seed.get("pairs", []))
+    engram.load_static_data(load_bundled_conversation_pairs())
     return engram
 
 

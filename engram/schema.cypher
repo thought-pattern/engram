@@ -4,6 +4,12 @@
 // The definitions Engram needs from a knowledge graph. A graph is compatible
 // when it has all of them; it may have more. To create them on an empty graph:
 //   python3 scripts/setup_schema.py --apply
+//
+// Record IDs and Entity/Predicate canonical IDs are opaque strings owned by
+// the graph's writer (UUIDv7 in a Tapestry-managed graph). Existence,
+// uniqueness and lookup indexes below are intentionally spelling-neutral:
+// Engram reads those references as opaque text and never allocates or
+// interprets them.
 
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT EXISTS (n.component);
 CREATE CONSTRAINT ON (n:SchemaRevision) ASSERT n.component IS UNIQUE;

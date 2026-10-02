@@ -316,6 +316,13 @@ def structured_proposition_projection(proposition_id: str = "proposition-1") -> 
         "subject_entity_id": "entity:ada",
         "predicate_id": "predicate:built",
         "object_entity_id": "entity:engine",
+        "polarity": "positive",
+        "modality_family": "none",
+        "modality_operator": "none",
+        "argument_count": 2,
+        "qualification_count": 0,
+        "context_count": 0,
+        "applicability_count": 0,
         "invalidated_at": "",
         "invalidated_at_available": False,
         "system_from": "2026-01-01T00:00:00Z",
@@ -337,7 +344,7 @@ def structured_proposition_projection(proposition_id: str = "proposition-1") -> 
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY)
     return result
 
 
@@ -351,7 +358,7 @@ def changed_proposition_projection(projection: dict, **changes) -> dict:
 def internal_current_proposition_projection(discovered: dict, **changes) -> dict:
     result = changed_proposition_projection(
         discovered,
-        projection_id=PropositionProjectionQuery.BY_ID_V1,
+        projection_id=PropositionProjectionQuery.BY_ID,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=0.0,
@@ -366,7 +373,7 @@ def internal_current_proposition_projection(discovered: dict, **changes) -> dict
 def semantic_proposition_projection(proposition_id: str = "proposition-1", similarity: float = 0.9) -> dict:
     result = changed_proposition_projection(
         structured_proposition_projection(proposition_id),
-        projection_id=PropositionProjectionQuery.VECTOR_V1,
+        projection_id=PropositionProjectionQuery.VECTOR,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=similarity,
@@ -522,7 +529,7 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     monkeypatch.setattr(
         engine,
         "graph_vector_propositions",
-        lambda internal_text, *, limit=0: [
+        lambda internal_text, *, limit=0, evaluation_time="": [
             {"proposition_id": REFERENCE_IDS.get("proposition_a", ""), "similarity": 0.9},
             {"proposition_id": "unlinked", "similarity": 1.0},
         ][:limit],
@@ -530,7 +537,7 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: projections[:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": projections[:limit],
     )
     by_id = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in projections}
     monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (by_id[proposition_id],))
@@ -589,7 +596,9 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
@@ -653,12 +662,14 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
         "limit": query_frame["budget"]["max_candidates"],
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
+        "evaluation_time": query_frame["eligibility_context"]["evaluation_time"],
     }
     assert calls[1][1] == {
         "index_name": "proposition_premise_embeddings",
         "limit": query_frame["budget"]["max_vector_results"] - 1,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
+        "evaluation_time": query_frame["eligibility_context"]["evaluation_time"],
     }
     assert calls[2][1] == {"proposition_id": "proposition-vertical"}
     assert "Ada" not in calls[0][0]
@@ -726,7 +737,9 @@ def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_boun
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
 
     def current_projection(internal_proposition_id):
@@ -771,7 +784,9 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(
@@ -820,11 +835,11 @@ def test_orchestrator_canonicalizes_cross_producer_proposition_without_candidacy
         "structured_proposition_projections",
         lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [structured][:row_limit],
     )
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0, evaluation_time="": [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [semantic][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [semantic][:limit],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
@@ -924,11 +939,13 @@ def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkey
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     discovered = semantic_proposition_projection("proposition-below-floor", 0.59)
     current = internal_current_proposition_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0, evaluation_time="": [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     query_frame = frame(engine, "Ada", namespace="")
@@ -970,11 +987,13 @@ def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_ex
     engine.config["graph"].update({"enabled": True, "vector_enabled": True, "vector_weight": 1.0})
     discovered = semantic_proposition_projection("proposition-below-floor-with-candidate", 0.59)
     current = internal_current_proposition_projection(discovered)
-    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0: [])
+    monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0, evaluation_time="": [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0: [discovered][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+            :limit
+        ],
     )
     monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
     sparse_candidate = candidate(statement_id)

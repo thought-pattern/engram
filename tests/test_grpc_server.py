@@ -17,7 +17,7 @@ from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pytest import raises as pytest_raises
 
 from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
-from engram.config import engram_config
+from engram.config import engram_config, graph_config
 from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -28,6 +28,8 @@ from engram.resolution import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore
 
 from .support_fixtures import ASSERTION_REFERENCE_A
+from .test_relation import RelationGraph
+from .test_scope_removal import RemovalExample
 
 
 class GrpcCore(EngramCore):
@@ -91,6 +93,31 @@ def internal_trailing_metadata(error: grpc_RpcError) -> dict[str, str]:
     return result
 
 
+def test_engagement_maintenance_protocol_deletes_one_scope_and_keeps_peer_responses():
+    example = RemovalExample()
+    with running_server(example.core) as (_, _, stub):
+        for action in ("plan", "prepare", "purge", "purge", "resume"):
+            request = struct_pb2.Struct()
+            request.update(example.command(action))
+            result = as_dict(stub.MaintainEngagement(request))
+            if action == "plan":
+                assert result.get("dry_run") is True
+                assert len(result.get("selected_statement_ids", [])) == 3
+            elif action == "prepare":
+                assert result.get("drained") is True
+                assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is False
+                with pytest_raises(grpc_RpcError) as paused:
+                    stub.LearnResponse(
+                        engram_pb2.LearnResponseRequest(request="late", response="late private response", request_id="late-wire")
+                    )
+                assert paused.value.code() == grpc_StatusCode.FAILED_PRECONDITION
+            elif action == "purge":
+                assert result.get("purged") is True
+        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is True
+        artifacts = example.core.engram.response_repository.snapshot().get("artifacts", {})
+        assert set(artifacts) == {example.ids.get(name) for name in ("public", "company", "engagement_b")}
+
+
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:
     with running_server(GrpcCore()) as (_, channel, stub):
         alice = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice", random_seed=7)))
@@ -142,43 +169,32 @@ def test_every_call_ends_by_letting_a_lost_graph_connection_reconnect() -> None:
     assert calls == [0, 0, 0, 0]
 
 
-def test_empty_wire_conversations_are_fresh_and_distinct_from_explicit_zero() -> None:
+def test_unknown_user_wire_lifecycle_uses_explicit_zero() -> None:
     core = GrpcCore()
     with running_server(core) as (_, _, stub):
-        explicit = as_dict(
-            stub.StartConversation(
-                engram_pb2.StartConversationRequest(
-                    user_id="0",
-                    initial_bot_text="Explicit zero context.",
-                )
-            )
+        started = as_dict(
+            stub.StartConversation(engram_pb2.StartConversationRequest(initial_bot_text="Unknown context."), timeout=5)
         )
+        token = started.get("conversation_token", "")
+        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello", conversation_token=token), timeout=5))
+        stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="", name="mood", value="curious"), timeout=5)
+        assert stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="0", name="mood"), timeout=5).value == "curious"
+        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
+        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="", conversation_token=token), timeout=5))
+        assert core.get_conversation("0").user_id == "0"
+        with pytest_raises(grpc_RpcError) as unowned:
+            stub.StopConversation(engram_pb2.UserRequest(user_id="0"), timeout=5)
+        assert unowned.value.code() == grpc_StatusCode.PERMISSION_DENIED
+        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
 
-        with pytest_raises(grpc_RpcError) as absent:
-            stub.StopConversation(engram_pb2.UserRequest(user_id=""))
-        assert absent.value.code() == grpc_StatusCode.NOT_FOUND
-        assert explicit["user_id"] == "0"
-
-        first_start = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
-        first_session_id = core.get_conversation("").session_id
-        first_turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
-        first_stop = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="")))
-
-        second_start = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="")))
-        second_session_id = core.get_conversation("").session_id
-        second_turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello")))
-
-        assert first_start["user_id"] == second_start["user_id"] == ""
-        assert first_turn["user_id"] == second_turn["user_id"] == ""
-        assert first_stop["user_id"] == ""
-        assert first_session_id != second_session_id
-        assert first_session_id not in core.engram.sessions
-        assert first_turn["context_changes"]["previous_response"]["before"] == ""
-        assert second_turn["context_changes"]["previous_response"]["before"] == ""
-        assert (
-            as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]["previous_response"]
-            == "Explicit zero context."
-        )
+        assert started.get("user_id", "") == "0"
+        assert turn.get("user_id", "") == "0"
+        assert inspected.get("user_id", "") == "0"
+        assert report.get("user_id", "") == "0"
+        assert stopped.get("user_id", "") == "0"
+        assert turn.get("context_changes", {}).get("previous_response", {}).get("before", "") == "Unknown context."
+        assert inspected.get("session", {}).get("previous_response", "") == turn.get("response", "")
+        assert "0" not in core.engram.sessions
 
 
 def test_regulated_cache_protocol_and_error_mapping() -> None:
@@ -301,6 +317,32 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
         assert result.evidence_package_available is False
         assert result.evidence_package.retained_count == 0
         assert result.evidence_package.records == []
+
+
+def test_grpc_evidence_service_uses_shared_graph_resolution(monkeypatch) -> None:
+    graph = RelationGraph()
+    monkeypatch.setattr("engram.core.connect_graph", lambda **internal_kwargs: graph)
+    core = EngramCore(
+        Engram(
+            engram_config(
+                graph=graph_config(enabled=True),
+            )
+        )
+    )
+    with running_server(core) as (_, channel, _):
+        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+
+        result = stub.ResolveEvidence(
+            engram_pb2.ResolveEvidenceRequest(
+                request="Where was Ada Lovelace born?",
+                request_id="grpc-graph-query",
+                configured_resolvers=("exact",),
+            )
+        )
+
+    assert result.outcome == "EVIDENCE"
+    assert as_dict(result.response_candidates[0])["response"] == "Ada Lovelace — birth place: London."
+    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
 def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:
@@ -470,9 +512,11 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
             barrier.wait()
             results = [future.result(timeout=10) for future in futures]
 
-        python_view = core.inspect_conversation("0")["session"]
+        python_view = core.inspect_conversation("0", conversation_token=mcp.active_conversation_token)["session"]
         mcp_view = mcp.inspect()["session"]
-        grpc_view = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0")))["session"]
+        grpc_view = as_dict(
+            stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=mcp.active_conversation_token))
+        )["session"]
 
         assert sum(result["idempotent"] is False for result in results) == 1
         assert sum(result["idempotent"] is True for result in results) == 5
@@ -534,10 +578,10 @@ def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str) -> dict:
+    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text)
+        result = original_chat(user_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat
@@ -560,10 +604,10 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str) -> dict:
+    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text)
+        result = original_chat(user_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat

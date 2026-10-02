@@ -99,7 +99,7 @@ def test_shadow_executes_without_disclosing_or_credentialing_candidates() -> Non
     assert artifact["statistics"]["hit_count"] == 0
 
 
-def test_disabled_skips_resolution_and_namespace_override_is_exact() -> None:
+def test_disabled_observes_without_disclosing_and_namespace_override_is_exact() -> None:
     core, statement_id = core_with_exact_response(
         RolloutMode.REGULATED_DIRECT_ANSWER,
         {"tenant-a": RolloutMode.DISABLED},
@@ -109,10 +109,11 @@ def test_disabled_skips_resolution_and_namespace_override_is_exact() -> None:
     artifact = core.engram.response_repository.get_artifact(statement_id)
 
     assert result["outcome"] == ResolutionOutcome.MISS
-    assert result["reason_codes"] == ("rollout_disabled",)
+    assert result["reason_codes"][-1] == "rollout_disabled"
+    assert result["response_candidates"] == ()
     assert result["resolver_results"] == ()
     assert result["frame_diagnostics"]["rollout"]["namespace_override"] is True
-    assert artifact["statistics"]["query_count"] == 0
+    assert result["frame_diagnostics"]["rollout"]["observed_outcome"] == "ANSWER"
     assert artifact["statistics"]["hit_count"] == 0
 
 

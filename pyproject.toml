@@ -22,6 +22,7 @@ classifiers = [
 # requirements.txt, which carries the pinned versions.
 dependencies = [
     "PyYAML>=6.0.3",
+    "msgpack==1.2.1",
     "nltk>=3.10.3",
     "spacy>=3.8.16",
     "sentence-transformers>=6.1.0",
@@ -60,7 +61,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json"]
+engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json", "data/*.toml"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram.constants.VERSION"}
@@ -122,4 +123,4 @@ ignore_names = ["exc_type", "exc_value", "traceback"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v"
+addopts = "-v -p no:jaxtyping"

@@ -17,15 +17,14 @@ Key features:
 - **Two-tier statements** - STATIC (provided at startup) and DYNAMIC (process-local and evictable)
 - **User-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Process memory** - Accepted responses, conversations, and receipts have one in-memory owner
-- **Multiple interfaces** - Python API, MCP tools, and a single-instance gRPC service
+- **Multiple interfaces** - Python API, CLI, MCP tools, and a single-instance gRPC service over one shared core
 
 ## Architecture
 
 ```text
 Python API --\
-              \
-MCP stdio -----> EngramCore ---> Engram, pipeline, sessions
-              /
+CLI ----------+--> EngramCore ---> Engram, pipeline, sessions
+MCP stdio ----+
 gRPC --------/
 ```
 
@@ -33,7 +32,9 @@ gRPC --------/
 facade. It owns the shared `Engram` instance, per-user conversation runtimes,
 the sole accepted-response artifact collection, and regulated-cache proposal
 state. Python callers and the MCP and gRPC adapters invoke that core. The lower-level
-`Engram`, `pipeline`, and `sessions` Python APIs remain available.
+`Engram`, `pipeline`, and `sessions` Python APIs remain available. When graph
+access is enabled, every interface uses the same graph-aware resolution and
+conversation behavior; adapters cannot select a graph-bypassing mode.
 
 A new process loads its current provided STATIC data once, before serving.
 When `conversation.seed_files` lists seed files, startup reads them and calls
@@ -42,6 +43,11 @@ method on a fresh Engram. Static data is startup input, not recovered Engram
 state. Restart begins with no dynamic accepted responses, learned conversational
 statements or facts, sessions, proposals, mutation receipts, reports, turn
 diagnostics, or counters inherited from the previous process.
+
+Engram-owned runtime contract, utility, projection, and resource names identify
+one current implementation without version suffixes. Callers and packaged
+resources use those same names; previous suffixed names are not compatibility
+aliases. Actual external model, protocol, and package versions are unchanged.
 
 ## Integration guides
 
@@ -61,13 +67,15 @@ diagnostics, or counters inherited from the previous process.
   one-hop, and composed Proposition retrieval.
 - [Local resolvers](documentation/local-resolvers.md) — symbolic rewrites,
   sparse and semantic retrieval, reranking, and deterministic utilities.
+- [Candidate fusion](documentation/fusion/contracts.md) — normalized features,
+  eligibility, ambiguity decisions, and bounded native outcome reports.
 
 ## Contributor documentation
 
 - [Python code style](documentation/code-style.md) — the Engram import
   convention and the Google Python Style Guide baseline used elsewhere.
 - [Query identity contracts](documentation/identity/contracts.md) — the
-  versioned scope, identity, normalization, retrieval-key, representation, and
+  scope, identity, normalization, retrieval-key, representation, and
   authoritative-input foundation used by exact retrieval work.
 
 ## Setup
@@ -215,14 +223,14 @@ config = engram_config(
 engram = Engram(config=config)
 ```
 
-A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI, MCP server, and gRPC server do when the list is left empty. List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored. Patterns count as repeated when they match the same path, so `HELLO` and `hello!`, or `MIL-STD-498` and `MIL STD 498`, are the same pattern. Set `conversation.duplicate_policy` to `last` or `first` to keep one of them instead.
+A configured process can also name the seed files it imports at startup. `conversation.bot_name` is the name templates render for `{bot:name}`. `conversation.seed_files` is an ordered list of JSON files, each shaped as `{"pairs": [{"pattern": "HELLO", "response": "Hey."}]}`. Paths in a YAML file are resolved from that file's directory. An empty list starts a silent process, which is what the CLI and gRPC server do when the list is left empty; the MCP server instead loads its packaged conversational corpus unless told otherwise (see [MCP Agent Interface](#mcp-agent-interface)). List the files for a social persona. Keep the catch-all pattern `*` in one file; a later file adds specific patterns, and a repeated pattern is rejected before any statement is stored. Patterns count as repeated when they match the same path, so `HELLO` and `hello!`, or `MIL-STD-498` and `MIL STD 498`, are the same pattern. Set `conversation.duplicate_policy` to `last` or `first` to keep one of them instead.
 
 ```yaml
 conversation:
   bot_name: "ENGRAM"
   seed_files:
-    - data/seed.json
-    - data/software_development.json
+    - engram/data/seed.json
+    - engram/data/software_development.json
 ```
 
 Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic
@@ -288,13 +296,15 @@ callers use `Engram` methods and module-level functions
 
 ### EngramCore (`from engram.service import EngramCore`)
 
-`open_engram_core(config=...)` creates an empty shared application runtime. Its
+`EngramCore(config=...)` creates an empty shared application runtime. Its
 primary operations are:
 
 - `start_conversation`, `chat`, `inspect_conversation`,
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
-- `propose`, `resolve`, `learn_response`, `supersede_response`, and `retire_response`;
+- `propose`, `resolve`, `learn_response`, `supersede_response`, `retire_response`, and `retire_responses`;
+- `maintain_engagement` for an explicitly owned, drained administrative pause,
+  physical response removal and resumption;
 - `status` for transport-neutral readiness information; and
 - `close` for lifecycle ownership.
 
@@ -303,16 +313,29 @@ outcome="rejected_stale")` records the verdict and excludes that observed
 generation without mutating the response artifact. The caller that established
 global staleness then uses `retire_response` as the separate, auditable
 lifecycle operation. Contextual rejection never retires a response.
+`retire_responses` processes bounded ordered groups through that same scalar
+owner, retaining per-entry failures and replay receipts. It is also exposed as
+gRPC `RetireResponses` and MCP `engram_retire_responses`; see the
+[shared contract](documentation/python-api.md#ordered-retirement).
+
+Engagement removal instead deletes matching artifacts, affected mutation receipts
+and feedback together, with rollback on publication failure. Selection includes
+explicit response scope, opaque support dependencies, superseded predecessors,
+and scope bindings retained after capacity eviction and receipt pruning. Peer
+artifacts and their statistics and replay state are preserved. The administrative
+RPC contract is documented in [gRPC integration](documentation/grpc-integration.md).
 
 One core retains multiple isolated user conversations and shared knowledge.
-Non-empty conversation identifiers retain their user context. An empty
-conversation identifier remains empty at the service boundary, receives a
-unique non-attributed ephemeral session at each start, never aliases explicit
-user `"0"`, and is deleted on stop. That behavior serves gRPC's anonymous
-conversation contract; MCP canonicalizes an omitted or empty label to the
-unknown user `"0"` before starting its single conversation. Restarting Engram
+Named conversation identifiers retain their exact spelling and user context.
+Omitted or empty labels use the reserved unknown user `"0"` across the core,
+gRPC and MCP. Unknown conversations start with fresh session context and delete
+that session on stop; failed initialization restores the prior session. There
+is no generated anonymous identity or separate empty-user namespace. Restarting Engram
 loads only the STATIC data provided for that new process; without provided
 STATIC data, it starts empty.
+Accepted cache resolution and learned information update named-user session
+context only; they never create or alter the reserved unknown user's social
+session. Cache results and idempotent receipts are unaffected.
 See the [Python API contract](documentation/python-api.md) for unified resolution,
 feedback, lifecycle, and error behavior.
 
@@ -322,7 +345,7 @@ feedback, lifecycle, and error behavior.
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; `replace_learned` retires DYNAMIC statements on the same pattern, that, and topic |
 | `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
-| `pattern_query(text, context_id, user_id)`                        | AIML-style match (pattern, then that, then topic) with separate turn context and learned-fact attribution; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
+| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, learned-fact attribution, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
 | `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance; replaces the learned fact already stored for its subject           |
@@ -383,6 +406,8 @@ print(result["source"], result["response"])
 
 The LLM result is not admitted as accepted knowledge. Accepted responses enter
 only through `EngramCore.learn_response` and exist only as response artifacts.
+Multiline accepted responses retain their exact tab and line-separator bytes in
+both the idempotency signature and authoritative artifact.
 
 A catch-all (pure-wildcard) question match is held as a fallback while retrieval and the
 LLM speak first, and returns it only when neither does.
@@ -408,6 +433,19 @@ the factor (see Eviction and Hit Tracking above).
 
 ## Service interfaces
 
+### Command-line interface
+
+The one-shot CLI query uses the same unified resolver as Python, MCP, and gRPC:
+
+```bash
+python scripts/cli.py --config config.yml query "What evidence is available?" \
+  --request-id cli-query-1
+```
+
+Interactive CLI turns use the same shared conversation path as MCP and gRPC.
+Configured graph retrieval therefore has the same precedence, temporal filtering,
+deduplication, and fail-soft behavior at each interface.
+
 ### MCP Agent Interface
 
 The MCP stdio server retains one core and its conversations between tool calls:
@@ -418,29 +456,44 @@ python -m engram.mcp_server
 engram-mcp
 ```
 
+Both commands load Engram's packaged conversational corpus by default. Use
+`--static-data /trusted/path/conversation.json` to select another host-owned
+corpus, or `--no-static-data` for an intentionally empty cache-only process.
+Conversational corpora must contain a `*` catch-all. A configuration that names
+`conversation.seed_files` loads those files instead of the adapter's corpus.
+
 MCP owns one active conversation. An omitted or empty `user_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
 and report the same canonical identifier.
 
-The ten tools cover conversation lifecycle (`engram_start`, `engram_send`,
+The twelve tools cover conversation lifecycle (`engram_start`, `engram_send`,
 `engram_inspect`, `engram_finish`, `engram_stop`), shared facts
-(`engram_add_fact`), and regulated-cache use (`engram_propose`,
-`engram_resolve`, `engram_learn_response`, `engram_retire_response`). See
+(`engram_add_fact`), unified resolution (`engram_query`), and regulated-cache use (`engram_propose`,
+`engram_resolve`, `engram_learn_response`, `engram_retire_response`,
+`engram_retire_responses`). See
 [MCP integration](documentation/mcp-integration.md) for host configuration,
 tool schemas, process-memory ownership, and retry behavior.
 
 ### gRPC Service Interface
 
 The gRPC server exposes the same shared core, isolated user conversations, and
-regulated-cache workflow. An empty `user_id` across Start, Chat, Inspect,
-Finish, and Stop addresses the currently active anonymous conversation; each
-new empty-identifier Start receives fresh session context:
+regulated-cache workflow. An omitted or empty `user_id` across Start, Chat,
+Inspect, Finish, and Stop means exactly `"0"`. Starting unknown user "0" creates
+fresh context; stopping removes both its conversation and session. Finish only
+reports, and named-user context remains reusable:
 
 ```bash
 engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
 # Or from a checkout:
 python -m engram.grpc_server --bind 127.0.0.1:50051
 ```
+
+A host that builds the configuration in memory calls
+`engram.config.config_from_dict(mapping)`. It starts from the repository-root
+`config.yml`, with its seed and table paths resolved against that file, and
+applies the mapping on top: top-level values replace the file's, and sections
+such as `graph` override the file's section key by key. Tapestry's managed
+server starts this way, so the seed files named in `config.yml` load under it.
 
 One unversioned `engram` protobuf package supplies conversation, cache, and
 unified evidence-resolution services from the same library contract. See
@@ -512,7 +565,7 @@ produce confirmation or contradiction responses. With spaCy,
 Copulas retain their surface form, prepositions become relations, and action
 verbs use their lemma. NER supplies `subject_type` and `obj_type` when available.
 `learn_user_facts` controls conversational learning; `use_spacy_facts` selects
-the relational extractor.
+the relational extractor. Both extractor APIs return their actual fact records.
 
 ### Optional spaCy matching/retrieval enhancements
 
@@ -541,6 +594,19 @@ the failed operation and exception type, and leaves out the exception text.
 Administrative schema commands still report database unavailability to the
 operator.
 
+When `graph.enabled` is true, the graph participates in every graph-eligible
+request through the shared core across Python, CLI, MCP, gRPC, every rollout
+mode, and future adapters. Conversational graph hits precede scripted factual
+fallbacks. Current surface reads apply valid-time bounds and suppress duplicate
+semantic triples; Tapestry domain entity types normalize to Engram's coarse
+`ENTITY` answer type. The shared core captures the evaluation time and schedules
+configured graph resolution before local exact-answer short-circuiting.
+
+[Friendly fact phrasing](documentation/python-api.md#friendly-fact-phrasing)
+uses one packaged idiomatic frame inventory shared as data with Tapestry.
+Literal labels cannot add format fields; the existing grammar and unavailable
+model fallback remain independent of Tapestry's Research parser policy.
+
 Engram either has a graph with a compatible schema or it does not. A graph is
 compatible when it has every index and constraint in `engram/schema.cypher`; it may
 have more. Startup checks this and fails if a needed definition is missing.
@@ -558,6 +624,13 @@ python scripts/reset_schema.py --apply
 The installer and reset commands refuse a graph that holds any data. Engram's
 graph-facing queries, decoders, and accepted-response support values use the
 current Proposition/Assertion contracts.
+
+Static schema admission derives allowed labels from Engram's current identity
+contracts and retains its exact text/vector definitions. The statement parser
+preserves quoted strings, backtick identifiers, escapes and literal whitespace;
+only external comments and layout are normalized. Catalog parsing and live
+comparison use that same statement sequence, and invalid input rejects before
+installation accesses the graph.
 
 Configure the connection in `config.yml`:
 

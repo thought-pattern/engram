@@ -37,19 +37,23 @@ class StartConversationRequest(Message):
 class ChatRequest(Message):
     user_id: str
     text: str
+    conversation_token: str
 
     def __init__(
         self,
         user_id: str = ...,
         text: str = ...,
+        conversation_token: str = ...,
     ) -> None: ...
 
 class UserRequest(Message):
     user_id: str
+    conversation_token: str
 
     def __init__(
         self,
         user_id: str = ...,
+        conversation_token: str = ...,
     ) -> None: ...
 
 class AddFactRequest(Message):
@@ -162,6 +166,22 @@ class RetireResponseRequest(Message):
         statement_id: str = ...,
         reason: str = ...,
         request_id: str = ...,
+    ) -> None: ...
+
+class RetireResponsesRequest(Message):
+    entries: RepeatedCompositeFieldContainer[RetireResponseRequest]
+
+    def __init__(
+        self,
+        entries: object = ...,
+    ) -> None: ...
+
+class ResponsesBySupportRequest(Message):
+    record_ids: RepeatedScalarFieldContainer[str]
+
+    def __init__(
+        self,
+        record_ids: object = ...,
     ) -> None: ...
 
 class ResolveEvidenceRequest(Message):

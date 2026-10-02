@@ -13,6 +13,7 @@ from engram.mutations import (
     validate_mutation_receipt,
 )
 from engram.repository import MAX_PLANNED_CANDIDATES, ArtifactRepository, validate_repository_state
+from engram.support import validate_statement_scope_bindings, validate_support_visibility
 
 logger = logging_getLogger(__name__)
 
@@ -262,6 +263,27 @@ class AtomicMutationCoordinator:
             )
             if changes != expected_changes:
                 raise ConflictError("mutation receipt affected generations do not match repository changes")
+            bindings = {}
+            for identifier, _, _ in expected_changes:
+                for state in (before_repository, validated_repository_candidate):
+                    artifact = state.get("artifacts", {}).get(identifier, {})
+                    scopes = [reference.get("visibility_scope") for reference in artifact.get("support_references", ())]
+                    if "visibility_scope" in artifact.get("metadata", {}):
+                        scopes.append(artifact.get("metadata", {}).get("visibility_scope"))
+                    for value in scopes:
+                        scope = validate_support_visibility(value)
+                        key = (
+                            identifier,
+                            scope.get("kind"),
+                            *(scope.get(field) or "" for field in ("company_id", "customer_id", "engagement_id")),
+                        )
+                        bindings[key] = {"statement_id": identifier, "visibility_scope": scope}
+            validated_receipt.get("result", {}).pop("scope_bindings", {})
+            if bindings:
+                validated_receipt.get("result", {})["scope_bindings"] = validate_statement_scope_bindings(
+                    tuple(bindings.get(key) for key in sorted(bindings))
+                )
+                validated_receipt = validate_mutation_receipt(validated_receipt)
             receipts = before["mutation_receipts"].clone()
             receipts.record(validated_receipt)
             after = {"repository": validated_repository_candidate, "mutation_receipts": receipts}

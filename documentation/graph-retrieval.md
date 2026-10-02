@@ -1,8 +1,35 @@
 # Graph retrieval contracts
 
-Graph retrieval is optional and issues no writes. It enriches a resolution request
-with canonical identity and retrieves bounded Proposition evidence through fixed
-parameterized capabilities with typed identity and relation inputs.
+Graph retrieval is optional and issues no writes. When `graph.enabled` is true,
+it participates in every graph-eligible request through the shared `EngramCore`,
+regardless of rollout mode or whether the caller is Python, CLI, MCP, gRPC, or a
+future adapter. Interfaces and rollout policies may govern presentation, but they
+do not remove the configured graph resolver from the retrieval plan. It enriches
+a resolution request with canonical identity and retrieves bounded Proposition
+evidence through fixed parameterized capabilities with typed identity and relation
+inputs.
+
+The core schedules a configured graph before local exact-answer short-circuiting.
+The request or conversation runtime captures one evaluation timestamp and supplies
+it to graph reads, including vector recall, so adapters do not create different
+temporal views of the same operation.
+
+Conversational factual questions consult the graph before a scripted response is
+accepted. A graph hit takes precedence over broad reflective and catch-all patterns;
+a miss or failure preserves the local conversational fallback. Surface-fact reads
+apply current valid-time bounds and collapse duplicate subject/predicate/object
+triples before phrasing.
+
+An affirmative subject/predicate/object phrase represents only a supported
+Proposition with positive polarity, no modality, exactly two argument edges,
+and no qualification, semantic-context, or applicability edges. Strict graph
+projections retain those semantic fields and reject missing or invalid values.
+Negative, modal, qualified, contextual, and additional-argument Propositions
+remain inspectable but are excluded from evidence and direct relation answers
+with `semantic_meaning_unrepresented`. Revalidation compares the semantic
+projection before evidence use. Chat surface-fact, vector surface-fact, and
+template triple reads apply the same guard; template triple reads also require
+active support, current valid time, and the configured graph visibility scope.
 
 ## Context and canonical identity
 
@@ -24,6 +51,11 @@ The relation path compiles one canonical subject and predicate into the fixed
 system time, valid time, trust inputs, ownership, scope, and publication identity are
 revalidated before a row becomes evidence.
 
+Tapestry's open `Entity.entity_type` taxonomy is normalized at this boundary.
+Engram's scalar and coarse types retain their exact values; domain types such as
+`OCCUPATION`, `PLANET`, or `CHEMICAL_ELEMENT` become `ENTITY`. Predicate-declared
+answer types remain strict.
+
 A unique eligible `SINGLE` relation may become a direct candidate through the common
 fusion policy. Multiple values, unknown cardinality, ambiguity, or incomplete trust
 remain evidence. Rendering changes the bounded output phrase and preserves the
@@ -36,7 +68,7 @@ explicit valid-time or system-time axis. Intervals are lower-inclusive and
 upper-exclusive. Historical direct output requires closed bounds on the requested
 axis. Unqualified requests use the captured evaluation time.
 
-Engram consumes source-calibrated trust and its version exactly as projected from
+Engram consumes source-calibrated trust exactly as projected from
 the Proposition's eligible Assertion basis. Known `MULTI` cardinality yields
 evidence; conflicting `SINGLE` rows abstain.
 
@@ -71,8 +103,13 @@ once it succeeds. A failed reconnect is retried after the next turn. The schema
 scripts use a 30-second limit instead (`GRAPH_ADMIN_TIMEOUT_SECONDS`).
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
+Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,
+and latency without retaining request text, entity labels, or graph identifiers.
 
 Focused behavior is covered by `tests/test_contextual.py`, `tests/test_temporal.py`,
 `tests/test_composition.py`, `tests/test_claim_projection.py`, and
 `tests/test_claim_eligibility.py`; the last two filenames are retained test-suite
-names, while their executable contracts are Proposition-centered.
+names, while their executable contracts are Proposition-centered. Graph-backed
+adapter behavior is also exercised through the loopback gRPC and MCP harnesses
+(`tests/test_grpc_server.py` and `tests/test_mcp_server.py`), which use the
+existing graph transport fixture and public adapter paths.

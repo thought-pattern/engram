@@ -24,5 +24,6 @@ def test_the_reference_shape_is_still_enforced() -> None:
     incomplete = {key: value for key, value in ASSERTION_REFERENCE_A.items() if key != "dependency_state_digest"}
     with pytest_raises(ValueError, match="invalid shape"):
         validate_support_reference(incomplete)
-    with pytest_raises(ValueError, match="does not match record_kind"):
-        validate_support_reference({**ASSERTION_REFERENCE_A, "id": "prp_" + "a" * 64})
+    # Record identifiers are opaque; record_kind implies no identifier prefix or length.
+    opaque_id = "01999a4e-7c3b-7d2a-9f1e-3b5c7d9e1f20"
+    assert validate_support_reference({**ASSERTION_REFERENCE_A, "id": opaque_id}).get("id", "") == opaque_id

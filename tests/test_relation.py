@@ -35,6 +35,13 @@ def proposition_row(proposition_id: str = "proposition:ada-birthplace", object_i
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",
         "object_entity_id": object_id,
+        "polarity": "positive",
+        "modality_family": "none",
+        "modality_operator": "none",
+        "argument_count": 2,
+        "qualification_count": 0,
+        "context_count": 0,
+        "applicability_count": 0,
         "invalidated_at": "",
         "invalidated_at_available": False,
         "system_from": "2026-01-01T00:00:00Z",
@@ -79,7 +86,7 @@ def internal_current(result: dict) -> dict:
     values = dict(result.get("projection", {}))
     values.update(
         {
-            "projection_id": PropositionProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -299,7 +306,7 @@ def test_one_hop_plan_accepts_only_selected_identity_and_allowlisted_fields() ->
 
     plan = one_hop_query_plan(subject, predicate, ExpectedObjectType.PLACE, max_rows=3)
 
-    assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_PROPOSITION_V1
+    assert plan["template_id"] == RelationPlanTemplate.ONE_HOP_PROPOSITION
     assert set(plan) == {
         "template_id",
         "subject_entity_id",
@@ -344,7 +351,7 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
     )
 
     assert len(result) == 1
-    assert result[0]["projection"]["projection_id"] == PropositionProjectionQuery.RELATION_ONE_HOP_V1
+    assert result[0]["projection"]["projection_id"] == PropositionProjectionQuery.RELATION_ONE_HOP
     assert captured.get("parameters", {}) == {
         "subject_entity_id": "entity:ada-lovelace",
         "predicate_id": "predicate:birth-place",

@@ -255,6 +255,13 @@ def trim_projection(index: int) -> dict:
         "subject_entity_id": "entity:ada",
         "predicate_id": "predicate:built",
         "object_entity_id": f"entity:object-{index}",
+        "polarity": "positive",
+        "modality_family": "none",
+        "modality_operator": "none",
+        "argument_count": 2,
+        "qualification_count": 0,
+        "context_count": 0,
+        "applicability_count": 0,
         "invalidated_at": "",
         "invalidated_at_available": False,
         "system_from": "2026-01-01T00:00:00Z",
@@ -276,14 +283,14 @@ def trim_projection(index: int) -> dict:
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY)
     return result
 
 
 def current_projection(discovered: dict) -> dict:
     values = dict(discovered)
     values.update(
-        projection_id=PropositionProjectionQuery.BY_ID_V1,
+        projection_id=PropositionProjectionQuery.BY_ID,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=0.0,

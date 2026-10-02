@@ -12,8 +12,9 @@ from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import CONVERSATION_REPORT_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.constants import CONVERSATION_REPORT_VERSION, DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.errors import InvalidRequestError
+from engram.feedback import canonical_utc
 from engram.template import TEMPLATE_RANDOM
 from engram.text import normalize
 
@@ -153,16 +154,12 @@ class ConversationRuntime:
         self,
         engram,
         user_id: str = "0",
-        anonymous_session_id: str = "",
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
+        clock=(),
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
-        if not isinstance(anonymous_session_id, str):
-            raise InvalidRequestError("anonymous_session_id must be a string")
-        if anonymous_session_id and user_id != "":
-            raise InvalidRequestError("anonymous_session_id requires an empty user_id")
         if not isinstance(initial_bot_text, str):
             raise InvalidRequestError("initial_bot_text must be a string")
         try:
@@ -175,13 +172,16 @@ class ConversationRuntime:
             raise InvalidRequestError("random_seed must be an integer")
         if not isinstance(random_seed_present, bool):
             raise InvalidRequestError("random_seed_present must be a boolean")
+        if clock != () and not callable(clock):
+            raise InvalidRequestError("clock must be callable")
 
         self.engram = engram
-        self.user_id = user_id if user_id == "" else normalized_user_id
-        self.session_id = anonymous_session_id or normalized_user_id
+        self.user_id = normalized_user_id
+        self.session_id = normalized_user_id
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
+        self.clock = clock
         self.started_at = utc_now()
         # Past turns are not kept: responses read the session's bounded
         # history, not a transcript. The report summary uses running counts,
@@ -192,10 +192,21 @@ class ConversationRuntime:
         self.catch_all_turns = 0
         self.lock = threading_RLock()
 
-        sessions.get_session(engram, self.session_id, create_if_missing=True)
-        if initial_bot_text:
-            sessions.update_session_context(engram, self.session_id, initial_bot_text)
-        self.metrics_baseline = metrics.get_metrics(engram)
+        with engram.session_lock:
+            prior_session = engram.sessions.get(self.session_id, {})
+            if self.user_id == DEFAULT_USER_ID:
+                sessions.delete_session(engram, self.session_id)
+            try:
+                sessions.get_session(engram, self.session_id, create_if_missing=True)
+                if initial_bot_text:
+                    sessions.update_session_context(engram, self.session_id, initial_bot_text)
+                self.metrics_baseline = metrics.get_metrics(engram)
+            except BaseException:
+                if self.user_id == DEFAULT_USER_ID:
+                    sessions.delete_session(engram, self.session_id)
+                    if prior_session:
+                        engram.sessions[self.session_id] = prior_session
+                raise
 
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
@@ -223,11 +234,15 @@ class ConversationRuntime:
                 random_token = TEMPLATE_RANDOM.set(Random(self.random_seed + turn_number))
             started = time_perf_counter()
             try:
+                evaluation_clock = self.clock() if callable(self.clock) else datetime.now(UTC)
+                if not isinstance(evaluation_clock, datetime):
+                    raise ValueError("clock must return a datetime")
                 result = pipeline.respond(
                     self.engram,
                     text,
                     context_id=self.session_id,
                     user_id=self.user_id,
+                    evaluation_time=canonical_utc(evaluation_clock),
                 )
             finally:
                 if random_token:

@@ -17,6 +17,7 @@ GLOBAL_VISIBILITY = {
 }
 
 ASSERTION_REFERENCE_A = {
+    "schema_version": "tapestry-engram-support",
     "record_kind": "assertion",
     "id": "ast_" + "a" * 64,
     "state_revision": 0,

@@ -1,14 +1,25 @@
 """Transport-neutral facade tests shared by CLI, MCP, and future adapters."""
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from threading import Event as threading_Event, Thread as threading_Thread
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES, RESOLUTION_RESULT_FIELDS, ResolutionOutcome, Tier
+from engram import metrics, sessions
+from engram.constants import (
+    ANONYMOUS_CONVERSATION_LEASE_SECONDS,
+    MAX_CACHE_REQUEST_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    RESOLUTION_RESULT_FIELDS,
+    ResolutionOutcome,
+    Tier,
+)
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     InvalidRequestError,
     LifecycleError,
     ResolutionCancelledError,
@@ -153,6 +164,7 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
             return []
 
     engine.internal_graph_client = BlockingGraph()
+    engine.config["graph"]["enabled"] = True
     engine.pattern_matcher.clear()
     core = EngramCore(engine)
     core.start_conversation(user_id="graph-user")
@@ -236,32 +248,89 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
     assert core.chat("Carol", "Hello")["user_id"] == "Carol"
 
 
-def test_anonymous_conversations_use_fresh_ephemeral_context_without_aliasing_zero() -> None:
+def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     core = EngramCore()
-    core.start_conversation("0", initial_bot_text="Explicit zero context.")
+    named_id = " named:π "
+    core.start_conversation(named_id, initial_bot_text="Named context.")
+    first = core.start_conversation("0", initial_bot_text="Explicit zero context.")
+    first_token = first.get("conversation_token", "")
+    assert first_token
+    with pytest_raises(ConflictError):
+        core.start_conversation("")
+    with pytest_raises(ConversationOwnershipError):
+        core.stop_conversation("0")
+    with pytest_raises(ConversationOwnershipError):
+        core.chat("0", "Taking over someone else's anonymous conversation.", conversation_token="wrong")
+    assert (
+        core.inspect_conversation("0", conversation_token=first_token).get("session", {}).get("previous_response", "")
+        == "Explicit zero context."
+    )
+    core.stop_conversation("0", conversation_token=first_token)
 
-    first_start = core.start_conversation("")
-    first_runtime = core.get_conversation("")
-    first_session_id = first_runtime.session_id
-    first_turn = core.chat("", "Hello")
+    started = core.start_conversation("")
+    runtime = core.get_conversation("")
+    token = started.get("conversation_token", "")
 
-    assert first_start["user_id"] == ""
-    assert first_session_id != "0"
-    assert first_turn["user_id"] == ""
-    assert first_turn["context_changes"]["previous_response"]["before"] == ""
-    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+    assert started.get("user_id", "") == "0"
+    assert token and token != first_token
+    assert runtime.session_id == "0"
+    assert core.inspect_conversation("", conversation_token=token).get("session", {}).get("previous_response", "") == ""
+    assert core.inspect_conversation("0", conversation_token=token).get("session", {}).get("previous_response", "") == ""
+    assert core.finish_conversation("0", conversation_token=token).get("metrics_baseline", {}).get("session_count", 0) == 2
 
-    stopped = core.stop_conversation("")
-    assert stopped["user_id"] == ""
-    assert first_session_id not in core.engram.sessions
+    core.conversation_activity["0"] -= ANONYMOUS_CONVERSATION_LEASE_SECONDS
+    expired_replacement = core.start_conversation("")
+    assert expired_replacement.get("conversation_token", "") not in {"", token}
+    core.stop_conversation("", conversation_token=expired_replacement.get("conversation_token", ""))
+    core.set_predicate("0", "preserved", "value")
+    with pytest_raises(InvalidRequestError):
+        core.start_conversation("", initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))
+    assert core.get_predicate("0", "preserved", "missing") == "value"
+    assert core.inspect_conversation(named_id).get("user_id", "") == named_id
+    core.stop_conversation(named_id)
+    core.start_conversation(named_id)
+    assert core.inspect_conversation(named_id).get("session", {}).get("previous_response", "") == "Named context."
 
-    second_start = core.start_conversation("")
-    second_runtime = core.get_conversation("")
 
-    assert second_start["user_id"] == ""
-    assert second_runtime.session_id != first_session_id
-    assert core.inspect_conversation("")["session"]["previous_response"] == ""
-    assert core.inspect_conversation("0")["session"]["previous_response"] == "Explicit zero context."
+@pytest_mark.parametrize("failure_site", ["context", "metrics"])
+def test_unknown_user_start_restores_existing_session_after_initialization_failure(monkeypatch, failure_site: str) -> None:
+    core = EngramCore()
+    prior_session = sessions.get_session(core.engram, "0")
+    prior_session["previous_response"] = "prior response"
+    prior_session["predicates"] = {"preserved": "value"}
+    prior_values = deepcopy(prior_session)
+    expected = RuntimeError(f"{failure_site} initialization failed")
+    cause = ValueError(f"{failure_site} cause")
+    replacement_sessions = []
+    original_update = sessions.update_session_context
+
+    def failing_update(engram, session_id, previous_response):
+        replacement = engram.sessions.get(session_id, {})
+        replacement_sessions.append(replacement)
+        original_update(engram, session_id, previous_response)
+        raise expected from cause
+
+    def failing_metrics(engram):
+        raise expected from cause
+
+    if failure_site == "context":
+        monkeypatch.setattr(sessions, "update_session_context", failing_update)
+    else:
+        monkeypatch.setattr(metrics, "get_metrics", failing_metrics)
+
+    with pytest_raises(RuntimeError) as caught:
+        core.start_conversation("0", initial_bot_text="replacement response")
+
+    restored = core.engram.sessions.get("0", {})
+    assert caught.value is expected
+    assert caught.value.__cause__ is cause
+    assert restored is prior_session
+    assert restored == prior_values
+    assert "0" not in core.conversations
+    if failure_site == "context":
+        assert replacement_sessions
+        assert replacement_sessions[0] is not prior_session
+        assert replacement_sessions[0].get("previous_response", "") == "replacement response"
 
 
 def test_regulated_cache_does_not_require_a_chat_conversation() -> None:

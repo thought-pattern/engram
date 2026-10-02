@@ -15,23 +15,60 @@ stative participle (``located in``), and a nominal head a noun role
 article (``a member of`` vs ``located in``).
 
 The frame is derived from each predicate without retaining hidden module
-state. A small override map keyed by slug corrects spaCy's residual
-single-token misreads (``precedes`` reads as a noun) and gives the temporal
-predicates an idiom (``date of birth`` -> ``was born on``). An override never
+state. Parsed alone, a finite verb such as ``prevents`` reads as a plural
+noun and ``get`` reads as an infinitive. Such a label is re-read after a
+subject pronoun and becomes a verb only if WordNet knows its lemma as one.
+A small override map keyed by slug gives the temporal predicates an idiom
+(``date of birth`` -> ``was born on``) and fixes the remaining misreads. An override never
 calls spaCy, so those phrase even if the model is unavailable; everything
 else degrades to a bare active verb rather than crashing -- ENGRAM's recall
 is best-effort.
 
-This is presentation only. ENGRAM keeps its own copy of the frame logic.
+This is presentation only. ENGRAM owns the packaged idiomatic frame data that
+Tapestry also reads, while each process owns its parser policy. ENGRAM does not
+depend on Tapestry. Dynamic labels are literal text, never extra format fields.
 """
+
+from nltk.corpus import wordnet
 
 from engram.constants import FRAME_OVERRIDES, VOWELS
 from engram.spacy_setup import get_nlp
+from engram.text import initialize_nltk_readers
 
 
 def deslug(predicate: str) -> str:
     """Turn a canonical slug into its surface label (``located_in`` -> ``located in``)."""
     result = predicate.replace("_", " ").strip()
+    return result
+
+
+def finite_verb_label(nlp, head, normalized: str) -> bool:
+    """Recognize a verb label that spaCy misreads when it is parsed alone.
+
+    Parsed alone, ``prevents`` or ``results in`` reads as a plural noun, and
+    ``get`` or ``work better with`` reads as an infinitive. After a subject
+    pronoun the tagger reads each one as a finite verb. WordNet must also know
+    the lemma as a verb, so a noun role such as ``genre`` keeps its noun
+    reading. Without WordNet data the label keeps its parsed reading, as
+    recall phrasing is best-effort.
+    """
+    plural_noun = head.pos_ == "NOUN" and head.morph.get("Number", []) == ["Plur"]
+    if not plural_noun and head.morph.get("VerbForm", []) != ["Inf"]:
+        result = False
+        return result
+    carried = nlp("it " + normalized)
+    if len(carried) < 2:
+        result = False
+        return result
+    token = carried[1]
+    if token.pos_ != "VERB" or token.morph.get("VerbForm", []) != ["Fin"]:
+        result = False
+        return result
+    try:
+        initialize_nltk_readers()
+        result = bool(wordnet.synsets(token.lemma_, pos=wordnet.VERB))
+    except LookupError:
+        result = False
     return result
 
 
@@ -43,8 +80,9 @@ def frame_for_label(label: str) -> str:
     """
     nlp = get_nlp(disable=("parser", "ner"))
     normalized = label.lower().strip()
+    literal_label = label.replace("{", "{{").replace("}", "}}")
     if not nlp:
-        result = "{s} " + label + " {o}"
+        result = "{s} " + literal_label + " {o}"
         return result
 
     doc = nlp(normalized)
@@ -52,40 +90,47 @@ def frame_for_label(label: str) -> str:
     ends_prep = doc[-1].pos_ == "ADP"
     verb_form = head.morph.get("VerbForm", [])
 
-    if normalized.endswith(" by"):
-        result = "{s} was " + label + " {o}"
+    if head.pos_ == "AUX":
+        # The label carries its own auxiliary (``is succeeded by``, ``can be``).
+        result = "{s} " + literal_label + " {o}"
         return result
 
-    if verb_form == ["Fin"]:
-        result = "{s} " + label + " {o}"
+    if normalized.endswith(" by"):
+        result = "{s} was " + literal_label + " {o}"
+        return result
+
+    if verb_form == ["Fin"] or finite_verb_label(nlp, head, normalized):
+        result = "{s} " + literal_label + " {o}"
         return result
 
     if verb_form == ["Part"]:
         # A participle behind a preposition is stative (`located in`); a
         # bare participle is a past-tense active verb (`created`).
         if ends_prep:
-            result = "{s} is " + label + " {o}"
+            result = "{s} is " + literal_label + " {o}"
             return result
-        result = "{s} " + label + " {o}"
+        result = "{s} " + literal_label + " {o}"
         return result
 
     if verb_form == ["Inf"]:
         # spaCy reads a bare standalone noun (`genre`) as a base-form verb;
         # in this vocabulary those are noun roles.
-        result = "{s}'s " + label + " is {o}"
+        result = "{s}'s " + literal_label + " is {o}"
         return result
 
-    if head.pos_ in ("NOUN", "PROPN", "ADJ"):
+    if head.pos_ == "ADJ":
+        result = "{s} is " + literal_label + " {o}"
+        return result
+
+    if head.pos_ in ("NOUN", "PROPN"):
         if ends_prep:
-            article = ""
-            if head.pos_ in ("NOUN", "PROPN"):
-                article = "an " if normalized[:1] in VOWELS else "a "
-            result = "{s} is " + article + label + " {o}"
+            article = "an " if normalized[:1] in VOWELS else "a "
+            result = "{s} is " + article + literal_label + " {o}"
             return result
-        result = "{s}'s " + label + " is {o}"
+        result = "{s}'s " + literal_label + " is {o}"
         return result
 
-    result = "{s} " + label + " {o}"
+    result = "{s} " + literal_label + " {o}"
     return result
 
 

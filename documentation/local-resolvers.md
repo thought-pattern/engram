@@ -60,7 +60,7 @@ same way as sparse documents, so only new or changed representations are encoded
 record, scan, and memory budgets are still checked before any encoding. Artifact,
 checksum, model, or dimension failure affects only semantic retrieval.
 
-The optional `transparent_logistic_v1` reranker scores only the already fused bounded
+The optional `transparent_logistic` reranker scores only the already fused bounded
 shortlist with fixed visible coefficients. Failure preserves
 the baseline order. Native semantic retrieval is qualified; the reranker remains
 unpromoted and disabled. The two flags can be rolled back separately.

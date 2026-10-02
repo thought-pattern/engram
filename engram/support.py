@@ -10,6 +10,7 @@ from engram.validation import require_any_text
 
 MAX_CONTRACT_NAME_BYTES = 128
 SUPPORT_REFERENCE_FIELDS = {
+    "schema_version",
     "record_kind",
     "id",
     "state_revision",
@@ -61,6 +62,7 @@ def validate_support_reference(value) -> dict:
     """Validate and defensively copy one opaque support reference."""
     if not isinstance(value, dict) or set(value) != SUPPORT_REFERENCE_FIELDS:
         raise ValueError("support reference has an invalid shape")
+    schema_version = require_any_text(value.get("schema_version", ""), "support schema_version", MAX_CONTRACT_NAME_BYTES)
     representation_contract = require_any_text(
         value.get("representation_contract", ""),
         "support representation_contract",
@@ -70,9 +72,6 @@ def validate_support_reference(value) -> dict:
     if kind not in {"assertion", "proposition"}:
         raise ValueError("support record_kind is not registered")
     identifier = require_any_text(value.get("id", ""), "support identifier", MAX_METADATA_BYTES)
-    expected_prefix = "ast_" if kind == "assertion" else "prp_"
-    if not identifier.startswith(expected_prefix) or len(identifier) != 68:
-        raise ValueError("support identifier does not match record_kind")
     state_revision = support_revision(value.get("state_revision", {}), "support state_revision")
     proposition_revision = value.get("support_revision", {})
     if kind == "proposition":
@@ -83,6 +82,7 @@ def validate_support_reference(value) -> dict:
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
     result = {
+        "schema_version": schema_version,
         "record_kind": kind,
         "id": identifier,
         "state_revision": state_revision,
@@ -103,3 +103,22 @@ def validate_support_references(value) -> tuple:
     if len(keys) != len(set(keys)):
         raise ValueError("support_references contain duplicate durable records")
     return references
+
+
+def validate_statement_scope_bindings(value) -> tuple:
+    """Keep removal ownership after accepted artifacts or full receipts expire."""
+    if not isinstance(value, tuple):
+        raise ValueError("statement scope bindings must be a tuple")
+    bindings = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"statement_id", "visibility_scope"}:
+            raise ValueError("statement scope binding fields are malformed")
+        identifier = require_any_text(item.get("statement_id"), "scope binding statement_id", MAX_METADATA_BYTES)
+        scope = validate_support_visibility(item.get("visibility_scope"))
+        key = (identifier, scope.get("kind"), *(scope.get(field) or "" for field in ("company_id", "customer_id", "engagement_id")))
+        if key in seen:
+            raise ValueError("statement scope bindings contain a duplicate")
+        seen.add(key)
+        bindings.append({"statement_id": identifier, "visibility_scope": scope})
+    return tuple(bindings)

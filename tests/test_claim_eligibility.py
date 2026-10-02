@@ -47,6 +47,13 @@ def internal_projection(ownership: str = "PUBLIC") -> dict:
         "subject_entity_id": "entity:account",
         "predicate_id": "predicate:status",
         "object_entity_id": "entity:active",
+        "polarity": "positive",
+        "modality_family": "none",
+        "modality_operator": "none",
+        "argument_count": 2,
+        "qualification_count": 0,
+        "context_count": 0,
+        "applicability_count": 0,
         "invalidated_at": "",
         "invalidated_at_available": False,
         "system_from": "2026-01-01T00:00:00Z",
@@ -68,7 +75,7 @@ def internal_projection(ownership: str = "PUBLIC") -> dict:
         "semantic_similarity": 0.0,
         "semantic_similarity_available": False,
     }
-    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY_V1)
+    result = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY)
     return result
 
 
@@ -82,7 +89,7 @@ def changed_projection(projection: dict, **changes) -> dict:
 def internal_current(projection: dict, **changes) -> dict:
     result = changed_projection(
         projection,
-        projection_id=PropositionProjectionQuery.BY_ID_V1,
+        projection_id=PropositionProjectionQuery.BY_ID,
         structured_match=0.0,
         structured_match_available=False,
         semantic_similarity=0.0,

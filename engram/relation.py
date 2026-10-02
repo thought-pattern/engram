@@ -252,12 +252,18 @@ def dependency_predicate_surfaces(text: object) -> tuple[tuple[str, str, float],
             and any(child.dep_ in {"aux", "auxpass"} for child in token.children)
         )
         if (token.pos_ == "VERB" or predicate_root) and lemma and lemma not in auxiliaries:
-            values.append((lemma, "verb_lemma", 0.12))
+            token_surface = normalize_retrieval_key(token.text)
             prepositions = [child for child in token.children if child.dep_ == "prep" and child.text]
-            values.extend(
-                (f"{lemma} {normalize_retrieval_key(preposition.text)}", "dependency_preposition", 0.08)
-                for preposition in prepositions
-            )
+            if lemma == "classify" and any(normalize_retrieval_key(item.text) == "as" for item in prepositions):
+                values.append(("is a", "copular_classification", 0.04))
+            values.append((lemma, "verb_lemma", 0.12))
+            if token_surface and token_surface != lemma:
+                values.append((token_surface, "verb_surface", 0.1))
+            for preposition in prepositions:
+                preposition_surface = normalize_retrieval_key(preposition.text)
+                values.append((f"{lemma} {preposition_surface}", "dependency_preposition", 0.08))
+                if token_surface and token_surface != lemma:
+                    values.append((f"{token_surface} {preposition_surface}", "dependency_surface", 0.06))
         elif token.pos_ == "ADP" and (
             token.head.pos_ == "VERB"
             or (
@@ -344,21 +350,21 @@ def one_hop_query_plan(
     expected_object_type: object,
     *,
     max_rows: object = MAX_RELATION_PLAN_ROWS,
-    template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
+    template_id: object = RelationPlanTemplate.ONE_HOP_PROPOSITION,
 ) -> dict:
     """Compile only the fixed one-hop template; Cypher and procedures are not inputs."""
     entity = validate_canonical_resolution(subject)
     relation = validate_canonical_resolution(predicate)
     if entity["status"] != CanonicalResolutionStatus.SELECTED or relation["status"] != CanonicalResolutionStatus.SELECTED:
         raise InvalidRequestError("one-hop query plan requires selected entity and Predicate identities")
-    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION_V1:
+    if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION:
         raise InvalidRequestError("one-hop query plan template is unsupported")
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("one-hop query plan expected object type is unsupported")
     if isinstance(max_rows, bool) or not isinstance(max_rows, int) or not 1 <= max_rows <= MAX_RELATION_PLAN_ROWS:
         raise InvalidRequestError(f"one-hop query plan max_rows must be from 1 through {MAX_RELATION_PLAN_ROWS}")
     result: dict = {
-        "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION_V1,
+        "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION,
         "subject_entity_id": entity["canonical_id"],
         "predicate_id": relation["canonical_id"],
         "expected_object_type": expected_object_type,

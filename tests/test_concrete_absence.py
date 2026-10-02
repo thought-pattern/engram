@@ -24,7 +24,7 @@ def none_paths(value, path: str = "root") -> list[str]:
 def test_representative_outputs_are_recursively_concrete() -> None:
     engram = Engram()
     core = EngramCore(engram)
-    core.start_conversation(random_seed=0, random_seed_present=True)
+    started = core.start_conversation(random_seed=0, random_seed_present=True)
     fact = core.add_fact("Tokyo is the capital of Japan.", source_label="research")
     runtime = core.get_conversation("0")
 
@@ -32,7 +32,7 @@ def test_representative_outputs_are_recursively_concrete() -> None:
         "status": core.status(),
         "pipeline": pipeline_result("", "none"),
         "fact": fact,
-        "inspection": core.inspect_conversation("0"),
+        "inspection": core.inspect_conversation("0", conversation_token=started.get("conversation_token", "")),
         "report": runtime.report(),
     }
 

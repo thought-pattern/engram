@@ -52,6 +52,13 @@ def internal_relation(raw: list[object]):
             "subject_entity_id": subject_id,
             "predicate_id": predicate_id,
             "object_entity_id": object_id,
+            "polarity": "positive",
+            "modality_family": "none",
+            "modality_operator": "none",
+            "argument_count": 2,
+            "qualification_count": 0,
+            "context_count": 0,
+            "applicability_count": 0,
             "invalidated_at": "",
             "invalidated_at_available": False,
             "system_from": "2020-01-01T00:00:00Z",
@@ -84,7 +91,7 @@ def internal_current(item):
     values = dict(item["projection"])
     values.update(
         {
-            "projection_id": PropositionProjectionQuery.BY_ID_V1,
+            "projection_id": PropositionProjectionQuery.BY_ID,
             "structured_match": 0.0,
             "structured_match_available": False,
             "semantic_similarity": 0.0,
@@ -98,7 +105,7 @@ def internal_current(item):
 
 
 def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
-    raw = case.get("branches", []) or ([case["predicates"]] if "predicates" in case else [])
+    raw = case.get("branches", []) or ([case.get("predicates", [])] if "predicates" in case else [])
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []

@@ -21,7 +21,8 @@ Usage:
 """
 
 from engram import sessions as sessions_mod
-from engram.constants import QUESTION_WORDS
+from engram.constants import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
+from engram.nlp import input_kind
 
 
 def pipeline_result(
@@ -75,6 +76,31 @@ def attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
     return result
 
 
+def retract_response(engram, session_id: str, response: str) -> bool:
+    """Remove a recorded, not-yet-shown response from the session.
+
+    pattern_query records its response into the session before the pipeline
+    decides whether graph recall answers instead. Left in place, the replaced
+    response would poison previous_response and linger as a phantom history
+    entry. Retraction restores previous_response to the prior turn's answer.
+    """
+    if not session_id or not response:
+        return False
+    with engram.session_lock:
+        session = engram.sessions.get(session_id, {})
+        if not session:
+            return False
+        history = session.get("response_history", [])
+        if history and history[0] == response:
+            history.pop(0)
+            that_history = session.get("that_history", [])
+            if that_history:
+                that_history.pop(0)
+        if session.get("previous_response", "") == response:
+            session["previous_response"] = history[0] if history else ""
+    return True
+
+
 def update_session(engram, session_id: str, response: str) -> bool:
     """Record a response into the session context, creating the session if needed."""
     if not session_id:
@@ -92,6 +118,7 @@ def respond(
     high_confidence: float = 0.7,
     context_limit: int = 3,
     user_id: str = "",
+    evaluation_time: str = "",
 ) -> dict:
     """Answer text through the conversational strategy: pattern, statement, then LLM.
 
@@ -118,6 +145,8 @@ def respond(
             answers without the LLM (scores run 0.0 - 1.0).
         context_limit: Maximum retrieved statements passed to llm_fn.
         user_id: Optional caller-owned identity for learned-fact attribution.
+        evaluation_time: Optional canonical UTC timestamp used by graph
+            recall for this turn.
 
     Returns:
         Pipeline result dict (response, source, score, matches, keywords).
@@ -133,9 +162,33 @@ def respond(
         text,
         context_id=context_id,
         user_id=user_id,
+        include_graph=False,
     )
+    stmt = {}
+    captured = []
+    response = ""
     if pattern_result:
         stmt, captured, response = pattern_result
+
+    # Graph recall takes precedence for questions and commands, applied once
+    # for the complete turn with the turn's evaluation clock.
+    graph_enabled = bool((engram.config.get("graph") or {}).get("enabled"))
+    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION}
+    graph_response = engram.graph_lookup(text, evaluation_time=evaluation_time) if graph_enabled and graph_eligible else ""
+    if graph_response:
+        if response:
+            retract_response(engram, context_id, response)
+        update_session(engram, context_id, graph_response)
+        graph_result = pipeline_result(
+            graph_response,
+            "graph",
+            score=1.0,
+            user_id=context_id,
+        )
+        result = attach_dialogue_state(engram, graph_result, context_id)
+        return result
+
+    if pattern_result:
         matched_pattern = stmt["pattern"] if stmt else ""
         is_fallback = not stmt and response == engram.config["fallback_response"]
         if response and not is_fallback:

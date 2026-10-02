@@ -1,7 +1,10 @@
 """MCPServer adapter for the transport-neutral Engram core."""
 
+from argparse import ArgumentParser as argparse_ArgumentParser
+from copy import deepcopy
 from functools import wraps as functools_wraps
 from logging import getLogger as logging_getLogger
+from sys import argv as sys_argv
 from threading import RLock as threading_RLock
 
 from mcp.server.mcpserver import MCPServer
@@ -9,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
 from engram.constants import EMPTY_METADATA, VERSION
+from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
 from engram.errors import ConflictError, EngramCoreError, LifecycleError
 from engram.service import EngramCore, normalize_service_user_id
 
@@ -42,9 +46,18 @@ def guarded_tool(operation):
 class MCPConversationService:
     """MCP lifecycle state delegating all Engram behavior to ``EngramCore``."""
 
-    def __init__(self) -> None:
+    def __init__(self, static_pairs=(), *, require_catch_all: bool = True) -> None:
+        if not isinstance(require_catch_all, bool):
+            raise ValueError("require_catch_all must be a boolean")
+        selected_pairs = load_conversation_pairs() if static_pairs == () else static_pairs
+        if not isinstance(selected_pairs, list) or not all(isinstance(pair, dict) for pair in selected_pairs):
+            raise ValueError("static_pairs must be a list of objects")
+        if require_catch_all:
+            require_conversation_catch_all(selected_pairs)
+        self.static_pairs = deepcopy(selected_pairs)
         self.core = ()
         self.active_user_id = ""
+        self.active_conversation_token = ""
         self.lock = threading_RLock()
 
     @property
@@ -74,6 +87,10 @@ class MCPConversationService:
             conversation_user_id = normalize_service_user_id(user_id)
             core = EngramCore(config=config)
             try:
+                # Seed files named by the configuration load when the core
+                # starts; the adapter's static data applies only without them.
+                if not (config.get("conversation") or {}).get("seed_files"):
+                    core.engram.load_static_data(deepcopy(self.static_pairs))
                 started = core.start_conversation(
                     user_id=conversation_user_id,
                     initial_bot_text=initial_bot_text,
@@ -85,20 +102,21 @@ class MCPConversationService:
                 raise
             self.core = core
             self.active_user_id = conversation_user_id
+            self.active_conversation_token = str(started.get("conversation_token", "") or "")
             return started
 
     def send(self, text: str) -> dict:
         """Submit exactly one conversational message."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.chat(user_id, text)
+            result = core.chat(user_id, text, conversation_token=self.active_conversation_token)
             return result
 
     def inspect(self) -> dict:
         """Inspect user context, learned facts, and metrics."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.inspect_conversation(user_id)
+            result = core.inspect_conversation(user_id, conversation_token=self.active_conversation_token)
             return result
 
     def add_fact(self, text: str, source_label: str = "") -> dict:
@@ -112,17 +130,18 @@ class MCPConversationService:
         """Return the current report without ending the conversation."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.finish_conversation(user_id)
+            result = core.finish_conversation(user_id, conversation_token=self.active_conversation_token)
             return result
 
     def stop(self) -> dict:
         """Discard process memory and release the MCP-owned core."""
         with self.lock:
             core, user_id = self.require_active()
-            result = core.stop_conversation(user_id)
+            result = core.stop_conversation(user_id, conversation_token=self.active_conversation_token)
             core.close()
             self.core = ()
             self.active_user_id = ""
+            self.active_conversation_token = ""
             return result
 
     def propose(
@@ -148,6 +167,38 @@ class MCPConversationService:
                 limit=limit,
                 required_metadata=required_metadata,
                 required_source_label=required_source_label,
+            )
+            return result
+
+    def query(
+        self,
+        request: str,
+        request_id: str,
+        user_id: str = "0",
+        namespace: str = "",
+        context_fingerprint: str = "",
+        identity: dict = EMPTY_METADATA,
+        required_metadata: dict = EMPTY_METADATA,
+        required_source_label: str = "",
+        budget: dict = EMPTY_METADATA,
+        configured_resolvers: tuple[str, ...] = (),
+        accept_exact: bool = False,
+    ) -> dict:
+        """Run the shared transport-neutral resolution pipeline."""
+        with self.lock:
+            core, _ = self.require_active()
+            result = core.resolve_request(
+                request=request,
+                request_id=request_id,
+                user_id=user_id,
+                namespace=namespace,
+                context_fingerprint=context_fingerprint,
+                identity=identity,
+                required_metadata=required_metadata,
+                required_source_label=required_source_label,
+                budget=budget,
+                configured_resolvers=tuple(configured_resolvers),
+                accept_exact=accept_exact,
             )
             return result
 
@@ -191,6 +242,13 @@ class MCPConversationService:
             result = core.retire_response(statement_id, reason, request_id)
             return result
 
+    def retire_responses(self, entries: list[dict]) -> dict:
+        """Retire an ordered bounded group through the shared core owner."""
+        with self.lock:
+            core, _ = self.require_active()
+            result = core.retire_responses(entries)
+            return result
+
     def require_active(self) -> tuple[EngramCore, str]:
         if not isinstance(self.core, EngramCore) or self.active_user_id == "":
             raise LifecycleError("no active conversation; call engram_start first")
@@ -206,9 +264,9 @@ class EngramMCPServer(MCPServer):
             "Engram",
             version=VERSION,
             instructions=(
-                "Use engram_start once, then use engram_send for chatbot turns or the propose/resolve tools "
-                "for regulated cache work. Use engram_inspect for context and provenance, and engram_finish "
-                "for an in-memory report."
+                "Use engram_start once, then use engram_send for chatbot turns, engram_query for unified "
+                "information resolution, or the propose/resolve tools for regulated cache work. Use "
+                "engram_inspect for context and provenance, and engram_finish for an in-memory report."
             ),
         )
         self.conversation_service = service or MCPConversationService()
@@ -219,10 +277,12 @@ class EngramMCPServer(MCPServer):
             self.engram_add_fact,
             self.engram_finish,
             self.engram_stop,
+            self.engram_query,
             self.engram_propose,
             self.engram_resolve,
             self.engram_learn_response,
             self.engram_retire_response,
+            self.engram_retire_responses,
         ):
             self.tool()(guarded_tool(operation))
 
@@ -267,6 +327,36 @@ class EngramMCPServer(MCPServer):
     def engram_stop(self) -> dict:
         """Discard process memory and release the active conversation."""
         result = self.conversation_service.stop()
+        return result
+
+    def engram_query(
+        self,
+        request: str,
+        request_id: str,
+        user_id: str = "0",
+        namespace: str = "",
+        context_fingerprint: str = "",
+        identity: dict = EMPTY_METADATA,
+        required_metadata: dict = EMPTY_METADATA,
+        required_source_label: str = "",
+        budget: dict = EMPTY_METADATA,
+        configured_resolvers: tuple[str, ...] = (),
+        accept_exact: bool = False,
+    ) -> dict:
+        """Resolve one information request through the shared Engram core."""
+        result = self.conversation_service.query(
+            request=request,
+            request_id=request_id,
+            user_id=user_id,
+            namespace=namespace,
+            context_fingerprint=context_fingerprint,
+            identity=identity,
+            required_metadata=required_metadata,
+            required_source_label=required_source_label,
+            budget=budget,
+            configured_resolvers=configured_resolvers,
+            accept_exact=accept_exact,
+        )
         return result
 
     def engram_propose(
@@ -336,10 +426,45 @@ class EngramMCPServer(MCPServer):
         )
         return result
 
+    def engram_retire_responses(self, entries: list[dict]) -> dict:
+        """Retire an ordered bounded group of globally stale responses."""
+        result = self.conversation_service.retire_responses(entries)
+        return result
+
+
+def argument_parser() -> argparse_ArgumentParser:
+    """Build the host-owned stdio launch contract."""
+    parser = argparse_ArgumentParser(description="Run the Engram MCP stdio server")
+    static_group = parser.add_mutually_exclusive_group()
+    static_group.add_argument(
+        "--static-data",
+        default="",
+        metavar="PATH",
+        help="conversation seed JSON (default: the bundled conversational corpus)",
+    )
+    static_group.add_argument(
+        "--no-static-data",
+        action="store_true",
+        help="start in cache-only mode without scripted conversational statements",
+    )
+    return parser
+
+
+def run(argv: tuple[str, ...] = ()) -> None:
+    """Run one configured MCP adapter over the host-owned stdio transport."""
+    parser = argument_parser()
+    args = parser.parse_args(argv)
+    try:
+        static_pairs = [] if args.no_static_data else load_conversation_pairs(args.static_data)
+        service = MCPConversationService(static_pairs=static_pairs, require_catch_all=not args.no_static_data)
+    except ValueError as error:
+        parser.error(str(error))
+    EngramMCPServer(service=service).run(transport="stdio")
+
 
 def main() -> None:
-    """Run the MCP adapter over the host-owned stdio transport."""
-    EngramMCPServer().run(transport="stdio")
+    """Console entry point for the MCP stdio server."""
+    run(tuple(sys_argv[1:]))
 
 
 if __name__ == "__main__":

@@ -3,6 +3,10 @@
 # Copy this file to config.yml and edit it:  cp config.example.yml config.yml
 # config.yml is gitignored (local config); this template is tracked. Any setting
 # you omit falls back to its built-in default (shown below).
+# A host that supplies settings in memory through engram.config.config_from_dict,
+# such as Tapestry's managed server, starts from the config.yml at the repository
+# root and overrides it: its top-level values replace this file's, and its
+# sections (graph, conversation, ...) override this file's sections key by key.
 
 # --- Capacity ---
 capacity: 10000 # Maximum DYNAMIC statements
@@ -73,8 +77,8 @@ semantic:
 # Disable this independently to roll back.
 reranker:
   enabled: false
-  implementation: transparent_logistic_v1
-  model_version: transparent-logistic-v1
+  implementation: transparent_logistic
+  model_version: transparent-logistic
   shortlist_size: 8
   max_input_bytes: 65536
   max_model_time_ms: 25
@@ -93,13 +97,13 @@ rollout:
 utility:
   enabled: false
   plugins:
-    - arithmetic_v1
-    - boolean_v1
-    - set_v1
-    - date_time_v1
-    - unit_conversion_v1
-    - version_v1
-    - identifier_v1
+    - arithmetic
+    - boolean
+    - set
+    - date_time
+    - unit_conversion
+    - version
+    - identifier
 
 # --- Output processing ---
 polish_responses: true # Repair casing in pattern-path responses
@@ -111,8 +115,9 @@ fallback_response: "" # Response when nothing matches ("" = no fallback)
 # Seed files load once at startup, in the order listed. Paths are relative to
 # this file. Leave the list empty for a silent process. To run as a social
 # bot, list the corpus files here. Keep the catch-all pattern in one file.
-# data/seed.json holds the catch-all "*" pattern, so every input gets a pattern
-# reply and the keyword retrieval, LLM, and graph recall fallbacks never run.
+# engram/data/seed.json holds the catch-all "*" pattern, so every input gets a
+# pattern reply and the keyword retrieval and LLM fallbacks never run. An enabled
+# graph still answers questions and commands before the pattern reply.
 # duplicate_policy defaults to error, which rejects a repeated pattern.
 # Set it to last when a later file should replace that same pattern, or
 # first to keep the earlier pair. Different patterns are kept either way.
@@ -122,8 +127,8 @@ conversation:
   seed_files: []
   # To run as a social bot, replace the line above with a list:
   # seed_files:
-  #   - data/seed.json
-  #   - data/software_development.json
+  #   - engram/data/seed.json
+  #   - engram/data/software_development.json
   # AIML tables load before the categories. Leave them unset until a file exists.
   # set_files: []            # JSON object: set name -> list of words
   # map_files: []            # JSON object: map name -> object of strings

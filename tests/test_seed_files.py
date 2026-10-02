@@ -1,6 +1,6 @@
 """Startup loading of the seed files named by conversation config.
 
-These tests use temporary files. They do not pin prose from data/seed.json.
+These tests use temporary files. They do not pin prose from engram/data/seed.json.
 """
 
 from json import dumps as json_dumps, loads as json_loads
@@ -219,7 +219,7 @@ def test_duplicate_policy_rejects_an_unknown_value():
 
 
 def test_hyphenated_questions_match_spaced_corpus_patterns():
-    root = Path(__file__).resolve().parents[1] / "data"
+    root = Path(__file__).resolve().parents[1] / "engram" / "data"
     engram = Engram(
         config=engram_config(
             conversation=conversation_config(
@@ -236,7 +236,7 @@ def test_hyphenated_questions_match_spaced_corpus_patterns():
 
 
 def test_seed_patterns_stay_unique_when_hyphens_become_spaces():
-    root = Path(__file__).resolve().parents[1] / "data"
+    root = Path(__file__).resolve().parents[1] / "engram" / "data"
     names = [
         "seed.json",
         "python.json",

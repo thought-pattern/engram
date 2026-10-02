@@ -31,7 +31,7 @@ def git_output(*arguments: str) -> str:
         text=True,
     )
     # Only trim record terminators.  Leading whitespace is meaningful in
-    # porcelain status output (for example, `` M .github/workflows/ci.yml``).
+    # porcelain status output (for example, `` M .github/workflows/python_analysis.yml``).
     result = process.stdout.rstrip("\r\n")
     return result
 

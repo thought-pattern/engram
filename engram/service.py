@@ -20,6 +20,8 @@ from uuid import uuid4
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
+    ANONYMOUS_CONVERSATION_LEASE_SECONDS,
+    DEFAULT_USER_ID,
     EMPTY_CONFIG,
     EMPTY_MAPPING,
     EMPTY_METADATA,
@@ -34,11 +36,14 @@ from engram.constants import (
     MAX_REASON_CODE_BYTES,
     MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
+    MAX_RETIREMENT_BATCH_ENTRIES,
     MAX_SIGNATURE_INPUT_BYTES,
     MAX_SOURCE_LABEL_BYTES,
     MAX_TRANSIENT_RECORDS,
     PROPOSAL_TTL_SECONDS,
     REGULATOR_OUTCOMES,
+    RETIREMENT_ERROR_MESSAGES,
+    RETIREMENT_FIELD_BYTE_LIMITS,
     CoreState,
     ExactLookupOutcome,
     ExpectedObjectType,
@@ -53,6 +58,7 @@ from engram.core import Engram
 from engram.eligibility import EligibilityContextCapture
 from engram.errors import (
     ConflictError,
+    ConversationOwnershipError,
     IdentityValidationError,
     InvalidRequestError,
     LifecycleError,
@@ -115,7 +121,8 @@ from engram.resolvers import (
 from engram.responses import AcceptedResponseService, LifecycleMutationReason, response_mutation_result_to_dict
 from engram.rewrite import RewriteEngine, apply_rewrites_to_frame, load_default_rewrite_corpus
 from engram.rollout import apply_rollout, rollout_status, select_rollout
-from engram.telemetry import record_regulator_outcome, record_resolution
+from engram.scope_removal import EngagementResponseRemoval, validate_removal_command
+from engram.telemetry import record_graph_recall, record_regulator_outcome, record_resolution
 from engram.text import normalize
 from engram.validation import require_any_text
 
@@ -208,11 +215,14 @@ class ServiceClock:
 class IsolatedGraphClient:
     """Run optional graph calls through a core-owned isolation context."""
 
-    def __init__(self, client, operation_context) -> None:
+    def __init__(self, client, operation_context, telemetry_operation) -> None:
         if not callable(operation_context):
             raise InvalidRequestError("graph operation context must be callable")
+        if not callable(telemetry_operation):
+            raise InvalidRequestError("graph telemetry operation must be callable")
         object.__setattr__(self, "client", client)
         object.__setattr__(self, "operation_context", operation_context)
+        object.__setattr__(self, "telemetry_operation", telemetry_operation)
 
     def __bool__(self) -> bool:
         result = bool(object.__getattribute__(self, "client"))
@@ -225,16 +235,26 @@ class IsolatedGraphClient:
         if not callable(value) or name in {"disconnect", "reconnect_after_turn"}:
             return value
         operation_context = object.__getattribute__(self, "operation_context")
+        telemetry_operation = object.__getattribute__(self, "telemetry_operation")
 
         def isolated(*args, **kwargs):
+            started_ns = time_monotonic_ns()
             with operation_context():
-                result = value(*args, **kwargs)
+                try:
+                    result = value(*args, **kwargs)
+                except Exception:
+                    if name not in {"execute", "vector_search_propositions"}:
+                        telemetry_operation("failure", time_monotonic_ns() - started_ns)
+                    raise
+                if name not in {"execute", "vector_search_propositions"}:
+                    outcome = "hit" if result else "miss"
+                    telemetry_operation(outcome, time_monotonic_ns() - started_ns)
                 return result
 
         return isolated
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name in {"client", "operation_context"}:
+        if name in {"client", "operation_context", "telemetry_operation"}:
             object.__setattr__(self, name, value)
         else:
             setattr(object.__getattribute__(self, "client"), name, value)
@@ -277,13 +297,6 @@ def normalize_service_user_id(user_id: str) -> str:
         return result
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
-
-
-def conversation_user_id(user_id: str) -> str:
-    """Validate a conversation identity while preserving anonymous emptiness."""
-    require_any_text(user_id, "user_id", MAX_CALLER_ID_BYTES, allow_empty=True)
-    result = user_id
-    return result
 
 
 def no_cancellation_check() -> bool:
@@ -431,6 +444,9 @@ class EngramCore:
             raise InvalidRequestError("engram must be an Engram")
         self.engram = selected_engram
         self.conversations: dict[str, ConversationRuntime] = {}
+        # Anonymous ("0") conversations are exclusive: each is owned by the token its start returned.
+        self.conversation_tokens: dict[str, str] = {}
+        self.conversation_activity: dict[str, float] = {}
         self.resolution_requests: dict[str, dict] = {}
         self.internal_clock = ServiceClock(clock)
         self.lock = threading_RLock()
@@ -439,9 +455,15 @@ class EngramCore:
         self.active_resolution_user_ids: set[str] = set()
         self.active_graph_operations = 0
         self.internal_state = CoreState.RUNNING
+        self.engagement_maintenance = {}
+        self.engagement_purged = False
         graph_client = self.engram.graph_client
         if graph_client:
-            self.engram.internal_graph_client = IsolatedGraphClient(graph_client, self.graph_operation)
+            self.engram.internal_graph_client = IsolatedGraphClient(
+                graph_client,
+                self.graph_operation,
+                self.record_graph_operation,
+            )
         self.internal_component_status = deepcopy(self.engram.component_status)
         self.negative_resolutions = NegativeResolutionStore()
         self.reset_regulated_state()
@@ -454,20 +476,22 @@ class EngramCore:
             self.response_coordinator,
             tier_admission_policy(self.engram.config.get("capacity", 1)),
         )
+        self.response_removal = EngagementResponseRemoval(self.response_coordinator, self.engram.feedback_store)
         self.query_frame_builder = QueryFrameBuilder(self.engram, time_monotonic_ns, self.internal_clock)
         self.rewrite_engine: object = (
             RewriteEngine(load_default_rewrite_corpus()) if self.engram.config["retrieval_rewrites_enabled"] else ()
         )
-        self.resolver_registry = ResolverRegistry(
-            (
-                ExactResolver(self.engram, time_monotonic_ns),
-                UtilityResolver(self.engram.utility_registry, time_monotonic_ns),
-                SparseResolver(self.engram, time_monotonic_ns),
-                StandaloneSemanticResolver(self.engram, time_monotonic_ns),
-                StructuredGraphResolver(self.engram, time_monotonic_ns),
-                SupportSemanticResolver(self.engram, time_monotonic_ns),
-            )
+        graph_resolver = StructuredGraphResolver(self.engram, time_monotonic_ns)
+        local_resolvers = (
+            ExactResolver(self.engram, time_monotonic_ns),
+            UtilityResolver(self.engram.utility_registry, time_monotonic_ns),
+            SparseResolver(self.engram, time_monotonic_ns),
+            StandaloneSemanticResolver(self.engram, time_monotonic_ns),
+            SupportSemanticResolver(self.engram, time_monotonic_ns),
         )
+        configured_graph = bool((self.engram.config.get("graph") or {}).get("enabled"))
+        registered_resolvers = (graph_resolver, *local_resolvers) if configured_graph else (*local_resolvers, graph_resolver)
+        self.resolver_registry = ResolverRegistry(registered_resolvers)
         self.resolution_accounting = ResolutionAccountingFinalizer(
             self.engram,
             self.response_mutations,
@@ -560,6 +584,11 @@ class EngramCore:
             with self.resolution_condition:
                 self.active_graph_operations -= 1
                 self.resolution_condition.notify_all()
+
+    def record_graph_operation(self, outcome: str, elapsed_ns: int) -> None:
+        """Record one fixed-capability graph call without retaining request data."""
+        with self.engram.count_lock:
+            record_graph_recall(self.engram.operational_metrics, outcome, elapsed_ns)
 
     def publish_response_state(self, state: dict) -> None:
         """Invalidate request-result misses after authoritative publication."""
@@ -895,6 +924,10 @@ class EngramCore:
             check_cancellation()
             rollout = select_rollout(self.engram.config, namespace)
             rollout_mode = rollout["mode"]
+            selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
+            graph_enabled = bool((self.engram.config.get("graph") or {}).get("enabled"))
+            if graph_enabled and selected_resolvers and "structured_graph" not in selected_resolvers:
+                selected_resolvers = (*selected_resolvers, "structured_graph")
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
             signature_budget.pop("started_ns")
             signature = service_request_signature(
@@ -906,7 +939,7 @@ class EngramCore:
                 required_metadata=required_metadata,
                 required_source_label=required_source_label,
                 budget=signature_budget,
-                configured_resolvers=list(configured_resolvers),
+                configured_resolvers=list(selected_resolvers),
                 accept_exact=accept_exact,
                 rollout_mode=rollout_mode.value,
             )
@@ -973,24 +1006,6 @@ class EngramCore:
                     session["last_active"] = self.internal_clock()
 
             negative_started_ns = time_monotonic_ns()
-            if rollout_mode == RolloutMode.DISABLED:
-                disabled_result = bounded_miss_result(
-                    frame,
-                    negative_started_ns,
-                    ("rollout_disabled",),
-                    {
-                        "rollout": {
-                            "mode": rollout_mode.value,
-                            "namespace_override": rollout["namespace_override"],
-                        }
-                    },
-                )
-                public_result = self.cache_resolution(request_id, signature, disabled_result, frame, (), ())
-                remember_contextual_frame()
-                self.record_resolution_telemetry(public_result, replayed=False)
-                return public_result
-
-            selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
             plan = self.resolver_registry.plan(frame, selected_resolvers)
             negative_key = empty_negative_resolution()["key"]
             negative_key_available = False
@@ -1176,21 +1191,25 @@ class EngramCore:
         """Create one observable conversation for a user context."""
         with self.lock:
             self.require_running()
-            conversation_id = conversation_user_id(user_id)
+            conversation_id = normalize_service_user_id(user_id)
+            if conversation_id == DEFAULT_USER_ID and conversation_id in self.conversations:
+                idle = time_monotonic() - self.conversation_activity.get(conversation_id, time_monotonic())
+                if idle >= ANONYMOUS_CONVERSATION_LEASE_SECONDS:
+                    self.release_conversation(self.conversations.get(conversation_id))
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
-            anonymous_session_id = f"anonymous_{uuid4().hex}" if conversation_id == "" else ""
             # Request validation raises InvalidRequestError with its own message;
             # anything else is an internal failure, logged at the transport.
             runtime = ConversationRuntime(
                 self.engram,
                 user_id=conversation_id,
-                anonymous_session_id=anonymous_session_id,
                 initial_bot_text=initial_bot_text,
                 random_seed=random_seed,
                 random_seed_present=random_seed_present,
+                clock=self.internal_clock,
             )
             self.conversations[conversation_id] = runtime
+            self.conversation_activity[conversation_id] = time_monotonic()
             snapshot = runtime.inspect()
             result = {
                 "started": True,
@@ -1200,13 +1219,37 @@ class EngramCore:
                 "statement_count": snapshot["metrics"]["statement_count"],
                 "memory_only": True,
             }
+            if conversation_id == DEFAULT_USER_ID:
+                token = uuid4().hex
+                self.conversation_tokens[conversation_id] = token
+                result["conversation_token"] = token
             return result
+
+    def owned_conversation(self, user_id: str, conversation_token: str) -> ConversationRuntime:
+        """Return an active runtime, requiring the anonymous owner's token and renewing its lease."""
+        runtime = self.get_conversation(user_id)
+        if runtime.user_id == DEFAULT_USER_ID:
+            expected = self.conversation_tokens.get(runtime.user_id, "")
+            if not expected or not isinstance(conversation_token, str) or conversation_token != expected:
+                raise ConversationOwnershipError("anonymous conversation requires the token issued when it started")
+        self.conversation_activity[runtime.user_id] = time_monotonic()
+        return runtime
+
+    def release_conversation(self, runtime: object) -> None:
+        """Remove one runtime and its anonymous session, ownership token, and lease."""
+        if not isinstance(runtime, ConversationRuntime):
+            raise LifecycleError("active conversation runtime is malformed")
+        self.conversations.pop(runtime.user_id, {})
+        self.conversation_tokens.pop(runtime.user_id, "")
+        self.conversation_activity.pop(runtime.user_id, 0.0)
+        if runtime.user_id == DEFAULT_USER_ID:
+            sessions.delete_session(self.engram, runtime.session_id)
 
     def get_conversation(self, user_id: str) -> ConversationRuntime:
         """Return an active user runtime or raise a lifecycle error."""
         with self.lock:
             self.require_running()
-            conversation_id = conversation_user_id(user_id)
+            conversation_id = normalize_service_user_id(user_id)
             if conversation_id not in self.conversations:
                 raise ResourceNotFoundError(f"no active conversation for user_id: {conversation_id}")
             result = self.conversations.get(conversation_id, ())
@@ -1214,22 +1257,22 @@ class EngramCore:
                 raise LifecycleError("active conversation runtime is malformed")
             return result
 
-    def chat(self, user_id: str, text: str) -> dict:
+    def chat(self, user_id: str, text: str, conversation_token: str = "") -> dict:
         """Submit one chatbot turn to an active user conversation."""
-        conversation_id = conversation_user_id(user_id)
+        conversation_id = normalize_service_user_id(user_id)
         operation_id = f"chat:{uuid4().hex}"
         with self.resolution_slot(operation_id, conversation_id), self.lock:
             self.require_running()
-            runtime = self.get_conversation(conversation_id)
+            runtime = self.owned_conversation(conversation_id, conversation_token)
             result = runtime.send(text)
             return result
 
-    def inspect_conversation(self, user_id: str) -> dict:
+    def inspect_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """Inspect one conversation and shared regulated-cache metrics."""
         with self.lock:
             self.require_running()
             self.cleanup_transient()
-            snapshot = self.get_conversation(user_id).inspect()
+            snapshot = self.owned_conversation(user_id, conversation_token).inspect()
             snapshot["regulated_cache"] = self.regulated_cache_metrics()
             snapshot["core_status"] = self.status()
             return snapshot
@@ -1244,23 +1287,21 @@ class EngramCore:
             result = statement_view(self.engram.get_statement(statement_id))
             return result
 
-    def finish_conversation(self, user_id: str) -> dict:
+    def finish_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """Return a report without ending or persisting the conversation."""
         with self.lock:
             self.require_running()
-            runtime = self.get_conversation(user_id)
+            runtime = self.owned_conversation(user_id, conversation_token)
             result = runtime.report()
             return result
 
-    def stop_conversation(self, user_id: str) -> dict:
+    def stop_conversation(self, user_id: str, conversation_token: str = "") -> dict:
         """End one conversation while leaving the shared core available."""
         with self.lock:
             self.require_running()
-            runtime = self.get_conversation(user_id)
+            runtime = self.owned_conversation(user_id, conversation_token)
             report = runtime.report()
-            self.conversations.pop(runtime.user_id, {})
-            if runtime.user_id == "":
-                sessions.delete_session(self.engram, runtime.session_id)
+            self.release_conversation(runtime)
             result = {
                 "stopped": True,
                 "user_id": report["user_id"],
@@ -1306,13 +1347,81 @@ class EngramCore:
                 LOGGER.error("Vector recall could not be initialized", exc_info=error)
                 raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from error
 
+    def maintain_engagement(self, value: dict) -> dict:
+        """Trusted administrative pause, physical purge and explicit resumption."""
+        command = validate_removal_command(value)
+        action = command.get("action")
+        binding = {key: item for key, item in command.items() if key != "action"}
+        with self.resolution_condition:
+            if action == "resume" and self.internal_state == CoreState.RUNNING:
+                return {"state": "running", "already_running": True}
+            if action == "plan":
+                retained = {}
+                if self.internal_state != CoreState.RUNNING:
+                    retained = self.engagement_maintenance
+                    if (
+                        self.internal_state not in {CoreState.QUIESCING, CoreState.MAINTENANCE}
+                        or retained.get("operation_id") != binding.get("operation_id")
+                        or retained.get("visibility_scope") != binding.get("visibility_scope")
+                        or (binding.get("dependency_ids") and retained.get("dependency_ids") != binding.get("dependency_ids"))
+                    ):
+                        raise LifecycleError("removal plan conflicts with the current maintenance owner")
+                report = self.response_removal.execute(
+                    command.get("visibility_scope"), retained.get("dependency_ids", command.get("dependency_ids"))
+                )
+                return {**report, "maintenance_binding": deepcopy(retained), "purged": self.engagement_purged}
+            if action == "prepare":
+                if self.internal_state == CoreState.RUNNING:
+                    self.engagement_maintenance = deepcopy(binding)
+                    self.engagement_purged = False
+                    self.internal_state = CoreState.QUIESCING
+                    self.resolution_condition.notify_all()
+                elif (
+                    self.internal_state not in {CoreState.QUIESCING, CoreState.MAINTENANCE}
+                    or self.engagement_maintenance != binding
+                ):
+                    raise LifecycleError("engagement maintenance belongs to another operation or lifecycle")
+                while self.active_resolution_request_ids or self.active_graph_operations:
+                    self.resolution_condition.wait()
+                self.internal_state = CoreState.MAINTENANCE
+                return {"state": "maintenance", "drained": True, "purged": self.engagement_purged}
+            if self.internal_state != CoreState.MAINTENANCE or self.engagement_maintenance != binding:
+                raise LifecycleError("engagement removal requires its exact drained maintenance owner")
+            if action == "purge":
+                report = self.response_removal.execute(
+                    command.get("visibility_scope"), command.get("dependency_ids"), dry_run=False
+                )
+                # Context is intentionally unscoped transport state, not an
+                # accepted-response owner. Drop it after the drained purge.
+                for records in (
+                    self.conversations,
+                    self.resolution_requests,
+                    self.proposals,
+                    self.proposal_requests,
+                    self.learn_requests,
+                    self.retire_requests,
+                ):
+                    records.clear()
+                self.negative_resolutions.clear()
+                with self.engram.session_lock:
+                    self.engram.sessions.clear()
+                self.engagement_purged = True
+                return {**report, "state": "maintenance", "purged": True}
+            if not self.engagement_purged:
+                raise LifecycleError("engagement maintenance cannot resume before a successful purge")
+            self.engagement_maintenance = {}
+            self.engagement_purged = False
+            self.internal_state = CoreState.RUNNING
+            self.resolution_condition.notify_all()
+            return {"state": "running", "already_running": False}
+
     def close(self) -> bool:
         """Release all transport-independent runtime state."""
         with self.resolution_condition:
             if self.internal_state == CoreState.CLOSED:
                 result = False
                 return result
-            if self.internal_state != CoreState.RUNNING:
+            if self.internal_state not in {CoreState.RUNNING, CoreState.MAINTENANCE}:
                 raise LifecycleError(f"core cannot close while {self.internal_state.value}")
             self.internal_state = CoreState.CLOSING
             self.resolution_condition.notify_all()
@@ -1608,12 +1717,13 @@ class EngramCore:
             )
             if outcome == "accepted":
                 proposal = record["proposal"]
-                sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
-                sessions.update_session_context(
-                    self.engram,
-                    proposal["user_id"],
-                    current_artifact.get("response", ""),
-                )
+                if proposal.get("user_id", "") != DEFAULT_USER_ID:
+                    sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
+                    sessions.update_session_context(
+                        self.engram,
+                        proposal["user_id"],
+                        current_artifact.get("response", ""),
+                    )
                 self.regulated_metrics["accepted"] += 1
             else:
                 self.regulated_metrics["rejections"][outcome] += 1
@@ -1687,7 +1797,7 @@ class EngramCore:
             learned = receipt["result_code"].value != "REJECTED_CAPACITY"
             if learned and not mutation["replayed"]:
                 self.engram.eviction_count += len(evicted_statement_ids)
-            if learned:
+            if learned and normalized_user_id != DEFAULT_USER_ID:
                 sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 sessions.update_session_context(self.engram, normalized_user_id, response)
             if mutation["replayed"]:
@@ -1747,51 +1857,150 @@ class EngramCore:
             require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
             require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, blank_is_empty=True)
             require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
-            response_artifacts = self.engram.response_repository.trusted_artifacts()
-            if statement_id in response_artifacts:
-                previous = self.retire_requests.get(request_id, {})
-                if previous and (previous["result"]["statement_id"] != statement_id or previous["result"]["reason"] != reason):
+            try:
+                current = self.engram.response_repository.get_artifact(statement_id)
+            except ResourceNotFoundError as err:
+                raise ResourceNotFoundError("accepted response artifact not found") from err
+            current_generation = current.get("generation", False)
+            if isinstance(current_generation, bool) or not isinstance(current_generation, int):
+                raise LifecycleError("accepted-response artifact generation is malformed")
+            previous = self.retire_requests.get(request_id, {})
+            if previous:
+                if not isinstance(previous, dict):
+                    raise LifecycleError("retirement replay record is malformed")
+                previous_result = previous.get("result", False)
+                if not isinstance(previous_result, dict):
+                    raise LifecycleError("retirement replay result is malformed")
+                if previous_result.get("statement_id", "") != statement_id or previous_result.get("reason", "") != reason:
                     raise ConflictError("request_id is already associated with a different retirement")
-                expected_generation = (
-                    previous["expected_generation"] if previous else response_artifacts[statement_id]["generation"]
+                expected_generation = previous.get("expected_generation", False)
+                if isinstance(expected_generation, bool) or not isinstance(expected_generation, int):
+                    raise LifecycleError("retirement replay generation is malformed")
+            else:
+                expected_generation = current_generation
+            mutation = self.response_mutations.retire_response(
+                statement_id,
+                expected_generation,
+                LifecycleMutationReason.ADMINISTRATIVE,
+                "RetireResponse",
+                request_id,
+                reason,
+            )
+            replayed = mutation.get("replayed", False)
+            if type(replayed) is not bool:
+                raise LifecycleError("response mutation replay marker is malformed")
+            metric_key = "idempotent_retries" if replayed else "retired"
+            metric_value = self.regulated_metrics.get(metric_key, False)
+            if isinstance(metric_value, bool) or not isinstance(metric_value, int):
+                raise LifecycleError("response mutation metric is malformed")
+            self.regulated_metrics[metric_key] = metric_value + 1
+            receipt = mutation.get("receipt", False)
+            if not isinstance(receipt, dict):
+                raise LifecycleError("response mutation receipt is not an object")
+            receipt_value = mutation_receipt_to_dict(receipt)
+            receipt_result = receipt_value.get("result", False)
+            if not isinstance(receipt_result, dict):
+                raise LifecycleError("response mutation receipt result is not an object")
+            generation = receipt_result.get("generation", False)
+            if isinstance(generation, bool) or not isinstance(generation, int):
+                raise LifecycleError("response mutation receipt generation is malformed")
+            result = {
+                "retired": True,
+                "statement_id": statement_id,
+                "reason": reason,
+                "request_id": request_id,
+                "idempotent": replayed,
+                "generation": generation,
+            }
+            self.retire_requests[request_id] = {
+                "created_at": time_monotonic(),
+                "expected_generation": expected_generation,
+                "result": result,
+            }
+            self.enforce_transient_bound()
+            result = deepcopy(result)
+            return result
+
+    def responses_by_support(self, record_ids: list[str]) -> dict:
+        """List ACTIVE accepted responses whose support names any given durable record."""
+        with self.lock:
+            self.require_running()
+            if not isinstance(record_ids, list) or not record_ids:
+                raise InvalidRequestError("record_ids must be a non-empty list")
+            for identifier in record_ids:
+                require_any_text(identifier, "record_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
+            wanted = set(record_ids)
+            artifacts = self.engram.response_repository.trusted_artifacts()
+            statement_ids = sorted(
+                identifier
+                for identifier, artifact in artifacts.items()
+                if artifact.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
+                and any(reference.get("id", "") in wanted for reference in artifact.get("support_references", ()))
+            )
+            result = {"statement_ids": statement_ids}
+            return result
+
+    def retire_responses(self, entries: list[dict]) -> dict:
+        """Retire an ordered bounded group while preserving scalar ownership."""
+        with self.lock:
+            self.require_running()
+            if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_RETIREMENT_BATCH_ENTRIES:
+                raise InvalidRequestError(f"retirement entries must be a list of 1 through {MAX_RETIREMENT_BATCH_ENTRIES} mappings")
+            required_fields = {"statement_id", "reason", "request_id"}
+            validated_entries = []
+            for entry in entries:
+                if not isinstance(entry, dict) or set(entry) != required_fields:
+                    raise InvalidRequestError("retirement entries must contain exactly statement_id, reason and request_id")
+                statement_id = entry.get("statement_id", "")
+                reason = entry.get("reason", "")
+                request_id = entry.get("request_id", "")
+                require_any_text(
+                    statement_id, "statement_id", RETIREMENT_FIELD_BYTE_LIMITS.get("statement_id", 0), blank_is_empty=True
                 )
-                mutation = self.response_mutations.retire_response(
-                    statement_id,
-                    expected_generation,
-                    LifecycleMutationReason.ADMINISTRATIVE,
-                    "RetireResponse",
-                    request_id,
-                    reason,
+                require_any_text(reason, "reason", RETIREMENT_FIELD_BYTE_LIMITS.get("reason", 0), blank_is_empty=True)
+                require_any_text(request_id, "request_id", RETIREMENT_FIELD_BYTE_LIMITS.get("request_id", 0), blank_is_empty=True)
+                validated_entries.append(
+                    {
+                        "statement_id": statement_id,
+                        "reason": reason,
+                        "request_id": request_id,
+                    }
                 )
-                if not mutation["replayed"]:
-                    self.regulated_metrics["retired"] += 1
-                else:
-                    self.regulated_metrics["idempotent_retries"] += 1
-                receipt = mutation["receipt"]
-                receipt_value = mutation_receipt_to_dict(receipt)
-                receipt_result = receipt_value["result"]
-                if not isinstance(receipt_result, dict):
-                    raise LifecycleError("response mutation receipt result is not an object")
-                generation = receipt_result.get("generation")
-                if isinstance(generation, bool) or not isinstance(generation, int):
-                    raise LifecycleError("response mutation receipt generation is malformed")
+
+            self.cleanup_transient()
+            results = []
+            for entry in validated_entries:
+                statement_id = entry.get("statement_id", "")
+                reason = entry.get("reason", "")
+                request_id = entry.get("request_id", "")
+                response = {}
+                error_code = ""
+                error = ""
+                try:
+                    response = self.retire_response(statement_id, reason, request_id)
+                except ResourceNotFoundError:
+                    error_code = "not_found"
+                    error = RETIREMENT_ERROR_MESSAGES.get(error_code, "")
+                except ConflictError:
+                    error_code = "conflict"
+                    error = RETIREMENT_ERROR_MESSAGES.get(error_code, "")
+                except InvalidRequestError:
+                    error_code = "invalid_request"
+                    error = RETIREMENT_ERROR_MESSAGES.get(error_code, "")
+                except LifecycleError:
+                    error_code = "lifecycle_unavailable"
+                    error = RETIREMENT_ERROR_MESSAGES.get(error_code, "")
                 result = {
-                    "retired": True,
                     "statement_id": statement_id,
                     "reason": reason,
                     "request_id": request_id,
-                    "idempotent": mutation["replayed"],
-                    "generation": generation,
+                    "response": response if isinstance(response, dict) else {},
+                    "error_code": error_code,
+                    "error": error,
                 }
-                self.retire_requests[request_id] = {
-                    "created_at": time_monotonic(),
-                    "expected_generation": expected_generation,
-                    "result": result,
-                }
-                self.enforce_transient_bound()
-                result = deepcopy(result)
-                return result
-            raise ResourceNotFoundError("accepted response artifact not found")
+                results.append(result)
+            computed_return_value = {"results": results}
+            return computed_return_value
 
     def regulated_cache_metrics(self) -> dict:
         """Return a JSON-ready snapshot of regulated-cache activity."""

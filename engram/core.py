@@ -1,12 +1,14 @@
 """Core ENGRAM implementation."""
 
 from bisect import bisect_left
+from datetime import UTC, datetime
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
 from os import path as os_path
 from pathlib import Path
 from threading import Lock as threading_Lock, RLock as threading_RLock, get_ident as threading_get_ident
+from time import monotonic_ns as time_monotonic_ns
 
 from sentence_transformers import SentenceTransformer
 
@@ -48,6 +50,7 @@ from engram.graph import (
     canonical_predicate_match_from_graph_row,
     connect_graph,
     is_write_cypher,
+    projection_timestamp,
     proposition_projection_to_dict,
     validate_proposition_projection,
     validate_relation_proposition_projection,
@@ -77,7 +80,7 @@ from engram.semantic import StandaloneSemanticRetriever
 from engram.spacy_setup import get_nlp
 from engram.sparse import SparseIndex, search_sparse_artifacts
 from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences, substitution_maps
-from engram.telemetry import operational_telemetry, telemetry_snapshot
+from engram.telemetry import operational_telemetry, record_graph_recall, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
     correct_spelling,
@@ -147,12 +150,16 @@ def run_cooperative_check(check=()) -> None:
 def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
     """Turn canonical graph rows into complete fact tuples."""
     facts = []
+    seen: set[tuple[str, str, str]] = set()
     for record in records:
         subject = record.get("subject", "")
         predicate = record.get("predicate", "")
         obj = record.get("object", "")
-        if subject and predicate and obj:
-            facts.append((subject, predicate, obj))
+        fact = (subject, predicate, obj)
+        identity = tuple(value.casefold() for value in fact)
+        if subject and predicate and obj and identity not in seen:
+            seen.add(identity)
+            facts.append(fact)
     result = facts
     return result
 
@@ -566,7 +573,7 @@ class Engram:
             result = telemetry_snapshot(self.operational_metrics)
             return result
 
-    def graph_query(self, cypher: str, params=()) -> list:
+    def graph_query(self, cypher: str, params=(), *, raise_on_failure: bool = False) -> list:
         """Execute a read-only Cypher query against the knowledge graph.
 
         Args:
@@ -594,6 +601,8 @@ class Engram:
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
         except RuntimeError as err:
+            if raise_on_failure:
+                raise
             result = failed_graph_read("graph_query", err, [])
             return result
 
@@ -640,7 +649,7 @@ class Engram:
             raise ValueError(f"query embedding dimension {len(vector)} does not match configured graph dimension {dimension}")
         return vector
 
-    def graph_vector_propositions(self, text: str, *, limit: int = 0) -> list:
+    def graph_vector_propositions(self, text: str, *, limit: int = 0, evaluation_time: str = "") -> list:
         """Return active semantic Proposition hits for ``text``.
 
         The method fails soft because vector recall augments the deterministic
@@ -663,6 +672,7 @@ class Engram:
                 index_name=graph_config["vector_index_name"],
                 limit=(max(1, min(1000, int(limit))) if limit else int(graph_config["vector_limit"])),
                 min_similarity=float(graph_config["vector_min_similarity"]),
+                evaluation_time=evaluation_time,
             )
             result = rows if isinstance(rows, list) else []
             return result
@@ -678,6 +688,7 @@ class Engram:
         limit: int = 0,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
+        evaluation_time: str = "",
     ) -> list[dict]:
         """Return strictly decoded wire-safe ANN Proposition projections."""
         graph_config = self.config.get("graph") or {}
@@ -700,6 +711,7 @@ class Engram:
                 index_name=graph_config["vector_index_name"],
                 limit=row_limit,
                 min_similarity=float(graph_config["vector_min_similarity"]),
+                evaluation_time=evaluation_time,
             )
             if not isinstance(rows, list) or len(rows) > row_limit:
                 raise ValueError("vector Proposition projection boundary returned an invalid collection")
@@ -942,7 +954,7 @@ class Engram:
         result = [components for _, _, components in scored]
         return result
 
-    def graph_lookup(self, text: str) -> str:
+    def graph_lookup(self, text: str, *, evaluation_time: str = "") -> str:
         """Look up information in the knowledge graph based on input text.
 
         Extracts entities from the text and queries the graph for related
@@ -950,6 +962,9 @@ class Engram:
 
         Args:
             text: User input text.
+            evaluation_time: Optional canonical UTC evaluation timestamp. The
+                shared runtime supplies this so every interface evaluates
+                temporal graph assertions against the same request clock.
 
         Returns:
             Response string if graph has relevant info, otherwise an empty string.
@@ -958,41 +973,56 @@ class Engram:
         if not client:
             result = ""
             return result
-
-        entities = extract_entities(text)
-        if not entities:
-            # Keyword fallback: match a canonical Entity whose primary label
-            # contains a query keyword, then return the surface triples of the
-            # propositions it is the subject of.
-            keywords = extract_keywords(normalize(text), self.config["stopwords"])
-            if not keywords:
-                result = ""
-                return result
+        started_ns = time_monotonic_ns()
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "graph lookup evaluation time")
+        result = ""
+        failed = False
+        try:
+            entities = extract_entities(text)
             facts = []
-            for kw in keywords[:3]:
-                records = self.graph_query(GRAPH_KEYWORD_FACTS_QUERY, {"keyword": kw})
-                facts.extend(graph_records_to_facts(records))
+            if entities:
+                # Query the canonical graph for each entity. The Proposition node
+                # carries the rendered subject/predicate/object projection, so one
+                # query covers the entity in either the subject or object role.
+                for entity in entities:
+                    records = self.graph_query(
+                        GRAPH_ENTITY_FACTS_QUERY,
+                        {"name": entity["text"], "evaluation_time": selected_evaluation_time},
+                        raise_on_failure=True,
+                    )
+                    facts.extend(graph_records_to_facts(records))
+            else:
+                # Keyword fallback: match a canonical Entity whose primary label
+                # contains a query keyword, then return its current surface triples.
+                keywords = extract_keywords(normalize(text), self.config["stopwords"])
+                for keyword in keywords[:3]:
+                    records = self.graph_query(
+                        GRAPH_KEYWORD_FACTS_QUERY,
+                        {"keyword": keyword, "evaluation_time": selected_evaluation_time},
+                        raise_on_failure=True,
+                    )
+                    facts.extend(graph_records_to_facts(records))
+            facts = graph_records_to_facts(
+                [{"subject": subject, "predicate": predicate, "object": obj} for subject, predicate, obj in facts]
+            )
             if facts:
-                formatted = format_graph_facts(facts)
-                return formatted
-            vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
+                result = format_graph_facts(facts)
+                return result
+            vector_facts = graph_records_to_facts(
+                self.graph_vector_propositions(text, limit=5, evaluation_time=selected_evaluation_time)
+            )
             result = format_graph_facts(vector_facts) if vector_facts else ""
             return result
-
-        # Query the canonical graph for each entity. The Proposition node carries the
-        # rendered subject/predicate/object projection, so one query covers the
-        # entity in either the subject or object role.
-        facts = []
-        for entity in entities:
-            records = self.graph_query(GRAPH_ENTITY_FACTS_QUERY, {"name": entity["text"]})
-            facts.extend(graph_records_to_facts(records))
-
-        if facts:
-            formatted = format_graph_facts(facts)
-            return formatted
-        vector_facts = graph_records_to_facts(self.graph_vector_propositions(text, limit=5))
-        result = format_graph_facts(vector_facts) if vector_facts else ""
-        return result
+        except RuntimeError as err:
+            failed = True
+            result = failed_graph_read("graph_lookup", err, "")
+            return result
+        finally:
+            available = bool(getattr(client, "available", True))
+            outcome = "failure" if failed or not available else "hit" if result else "miss"
+            with self.count_lock:
+                record_graph_recall(self.operational_metrics, outcome, time_monotonic_ns() - started_ns)
 
     # =========================================================================
     # Statement Operations
@@ -1358,13 +1388,13 @@ class Engram:
         entities = extract_entities(text)
         if entities:
             requests.extend(
-                (PropositionProjectionQuery.STRUCTURED_ENTITY_V1, str(entity["text"]))
+                (PropositionProjectionQuery.STRUCTURED_ENTITY, str(entity.get("text", "")))
                 for entity in entities[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
         else:
             keywords = extract_keywords(normalize(text), self.config["stopwords"])
             requests.extend(
-                (PropositionProjectionQuery.STRUCTURED_KEYWORD_V1, keyword)
+                (PropositionProjectionQuery.STRUCTURED_KEYWORD, keyword)
                 for keyword in keywords[:MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS]
             )
         retained: dict[str, dict] = {}
@@ -1621,6 +1651,9 @@ class Engram:
         text: str,
         context_id: str = "",
         user_id: str = "",
+        *,
+        include_graph: bool = True,
+        evaluation_time: str = "",
     ) -> tuple:
         """Query using AIML-style pattern matching.
 
@@ -1632,6 +1665,10 @@ class Engram:
             context_id: Optional conversation context used for turn state.
             user_id: Optional caller-owned user label. When supplied, learned
                 conversational facts record this attribution.
+            include_graph: Whether a no-pattern result may fall back to graph
+                recall. The shared response pipeline disables this and applies
+                graph precedence once for the complete turn.
+            evaluation_time: Optional canonical UTC timestamp for graph recall.
 
         Returns:
             Tuple of (matched_statement, captured_wildcards, response_text) or ().
@@ -1658,6 +1695,9 @@ class Engram:
         if not sentences:
             result = ()
             return result
+
+        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        projection_timestamp(selected_evaluation_time, True, "pattern query evaluation time")
 
         session = {}
         that = ""
@@ -1748,6 +1788,17 @@ class Engram:
                     that=self._expand_for_match(that),
                     topic=self._expand_for_match(topic),
                 )
+
+            # Fact admission belongs to the observed user turn, not to the
+            # availability of a scripted response. Match first so a newly
+            # learned fact cannot answer the sentence that introduced it,
+            # then persist every admitted fact regardless of match outcome.
+            for fact in admitted_facts:
+                self.learn_fact(
+                    fact,
+                    introduced_by_user_id=attributed_user_id,
+                )
+
             if result:
                 (
                     response_text,
@@ -1759,12 +1810,6 @@ class Engram:
                     matched_that,
                 ) = result
                 captured = restore_capture_case(captured, sentence)
-
-                for fact in admitted_facts:
-                    self.learn_fact(
-                        fact,
-                        introduced_by_user_id=attributed_user_id,
-                    )
 
                 # Find the statement carrying this (pattern, topic, that).
                 # Among duplicates the highest priority wins, ties going to
@@ -1788,6 +1833,7 @@ class Engram:
                             topicstars=topicstars,
                             that=that,
                             topic=topic,
+                            evaluation_time=selected_evaluation_time,
                         )
                         # Output cleanup: repair casing (sentence starts, the
                         # pronoun I) that lowercase captures splice into
@@ -1813,7 +1859,7 @@ class Engram:
 
         if not responses:
             selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
-            graph_response = self.graph_lookup(text)
+            graph_response = self.graph_lookup(text, evaluation_time=selected_evaluation_time) if include_graph else ""
             if graph_response:
                 if session:
                     with self.session_lock:
@@ -1873,6 +1919,7 @@ class Engram:
         topicstars=(),
         that: str = "",
         topic: str = "",
+        evaluation_time: str = "",
     ) -> str:
         """Process a statement's template with context.
 
@@ -1901,6 +1948,7 @@ class Engram:
             gender_subs=self.substitution_maps["gender"],
             category_count=len(self.statements),
             graph_fn=self.graph_read_fn,
+            evaluation_time=evaluation_time,
         )
 
         if session:
@@ -1951,6 +1999,7 @@ class Engram:
                             redirect_fn=redirect_fn,
                             learn_fn=context["learn_fn"],
                             graph_fn=self.graph_read_fn,
+                            evaluation_time=context.get("evaluation_time", ""),
                         )
                         template_to_process = redirect_stmt.get("template", {}) or redirect_stmt.get("text", "")
                         redirect_response = self.template_processor.process(template_to_process, new_context)
