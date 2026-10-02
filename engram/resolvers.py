@@ -435,7 +435,7 @@ def working_size(value: object, seen=()) -> int:
     if isinstance(value, bytes):
         result = len(value) + 33
         return result
-    if isinstance(value, (bool, int, float)):
+    if isinstance(value, bool | int | float):
         result = 32
         return result
     identity = id(value)
@@ -446,7 +446,7 @@ def working_size(value: object, seen=()) -> int:
     if isinstance(value, dict):
         result = 64 + sum(working_size(key, visited) + working_size(item, visited) for key, item in value.items())
         return result
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         result = 64 + sum(working_size(item, visited) for item in value)
         return result
     result = len(str(value).encode("utf-8")) + 64
@@ -1294,7 +1294,9 @@ class StructuredGraphResolver:
                 )
                 for proposition_id in proposition_ids
             )
-            composition_id = composition_candidate_id(plan.get("operator").value, proposition_ids, frame.get("diagnostic_id", ""))
+            composition_id = composition_candidate_id(
+                plan.get("operator", operator).value, proposition_ids, frame.get("diagnostic_id", "")
+            )
             candidates.append(
                 resolution_candidate(
                     candidate_id=composition_id,
