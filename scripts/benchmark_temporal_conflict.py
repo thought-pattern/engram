@@ -125,7 +125,7 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=Path("eval/section9-temporal-conflict.json"))
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section9-temporal-conflict-v1.json"))
     parser.add_argument(
         "--output",
         type=Path,

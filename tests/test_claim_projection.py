@@ -5,6 +5,7 @@ from json import dumps as json_dumps, loads as json_loads
 
 from pytest import approx as pytest_approx, mark as pytest_mark, raises as pytest_raises
 
+from engram.constants import UNCONSTRAINED_ASSERTION_BASIS
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import (
@@ -78,7 +79,7 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
     assert projection["structured_match"] == 1.0
     assert projection["semantic_similarity_available"] is False
     assert set(internal_row()) == PROPOSITION_PROJECTION_FIELDS
-    assert captured.get("parameters", {}) == {"value": "Alan Turing", "limit": 3}
+    assert captured.get("parameters", {}) == {"value": "Alan Turing", "limit": 3, **UNCONSTRAINED_ASSERTION_BASIS}
     assert "Alan Turing" not in captured.get("query", "")
     assert "subject.canonical_id AS subject_entity_id" in captured.get("query", "")
     assert "predicate.canonical_id AS predicate_id" in captured.get("query", "")
@@ -100,12 +101,19 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
         return result
 
     client.execute = execute
+    point_window = {
+        "basis_start": "2026-08-12T18:00:00Z",
+        "basis_start_available": True,
+        "basis_end": "2026-08-12T18:00:00Z",
+        "basis_end_available": True,
+        "basis_end_inclusive": True,
+    }
     projections = client.vector_search_proposition_projections(
         [0.0, 1.0],
         index_name="proposition_embeddings",
         limit=7,
         min_similarity=0.45,
-        evaluation_time="2026-08-12T18:00:00Z",
+        basis_window=point_window,
     )
 
     projection = projections[0]
@@ -120,7 +128,7 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
         "limit": 7,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
-        "evaluation_time": "2026-08-12T18:00:00Z",
+        **point_window,
     }
 
 
@@ -232,7 +240,8 @@ def test_projection_boundary_rejects_excess_rows_and_untrusted_identifiers() -> 
 def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch) -> None:
     projection = proposition_projection_from_graph_row(internal_row(), PropositionProjectionQuery.STRUCTURED_ENTITY)
 
-    def structured_proposition_projections(value, *, projection_id, limit=10):
+    def structured_proposition_projections(value, *, projection_id, limit=10, basis_window=UNCONSTRAINED_ASSERTION_BASIS):
+        assert basis_window == UNCONSTRAINED_ASSERTION_BASIS
         assert value == "Alan Turing"
         assert projection_id == PropositionProjectionQuery.STRUCTURED_ENTITY
         assert limit == 1
@@ -255,7 +264,8 @@ def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch
 def test_transport_neutral_structured_projection_caps_zero_row_query_attempts(monkeypatch) -> None:
     calls = []
 
-    def structured_proposition_projections(value, *, projection_id, limit=10):
+    def structured_proposition_projections(value, *, projection_id, limit=10, basis_window=UNCONSTRAINED_ASSERTION_BASIS):
+        del basis_window
         calls.append((value, projection_id, limit))
         result = []
         return result
@@ -351,7 +361,7 @@ def test_fixed_by_id_projection_supports_publication_revalidation() -> None:
     assert projections[0]["projection_id"] == PropositionProjectionQuery.BY_ID
     assert projections[0]["structured_match_available"] is False
     assert projections[0]["semantic_similarity_available"] is False
-    assert captured.get("parameters", {}) == {"proposition_id": "proposition:01J5M6Q9J8"}
+    assert captured.get("parameters", {}) == {"proposition_id": "proposition:01J5M6Q9J8", **UNCONSTRAINED_ASSERTION_BASIS}
     assert "c.id = $proposition_id" in captured.get("query", "")
     assert "LIMIT 2" in captured.get("query", "")
     assert "c.subject AS subject" not in captured.get("query", "")

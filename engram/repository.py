@@ -93,6 +93,10 @@ def repository_state(
     generation = positive_int(state_generation, "repository state_generation")
     if not isinstance(artifacts, dict):
         raise InvalidRequestError("repository artifacts must be an object")
+    # Every validated state, including a public replacement or restore, holds the
+    # process ceiling, refused before any artifact is validated or copied.
+    if len(artifacts) > MAX_REPOSITORY_ARTIFACTS:
+        raise InvalidRequestError(f"repository artifacts exceed the limit of {MAX_REPOSITORY_ARTIFACTS}")
     trusted = trusted_artifacts if isinstance(trusted_artifacts, dict) else {}
     validated_artifacts = {}
     for statement_id, artifact in artifacts.items():

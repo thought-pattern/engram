@@ -270,12 +270,15 @@ class StandaloneSemanticRetriever:
                 logger.warning("Semantic retrieval model is unavailable", exc_info=error)
                 self.internal_healthy = False
                 self.internal_last_error = type(error).__name__
-        # statement_id -> (artifact, {(origin, ordinal): record}). A record is a
-        # pure function of its artifact and this retriever's model, and a
-        # validated artifact never changes in place, so an entry checked by
-        # identity is always current. Similarity is still computed per request.
+        # statement_id -> (artifact, {(origin, ordinal): record}, {text: embedding}).
+        # A record is a pure function of its artifact and this retriever's fixed
+        # model, and a validated artifact never changes in place, so an entry
+        # checked by identity is always current. An embedding depends only on its
+        # representation text and that model, so a new generation of the same
+        # statement keeps the embeddings of its unchanged texts and rebuilds only
+        # the record envelopes. Similarity is still computed per request.
         self.internal_record_lock = threading_Lock()
-        self.internal_records: dict[str, tuple[dict, dict[tuple[str, int], dict]]] = {}
+        self.internal_records: dict[str, tuple[dict, dict[tuple[str, int], dict], dict[str, tuple[float, ...]]]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -310,28 +313,50 @@ class StandaloneSemanticRetriever:
         )
         return result
 
+    def artifact_entry(self, artifact: dict, statement_id: str) -> tuple:
+        """Return the cache entry for this artifact object; call with the record lock held.
+
+        A different object for the same statement, such as a statistics-only generation,
+        replaces the entry and carries forward the embedding of every representation text
+        it still has. Records are rebuilt because they carry generation, scope, and lifecycle.
+        """
+        entry = self.internal_records.get(statement_id, ())
+        if entry and entry[0] is artifact:
+            return entry
+        texts = {spec.get("text", "") for spec in representation_specs(artifact, self.internal_settings)}
+        embeddings = {text: embedding for text, embedding in entry[2].items() if text in texts} if entry else {}
+        result = (artifact, {}, embeddings)
+        self.internal_records[statement_id] = result
+        return result
+
     def cached_records(self, pairs: tuple[tuple[dict, dict], ...]) -> tuple[dict, ...]:
-        """Return records for (artifact, spec) pairs, encoding only those not already cached."""
+        """Return records for (artifact, spec) pairs, encoding only representation text not yet embedded."""
         records: list[dict] = []
+        reusable: list[tuple[int, tuple[float, ...]]] = []
         missing: list[int] = []
         with self.internal_record_lock:
             for index, (artifact, spec) in enumerate(pairs):
-                entry = self.internal_records.get(spec.get("statement_id", ""))
-                record = entry[1].get((spec.get("origin", ""), spec.get("ordinal", 0))) if entry and entry[0] is artifact else None
-                records.append(record if record is not None else {})
-                if record is None:
+                entry = self.artifact_entry(artifact, spec.get("statement_id", ""))
+                record = entry[1].get((spec.get("origin", ""), spec.get("ordinal", 0)), {})
+                records.append(record)
+                if record:
+                    continue
+                embedding = entry[2].get(spec.get("text", ""), ())
+                if embedding:
+                    reusable.append((index, embedding))
+                else:
                     missing.append(index)
+        built = [(index, embedding_record(pairs[index][1], embedding, self.internal_identity)) for index, embedding in reusable]
         if missing:
             computed = self.records(tuple(pairs[index][1] for index in missing))
+            built.extend(zip(missing, computed, strict=True))
+        if built:
             with self.internal_record_lock:
-                for index, record in zip(missing, computed, strict=True):
+                for index, record in built:
                     artifact, spec = pairs[index]
-                    statement_id = spec.get("statement_id", "")
-                    entry = self.internal_records.get(statement_id)
-                    if entry is None or entry[0] is not artifact:
-                        entry = (artifact, {})
-                        self.internal_records[statement_id] = entry
+                    entry = self.artifact_entry(artifact, spec.get("statement_id", ""))
                     entry[1][(spec.get("origin", ""), spec.get("ordinal", 0))] = record
+                    entry[2][record.get("text", "")] = record.get("embedding", ())
                     records[index] = record
         result = tuple(records)
         return result
@@ -421,11 +446,10 @@ class StandaloneSemanticRetriever:
 
         corpus_record_count = 0
         largest_record_working_bytes = 0
-        # The budget pass keeps its pairs, so the scan below reuses them instead
-        # of deriving (and validating) every specification a second time.
-        pairs: list[tuple[dict, dict]] = []
-        for artifact, spec in scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts):
-            pairs.append((artifact, spec))
+        # The budget pass counts and sizes every representation without retaining it.
+        # The scan derives them again one batch at a time, so request memory is the
+        # query, one batch, and the retained shortlist however large the scope is.
+        for _, spec in scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts):
             corpus_record_count += 1
             if corpus_record_count > settings.get("max_records", 0):
                 result = {
@@ -481,7 +505,8 @@ class StandaloneSemanticRetriever:
         retained_by_statement: dict[str, dict] = {}
         scanned_records = 0
         peak_working_memory = query_memory
-        for pair_batch in itertools_batched(pairs, batch_capacity):
+        scan_pairs = scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts)
+        for pair_batch in itertools_batched(scan_pairs, batch_capacity):
             batch_working_bytes = sum(semantic_record_working_bytes(spec, dimension) for _, spec in pair_batch)
             records = self.cached_records(pair_batch)
             peak_working_memory = max(

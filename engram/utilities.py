@@ -48,8 +48,10 @@ UTILITY_SEMVER_RE = re_compile(
 )
 UTILITY_UUID_RE = re_compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\Z")
 UTILITY_SLUG_RE = re_compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+# RFC 3339 section 5.6 limits offset hours to 00-23 and minutes to 00-59;
+# fromisoformat would otherwise normalize "+00:99" into a different offset.
 UTILITY_RFC3339_RE = re_compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z",
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z",
     IGNORECASE,
 )
 
@@ -207,18 +209,32 @@ def arithmetic_tokens(expression: str) -> tuple[str, ...]:
     return result
 
 
+def arithmetic_unary(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
+    """Parse a signed power.
+
+    Precedence follows Python's documented expression grammar: a unary sign
+    binds more loosely than ``**`` on its left and more tightly on its right,
+    so ``-2 ** 2`` is ``-4`` and ``2 ** -2`` is ``0.25``.
+    """
+    if depth > UTILITY_MAX_NESTING:
+        raise UtilityInputError("operation_limit")
+    if index < len(tokens) and tokens[index] in {"+", "-"}:
+        token = tokens[index]
+        value, next_index, count = arithmetic_unary(tokens, index + 1, operations + 1, depth + 1)
+        if count > UTILITY_MAX_OPERATIONS:
+            raise UtilityInputError("operation_limit")
+        result = ((checked_decimal(-value) if token == "-" else value), next_index, count)
+        return result
+    result = arithmetic_power(tokens, index, operations, depth)
+    return result
+
+
 def arithmetic_atom(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
     if depth > UTILITY_MAX_NESTING:
         raise UtilityInputError("operation_limit")
     if index >= len(tokens):
         raise UtilityInputError("arithmetic_syntax")
     token = tokens[index]
-    if token in {"+", "-"}:
-        value, next_index, count = arithmetic_atom(tokens, index + 1, operations + 1, depth + 1)
-        if count > UTILITY_MAX_OPERATIONS:
-            raise UtilityInputError("operation_limit")
-        result = ((checked_decimal(-value) if token == "-" else value), next_index, count)
-        return result
     if token == "(":
         value, next_index, count = arithmetic_expression(tokens, index + 1, operations, depth + 1)
         if next_index >= len(tokens) or tokens[next_index] != ")":
@@ -233,8 +249,9 @@ def arithmetic_atom(tokens: tuple[str, ...], index: int, operations: int, depth:
 
 def arithmetic_power(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
     left, index, operations = arithmetic_atom(tokens, index, operations, depth)
+    # The exponent is a signed power, which makes ``**`` right-associative.
     if index < len(tokens) and tokens[index] == "**":
-        right, index, operations = arithmetic_power(tokens, index + 1, operations + 1, depth + 1)
+        right, index, operations = arithmetic_unary(tokens, index + 1, operations + 1, depth + 1)
         if operations > UTILITY_MAX_OPERATIONS or right != right.to_integral_value() or abs(right) > UTILITY_MAX_POWER:
             raise UtilityInputError("operation_limit")
         try:
@@ -245,10 +262,10 @@ def arithmetic_power(tokens: tuple[str, ...], index: int, operations: int, depth
 
 
 def arithmetic_term(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
-    value, index, operations = arithmetic_power(tokens, index, operations, depth)
+    value, index, operations = arithmetic_unary(tokens, index, operations, depth)
     while index < len(tokens) and tokens[index] in {"*", "/", "%"}:
         operator = tokens[index]
-        right, index, operations = arithmetic_power(tokens, index + 1, operations + 1, depth)
+        right, index, operations = arithmetic_unary(tokens, index + 1, operations + 1, depth)
         if operations > UTILITY_MAX_OPERATIONS:
             raise UtilityInputError("operation_limit")
         try:

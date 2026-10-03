@@ -205,36 +205,28 @@ async def internal_run(
             latency_ms = (time_perf_counter_ns() - call_started) / 1_000_000
             latencies_ms.append(latency_ms)
             evaluation = evaluate_turn(result, expected_turn, message, user_id, latency_ms)
-            if profile == "context-recall":
-                response = result.get("response", "")
-                if graph_probe:
-                    profile_check = "memgraph_source_when_asked"
-                    profile_passed = result.get("source") == "graph"
-                else:
-                    profile_check = "sushi_recall_when_asked"
-                    profile_passed = (
-                        isinstance(response, str) and "sushi" in response.casefold() if message == "What's good?" else True
-                    )
-                evaluation["profile_check"] = profile_check
-                evaluation["profile_passed"] = profile_passed
-                if not profile_passed:
-                    evaluation["passed"] = False
-                    evaluation["failed_checks"].append(profile_check)
+            response = result.get("response", "")
+            # A requested graph probe is enforced here for every profile; a
+            # profile's own check applies to its other turns.
+            profile_check = ""
+            profile_passed = True
+            if graph_probe:
+                profile_check = "memgraph_source_when_asked"
+                profile_passed = result.get("source") == "graph"
+            elif profile == "context-recall":
+                profile_check = "sushi_recall_when_asked"
+                profile_passed = isinstance(response, str) and "sushi" in response.casefold() if message == "What's good?" else True
             elif profile == "preference-continuity":
-                response = result.get("response", "")
-                if graph_probe:
-                    profile_check = "memgraph_source_when_asked"
-                    profile_passed = result.get("source") == "graph"
-                else:
-                    expected_terms = PREFERENCE_CONTINUITY_EXPECTATIONS.get(message, ())
-                    response_text = response.casefold() if isinstance(response, str) else ""
-                    profile_check = "preference_continuity"
-                    profile_passed = result.get("user_id") == user_id and all(term in response_text for term in expected_terms)
+                expected_terms = PREFERENCE_CONTINUITY_EXPECTATIONS.get(message, ())
+                response_text = response.casefold() if isinstance(response, str) else ""
+                profile_check = "preference_continuity"
+                profile_passed = result.get("user_id") == user_id and all(term in response_text for term in expected_terms)
+            if profile_check:
                 evaluation["profile_check"] = profile_check
                 evaluation["profile_passed"] = profile_passed
-                if not profile_passed:
-                    evaluation["passed"] = False
-                    evaluation["failed_checks"].append(profile_check)
+            if not profile_passed:
+                evaluation["passed"] = False
+                evaluation["failed_checks"].append(profile_check)
             evaluations.append(evaluation)
             if evaluation["passed"]:
                 response_count += 1
@@ -260,6 +252,10 @@ async def internal_run(
     finished_at = datetime.now(UTC)
     duration_seconds = time_perf_counter() - started_clock
     failure_counts: Counter[str] = Counter(failure for evaluation in evaluations for failure in evaluation["failed_checks"])
+    # Reported checks are derived from the checks each turn actually applied.
+    additional_checks: Counter[str] = Counter(
+        evaluation.get("profile_check", "") for evaluation in evaluations if evaluation.get("profile_check", "")
+    )
     failed_turns = [evaluation["turn"] for evaluation in evaluations if not evaluation["passed"]]
     evaluation_bytes = json_dumps(evaluations, sort_keys=True, separators=(",", ":")).encode("utf-8")
     response_sequence = [evaluation["response_sha256"] for evaluation in evaluations]
@@ -292,6 +288,8 @@ async def internal_run(
         and (not semantic_active or semantic_status.get("ready") is True)
         and (not reranker_active or reranker_status.get("ready") is True)
         and (not utility_active or utility_status.get("ready") is True)
+        # Requested graph probes need a ready graph, whatever the profile.
+        and (not memgraph_probe_every or graph_status.get("ready") is True)
     )
     run_result = {
         "gate": gate,
@@ -339,15 +337,9 @@ async def internal_run(
         "first_turn": first_turn,
         "last_turn": last_turn,
         "turn_evaluation": {
-            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS) + int(profile in {"context-recall", "preference-continuity"}),
-            "check_names": sorted(
-                {
-                    *MCP_TURN_EVALUATION_CHECKS,
-                    *({"sushi_recall_when_asked"} if profile == "context-recall" else set()),
-                    *({"preference_continuity"} if profile == "preference-continuity" else set()),
-                    *({"memgraph_source_when_asked"} if memgraph_probe_every else set()),
-                }
-            ),
+            "checks_per_turn": len(MCP_TURN_EVALUATION_CHECKS),
+            "additional_check_turns": dict(sorted(additional_checks.items())),
+            "check_names": sorted({*MCP_TURN_EVALUATION_CHECKS, *additional_checks}),
             "pass_runs_encoding": "ordered runs; bit 1 means every check passed and bit 0 means at least one failed",
             "pass_runs": run_length_encode_passes(evaluations),
             "passed_turns": response_count,
@@ -425,6 +417,8 @@ def main(argv: tuple[str, ...] = ()) -> int:
         raise ValueError(f"MCP conformance requires at least {MCP_CONFORMANCE_MINIMUM_TURNS} turns")
     if args.memgraph_probe_every < 0:
         raise ValueError("--memgraph-probe-every must be nonnegative")
+    if args.memgraph_probe_every > args.turns:
+        raise ValueError("--memgraph-probe-every must not exceed --turns, or no requested probe would run")
     selected_config = args.config
     with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
         if args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility:

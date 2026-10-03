@@ -3,6 +3,7 @@
 Configurations are plain dictionaries returned by validating normalizers.
 """
 
+from datetime import timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from os import path as os_path
@@ -42,7 +43,7 @@ def graph_config(
     vector_min_similarity: float = 0.45,
     vector_weight: float = 0.75,
 ) -> dict:
-    """Build a Knowledge Graph connection configuration dict.
+    """Validate and normalize a Knowledge Graph connection configuration.
 
     Connects to a Bolt graph database with the neo4j driver over host/port.
     Startup checks that the graph's schema is compatible with Engram's.
@@ -120,7 +121,7 @@ def sparse_config(
     max_posting_visits: int = 100_000,
     max_prefix_expansions: int = 64,
 ) -> dict:
-    """Build configuration for request-local sparse retrieval."""
+    """Validate configuration for request-local sparse retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("sparse enabled must be a boolean")
     if not isinstance(include_response_text, bool):
@@ -158,7 +159,7 @@ def semantic_config(
     max_scan_records: int = 100_000,
     min_similarity: float = 0.45,
 ) -> dict:
-    """Build configuration for offline standalone semantic retrieval."""
+    """Validate and normalize configuration for offline standalone semantic retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("semantic enabled must be a boolean")
     for name, value in (
@@ -225,7 +226,7 @@ def reranker_config(
     max_input_bytes: int = 65_536,
     max_model_time_ms: int = 25,
 ) -> dict:
-    """Build the bounded optional reranker configuration."""
+    """Validate the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
         raise ValueError("reranker enabled must be a boolean")
     if implementation != "transparent_logistic":
@@ -251,10 +252,14 @@ def reranker_config(
 
 
 def rollout_config(
-    default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
+    default_mode=RolloutMode.REGULATED_DIRECT_ANSWER,
     namespaces: dict = EMPTY_CONFIG,
 ) -> dict:
-    """Build the small namespace rollout policy used by unified resolution."""
+    """Validate the small namespace rollout policy used by unified resolution.
+
+    ``default_mode`` and each namespace mode accept a ``RolloutMode`` or its
+    string value from YAML; both normalize to the enum member.
+    """
     if not isinstance(default_mode, RolloutMode):
         try:
             default_mode = RolloutMode(default_mode)
@@ -299,17 +304,19 @@ def conversation_optional_path(entry, label: str) -> str:
 
 def conversation_config(
     bot_name: str = "ENGRAM",
-    seed_files: list | tuple = (),
+    seed_files=(),
     duplicate_policy: str = "error",
-    set_files: list | tuple = (),
-    map_files: list | tuple = (),
+    set_files=(),
+    map_files=(),
     properties_file: str = "",
     predicate_file: str = "",
     substitution_file: str = "",
 ) -> dict:
-    """Build the conversation persona and the files loaded at startup.
+    """Validate the conversation persona and the files loaded at startup.
 
-    An empty ``seed_files`` list loads no categories. Paths stored here are
+    ``seed_files``, ``set_files`` and ``map_files`` accept a list or tuple of
+    non-empty strings and normalize to a list of stripped paths. An empty
+    ``seed_files`` list loads no categories. Paths stored here are
     used as given; ``load_config`` resolves paths from a YAML file before this
     runs. Set, map, property, predicate, and substitution files load before
     the categories. This function does not require the files to exist.
@@ -416,7 +423,7 @@ def engram_config(
     # Persona name, categories, and AIML tables loaded once at startup
     conversation: dict = EMPTY_CONVERSATION_CONFIG,
 ) -> dict:
-    """Build (and validate) a configuration dict for an ENGRAM instance."""
+    """Validate and normalize the configuration dict for an ENGRAM instance."""
     if not isinstance(graph, dict):
         raise ValueError("graph config must be an object")
     if not isinstance(sparse, dict):
@@ -431,12 +438,18 @@ def engram_config(
         raise ValueError("utility config must be an object")
     if not isinstance(conversation, dict):
         raise ValueError("conversation config must be an object")
-    if capacity < 1:
-        raise ValueError("capacity must be at least 1")
-    if max_sessions < 1:
-        raise ValueError("max_sessions must be at least 1")
-    if session_ttl_seconds <= 0:
-        raise ValueError("session_ttl_seconds must be positive")
+    # Store and session counts compare against these limits on every admission,
+    # so only a native positive integer bounds them; NaN and infinity never trip.
+    if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
+        raise ValueError("capacity must be an integer of at least 1")
+    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
+        raise ValueError("max_sessions must be an integer of at least 1")
+    if type(session_ttl_seconds) not in {int, float} or not math_isfinite(session_ttl_seconds) or session_ttl_seconds <= 0:
+        raise ValueError("session_ttl_seconds must be a finite positive number")
+    try:
+        timedelta(seconds=session_ttl_seconds)
+    except OverflowError as err:
+        raise ValueError("session_ttl_seconds exceeds the representable session interval") from err
 
     weights = (weight_base, weight_recency, weight_hit_rate)
     if any(not math_isfinite(weight) or weight < 0 for weight in weights):
@@ -536,20 +549,21 @@ def read_config_mapping(path: str) -> dict:
         return result
     data = known_keys(loaded, set(engram_config()), "", path)
     for name, builder in SECTION_BUILDERS:
-        if name in data and data.get(name):
-            data[name] = known_keys(data.get(name), set(builder()), name, path)
-    section = data.get("conversation") or {}
+        section_values = data.get(name, {})
+        if section_values:
+            data[name] = known_keys(section_values, set(builder()), name, path)
+    section = data.get("conversation", {})
     if section:
         for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
             if key in section:
-                section[key] = resolve_conversation_path_list(section.get(key), path, key, kind)
+                section[key] = resolve_conversation_path_list(section.get(key, []), path, key, kind)
         for key, kind in (
             ("properties_file", "properties file"),
             ("predicate_file", "predicate file"),
             ("substitution_file", "substitution file"),
         ):
             if key in section:
-                section[key] = resolve_conversation_optional_file(section.get(key), path, key, kind)
+                section[key] = resolve_conversation_optional_file(section.get(key, ""), path, key, kind)
     return data
 
 

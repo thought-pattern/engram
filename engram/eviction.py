@@ -55,9 +55,8 @@ def evict_statement_at(engram, idx: int) -> bool:
     return result
 
 
-def detach_statement(engram, stmt: dict) -> None:
-    """Remove a statement's keywords and patterns, leaving the statement list alone."""
-    # Remove from keyword indices
+def detach_keywords(engram, stmt: dict) -> None:
+    """Remove a statement from the keyword index, pruning emptied keywords."""
     with engram.keyword_lock:
         for kw in stmt.get("keywords", []):
             if kw in engram.keywords:
@@ -65,6 +64,11 @@ def detach_statement(engram, stmt: dict) -> None:
                 # Prune empty keyword entries
                 if not engram.keywords[kw].get("statement_ids", []):
                     del engram.keywords[kw]
+
+
+def detach_statement(engram, stmt: dict) -> None:
+    """Remove a statement's keywords and patterns, leaving the statement list alone."""
+    detach_keywords(engram, stmt)
 
     # store() registered one matcher entry per pattern, so exactly one goes.
     # A surviving statement carrying the same pattern keeps its own entry and
@@ -172,8 +176,35 @@ def clear_dynamic(engram) -> int:
     """
     with engram.mutation_lock, engram.statement_lock:
         dynamic = [stmt for stmt in engram.statements if stmt.get("tier", "") == Tier.DYNAMIC]
+        removed_ids = {stmt.get("id", "") for stmt in dynamic}
+        touched_patterns: dict[str, bool] = {}
         for stmt in dynamic:
-            detach_statement(engram, stmt)
+            detach_keywords(engram, stmt)
+            # store() registered one matcher entry per pattern, so exactly one goes.
+            for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])]:
+                if pattern:
+                    engram.pattern_matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
+                    touched_patterns[pattern] = True
+        # Each shared pattern's carriers are filtered once against the final
+        # survivor set. A removed map target passes to the first surviving
+        # carrier with its that/topic, as statement-by-statement detaching would.
+        for pattern in touched_patterns:
+            survivors = [
+                statement_id for statement_id in engram.pattern_statements.get(pattern, ()) if statement_id not in removed_ids
+            ]
+            if survivors:
+                engram.pattern_statements[pattern] = survivors
+            elif pattern in engram.pattern_statements:
+                del engram.pattern_statements[pattern]
+            target_id = engram.pattern_to_statement.get(pattern, "")
+            if target_id in removed_ids:
+                target = engram.statement_by_id.get(target_id, {})
+                del engram.pattern_to_statement[pattern]
+                for statement_id in survivors:
+                    survivor = engram.statement_by_id.get(statement_id, {})
+                    if survivor.get("that", "") == target.get("that", "") and survivor.get("topic", "") == target.get("topic", ""):
+                        engram.pattern_to_statement[pattern] = statement_id
+                        break
         # One pass over the list instead of one eviction scan per statement.
         kept = [
             (stmt, sequence)

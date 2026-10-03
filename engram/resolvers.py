@@ -50,6 +50,7 @@ from engram.constants import (
 from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError, ResourceNotFoundError
 from engram.evidence import (
     PropositionEligibilityEvaluator,
+    assertion_basis_window,
     canonicalize_proposition_evidence,
     evaluate_evidence_usefulness,
     evidence_usefulness_policy,
@@ -59,8 +60,9 @@ from engram.evidence import (
 from engram.feedback import canonical_fingerprint
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.graph import proposition_projection_to_dict
-from engram.identity import build_scoped_retrieval_key
+from engram.identity import scoped_retrieval_key_from_text
 from engram.relation import (
+    RelationQuestion,
     object_type_match,
     one_hop_query_plan,
     phrase_relation_result,
@@ -100,6 +102,7 @@ from engram.resolution import (
     trusted_proposition_evidence_record_to_dict,
     trusted_resolution_result,
     trusted_resolution_result_to_json,
+    trusted_resolver_result_to_dict,
     trusted_resolver_result_with_changes,
     validate_budget_consumption,
     validate_query_frame,
@@ -562,7 +565,7 @@ class ExactResolver:
             result = exhausted_result(self.name, (dimension,))
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
-        key = build_scoped_retrieval_key(frame.get("scope", {}), frame.get("resolved_text", ""))
+        key = scoped_retrieval_key_from_text(frame.get("scope", {}), frame.get("resolved_text", ""))
         contextual = self.internal_engram.response_repository.exact_lookup(
             key,
             frame.get("eligibility_context", {}),
@@ -1066,6 +1069,7 @@ class StructuredGraphResolver:
         frame: dict,
         budget: dict,
         started: int,
+        question: RelationQuestion,
         cooperative_check: object = (),
     ) -> tuple[dict, ...]:
         """Compile and execute a conservative composed request through fixed one-hop reads."""
@@ -1104,7 +1108,7 @@ class StructuredGraphResolver:
             graph_rows += len(rows)
             return rows
 
-        subject = resolve_canonical_subject(frame, entity_lookup, cooperative_check=check)
+        subject = resolve_canonical_subject(frame, entity_lookup, question=question, cooperative_check=check)
         if subject["status"] != CanonicalResolutionStatus.SELECTED:
             reason = (
                 CompositionReason.IDENTITY_AMBIGUOUS
@@ -1178,6 +1182,7 @@ class StructuredGraphResolver:
                 },
                 cooperative_check=check,
                 max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+                basis_window=assertion_basis_window(frame),
             )
             return result
 
@@ -1393,6 +1398,7 @@ class StructuredGraphResolver:
         frame: dict,
         budget: dict,
         started: int,
+        question: RelationQuestion,
         cooperative_check: object = (),
     ) -> tuple[dict, ...]:
         """Interpret and execute one canonical one-hop relation plan."""
@@ -1430,8 +1436,8 @@ class StructuredGraphResolver:
             graph_rows += len(rows)
             return rows
 
-        subject = resolve_canonical_subject(frame, entity_lookup, cooperative_check=check)
-        predicate = resolve_canonical_predicate(frame, predicate_lookup, cooperative_check=check)
+        subject = resolve_canonical_subject(frame, entity_lookup, question=question, cooperative_check=check)
+        predicate = resolve_canonical_predicate(frame, predicate_lookup, question=question, cooperative_check=check)
         statuses = (subject["status"], predicate["status"])
         if statuses == (CanonicalResolutionStatus.MISS, CanonicalResolutionStatus.MISS):
             result = ()
@@ -1478,6 +1484,7 @@ class StructuredGraphResolver:
             },
             cooperative_check=check,
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+            basis_window=assertion_basis_window(frame),
         )
         graph_rows += len(results)
         retained: list[tuple[dict, dict, float, bool]] = []
@@ -1688,8 +1695,10 @@ class StructuredGraphResolver:
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
         composition_rows = 0
+        # Composition and one-hop discovery read one parse of the same question.
+        question = RelationQuestion(frame.get("resolved_text", ""))
         try:
-            composition_result = self.internal_composition_result(frame, budget, started, cooperative_check)
+            composition_result = self.internal_composition_result(frame, budget, started, question, cooperative_check)
             if composition_result and not composition_not_applicable(composition_result[0]):
                 result = composition_result[0]
                 return result
@@ -1702,7 +1711,7 @@ class StructuredGraphResolver:
                     budget,
                     {"max_graph_rows": max(0, budget.get("max_graph_rows", 0) - composition_rows)},
                 )
-            relation_result = self.internal_relation_result(frame, budget, started, cooperative_check)
+            relation_result = self.internal_relation_result(frame, budget, started, question, cooperative_check)
             if relation_result:
                 result = with_prior_graph_rows(relation_result[0], composition_rows)
                 return result
@@ -1711,6 +1720,7 @@ class StructuredGraphResolver:
                 row_limit=min(budget.get("max_graph_rows", 0) // 2, budget.get("max_evidence", 0)),
                 cooperative_check=cooperative_check,
                 max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+                basis_window=assertion_basis_window(frame),
             )
         except MemoryError:
             result = memory_exhausted_result(self.name)
@@ -1882,7 +1892,7 @@ class SupportSemanticResolver:
                     limit=remaining_vector_results,
                     cooperative_check=cooperative_check,
                     max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
-                    evaluation_time=frame.get("eligibility_context", {})["evaluation_time"],
+                    basis_window=assertion_basis_window(frame),
                 )
                 if remaining_vector_results
                 else []
@@ -2530,6 +2540,11 @@ class ResolutionAccountingFinalizer:
         result = EngramCandidateAuthority(self.internal_engram)
         return result
 
+    def clear(self) -> None:
+        """Forget every transient retry record when the owning result cache is cleared."""
+        with self.internal_lock:
+            self.internal_requests.clear()
+
     def discard(self, request_id: str) -> None:
         """Forget one transient retry record after the owning result cache evicts it."""
         if not isinstance(request_id, str) or not request_id:
@@ -2684,6 +2699,17 @@ class ResolutionOrchestrator:
         reason_codes = [*decision["reason_codes"], "accounting_finalized"]
         confidence = decision["confidence"]
         confidence_available = decision["confidence_available"]
+        if outcome == ResolutionOutcome.ANSWER and selected["source"] == CandidateSource.EXACT and not accept_exact:
+            # Fusion decides that an exact result is eligible; releasing it as a direct
+            # ANSWER needs the caller's explicit permission. Without it the candidate is
+            # kept as evidence and earns no success credit.
+            outcome = ResolutionOutcome.EVIDENCE
+            response_candidates = (selected,)
+            selected = empty_candidate()
+            selected_available = False
+            confidence = 0.0
+            confidence_available = False
+            reason_codes.append("exact_answer_not_permitted")
         evidence_package_available = False
         evidence_package = empty_evidence_package()
         package_source_records = ()
@@ -2949,6 +2975,21 @@ class ResolutionOrchestrator:
             result = len(trusted_resolution_result_to_json(value).encode("utf-8"))
             return result
 
+        def trailing_item_bytes(payload: dict, count: int) -> int:
+            """Bytes the last of ``count`` encoded list items occupies, with its separating comma."""
+            result = json_size(payload) + (1 if count > 1 else 0)
+            return result
+
+        def package_field_bytes() -> int:
+            """Encode the only top-level fields a package trim changes: package, diagnostics, budget."""
+            budget_payload = budget_consumption_to_dict(complete_consumption(MAX_RESOURCE_COUNTER, True))
+            result = (
+                len(trusted_evidence_package_to_json(evidence_package).encode("utf-8"))
+                + json_size(frame_diagnostics)
+                + json_size(budget_payload)
+            )
+            return result
+
         frame_diagnostics = bound_frame_diagnostics(
             {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
@@ -3010,12 +3051,18 @@ class ResolutionOrchestrator:
                     "frame_diagnostics": frame_diagnostics,
                 }
             )
-            while resolver_results and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+            # The result is encoded once here; each trim then subtracts the exact bytes it
+            # removes, since a JSON list item's encoding does not depend on its neighbours.
+            # The complete encoding below re-checks the fitted result before accounting.
+            sized = sized_output_bytes(MAX_RESOURCE_COUNTER)
+            while resolver_results and sized > output_limit:
                 evidence_check()
+                sized -= trailing_item_bytes(trusted_resolver_result_to_dict(resolver_results[-1]), len(resolver_results))
                 resolver_results = resolver_results[:-1]
                 result_fields["resolver_results"] = resolver_results
-            while evidence_package.get("records", ()) and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+            while evidence_package.get("records", ()) and sized > output_limit:
                 evidence_check()
+                before = package_field_bytes()
                 evidence_package = build_evidence_package(
                     package_source_records,
                     max_records=len(evidence_package.get("records", ())) - 1,
@@ -3023,12 +3070,15 @@ class ResolutionOrchestrator:
                 )
                 result_fields["evidence_package"] = evidence_package
                 sync_evidence_diagnostics()
-            while response_evidence and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+                sized += package_field_bytes() - before
+            while response_evidence and sized > output_limit:
                 evidence_check()
+                sized -= trailing_item_bytes(trusted_evidence_reference_to_dict(response_evidence[-1]), len(response_evidence))
                 response_evidence = response_evidence[:-1]
                 result_fields["evidence"] = response_evidence
-            while response_candidates and sized_output_bytes(MAX_RESOURCE_COUNTER) > output_limit:
+            while response_candidates and sized > output_limit:
                 evidence_check()
+                sized -= trailing_item_bytes(trusted_candidate_to_dict(response_candidates[-1]), len(response_candidates))
                 response_candidates = response_candidates[:-1]
                 result_fields["response_candidates"] = response_candidates
             if outcome == ResolutionOutcome.ANSWER and not response_candidates:

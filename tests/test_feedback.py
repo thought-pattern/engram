@@ -416,7 +416,9 @@ def test_policy_filtered_exact_miss_is_never_negative_admitted() -> None:
 
 def test_core_feedback_candidacy_verdict_retry_conflict_and_stale_handoff() -> None:
     core = EngramCore(engine_with_artifact(), clock=lambda: NOW)
-    result = core.resolve_request("What is Engram?", "resolution-1", namespace="tenant-a", configured_resolvers=("exact",))
+    result = core.resolve_request(
+        "What is Engram?", "resolution-1", namespace="tenant-a", configured_resolvers=("exact",), accept_exact=True
+    )
     statement_id = result["selected_candidate"]["statement_id"]
 
     first = core.record_resolution_feedback("resolution-1", "feedback-1", "rejected_stale", statement_id, "outdated")
@@ -436,7 +438,9 @@ def test_core_feedback_candidacy_verdict_retry_conflict_and_stale_handoff() -> N
 
 def test_policy_feedback_suppresses_only_matching_namespace_and_policy_partition() -> None:
     core = EngramCore(engine_with_artifact(), clock=lambda: NOW)
-    result = core.resolve_request("What is Engram?", "resolution-policy", namespace="tenant-a", configured_resolvers=("exact",))
+    result = core.resolve_request(
+        "What is Engram?", "resolution-policy", namespace="tenant-a", configured_resolvers=("exact",), accept_exact=True
+    )
     statement_id = result["selected_candidate"]["statement_id"]
     core.record_resolution_feedback("resolution-policy", "feedback-policy", "rejected_policy", statement_id)
 
@@ -455,7 +459,7 @@ def test_policy_feedback_suppresses_only_matching_namespace_and_policy_partition
 def test_feedback_history_is_produced_for_fusion_without_weakening_hard_gates() -> None:
     core = EngramCore(engine_with_artifact(), clock=lambda: NOW)
     first = core.resolve_request("What is Engram?", "history-source", namespace="tenant-a", configured_resolvers=("exact",))
-    statement_id = first["selected_candidate"]["statement_id"]
+    statement_id = first["response_candidates"][0]["statement_id"]
     for index in range(5):
         core.record_resolution_feedback(
             "history-source",
@@ -464,7 +468,9 @@ def test_feedback_history_is_produced_for_fusion_without_weakening_hard_gates() 
             statement_id,
         )
 
-    evaluated = core.resolve_request("What is Engram?", "history-evaluated", namespace="tenant-a", configured_resolvers=("exact",))
+    evaluated = core.resolve_request(
+        "What is Engram?", "history-evaluated", namespace="tenant-a", configured_resolvers=("exact",), accept_exact=True
+    )
     normalized = evaluated["frame_diagnostics"]["fusion"]["candidates"][0]["normalized_features"]
 
     assert evaluated["outcome"] == ResolutionOutcome.ANSWER
@@ -474,7 +480,9 @@ def test_feedback_history_is_produced_for_fusion_without_weakening_hard_gates() 
 
 def test_concurrent_external_verdicts_are_serialized_without_lost_updates() -> None:
     core = EngramCore(engine_with_artifact(), clock=lambda: NOW)
-    first = core.resolve_request("What is Engram?", "concurrent-source", namespace="tenant-a", configured_resolvers=("exact",))
+    first = core.resolve_request(
+        "What is Engram?", "concurrent-source", namespace="tenant-a", configured_resolvers=("exact",), accept_exact=True
+    )
     statement_id = first["selected_candidate"]["statement_id"]
 
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -503,6 +511,7 @@ def test_feedback_replay_is_process_local_and_does_not_claim_durability() -> Non
         "process-feedback-source",
         namespace="tenant-a",
         configured_resolvers=("exact",),
+        accept_exact=True,
     )
     statement_id = result.get("selected_candidate", {}).get("statement_id", "")
 

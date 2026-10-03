@@ -1,7 +1,7 @@
 """Text processing for ENGRAM."""
 
 from functools import lru_cache
-from re import UNICODE as UNICODE, finditer as re_finditer, sub as re_sub
+from re import finditer as re_finditer, sub as re_sub
 from threading import Lock
 
 from nltk.corpus import wordnet, words
@@ -15,6 +15,7 @@ from engram.constants import (
     CLAUSE_QUESTION_BOUNDARIES,
     CONTENT_POS_TAGS,
     MAX_NAME_TOKENS,
+    MAX_SPELL_EDIT_DISTANCE,
     MIN_SPELL_TOKEN_LENGTH,
     MIN_STEM_TOKEN_LENGTH,
     NAME_LEADING_FILLERS,
@@ -65,9 +66,10 @@ def normalize(text: str) -> str:
     """
     result = text.lower()
 
-    # Protect intra-word hyphens while removing other punctuation.
+    # Protect intra-word hyphens while removing other punctuation. Lookarounds
+    # leave the neighbors unconsumed, so every hyphen in "a-b-c" is kept.
     placeholder = "\x00"
-    result = re_sub(r"([a-z0-9])-([a-z0-9])", rf"\1{placeholder}\2", result)
+    result = re_sub(r"(?<=[a-z0-9])-(?=[a-z0-9])", placeholder, result)
     result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
     result = result.replace(placeholder, "-")
     result = re_sub(r"\s+", " ", result)
@@ -86,8 +88,23 @@ def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
     if not captures or not source_text:
         return captures
 
-    source_matches = list(re_finditer(r"[^\W_]+(?:-[^\W_]+)*", source_text, flags=UNICODE))
-    source_words = [normalize(match.group(0)) for match in source_matches]
+    # Captures come from pattern.prepare_pattern_text, which breaks hyphens and
+    # underscores inside a whitespace token into separate words and then
+    # normalizes each, so the source is split the same way. Each word keeps
+    # the span from its first to its last alphanumeric character and the
+    # source token it came from, so words split from one token are rejoined
+    # with the marks the caller wrote.
+    source_words: list[str] = []
+    source_spans: list[tuple[int, int, int]] = []
+    for token_index, token in enumerate(re_finditer(r"\S+", source_text)):
+        for piece in re_finditer(r"[^-_]+", token.group(0)):
+            word = normalize(piece.group(0))
+            if not word:
+                continue
+            offsets = [offset for offset, character in enumerate(piece.group(0)) if character.isalnum()]
+            start = token.start() + piece.start() + offsets[0]
+            source_words.append(word)
+            source_spans.append((start, token.start() + piece.start() + offsets[-1] + 1, token_index))
     restored: list[str] = []
     search_start = 0
 
@@ -105,7 +122,11 @@ def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
             continue
 
         end = found + len(capture_words)
-        restored.append(" ".join(match.group(0) for match in source_matches[found:end]))
+        spelled = source_text[source_spans[found][0] : source_spans[found][1]]
+        for previous, current in zip(source_spans[found : end - 1], source_spans[found + 1 : end], strict=True):
+            separator = source_text[previous[1] : current[0]] if previous[2] == current[2] else " "
+            spelled += separator + source_text[current[0] : current[1]]
+        restored.append(spelled)
         search_start = end
 
     return restored
@@ -447,7 +468,7 @@ def correct_token(token: str, vocabulary: set) -> str:
     if is_known_word(token):
         return token
 
-    max_distance = 2 if len(token) >= SPELL_LONG_TOKEN_LENGTH else 1
+    max_distance = MAX_SPELL_EDIT_DISTANCE if len(token) >= SPELL_LONG_TOKEN_LENGTH else 1
 
     best_distance = max_distance + 1
     best_candidates: list[str] = []
@@ -630,10 +651,12 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     """
 
     synonyms = {word.lower()}
+    # Readers are initialized first: initialization takes the same
+    # non-reentrant lock, so it must not run while this read holds it.
+    ensure_wordnet()
     # NLTK's shared reader opens and closes its zipped corpus around each read;
     # concurrent access can trip its internal file-handle assertion.
     with nltk_reader_lock:
-        ensure_wordnet()
         wordnet_reader = wordnet
         for syn in wordnet_reader.synsets(word):
             if syn is None:

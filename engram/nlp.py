@@ -6,6 +6,7 @@ relationships for dynamic learning.
 """
 
 from functools import lru_cache
+from logging import getLogger
 
 from nltk import ne_chunk
 from nltk.metrics.distance import edit_distance
@@ -25,6 +26,8 @@ from engram.constants import (
 )
 from engram.nltk_data import ensure_resource
 from engram.text import is_known_word, verb_only_word
+
+LOGGER = getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -302,10 +305,34 @@ def extract_fact(text: str) -> dict:
 def extracted_entity(text: str, label: str, start: int, end: int) -> dict:
     """Build a named-entity dict.
 
-    Keys: text, label (PERSON/ORGANIZATION/GPE/...), start and end positions.
+    Keys: text (the entity's tokens joined by single spaces), label
+    (PERSON/ORGANIZATION/GPE/...), and the exact [start, end) character range
+    those tokens occupy in the original text.
     """
     entity = {"text": text, "label": label, "start": start, "end": end}
     return entity
+
+
+def token_offsets(text: str, tokens: list[str]) -> list[tuple[int, int]]:
+    """Return each tokenizer token's exact [start, end) range in text, in order.
+
+    Tokens are verbatim slices separated only by whitespace, except that the
+    Treebank tokenizer rewrites a straight double quote as `` or ''. An empty
+    list means the tokens could not be aligned to the text.
+    """
+    offsets = []
+    position = 0
+    for token in tokens:
+        while position < len(text) and text[position].isspace():
+            position += 1
+        surfaces = (token, '"') if token in ("``", "''") else (token,)
+        surface = next((candidate for candidate in surfaces if text.startswith(candidate, position)), "")
+        if not surface:
+            offsets = []
+            return offsets
+        offsets.append((position, position + len(surface)))
+        position += len(surface)
+    return offsets
 
 
 def extract_entities(text: str) -> list[dict]:
@@ -331,34 +358,31 @@ def extract_entities(text: str) -> list[dict]:
         return result
 
     tokens = word_tokenize(text)
+    offsets = token_offsets(text, tokens)
+    if len(offsets) != len(tokens):
+        # Coordinates come only from aligned tokens; none are invented.
+        LOGGER.warning("named-entity tokens do not align with their source text; no entities extracted")
+        result = []
+        return result
     tagged = pos_tag(tokens)
     tree = ne_chunk(tagged)
 
     entities = []
-    current_pos = 0
+    index = 0
 
     for subtree in tree:
         if hasattr(subtree, "label"):
-            entity_text = " ".join(word for word, tag in subtree)
-            label = subtree.label()
-
-            start = text.find(entity_text, current_pos)
-            if start == -1:
-                start = text.lower().find(entity_text.lower(), current_pos)
-            if start != -1:
-                end = start + len(entity_text)
-                current_pos = end
-            else:
-                start = current_pos
-                end = current_pos + len(entity_text)
-
+            words = [word for word, tag in subtree.leaves()]
             entities.append(
                 extracted_entity(
-                    text=entity_text,
-                    label=label,
-                    start=start,
-                    end=end,
+                    text=" ".join(words),
+                    label=subtree.label(),
+                    start=offsets[index][0],
+                    end=offsets[index + len(words) - 1][1],
                 )
             )
+            index += len(words)
+        else:
+            index += 1
 
     return entities

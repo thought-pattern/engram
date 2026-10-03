@@ -23,12 +23,12 @@ from engram.constants import (
     PredicateCardinality,
 )
 from engram.core import Engram
-from engram.errors import InvalidRequestError
+from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.evidence import PropositionEligibilityEvaluator, proposition_evidence_record
 from engram.fusion import EngramCandidateAuthority
 from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import scope_key
-from engram.relation import canonical_resolution, resolve_canonical_subject
+from engram.relation import RelationQuestion, canonical_resolution, resolve_canonical_subject
 from engram.resolution import (
     QueryFrameBuilder,
     ResolutionOutcome,
@@ -184,7 +184,9 @@ def execute(plan=(), query=(), current_items=(FOUNDER, BIRTHPLACE)):
         selected_plan,
         selected_query,
         lambda projection: evaluator.evaluate(projection, frame),
-        lambda projection: evaluator.revalidate(projection, frame, lambda proposition_id: (current[proposition_id],)),
+        lambda projection: evaluator.revalidate(
+            projection, frame, lambda proposition_id, basis_window: (current[proposition_id],)
+        ),
     )
     return result
 
@@ -444,9 +446,12 @@ def test_cycle_and_partial_dependency_failure_never_produce_a_direct_result() ->
         result = [FOUNDER] if subject == "entity:microsoft" else [cycle] if predicate == "predicate:born-in" else []
         return result
 
-    cycle_result = execute(query=cycle_query, current_items=(FOUNDER, cycle))
-    assert cycle_result["direct_result"] is False
-    assert CompositionReason.CYCLE in cycle_result["reasons"]
+    # A pruned cycle is a real path whose terminal value was dropped, so neither a lookup
+    # nor an exhaustive absence or count may be stated directly.
+    for operator in (GraphCompositionOperator.LOOKUP, GraphCompositionOperator.EXISTS, GraphCompositionOperator.COUNT):
+        cycle_result = execute(plan=internal_plan(operator), query=cycle_query, current_items=(FOUNDER, cycle))
+        assert cycle_result["direct_result"] is False
+        assert CompositionReason.CYCLE in cycle_result["reasons"]
 
     def failed_query(subject, internal_predicate, internal_limit):
         del internal_predicate, internal_limit
@@ -555,7 +560,7 @@ def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -
     decision = evaluator.revalidate(
         terminal["proposition"]["projection"],
         frame,
-        lambda internal_proposition_id: (internal_current(BIRTHPLACE),),
+        lambda internal_proposition_id, internal_basis_window: (internal_current(BIRTHPLACE),),
     )
     base = proposition_evidence_record(terminal["proposition"]["projection"], decision, frame, "structured_graph")
     steps = tuple(
@@ -594,6 +599,16 @@ def test_cooperative_cancellation_propagates_before_graph_work() -> None:
             lambda internal_projection: pytest_fail("revalidate must not run"),
             lambda: (_ for _ in ()).throw(RuntimeError("cancelled")),
         )
+
+    def cancelled_query(subject, internal_predicate, internal_limit):
+        del internal_predicate, internal_limit
+        if subject == "entity:founder":
+            raise ResolutionCancelledError("cancelled inside the graph read")
+        return [FOUNDER]
+
+    # Cancellation raised by the graph callback is the caller's, not a dependency failure.
+    with pytest_raises(ResolutionCancelledError):
+        execute(query=cancelled_query)
 
 
 def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence(monkeypatch) -> None:
@@ -655,12 +670,15 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
             *,
             limit,
             include_historical=False,
+            basis_window,
         ):
+            del basis_window
             self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
             result = self.rows.get((subject_entity_id, predicate_id), [])[:limit]
             return result
 
-        def proposition_projection_by_id(self, proposition_id):
+        def proposition_projection_by_id(self, proposition_id, basis_window):
+            del basis_window
             result = [
                 internal_current(item)
                 for items in self.rows.values()
@@ -687,7 +705,7 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
         max_diagnostic_bytes=65_536,
         max_working_memory_bytes=1_048_576,
     )
-    subject = resolve_canonical_subject(frame, engine.canonical_entity_matches)
+    subject = resolve_canonical_subject(frame, engine.canonical_entity_matches, question=RelationQuestion(frame["resolved_text"]))
     assert subject["status"] == CanonicalResolutionStatus.SELECTED
     assert tuple(
         value["canonical_id"] for value in resolve_composition_predicates(frame, subject, engine.canonical_predicate_matches)

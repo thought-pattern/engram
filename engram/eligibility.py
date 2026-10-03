@@ -67,7 +67,7 @@ def eligibility_context(
     namespace: object,
     artifact_repository_available: object,
 ) -> dict:
-    """Build one request-scoped cache-eligibility context."""
+    """Validate the fields of one request-scoped cache-eligibility context."""
     result: dict = {
         "evaluation_time": "",
         "evaluation_time_available": False,
@@ -91,10 +91,10 @@ def validate_eligibility_context(value: object) -> dict:
     """Validate and copy one eligibility context."""
     data = require_exact_mapping(value, "EligibilityContext", ELIGIBILITY_CONTEXT_FIELDS)
     result = eligibility_context(
-        data.get("evaluation_time", ()),
-        data.get("evaluation_time_available", ()),
-        data.get("namespace", ()),
-        data.get("artifact_repository_available", ()),
+        data.get("evaluation_time", ""),
+        data.get("evaluation_time_available", False),
+        data.get("namespace", ""),
+        data.get("artifact_repository_available", False),
     )
     return result
 
@@ -122,7 +122,7 @@ def eligibility_decision(
     namespace: object,
     artifact_repository_available: object,
 ) -> dict:
-    """Build one complete cache-eligibility decision."""
+    """Validate the fields of one complete cache-eligibility decision."""
     normalized_statement_id = require_text(
         statement_id,
         "eligibility statement_id",
@@ -163,15 +163,15 @@ def validate_eligibility_decision(value: object) -> dict:
     """Validate and copy one eligibility decision."""
     data = require_exact_mapping(value, "EligibilityDecision", ELIGIBILITY_DECISION_FIELDS)
     result = eligibility_decision(
-        data.get("statement_id", ()),
-        data.get("generation", ()),
-        data.get("lifecycle_base_eligible", ()),
-        data.get("direct_answer_eligible", ()),
-        data.get("exclusion_reason", ()),
-        data.get("evaluation_time", ()),
-        data.get("evaluation_time_available", ()),
-        data.get("namespace", ()),
-        data.get("artifact_repository_available", ()),
+        data.get("statement_id", ""),
+        data.get("generation", 0),
+        data.get("lifecycle_base_eligible", False),
+        data.get("direct_answer_eligible", False),
+        data.get("exclusion_reason", EligibilityExclusionReason.LIFECYCLE_RETIRED),
+        data.get("evaluation_time", ""),
+        data.get("evaluation_time_available", False),
+        data.get("namespace", ""),
+        data.get("artifact_repository_available", False),
     )
     return result
 
@@ -208,25 +208,22 @@ def eligibility_decision_context_signature(value: object) -> str:
     return result
 
 
-def eligibility_result(
-    artifact: dict,
-    context: dict,
-    lifecycle_base_eligible: bool,
-    reason: EligibilityExclusionReason,
-) -> dict:
-    """Build a decision from already validated values."""
-    result = eligibility_decision(
-        artifact.get("statement_id", ""),
-        artifact.get("generation", 0),
-        lifecycle_base_eligible,
-        reason == EligibilityExclusionReason.ELIGIBLE,
-        reason,
-        context.get("evaluation_time", ""),
-        context.get("evaluation_time_available", False),
-        context.get("namespace", ""),
-        context.get("artifact_repository_available", False),
-    )
-    return result
+def validity_exclusion_reason(artifact: dict, evaluation_timestamp: str) -> EligibilityExclusionReason:
+    """Return the validity-interval outcome of one validated artifact at the evaluation time."""
+    evaluation_time = utc_datetime(evaluation_timestamp)
+    valid_from_available = artifact.get("valid_from_available", False)
+    valid_until_available = artifact.get("valid_until_available", False)
+    valid_from = utc_datetime(artifact.get("valid_from", "")) if valid_from_available else evaluation_time
+    valid_until = utc_datetime(artifact.get("valid_until", "")) if valid_until_available else evaluation_time
+    if valid_from_available and valid_until_available and valid_from >= valid_until:
+        reason = EligibilityExclusionReason.VALIDITY_INTERVAL_INVALID
+    elif valid_from_available and evaluation_time < valid_from:
+        reason = EligibilityExclusionReason.NOT_YET_VALID
+    elif valid_until_available and evaluation_time >= valid_until:
+        reason = EligibilityExclusionReason.EXPIRED
+    else:
+        reason = EligibilityExclusionReason.ELIGIBLE
+    return reason
 
 
 def evaluate_artifact_eligibility(
@@ -245,70 +242,31 @@ def evaluate_artifact_eligibility(
     lifecycle = lifecycle_base_eligibility(current_artifact.get("lifecycle", LifecycleState.RETIRED))
     lifecycle_eligible = lifecycle.get("direct_answer_eligible", False)
     if not current_context.get("artifact_repository_available", False):
-        result = eligibility_result(
-            current_artifact,
-            current_context,
-            lifecycle_eligible,
-            EligibilityExclusionReason.ARTIFACT_REPOSITORY_UNAVAILABLE,
+        reason = EligibilityExclusionReason.ARTIFACT_REPOSITORY_UNAVAILABLE
+    elif not current_context.get("evaluation_time_available", False):
+        reason = EligibilityExclusionReason.EVALUATION_TIME_UNAVAILABLE
+    elif current_artifact.get("scope", {}).get("namespace", "") != current_context.get("namespace", ""):
+        reason = EligibilityExclusionReason.SCOPE_NAMESPACE_MISMATCH
+    elif not lifecycle_eligible:
+        reason = LIFECYCLE_EXCLUSION_REASONS.get(
+            lifecycle.get("reason", LifecycleDecisionReason.RETIRED),
+            EligibilityExclusionReason.LIFECYCLE_RETIRED,
         )
-        return result
-    if not current_context.get("evaluation_time_available", False):
-        result = eligibility_result(
-            current_artifact,
-            current_context,
-            lifecycle_eligible,
-            EligibilityExclusionReason.EVALUATION_TIME_UNAVAILABLE,
-        )
-        return result
-    if current_artifact.get("scope", {}).get("namespace", "") != current_context.get("namespace", ""):
-        result = eligibility_result(
-            current_artifact,
-            current_context,
-            lifecycle_eligible,
-            EligibilityExclusionReason.SCOPE_NAMESPACE_MISMATCH,
-        )
-        return result
-    if not lifecycle_eligible:
-        result = eligibility_result(
-            current_artifact,
-            current_context,
-            False,
-            LIFECYCLE_EXCLUSION_REASONS.get(
-                lifecycle.get("reason", LifecycleDecisionReason.RETIRED),
-                EligibilityExclusionReason.LIFECYCLE_RETIRED,
-            ),
-        )
-        return result
-    evaluation_time = utc_datetime(current_context.get("evaluation_time", ""))
-    valid_from = (
-        utc_datetime(current_artifact.get("valid_from", ""))
-        if current_artifact.get("valid_from_available", False)
-        else evaluation_time
+    else:
+        reason = validity_exclusion_reason(current_artifact, current_context.get("evaluation_time", ""))
+    # Every branch reports the artifact's own lifecycle eligibility; request
+    # conditions only change the exclusion reason.
+    result = eligibility_decision(
+        current_artifact.get("statement_id", ""),
+        current_artifact.get("generation", 0),
+        lifecycle_eligible,
+        reason == EligibilityExclusionReason.ELIGIBLE,
+        reason,
+        current_context.get("evaluation_time", ""),
+        current_context.get("evaluation_time_available", False),
+        current_context.get("namespace", ""),
+        current_context.get("artifact_repository_available", False),
     )
-    valid_until = (
-        utc_datetime(current_artifact.get("valid_until", ""))
-        if current_artifact.get("valid_until_available", False)
-        else evaluation_time
-    )
-    if (
-        current_artifact.get("valid_from_available", False)
-        and current_artifact.get("valid_until_available", False)
-        and valid_from >= valid_until
-    ):
-        result = eligibility_result(
-            current_artifact,
-            current_context,
-            True,
-            EligibilityExclusionReason.VALIDITY_INTERVAL_INVALID,
-        )
-        return result
-    if current_artifact.get("valid_from_available", False) and evaluation_time < valid_from:
-        result = eligibility_result(current_artifact, current_context, True, EligibilityExclusionReason.NOT_YET_VALID)
-        return result
-    if current_artifact.get("valid_until_available", False) and evaluation_time >= valid_until:
-        result = eligibility_result(current_artifact, current_context, True, EligibilityExclusionReason.EXPIRED)
-        return result
-    result = eligibility_result(current_artifact, current_context, True, EligibilityExclusionReason.ELIGIBLE)
     return result
 
 
@@ -322,7 +280,7 @@ def exact_lookup_result(
     owner_statement_ids: object,
     truncated: object,
 ) -> dict:
-    """Build one direct artifact lookup result without an implicit collision winner."""
+    """Validate one direct artifact lookup result without an implicit collision winner."""
     if not isinstance(outcome, ExactLookupOutcome):
         raise InvalidRequestError("exact lookup outcome must be an ExactLookupOutcome")
     try:
@@ -373,7 +331,7 @@ def exact_lookup_result(
         raise InvalidRequestError("exact lookup truncated must be a boolean")
     if selected and not truncated and normalized_statement_id not in owners:
         raise InvalidRequestError("found exact lookup owners must include the selected artifact")
-    return {
+    result = {
         "outcome": outcome,
         "key": normalized_key,
         "statement_id": normalized_statement_id,
@@ -383,20 +341,21 @@ def exact_lookup_result(
         "owner_statement_ids": owners,
         "truncated": truncated,
     }
+    return result
 
 
 def validate_exact_lookup_result(value: object) -> dict:
     """Validate and copy one direct artifact lookup result."""
     data = require_exact_mapping(value, "ExactLookupResult", EXACT_LOOKUP_RESULT_FIELDS)
     result = exact_lookup_result(
-        data.get("outcome", ()),
-        data.get("key", ()),
-        data.get("statement_id", ()),
-        data.get("generation", ()),
-        data.get("provenance", ()),
-        data.get("representation", ()),
+        data.get("outcome", ExactLookupOutcome.MISS),
+        data.get("key", {}),
+        data.get("statement_id", ""),
+        data.get("generation", 0),
+        data.get("provenance", ""),
+        data.get("representation", ""),
         data.get("owner_statement_ids", ()),
-        data.get("truncated", ()),
+        data.get("truncated", False),
     )
     return result
 
@@ -406,7 +365,7 @@ def contextual_exact_lookup_result(
     decisions: object,
     context_signature: object,
 ) -> dict:
-    """Build one context-revalidated exact lookup result."""
+    """Validate one context-revalidated exact lookup result."""
     try:
         normalized_lookup = validate_exact_lookup_result(lookup)
     except InvalidRequestError as error:
@@ -420,11 +379,12 @@ def contextual_exact_lookup_result(
         MAX_ELIGIBILITY_CONTEXT_SIGNATURE_BYTES,
         allow_empty=False,
     )
-    return {
+    result = {
         "lookup": normalized_lookup,
         "decisions": normalized_decisions,
         "context_signature": normalized_signature,
     }
+    return result
 
 
 class ContextualExactLookup:
@@ -447,7 +407,7 @@ class ContextualExactLookup:
                 if not isinstance(statement_id, str) or not statement_id:
                     raise InvalidRequestError("contextual exact artifact keys must be non-empty strings")
                 validated_artifact = validate_cached_response_artifact(artifact)
-                if validated_artifact.get("statement_id") != statement_id:
+                if validated_artifact.get("statement_id", "") != statement_id:
                     raise InvalidRequestError("contextual exact artifact key must match its statement_id")
                 validated[statement_id] = validated_artifact
             self.artifacts = dict(validated)
@@ -467,9 +427,9 @@ class ContextualExactLookup:
         decisions = []
         for statement_id in sorted(self.artifacts):
             artifact = self.artifacts.get(statement_id, {})
-            matched_binding = ()
+            matched_binding = {}
             for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {})):
-                if binding.get("key") == current_key:
+                if binding.get("key", {}) == current_key:
                     matched_binding = binding
                     break
             if not matched_binding:

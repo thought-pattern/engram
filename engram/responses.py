@@ -14,13 +14,20 @@ from engram.artifacts import (
     require_lifecycle_transition,
     validate_cached_response_artifact,
 )
-from engram.constants import LifecycleMutationReason, Tier
+from engram.constants import (
+    LIFECYCLE_AUDIT_KEY,
+    MAX_ARTIFACT_ID_BYTES,
+    MAX_CALLER_ID_BYTES,
+    MAX_LIFECYCLE_AUDIT_DETAIL_BYTES,
+    LifecycleMutationReason,
+    Tier,
+)
 from engram.coordination import AtomicMutationCoordinator, validate_mutation_execution_result
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import (
-    build_retrieval_representation,
-    build_standalone_identity,
+    extract_standalone_identity,
     normalize_retrieval_key,
+    retrieval_representation,
     retrieval_representation_bindings,
     scope_key,
 )
@@ -109,7 +116,7 @@ def validate_base_response_artifact(artifact: dict) -> dict:
         raise InvalidRequestError("base commit requires artifact generation 1")
     if normalize_retrieval_key(validated_artifact["response"]) == "idk":
         raise InvalidRequestError("IDK is not a cacheable response")
-    if "lifecycle_audit" in validated_artifact["metadata"]:
+    if LIFECYCLE_AUDIT_KEY in validated_artifact["metadata"]:
         raise InvalidRequestError("base commit metadata must not use the reserved lifecycle_audit field")
     return validated_artifact
 
@@ -318,8 +325,8 @@ class AcceptedResponseService:
                 statement_id=f"response_{uuid5(NAMESPACE_URL, f'engram:LearnResponse:{request_id}').hex}",
                 generation=1,
                 response=response,
-                query_identity=build_standalone_identity(request, scope),
-                retrieval=build_retrieval_representation(request),
+                query_identity=extract_standalone_identity(request, scope),
+                retrieval=retrieval_representation(request),
                 tier=Tier.DYNAMIC,
                 lifecycle=LifecycleState.ACTIVE,
                 scope=scope,
@@ -395,7 +402,7 @@ class AcceptedResponseService:
     def record_response_hit(self, statement_id: str, request_id: str) -> dict:
         """Increment one authoritative accepted-hit statistic and last-hit time."""
 
-        normalized_id = require_text(statement_id, "response hit statement_id", 256, allow_empty=False)
+        normalized_id = require_text(statement_id, "response hit statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
         payload_signature = canonical_payload_signature({"statement_id": normalized_id})
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.RECORD_RESPONSE_HIT, payload_signature)
@@ -451,7 +458,7 @@ class AcceptedResponseService:
         normalized_accepted = require_text(
             accepted_statement_id,
             "resolution accepted_statement_id",
-            256,
+            MAX_ARTIFACT_ID_BYTES,
             allow_empty=True,
         )
         if normalized_accepted and normalized_accepted not in normalized_ids:
@@ -521,13 +528,13 @@ class AcceptedResponseService:
         target: LifecycleState,
         result_code: MutationResultCode,
     ) -> dict:
-        normalized_statement_id = require_text(statement_id, "lifecycle statement_id", 256, allow_empty=False)
+        normalized_statement_id = require_text(statement_id, "lifecycle statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
         if isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
             raise InvalidRequestError("expected_generation must be a positive integer")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("lifecycle reason must be a LifecycleMutationReason")
-        normalized_caller_id = require_text(caller_id, "lifecycle caller_id", 256, allow_empty=False)
-        normalized_detail = require_text(audit_detail, "lifecycle audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "lifecycle caller_id", MAX_CALLER_ID_BYTES, allow_empty=False)
+        normalized_detail = require_text(audit_detail, "lifecycle audit_detail", MAX_LIFECYCLE_AUDIT_DETAIL_BYTES, allow_empty=True)
         payload_signature = canonical_payload_signature(
             {
                 "statement_id": normalized_statement_id,
@@ -564,7 +571,7 @@ class AcceptedResponseService:
             updated["generation"] = current["generation"] + 1
             updated["lifecycle"] = target.value
             updated_metadata = mapping_copy(updated["metadata"], "metadata")
-            updated_metadata["lifecycle_audit"] = {
+            updated_metadata[LIFECYCLE_AUDIT_KEY] = {
                 "operation": mutation_operation.value,
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,
@@ -675,7 +682,7 @@ class AcceptedResponseService:
         normalized_statement_id = require_text(
             expected_statement_id,
             "supersession expected_statement_id",
-            256,
+            MAX_ARTIFACT_ID_BYTES,
             allow_empty=False,
         )
         if isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
@@ -685,8 +692,8 @@ class AcceptedResponseService:
             raise InvalidRequestError("supersession replacement must have a new statement_id")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("supersession reason must be a LifecycleMutationReason")
-        normalized_caller_id = require_text(caller_id, "supersession caller_id", 256, allow_empty=False)
-        normalized_detail = require_text(audit_detail, "supersession audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "supersession caller_id", MAX_CALLER_ID_BYTES, allow_empty=False)
+        normalized_detail = require_text(audit_detail, "supersession audit_detail", MAX_LIFECYCLE_AUDIT_DETAIL_BYTES, allow_empty=True)
         payload_signature = canonical_payload_signature(
             {
                 "expected_statement_id": normalized_statement_id,
@@ -761,7 +768,7 @@ class AcceptedResponseService:
             updated_current["lifecycle"] = LifecycleState.SUPERSEDED.value
             updated_current["superseded_by"] = replacement.get("statement_id", "")
             updated_metadata = mapping_copy(updated_current["metadata"], "metadata")
-            updated_metadata["lifecycle_audit"] = {
+            updated_metadata[LIFECYCLE_AUDIT_KEY] = {
                 "operation": MutationOperation.SUPERSEDE_RESPONSE.value,
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,

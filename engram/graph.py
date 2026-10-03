@@ -30,12 +30,14 @@ from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from neo4j.time import Date as neo4j_Date, DateTime as neo4j_DateTime, Time as neo4j_Time
 
 from engram.constants import (
+    ASSERTION_BASIS_WINDOW_FIELDS,
     CANONICAL_ENTITY_MATCH_FIELDS,
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_FIELDS,
     CANONICAL_PREDICATE_MATCH_QUERY,
     GRAPH_SPO_MEANING_GUARD,
     GRAPH_TIMEOUT_SECONDS,
+    MAX_GRAPH_READ_ROWS,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
@@ -52,6 +54,7 @@ from engram.constants import (
     RELATION_ONE_HOP_RESULT_FIELDS,
     STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY,
     STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY,
+    UNCONSTRAINED_ASSERTION_BASIS,
     VECTOR_INDEX_NAME,
     VECTOR_PROPOSITION_PROJECTION_QUERY,
     WRITE_CLAUSE,
@@ -59,7 +62,7 @@ from engram.constants import (
     PredicateCardinality,
     PropositionProjectionQuery,
 )
-from engram.errors import InvalidRequestError
+from engram.errors import InvalidRequestError, ResourceExhaustedError
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
@@ -146,13 +149,20 @@ def native_value(value: object) -> object:
     return value
 
 
-async def read_rows(driver, statement: str, parameters: dict) -> list[dict]:
-    """Run one auto-commit statement and return its rows as column -> value dicts."""
+async def read_rows(driver, statement: str, parameters: dict, max_rows: int) -> list[dict]:
+    """Run one auto-commit statement and return its rows as column -> value dicts.
+
+    Records are consumed one at a time, so a read that would exceed ``max_rows``
+    is refused before its remaining rows are fetched, decoded or rendered.
+    """
+    rows = []
     async with driver.session() as session:
         result = await session.run(statement, parameters)
         columns = list(result.keys())
-        values = await result.values()
-    rows = [dict(zip(columns, (native_value(value) for value in row), strict=False)) for row in values]
+        async for record in result:
+            if len(rows) >= max_rows:
+                raise ResourceExhaustedError(f"graph read exceeded the allowance of {max_rows} rows")
+            rows.append(dict(zip(columns, (native_value(value) for value in record.values()), strict=False)))
     return rows
 
 
@@ -190,6 +200,21 @@ def projection_timestamp(value: object, available: bool, name: str) -> str:
         text = require_text(value, name, MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES, allow_empty=False)
     parse_utc_timestamp(text, name)
     return text
+
+
+def assertion_basis_parameters(window: object) -> dict:
+    """Validate a request's Assertion basis window as fixed projection query parameters."""
+    if not isinstance(window, dict) or set(window) != ASSERTION_BASIS_WINDOW_FIELDS:
+        raise InvalidRequestError("Assertion basis window has an invalid shape")
+    flags = {name: window.get(name, False) for name in ("basis_start_available", "basis_end_available", "basis_end_inclusive")}
+    if not all(isinstance(value, bool) for value in flags.values()):
+        raise InvalidRequestError("Assertion basis window flags must be booleans")
+    basis_start = projection_timestamp(
+        window.get("basis_start", ""), flags.get("basis_start_available", False), "Assertion basis start"
+    )
+    basis_end = projection_timestamp(window.get("basis_end", ""), flags.get("basis_end_available", False), "Assertion basis end")
+    result = {**flags, "basis_start": basis_start, "basis_end": basis_end}
+    return result
 
 
 def optional_projection_text(value: object, available: bool, name: str, maximum_bytes: int) -> str:
@@ -243,16 +268,17 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
     """Decode one exact canonical entity match row without arbitrary graph properties."""
     if not isinstance(value, Mapping) or set(value) != CANONICAL_ENTITY_MATCH_FIELDS:
         raise InvalidRequestError("canonical entity match row has invalid fields")
+    # The exact field set is checked above, so every typed default below is unreachable.
     result: dict = {
         "canonical_id": require_identifier(
-            value["canonical_id"], "canonical entity ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+            value.get("canonical_id", ""), "canonical entity ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
         ),
         "primary_label": require_text(
-            value["primary_label"], "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+            value.get("primary_label", ""), "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "aliases": projection_text_collection(value["aliases"], "canonical entity aliases"),
-        "edge_surfaces": projection_text_collection(value["edge_surfaces"], "canonical entity edge surfaces"),
-        "entity_type": projection_entity_object_type(value["entity_type"], "canonical entity type"),
+        "aliases": projection_text_collection(value.get("aliases", []), "canonical entity aliases"),
+        "edge_surfaces": projection_text_collection(value.get("edge_surfaces", []), "canonical entity edge surfaces"),
+        "entity_type": projection_entity_object_type(value.get("entity_type", ""), "canonical entity type"),
     }
     return result
 
@@ -261,15 +287,16 @@ def canonical_predicate_match_from_graph_row(value: object) -> dict:
     """Decode one exact canonical Predicate match row."""
     if not isinstance(value, Mapping) or set(value) != CANONICAL_PREDICATE_MATCH_FIELDS:
         raise InvalidRequestError("canonical Predicate match row has invalid fields")
+    # The exact field set is checked above, so every typed default below is unreachable.
     result: dict = {
         "canonical_id": require_identifier(
-            value["canonical_id"], "canonical Predicate ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
+            value.get("canonical_id", ""), "canonical Predicate ID", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
         ),
         "primary_label": require_text(
-            value["primary_label"], "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+            value.get("primary_label", ""), "canonical Predicate primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
-        "synonyms": projection_text_collection(value["synonyms"], "canonical Predicate synonyms"),
-        "object_type": projection_object_type(value["object_type"], "canonical Predicate object type"),
+        "synonyms": projection_text_collection(value.get("synonyms", []), "canonical Predicate synonyms"),
+        "object_type": projection_object_type(value.get("object_type", ""), "canonical Predicate object type"),
     }
     return result
 
@@ -465,12 +492,18 @@ def validate_proposition_projection(value: object) -> dict:
     """
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection must be an object")
+    key = ()
+    cached = {}
+    cacheable = False
     try:
-        key: tuple | None = (tuple(value), tuple(value.values()), tuple(map(type, value.values())))
-        cached = VALIDATED_PROJECTIONS.get(key)
+        key = (tuple(value), tuple(value.values()), tuple(map(type, value.values())))
+        cached = VALIDATED_PROJECTIONS.get(key, {})
+        cacheable = True
     except TypeError:
-        key, cached = None, None
-    if cached is not None:
+        # An unhashable field value makes the input uncacheable, not invalid; validation below still runs.
+        cacheable = False
+    # A remembered projection always carries its full field set, so an empty value means a cache miss.
+    if cached:
         result = dict(cached)
         return result
     observed = set(value)
@@ -481,7 +514,7 @@ def validate_proposition_projection(value: object) -> dict:
             f"extra={sorted(observed - PROPOSITION_PROJECTION_RECORD_FIELDS)}"
         )
     result = proposition_projection(**value)
-    if key is not None:
+    if cacheable:
         if len(VALIDATED_PROJECTIONS) >= MAX_VALIDATED_PROJECTIONS:
             VALIDATED_PROJECTIONS.pop(next(iter(VALIDATED_PROJECTIONS)))
         VALIDATED_PROJECTIONS[key] = dict(result)
@@ -505,46 +538,48 @@ def proposition_projection_from_graph_row(
         )
     if not isinstance(projection_id, PropositionProjectionQuery):
         raise InvalidRequestError("Proposition projection query identifier is unsupported")
-    invalidated_available = require_bool(value["invalidated_at_available"], "invalidated_at_available")
-    system_from_available = require_bool(value["system_from_available"], "system_from_available")
-    system_to_available = require_bool(value["system_to_available"], "system_to_available")
-    valid_from_available = require_bool(value["valid_from_available"], "valid_from_available")
-    valid_to_available = require_bool(value["valid_to_available"], "valid_to_available")
-    trust_category_available = require_bool(value["trust_category_available"], "trust_category_available")
-    trust_available = require_bool(value["supplied_trust_available"], "supplied_trust_available")
-    structured_available = require_bool(value["structured_match_available"], "structured_match_available")
-    semantic_available = require_bool(value["semantic_similarity_available"], "semantic_similarity_available")
+    # The exact field set is checked above, so every typed default below is unreachable. A driver null
+    # in a present field is still returned as None and refused or normalized by the field validators.
+    invalidated_available = require_bool(value.get("invalidated_at_available", False), "invalidated_at_available")
+    system_from_available = require_bool(value.get("system_from_available", False), "system_from_available")
+    system_to_available = require_bool(value.get("system_to_available", False), "system_to_available")
+    valid_from_available = require_bool(value.get("valid_from_available", False), "valid_from_available")
+    valid_to_available = require_bool(value.get("valid_to_available", False), "valid_to_available")
+    trust_category_available = require_bool(value.get("trust_category_available", False), "trust_category_available")
+    trust_available = require_bool(value.get("supplied_trust_available", False), "supplied_trust_available")
+    structured_available = require_bool(value.get("structured_match_available", False), "structured_match_available")
+    semantic_available = require_bool(value.get("semantic_similarity_available", False), "semantic_similarity_available")
     result = proposition_projection(
-        proposition_id=value["proposition_id"],
-        subject_entity_id=value["subject_entity_id"],
-        predicate_id=value["predicate_id"],
-        object_entity_id=value["object_entity_id"],
-        polarity=value["polarity"],
-        modality_family=value["modality_family"],
-        modality_operator=value["modality_operator"],
-        argument_count=value["argument_count"],
-        qualification_count=value["qualification_count"],
-        context_count=value["context_count"],
-        applicability_count=value["applicability_count"],
-        invalidated_at=value["invalidated_at"],
+        proposition_id=value.get("proposition_id", ""),
+        subject_entity_id=value.get("subject_entity_id", ""),
+        predicate_id=value.get("predicate_id", ""),
+        object_entity_id=value.get("object_entity_id", ""),
+        polarity=value.get("polarity", ""),
+        modality_family=value.get("modality_family", ""),
+        modality_operator=value.get("modality_operator", ""),
+        argument_count=value.get("argument_count", 0),
+        qualification_count=value.get("qualification_count", 0),
+        context_count=value.get("context_count", 0),
+        applicability_count=value.get("applicability_count", 0),
+        invalidated_at=value.get("invalidated_at", ""),
         invalidated_at_available=invalidated_available,
-        system_from=value["system_from"],
+        system_from=value.get("system_from", ""),
         system_from_available=system_from_available,
-        system_to=value["system_to"],
+        system_to=value.get("system_to", ""),
         system_to_available=system_to_available,
-        valid_from=value["valid_from"],
+        valid_from=value.get("valid_from", ""),
         valid_from_available=valid_from_available,
-        valid_to=value["valid_to"],
+        valid_to=value.get("valid_to", ""),
         valid_to_available=valid_to_available,
-        predicate_canonical=value["predicate_canonical"],
-        ownership_category=value["ownership_category"],
-        trust_category=value["trust_category"],
+        predicate_canonical=value.get("predicate_canonical", False),
+        ownership_category=value.get("ownership_category", ""),
+        trust_category=value.get("trust_category", ""),
         trust_category_available=trust_category_available,
-        supplied_trust=value["supplied_trust"],
+        supplied_trust=value.get("supplied_trust", 0.0),
         supplied_trust_available=trust_available,
-        structured_match=value["structured_match"],
+        structured_match=value.get("structured_match", 0.0),
         structured_match_available=structured_available,
-        semantic_similarity=value["semantic_similarity"],
+        semantic_similarity=value.get("semantic_similarity", 0.0),
         semantic_similarity_available=semantic_available,
         projection_id=projection_id,
         vector_index_id=vector_index_id,
@@ -903,7 +938,7 @@ class MemGraphConnection:
         later reads fail immediately until the after-turn reconnect.
         """
         sendable = {key: coerce_params(value) for key, value in parameters.items()}
-        future = asyncio_run_coroutine_threadsafe(read_rows(driver, statement, sendable), loop)
+        future = asyncio_run_coroutine_threadsafe(read_rows(driver, statement, sendable, MAX_GRAPH_READ_ROWS), loop)
         try:
             result = future.result(timeout=self.timeout_seconds)
             return result
@@ -930,11 +965,19 @@ class MemGraphConnection:
 
         loop, driver = self.current_driver()
         try:
-            merged_parameters = self.visibility_parameters()
+            visibility = self.visibility_parameters()
             if isinstance(parameters, Mapping):
-                merged_parameters.update(parameters)
+                caller_parameters = dict(parameters)
             elif parameters:
                 raise ValueError("graph query parameters must be an object")
+            else:
+                caller_parameters = {}
+            # The configured visibility scope is the owner's authority; a caller
+            # or authored template may not rebind it for a filtered read.
+            collisions = sorted(set(caller_parameters) & set(visibility))
+            if collisions:
+                raise ValueError(f"graph query parameters cannot rebind visibility bindings: {', '.join(collisions)}")
+            merged_parameters = {**caller_parameters, **visibility}
             result = self.run_on(loop, driver, query, merged_parameters)
             return result
         except Exception as err:
@@ -1011,6 +1054,7 @@ class MemGraphConnection:
         *,
         projection_id: PropositionProjectionQuery,
         limit: int = 10,
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
         """Run one allow-listed structured Proposition projection and strictly decode its rows."""
         term = require_text(value, "Proposition projection search value", MAX_PROPOSITION_PROJECTION_TERM_BYTES, allow_empty=False)
@@ -1021,7 +1065,7 @@ class MemGraphConnection:
         else:
             raise InvalidRequestError("structured Proposition projection query identifier is unsupported")
         row_limit = projection_int(limit, "Proposition projection limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
-        rows = self.execute(query, {"value": term, "limit": row_limit})
+        rows = self.execute(query, {"value": term, "limit": row_limit, **assertion_basis_parameters(basis_window)})
         result = decode_projection_rows(rows, projection_id, "", row_limit)
         return result
 
@@ -1058,6 +1102,7 @@ class MemGraphConnection:
         *,
         limit: int = MAX_RELATION_PLAN_ROWS,
         include_historical: bool = False,
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
         """Execute only the allow-listed parameterized one-hop Proposition template."""
         subject = require_identifier(
@@ -1076,6 +1121,7 @@ class MemGraphConnection:
                 "predicate_id": predicate,
                 "include_historical": include_historical,
                 "limit": row_limit,
+                **assertion_basis_parameters(basis_window),
             },
         )
         result = decode_relation_projection_rows(rows, row_limit)
@@ -1088,9 +1134,13 @@ class MemGraphConnection:
         index_name: str = "proposition_embeddings",
         limit: int = 10,
         min_similarity: float = 0.45,
-        evaluation_time: str = "",
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
-        """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties."""
+        """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties.
+
+        Only Propositions with an active Assertion inside the request's basis
+        window are returned, each projected from its lowest-ID such basis.
+        """
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
             raise InvalidRequestError("invalid Proposition projection vector index name")
         if not isinstance(embedding, list) or not embedding:
@@ -1105,8 +1155,6 @@ class MemGraphConnection:
                 raise InvalidRequestError("Proposition projection embedding must contain finite numeric values")
         row_limit = projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
         similarity = projection_score(min_similarity, True, "Proposition projection min_similarity")
-        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        projection_timestamp(selected_evaluation_time, True, "Proposition projection vector evaluation time")
         rows = self.execute(
             VECTOR_PROPOSITION_PROJECTION_QUERY,
             {
@@ -1114,20 +1162,30 @@ class MemGraphConnection:
                 "limit": row_limit,
                 "query_embedding": embedding,
                 "min_similarity": similarity,
-                "evaluation_time": selected_evaluation_time,
+                **assertion_basis_parameters(basis_window),
             },
         )
         result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR, index_name, row_limit)
         return result
 
-    def proposition_projection_by_id(self, proposition_id: str) -> list[dict]:
-        """Re-read one Proposition through the fixed canonical projection for publication revalidation."""
+    def proposition_projection_by_id(
+        self,
+        proposition_id: str,
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+    ) -> list[dict]:
+        """Re-read one Proposition through the fixed canonical projection for publication revalidation.
+
+        The request's basis window selects the same Assertion basis discovery used.
+        """
         identifier = require_identifier(
             proposition_id,
             "Proposition projection revalidation proposition_id",
             maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
         )
-        rows = self.execute(PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier})
+        rows = self.execute(
+            PROPOSITION_PROJECTION_BY_ID_QUERY,
+            {"proposition_id": identifier, **assertion_basis_parameters(basis_window)},
+        )
         result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID, "", 1)
         return result
 
@@ -1152,12 +1210,17 @@ def connect_graph(
         password=password,
         visibility_scope=visibility_scope,
     )
-    if not client.connect():
+    # Ownership passes to the caller only after validation; every unsuccessful
+    # connection or preflight outcome, including a raised catalog read, stops
+    # the client's loop and driver here.
+    try:
+        if not client.connect():
+            raise RuntimeError(f"graph database is unavailable at {host}:{port}")
+        report = verify_schema(client, packaged_schema())
+        if not report.get("valid", False):
+            raise RuntimeError(f"graph database schema preflight failed: {report}")
+    except BaseException:
         client.disconnect()
-        raise RuntimeError(f"graph database is unavailable at {host}:{port}")
-    report = verify_schema(client, packaged_schema())
-    if not report.get("valid", False):
-        client.disconnect()
-        raise RuntimeError(f"graph database schema preflight failed: {report}")
+        raise
     client.schema_report = report
     return client

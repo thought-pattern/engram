@@ -718,13 +718,13 @@ class PatternMatcher:
                     found = self._topic_category(that_node, stars, thatstars, topic_words, mode, sources)
                     return found
 
-                matched_that = self._walk(node.that_root, that_words, 0, [], mode, on_that)
+                matched_that = self._walk(node.that_root, that_words, 0, [], mode, on_that, set())
                 if matched_that:
                     return matched_that
             found = self._topic_category(node, stars, [], topic_words, mode, sources)
             return found
 
-        found = self._walk(self.default_trie, words, 0, [], mode, on_pattern)
+        found = self._walk(self.default_trie, words, 0, [], mode, on_pattern, set())
         return found
 
     def _topic_category(
@@ -743,7 +743,7 @@ class PatternMatcher:
                 taken = self._take_category(topic_node, stars, thatstars, topicstars, sources)
                 return taken
 
-            found = self._walk(node.topic_root, topic_words, 0, [], mode, on_topic)
+            found = self._walk(node.topic_root, topic_words, 0, [], mode, on_topic, set())
             if found:
                 return found
         taken = self._take_category(node, stars, thatstars, [], sources)
@@ -782,40 +782,49 @@ class PatternMatcher:
         stars: list[tuple[int, int]],
         mode: str,
         on_leaf,
+        failed: set,
     ) -> tuple:
         """Try this node's branches in AIML order. The first path that finishes wins.
 
-        Each capture is a (start, end) span of ``words``.
+        Each capture is a (start, end) span of ``words``. Whether a walk from a
+        node at a position succeeds does not depend on the captures taken to get
+        there, so ``failed`` remembers (node, position) states that already
+        failed during this walk. Consecutive wildcards then try each suffix once
+        instead of once per capture partition, and branch order is unchanged.
         """
+        if (node, pos) in failed:
+            result = ()
+            return result
         if pos == len(words):
             found = on_leaf(node, stars)
             if found:
                 return found
             if node.caret is not None:
-                found = self._walk(node.caret, words, pos, stars + [(pos, pos)], mode, on_leaf)
+                found = self._walk(node.caret, words, pos, stars + [(pos, pos)], mode, on_leaf, failed)
                 if found:
                     return found
             if node.hash is not None:
-                found = self._walk(node.hash, words, pos, stars + [(pos, pos)], mode, on_leaf)
+                found = self._walk(node.hash, words, pos, stars + [(pos, pos)], mode, on_leaf, failed)
                 if found:
                     return found
+            failed.add((node, pos))
             result = ()
             return result
 
         word = words[pos]
         for child in self._dollar_children(node, word, mode):
-            found = self._walk(child, words, pos + 1, stars, mode, on_leaf)
+            found = self._walk(child, words, pos + 1, stars, mode, on_leaf, failed)
             if found:
                 return found
 
         if node.underscore is not None:
             for end in range(pos + 1, len(words) + 1):
-                found = self._walk(node.underscore, words, end, stars + [(pos, end)], mode, on_leaf)
+                found = self._walk(node.underscore, words, end, stars + [(pos, end)], mode, on_leaf, failed)
                 if found:
                     return found
 
         for child in self._atom_children(node, word, mode):
-            found = self._walk(child, words, pos + 1, stars, mode, on_leaf)
+            found = self._walk(child, words, pos + 1, stars, mode, on_leaf, failed)
             if found:
                 return found
 
@@ -824,7 +833,7 @@ class PatternMatcher:
             end = self._consume_fixed(words, pos, expected)
             if end < 0:
                 continue
-            found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
+            found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf, failed)
             if found:
                 return found
 
@@ -839,28 +848,29 @@ class PatternMatcher:
                 end = self._consume_fixed(words, pos, member_words)
                 if end < 0:
                     continue
-                found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf)
+                found = self._walk(child, words, end, stars + [(pos, end)], mode, on_leaf, failed)
                 if found:
                     return found
 
         if node.caret is not None:
             for end in range(pos, len(words) + 1):
-                found = self._walk(node.caret, words, end, stars + [(pos, end)], mode, on_leaf)
+                found = self._walk(node.caret, words, end, stars + [(pos, end)], mode, on_leaf, failed)
                 if found:
                     return found
 
         if node.hash is not None:
             for end in range(pos, len(words) + 1):
-                found = self._walk(node.hash, words, end, stars + [(pos, end)], mode, on_leaf)
+                found = self._walk(node.hash, words, end, stars + [(pos, end)], mode, on_leaf, failed)
                 if found:
                     return found
 
         if node.star is not None:
             for end in range(pos + 1, len(words) + 1):
-                found = self._walk(node.star, words, end, stars + [(pos, end)], mode, on_leaf)
+                found = self._walk(node.star, words, end, stars + [(pos, end)], mode, on_leaf, failed)
                 if found:
                     return found
 
+        failed.add((node, pos))
         result = ()
         return result
 

@@ -5,7 +5,7 @@ interpret epistemic state; the producer performs current-state validation.
 A reference is accepted on its shape, not on the contract versions it names.
 """
 
-from engram.constants import MAX_METADATA_BYTES
+from engram.constants import MAX_METADATA_BYTES, MAX_SUPPORT_REVISION
 from engram.validation import require_any_text
 
 MAX_CONTRACT_NAME_BYTES = 128
@@ -23,9 +23,13 @@ VISIBILITY_FIELDS = {"kind", "company_id", "customer_id", "engagement_id"}
 
 
 def support_revision(value, name: str) -> int:
-    """Validate a non-negative support revision."""
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
+    """Validate a non-negative support revision the Struct transport carries exactly.
+
+    A larger value would round in transit, so it is refused before storage rather
+    than returned to its producer as a different revision.
+    """
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= MAX_SUPPORT_REVISION:
+        raise ValueError(f"{name} must be an integer from 0 through {MAX_SUPPORT_REVISION}")
     return value
 
 
@@ -37,13 +41,17 @@ def validate_support_visibility(value) -> dict:
     company_id = value.get("company_id", {})
     customer_id = value.get("customer_id", {})
     engagement_id = value.get("engagement_id", {})
+    # Absent identifiers are rebuilt as owned empty mappings so the validated
+    # copy never aliases a caller's mutable dictionary.
     if kind == "global":
         if any(item != {} for item in (company_id, customer_id, engagement_id)):
             raise ValueError("global support visibility requires empty identifiers")
+        company_id, customer_id, engagement_id = {}, {}, {}
     elif kind == "company":
         company_id = require_any_text(company_id, "support company_id", MAX_METADATA_BYTES)
         if customer_id != {} or engagement_id != {}:
             raise ValueError("company support visibility has customer identifiers")
+        customer_id, engagement_id = {}, {}
     elif kind == "engagement":
         company_id = require_any_text(company_id, "support company_id", MAX_METADATA_BYTES)
         customer_id = require_any_text(customer_id, "support customer_id", MAX_METADATA_BYTES)
@@ -78,6 +86,8 @@ def validate_support_reference(value) -> dict:
         proposition_revision = support_revision(proposition_revision, "support support_revision")
     elif proposition_revision != {}:
         raise ValueError("Assertion support_revision must be {}")
+    else:
+        proposition_revision = {}
     digest = require_any_text(value.get("dependency_state_digest", ""), "support dependency_state_digest", MAX_METADATA_BYTES)
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")

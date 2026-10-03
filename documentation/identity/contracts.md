@@ -129,8 +129,9 @@ It performs these ordered operations:
 4. case-fold;
 5. expand the repository's bounded contraction table using whole-token matches;
 6. replace non-semantic punctuation with spaces while retaining `.`, `_`, `:`, `/`, `\\`, `-`, `+`, `#`, `@`, `$`, `%`, `|`, `&`, `*`, comparison operators, and internal apostrophes used by technical tokens or identifiers;
-7. remove terminal sentence periods and non-semantic quote apostrophes; and
-8. collapse whitespace.
+7. remove terminal sentence periods and non-semantic quote apostrophes;
+8. collapse whitespace; and
+9. refuse a result whose UTF-8 size exceeds the input bound, because NFKC and contraction expansion can grow admitted text.
 
 The function is deterministic and idempotent. Its golden fixture is
 [normalization.json](../../tests/fixtures/identity/normalization.json). Key-changing behavior requires
@@ -138,7 +139,7 @@ updated fixtures.
 
 ## Standalone extraction
 
-`build_standalone_identity` uses bounded string and regular-expression logic only:
+`extract_standalone_identity` uses bounded string and regular-expression logic only:
 
 - operators are classified before lexical filtering;
 - explicit negation, quantity, word-based or symbolic comparison, temporal, current/historical, and location cues become qualifiers;

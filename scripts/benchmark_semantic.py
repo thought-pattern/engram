@@ -6,9 +6,11 @@ from importlib import util as importlib_util
 from json import dumps as json_dumps, loads as json_loads
 from math import ceil as math_ceil
 from pathlib import Path
+from resource import RUSAGE_SELF, getrusage as resource_getrusage
 from statistics import fmean as statistics_fmean
-from sys import path as sys_path
+from sys import path as sys_path, platform as sys_platform
 from time import perf_counter_ns as time_perf_counter_ns
+from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from psutil import Process as psutil_Process
 
@@ -26,13 +28,22 @@ from scripts.benchmark_metadata import benchmark_source_state
 
 def parse_args() -> argparse_Namespace:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", default="eval/section13-semantic.json")
+    # The tree carries no Section 13 corpus, so the input is always named explicitly.
+    parser.add_argument("--corpus", required=True)
     parser.add_argument(
         "--manifest",
         default="data/artifacts/models/all-MiniLM-L6-v2-826711e5.engram-model.json",
     )
     parser.add_argument("--output", default="eval/results/semantic/benchmark.json")
     result = parser.parse_args()
+    return result
+
+
+def peak_rss_bytes() -> int:
+    """Return this process's resident-set high-water mark in bytes."""
+    peak = resource_getrusage(RUSAGE_SELF).ru_maxrss
+    # getrusage reports kilobytes on Linux and bytes on macOS.
+    result = peak if sys_platform == "darwin" else peak * 1024
     return result
 
 
@@ -147,6 +158,10 @@ def main() -> int:
     semantic_latencies = []
     reranker_latencies = []
     drift_max = 0.0
+    # Each component runs as its own phase so its memory can be attributed.
+    # Every semantic search runs first; the process high-water mark read after
+    # that phase bounds the model load, warmup and query work.
+    semantic_results = []
     for query in corpus["queries"]:
         started = time_perf_counter_ns()
         semantic_result = semantic.search(
@@ -174,18 +189,22 @@ def main() -> int:
             max((abs(first_scores[key] - second_scores.get(key, 0.0)) for key in first_scores), default=0.0),
         )
         semantic_ids = [value["statement_id"] for value in semantic_result["matches"]]
-        expected = query["expected_statement_id"]
+        semantic_results.append(semantic_result)
         semantic_rows.append(
             {
                 "query_id": query["query_id"],
                 "partition": query["partition"],
-                "expected_statement_id": expected,
+                "expected_statement_id": query["expected_statement_id"],
                 "top_statement_id": semantic_ids[0] if semantic_ids else "",
-                "rank": rank(semantic_ids, expected),
+                "rank": rank(semantic_ids, query["expected_statement_id"]),
                 "latency_ms": semantic_ms,
                 "candidate_ids": semantic_ids,
             }
         )
+    semantic_peak_rss = peak_rss_bytes()
+    rss_after_queries = process.memory_info().rss
+    shortlists = []
+    for query, semantic_result in zip(corpus["queries"], semantic_results, strict=True):
         sparse_result = search_sparse_artifacts(
             artifacts,
             query["text"],
@@ -200,24 +219,28 @@ def main() -> int:
             {
                 "query_id": query["query_id"],
                 "partition": query["partition"],
-                "expected_statement_id": expected,
+                "expected_statement_id": query["expected_statement_id"],
                 "top_statement_id": sparse_ids[0] if sparse_ids else "",
-                "rank": rank(sparse_ids, expected),
+                "rank": rank(sparse_ids, query["expected_statement_id"]),
                 "candidate_ids": sparse_ids,
             }
         )
-        shortlist = tuple(
-            {
-                "statement_id": value["statement_id"],
-                "base_score": value["similarity"],
-                "features": {
+        shortlists.append(
+            tuple(
+                {
+                    "statement_id": value["statement_id"],
                     "base_score": value["similarity"],
-                    "semantic": value["similarity"],
-                    "lexical": sparse_scores.get(value["statement_id"], 0.0),
-                },
-            }
-            for value in semantic_result["matches"]
+                    "features": {
+                        "base_score": value["similarity"],
+                        "semantic": value["similarity"],
+                        "lexical": sparse_scores.get(value["statement_id"], 0.0),
+                    },
+                }
+                for value in semantic_result["matches"]
+            )
         )
+    for query, semantic_result, shortlist in zip(corpus["queries"], semantic_results, shortlists, strict=True):
+        semantic_ids = [value["statement_id"] for value in semantic_result["matches"]]
         rerank_started = time_perf_counter_ns()
         reranked = reranker.rerank(shortlist)
         rerank_ms = (time_perf_counter_ns() - rerank_started) / 1_000_000
@@ -227,13 +250,21 @@ def main() -> int:
             {
                 "query_id": query["query_id"],
                 "partition": query["partition"],
-                "expected_statement_id": expected,
+                "expected_statement_id": query["expected_statement_id"],
                 "top_statement_id": reranked_ids[0] if reranked_ids else "",
-                "rank": rank(reranked_ids, expected),
+                "rank": rank(reranked_ids, query["expected_statement_id"]),
                 "latency_ms": rerank_ms,
                 "candidate_ids": reranked_ids,
             }
         )
+    # The reranker is pure Python, so traced allocations give its own
+    # high-water mark. Tracing runs as a separate pass so it does not distort
+    # the timings above, and each result is discarded as the service would.
+    tracemalloc_start()
+    for shortlist in shortlists:
+        reranker.rerank(shortlist)
+    _, reranker_peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
     elapsed_query_seconds = sum(semantic_latencies) / 1000.0
     semantic_metrics = evaluate_rows(semantic_rows)
     sparse_metrics = evaluate_rows(sparse_rows)
@@ -246,7 +277,7 @@ def main() -> int:
         "engineering_holdout_recall_at_1": holdout_semantic["recall_at_1"],
         "engineering_holdout_recall_delta_vs_sparse": holdout_semantic["recall_at_1"] - holdout_sparse["recall_at_1"],
         "engineering_holdout_false_answer_rate": holdout_semantic["false_answer_rate"],
-        "peak_memory_mib": max(rss_after_model, rss_after_request) / 1_048_576,
+        "peak_memory_mib": semantic_peak_rss / 1_048_576,
     }
     semantic_checks = {
         "engineering_holdout_recall_at_1": semantic_gate_values.get("engineering_holdout_recall_at_1", 0.0)
@@ -260,7 +291,7 @@ def main() -> int:
     reranker_gate_values = {
         "engineering_holdout_recall_delta": holdout_reranker["recall_at_1"] - holdout_semantic["recall_at_1"],
         "engineering_holdout_false_answer_delta": holdout_reranker["false_answer_rate"] - holdout_semantic["false_answer_rate"],
-        "peak_memory_mib": max(0, process.memory_info().rss - rss_after_request) / 1_048_576,
+        "peak_memory_mib": reranker_peak_bytes / 1_048_576,
     }
     reranker_checks = {
         "engineering_holdout_recall_delta": reranker_gate_values.get("engineering_holdout_recall_delta", 0.0)
@@ -304,6 +335,9 @@ def main() -> int:
                 "rss_before_mib": rss_before / 1_048_576,
                 "rss_after_model_mib": rss_after_model / 1_048_576,
                 "rss_after_request_mib": rss_after_request / 1_048_576,
+                "rss_after_queries_mib": rss_after_queries / 1_048_576,
+                "peak_rss_mib": semantic_peak_rss / 1_048_576,
+                "peak_memory_measurement": "process resident-set high-water mark after model load, warmup and all queries",
                 "artifact_count": len(artifacts),
                 "maximum_repeated_score_drift": drift_max,
                 "metrics": semantic_metrics,
@@ -327,6 +361,8 @@ def main() -> int:
             "p95_overhead_ms": percentile(reranker_latencies, 0.95),
             "p99_overhead_ms": percentile(reranker_latencies, 0.99),
             "maximum_overhead_ms": max(reranker_latencies, default=0.0),
+            "peak_traced_bytes": reranker_peak_bytes,
+            "peak_memory_measurement": "traced Python allocation high-water mark of reranking every shortlist",
             "timing_gate_applied": False,
             "health": reranker.health(),
             "pairwise_encoder": {"available": False, "reason": "no approved local pairwise model artifact"},

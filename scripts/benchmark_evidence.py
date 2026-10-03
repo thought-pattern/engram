@@ -85,40 +85,6 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def record(index: int) -> dict:
-    """Construct one content-neutral, currently eligible synthetic record."""
-    proposition_id = f"proposition-benchmark-{index:04d}"
-    result = proposition_evidence_record(
-        proposition_id=proposition_id,
-        source_resolver="structured_graph",
-        source_contributions=("structured_graph",),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0},
-            unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
-        ),
-        canonical_references=canonical_proposition_references(
-            f"entity:subject-{index:04d}",
-            "predicate:benchmark",
-            f"entity:object-{index:04d}",
-        ),
-        validity=proposition_validity_inputs(
-            "2026-08-16T16:00:00Z",
-            True,
-            True,
-            True,
-        ),
-        trust=proposition_trust_inputs(),
-        disclosure=disclosure_decision(
-            PropositionOwnership.PUBLIC,
-            DisclosureBasis.PUBLIC_RULE,
-            SCOPE,
-        ),
-        path=(proposition_id,),
-        selection_reasons=("canonical_complete", "public", "structured_match"),
-    )
-    return result
-
-
 class SyntheticResolver:
     """Bounded synthetic resolver used only by the offline benchmark."""
 
@@ -142,9 +108,43 @@ class SyntheticResolver:
         return result
 
 
-def measure_evidence(samples: int) -> dict[str, object]:
+def measure_evidence(samples: int) -> dict:
     """Run warmed engineering benchmarks and return a bounded evidence artifact."""
-    records = tuple(record(index) for index in range(1_000))
+    # One thousand content-neutral, currently eligible synthetic records.
+    synthetic_records = []
+    for index in range(1_000):
+        proposition_id = f"proposition-benchmark-{index:04d}"
+        synthetic_records.append(
+            proposition_evidence_record(
+                proposition_id=proposition_id,
+                source_resolver="structured_graph",
+                source_contributions=("structured_graph",),
+                features=feature_set(
+                    values={"canonical_completeness": 1.0, "structured_match": 1.0},
+                    unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
+                ),
+                canonical_references=canonical_proposition_references(
+                    f"entity:subject-{index:04d}",
+                    "predicate:benchmark",
+                    f"entity:object-{index:04d}",
+                ),
+                validity=proposition_validity_inputs(
+                    "2026-08-16T16:00:00Z",
+                    True,
+                    True,
+                    True,
+                ),
+                trust=proposition_trust_inputs(),
+                disclosure=disclosure_decision(
+                    PropositionOwnership.PUBLIC,
+                    DisclosureBasis.PUBLIC_RULE,
+                    SCOPE,
+                ),
+                path=(proposition_id,),
+                selection_reasons=("canonical_complete", "public", "structured_match"),
+            )
+        )
+    records = tuple(synthetic_records)
     ten_records = records[:10]
     policy = evidence_usefulness_policy()
     encoded_record = proposition_evidence_record_to_json(records[0])

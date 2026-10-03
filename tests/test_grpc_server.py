@@ -58,12 +58,14 @@ def as_struct(value: dict) -> struct_pb2.Struct:
 @contextmanager
 def running_server(core: EngramCore, **kwargs):
     server = EngramGrpcServer(core, bind_address="127.0.0.1:0", **kwargs)
-    channel = grpc_insecure_channel(server.start())
-    grpc_channel_ready_future(channel).result(timeout=5)
     try:
-        yield server, channel, engram_pb2_grpc.EngramServiceStub(channel)
+        channel = grpc_insecure_channel(server.start())
+        try:
+            grpc_channel_ready_future(channel).result(timeout=5)
+            yield server, channel, engram_pb2_grpc.EngramServiceStub(channel)
+        finally:
+            channel.close()
     finally:
-        channel.close()
         server.stop(0)
 
 

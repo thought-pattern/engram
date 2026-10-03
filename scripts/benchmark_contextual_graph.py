@@ -13,7 +13,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import VERSION, ExpectedObjectType, ResolutionOutcome
+from engram.constants import UNCONSTRAINED_ASSERTION_BASIS, VERSION, ExpectedObjectType, ResolutionOutcome
 from engram.core import Engram
 from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
@@ -21,45 +21,7 @@ from engram.service import EngramCore
 from engram.spacy_setup import get_nlp
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_MANIFEST = Path("eval/section8-relation-followup.json")
 DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark.json")
-
-
-def proposition_row(proposition_id: str, subject_id: str, predicate_id: str, object_id: str) -> dict[str, object]:
-    return {
-        "proposition_id": proposition_id,
-        "subject_entity_id": subject_id,
-        "predicate_id": predicate_id,
-        "object_entity_id": object_id,
-        "polarity": "positive",
-        "modality_family": "none",
-        "modality_operator": "none",
-        "argument_count": 2,
-        "qualification_count": 0,
-        "context_count": 0,
-        "applicability_count": 0,
-        "invalidated_at": "",
-        "invalidated_at_available": False,
-        "system_from": "2026-01-01T00:00:00Z",
-        "system_from_available": True,
-        "system_to": "",
-        "system_to_available": False,
-        "valid_from": "",
-        "valid_from_available": False,
-        "valid_to": "",
-        "valid_to_available": False,
-        "predicate_canonical": True,
-        "ownership_category": "PUBLIC",
-        "trust_category": "source_supplied",
-        "trust_category_available": True,
-        "supplied_trust": 0.8,
-        "supplied_trust_available": True,
-        "structured_match": 1.0,
-        "structured_match_available": True,
-        "semantic_similarity": 0.0,
-        "semantic_similarity_available": False,
-        "predicate_cardinality": "SINGLE",
-    }
 
 
 class BenchmarkGraph:
@@ -118,7 +80,38 @@ class BenchmarkGraph:
         self.results = {
             proposition_id: relation_proposition_projection_from_graph_row(
                 {
-                    **proposition_row(proposition_id, subject_id, predicate_id, object_id),
+                    "proposition_id": proposition_id,
+                    "subject_entity_id": subject_id,
+                    "predicate_id": predicate_id,
+                    "object_entity_id": object_id,
+                    "polarity": "positive",
+                    "modality_family": "none",
+                    "modality_operator": "none",
+                    "argument_count": 2,
+                    "qualification_count": 0,
+                    "context_count": 0,
+                    "applicability_count": 0,
+                    "invalidated_at": "",
+                    "invalidated_at_available": False,
+                    "system_from": "2026-01-01T00:00:00Z",
+                    "system_from_available": True,
+                    "system_to": "",
+                    "system_to_available": False,
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_to": "",
+                    "valid_to_available": False,
+                    "predicate_canonical": True,
+                    "ownership_category": "PUBLIC",
+                    "trust_category": "source_supplied",
+                    "trust_category_available": True,
+                    "supplied_trust": 0.8,
+                    "supplied_trust_available": True,
+                    "structured_match": 1.0,
+                    "structured_match_available": True,
+                    "semantic_similarity": 0.0,
+                    "semantic_similarity_available": False,
+                    "predicate_cardinality": "SINGLE",
                     "object_label": object_label,
                     "object_type": object_type,
                 }
@@ -168,22 +161,24 @@ class BenchmarkGraph:
         *,
         limit: int,
         include_historical: bool = False,
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ):
-        del include_historical
+        del include_historical, basis_window
         self.one_hop_calls.append((subject_entity_id, predicate_id, limit))
         result = [
             result
             for result in self.results.values()
-            if result["projection"]["subject_entity_id"] == subject_entity_id
-            and result["projection"]["predicate_id"] == predicate_id
+            if result.get("projection", {}).get("subject_entity_id", "") == subject_entity_id
+            and result.get("projection", {}).get("predicate_id", "") == predicate_id
         ][:limit]
         return result
 
-    def proposition_projection_by_id(self, proposition_id: str):
-        result = self.results.get(proposition_id)
-        if not result:
+    def proposition_projection_by_id(self, proposition_id: str, basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS):
+        del basis_window
+        stored = self.results.get(proposition_id, {})
+        if not stored:
             return []
-        values = dict(result["projection"])
+        values = dict(stored.get("projection", {}))
         values.update(
             {
                 "projection_id": PropositionProjectionQuery.BY_ID,
@@ -209,18 +204,18 @@ def internal_percentile(values: list[float], fraction: float) -> float:
 def validate_manifest(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {"benchmark_id", "authored_at", "partitions"}:
         raise ValueError("benchmark manifest has invalid top-level fields")
-    if value["benchmark_id"] != "section8-relation-followup":
+    if value.get("benchmark_id", "") != "section8-relation-followup":
         raise ValueError("benchmark manifest identity is unsupported")
-    partitions = value["partitions"]
+    partitions = value.get("partitions", {})
     if not isinstance(partitions, dict) or set(partitions) != {"development", "held_out"}:
         raise ValueError("benchmark manifest partitions are invalid")
     for cases in partitions.values():
         if not isinstance(cases, list) or not cases:
             raise ValueError("each benchmark partition must contain cases")
         for case in cases:
-            if not isinstance(case, dict) or set(case) != {"id", "category", "turns"} or not case["turns"]:
+            if not isinstance(case, dict) or set(case) != {"id", "category", "turns"} or not case.get("turns", []):
                 raise ValueError("benchmark case is malformed")
-            for turn in case["turns"]:
+            for turn in case.get("turns", []):
                 if not isinstance(turn, dict) or set(turn) != {
                     "text",
                     "expected_outcome",
@@ -238,42 +233,43 @@ def run(manifest_path: Path) -> dict:
     partition_reports = {}
     all_latencies = []
     all_failures = []
-    for partition_name, cases in manifest["partitions"].items():
+    for partition_name, cases in manifest.get("partitions", {}).items():
         case_reports = []
         for case in cases:
+            case_id = case.get("id", "")
             engine = Engram()
             graph = BenchmarkGraph()
             engine.internal_graph_client = graph
             core = EngramCore(engine)
             turn_reports = []
-            for turn_index, turn in enumerate(case["turns"], 1):
-                request_id = f"benchmark:{partition_name}:{case['id']}:{turn_index}"
+            for turn_index, turn in enumerate(case.get("turns", []), 1):
+                request_id = f"benchmark:{partition_name}:{case_id}:{turn_index}"
                 started = time_perf_counter_ns()
                 result = core.resolve_request(
-                    turn["text"],
+                    turn.get("text", ""),
                     request_id,
-                    user_id=f"benchmark:{case['id']}",
+                    user_id=f"benchmark:{case_id}",
                     namespace="benchmark",
                     configured_resolvers=("structured_graph",),
                 )
                 latency_ms = (time_perf_counter_ns() - started) / 1_000_000
                 all_latencies.append(latency_ms)
                 frame = core.resolution_requests.get(request_id, {}).get("frame", {})
-                if not isinstance(frame, dict):
+                if not isinstance(frame, dict) or "inheritance" not in frame:
                     raise RuntimeError("benchmark resolution frame is malformed")
-                observed_inheritance = sorted(item["field_name"] for item in frame["inheritance"])
-                responses = [candidate["response"] for candidate in result.get("response_candidates", [])]
+                observed_inheritance = sorted(item.get("field_name", "") for item in frame.get("inheritance", []))
+                responses = [candidate.get("response", "") for candidate in result.get("response_candidates", [])]
                 if result.get("selected_candidate_available", False):
-                    responses.append(result.get("selected_candidate", {})["response"])
+                    responses.append(result.get("selected_candidate", {}).get("response", ""))
+                response_contains = turn.get("response_contains", "")
                 checks = {
-                    "outcome": result.get("outcome", ResolutionOutcome.MISS).value == turn["expected_outcome"],
-                    "response": not turn["response_contains"]
-                    or any(turn["response_contains"] in response for response in responses),
-                    "inheritance": observed_inheritance == sorted(turn["inheritance_fields"]),
+                    "outcome": result.get("outcome", ResolutionOutcome.MISS).value == turn.get("expected_outcome", ""),
+                    "response": not response_contains or any(response_contains in response for response in responses),
+                    "inheritance": observed_inheritance == sorted(turn.get("inheritance_fields", [])),
                     "bounded_plan": all(1 <= call[2] <= 10 for call in graph.one_hop_calls),
                 }
                 failures = sorted(name for name, passed in checks.items() if not passed)
-                all_failures.extend(f"{partition_name}:{case['id']}:{turn_index}:{name}" for name in failures)
+                all_failures.extend(f"{partition_name}:{case_id}:{turn_index}:{name}" for name in failures)
                 turn_reports.append(
                     {
                         "turn": turn_index,
@@ -287,20 +283,20 @@ def run(manifest_path: Path) -> dict:
                 )
             case_reports.append(
                 {
-                    "id": case["id"],
-                    "category": case["category"],
-                    "passed": all(turn["passed"] for turn in turn_reports),
+                    "id": case_id,
+                    "category": case.get("category", ""),
+                    "passed": all(turn_report.get("passed", False) for turn_report in turn_reports),
                     "turns": turn_reports,
                 }
             )
         partition_reports[partition_name] = {
             "cases": len(case_reports),
-            "passed": sum(case["passed"] for case in case_reports),
+            "passed": sum(case_report.get("passed", False) for case_report in case_reports),
             "results": case_reports,
         }
     result = {
-        "benchmark_id": manifest["benchmark_id"],
-        "manifest_authored_at": manifest["authored_at"],
+        "benchmark_id": manifest.get("benchmark_id", ""),
+        "manifest_authored_at": manifest.get("authored_at", ""),
         "executed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "engram_version": VERSION,
         "python_version": platform_python_version(),
@@ -320,14 +316,16 @@ def run(manifest_path: Path) -> dict:
 
 def main() -> int:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    # The tree carries no Section 8 relation follow-up manifest, so the input is always named explicitly.
+    parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     report = run(args.manifest)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json_dumps({"passed": report["passed"], "failures": report["failures"], "latency_ms": report["latency_ms"]}))
-    result = 0 if report["passed"] else 1
+    passed = report.get("passed", False)
+    print(json_dumps({"passed": passed, "failures": report.get("failures", []), "latency_ms": report.get("latency_ms", {})}))
+    result = 0 if passed else 1
     return result
 
 

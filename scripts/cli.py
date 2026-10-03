@@ -67,7 +67,8 @@ class InteractiveChat:
     def handle_command(self, line: str) -> bool:
         """Handle one slash command; return whether the loop should stop."""
         parts = line[1:].split(maxsplit=2)
-        command = parts[0].lower()
+        # A bare "/" names no command, so it is answered like /help.
+        command = parts[0].lower() if parts else "help"
         if command in ("quit", "exit", "q"):
             return True
         if command == "debug":
@@ -120,27 +121,30 @@ def main(argv=()) -> int:
     if args.capacity:
         config["capacity"] = args.capacity
     command = args.command or "interactive"
+    # The core and the conversation are released even when an unexpected
+    # error escapes the command loop.
     try:
-        core = EngramCore(config=config)
-        if command == "query":
-            result = core.resolve_request(
-                args.text,
-                args.request_id,
-                user_id=args.user_id,
-                namespace=args.namespace,
-                context_fingerprint=args.context_fingerprint,
-                accept_exact=args.accept_exact,
-            )
-            print(json_dumps(result, indent=2, default=str))
-        else:
-            chat = InteractiveChat(
-                core,
-                session_id=getattr(args, "session", ""),
-                initial_bot_text=getattr(args, "initial_bot_text", ""),
-            )
-            chat.run()
-            core.stop_conversation(chat.session_id, conversation_token=chat.conversation_token)
-        core.close()
+        with EngramCore(config=config) as core:
+            if command == "query":
+                result = core.resolve_request(
+                    args.text,
+                    args.request_id,
+                    user_id=args.user_id,
+                    namespace=args.namespace,
+                    context_fingerprint=args.context_fingerprint,
+                    accept_exact=args.accept_exact,
+                )
+                print(json_dumps(result, indent=2, default=str))
+            else:
+                chat = InteractiveChat(
+                    core,
+                    session_id=getattr(args, "session", ""),
+                    initial_bot_text=getattr(args, "initial_bot_text", ""),
+                )
+                try:
+                    chat.run()
+                finally:
+                    core.stop_conversation(chat.session_id, conversation_token=chat.conversation_token)
     except EngramCoreError as error:
         print(f"Error: {error}", file=sys_stderr)
         return 1

@@ -20,6 +20,10 @@ SOURCE_FILES = (
     "config.example.yml",
     "engram/schema.cypher",
 )
+# Benchmark runners write their reports under these roots. Reports are output,
+# not governed source, so a new or changed report never alters the source
+# digest of another run; corpora and fixtures elsewhere under eval stay governed.
+GENERATED_OUTPUT_ROOTS = ("eval/results",)
 
 
 def git_output(*arguments: str) -> str:
@@ -42,7 +46,11 @@ def governed_source_sha256(repository: Path = REPOSITORY) -> str:
     paths = []
     for root_name, patterns in SOURCE_GLOBS:
         for pattern in patterns:
-            paths.extend(path for path in (repository / root_name).rglob(pattern) if "__pycache__" not in path.parts)
+            for path in (repository / root_name).rglob(pattern):
+                relative = path.relative_to(repository)
+                if "__pycache__" in relative.parts or any(relative.is_relative_to(root) for root in GENERATED_OUTPUT_ROOTS):
+                    continue
+                paths.append(path)
     paths.extend(repository / name for name in SOURCE_FILES)
     for path in sorted(paths):
         relative = path.relative_to(repository).as_posix()

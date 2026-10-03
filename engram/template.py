@@ -15,6 +15,8 @@ from re import compile as re_compile, match as re_match
 from engram.constants import (
     TEMPLATE_BOT_EXPRESSION,
     TEMPLATE_DATE_FORMAT_EXPRESSION,
+    TEMPLATE_ESCAPABLE_CHARACTERS,
+    TEMPLATE_ESCAPE_CHARACTER,
     TEMPLATE_GET_EXPRESSION,
     TEMPLATE_INPUT_EXPRESSION,
     TEMPLATE_MAP_EXPRESSION,
@@ -200,6 +202,43 @@ def simple_variable_values(context: dict) -> dict[str, str]:
     return result
 
 
+def format_template_date(date_format: str, token: str) -> str:
+    """Render a ``{date:...}`` token; a format strftime rejects leaves the token as written."""
+    try:
+        formatted = datetime.now().strftime(date_format)
+    except ValueError:
+        return token
+    return formatted
+
+
+def template_token_end(text: str, start: int) -> int:
+    """Return the index of the brace closing the token opened at ``start``, or -1 when it is unclosed."""
+    depth = 0
+    position = start
+    while position < len(text):
+        character = text[position]
+        if character == TEMPLATE_ESCAPE_CHARACTER:
+            position += 2
+            continue
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if not depth:
+                return position
+        position += 1
+    result = -1
+    return result
+
+
+def escape_template_text(text: str) -> str:
+    """Escape rendered text so that rendering it again reproduces it literally."""
+    result = "".join(
+        TEMPLATE_ESCAPE_CHARACTER + character if character in TEMPLATE_ESCAPABLE_CHARACTERS else character for character in text
+    )
+    return result
+
+
 def apply_word_substitution(text: str, substitutions: dict[str, str]) -> str:
     """Apply a case-preserving word substitution map."""
     if not substitutions:
@@ -287,10 +326,11 @@ class TemplateProcessor:
             return result
 
         if "redirect" in template:
-            result = self.process_redirect(template.get("redirect", ""), context)
+            result = self.process_redirect(self.substitute_variables(template.get("redirect", ""), context), context)
             return result
 
         if "sr" in template and template.get("sr", False):
+            # The capture is redirected as input text, never rendered as a template.
             if context.get("stars", []):
                 result = self.process_redirect(context.get("stars", [])[0], context)
                 return result
@@ -402,13 +442,11 @@ class TemplateProcessor:
         output = " ".join(output_parts) if output_parts else ""
         return output
 
-    def process_redirect(self, pattern: str, context: dict) -> str:
-        """Process redirect (SRAI)."""
+    def process_redirect(self, resolved_pattern: str, context: dict) -> str:
+        """Redirect (SRAI) already rendered input text."""
         if self.srai_depth >= self.srai_limit:
             result = ""
             return result
-
-        resolved_pattern = self.substitute_variables(pattern, context)
 
         redirect = context.get("redirect_fn", ())
         if redirect:
@@ -453,9 +491,14 @@ class TemplateProcessor:
             learn(resolved)
 
     def resolve_template_vars(self, template, context: dict):
-        """Recursively resolve variables in a template structure."""
+        """Render every text leaf of a template that ``learn`` stores.
+
+        Each leaf is rendered now and escaped, so the learned template later
+        reproduces this text literally; a capture taught into it never acts as
+        template syntax when the learned category fires.
+        """
         if isinstance(template, str):
-            resolved = self.substitute_variables(template, context)
+            resolved = escape_template_text(self.substitute_variables(template, context))
             return resolved
         elif isinstance(template, dict):
             resolved = {k: self.resolve_template_vars(v, context) for k, v in template.items()}
@@ -492,15 +535,16 @@ class TemplateProcessor:
 
         format_type = query_data.get("format", "single")
 
+        # Graph values are bound as literal data: record fields in the item
+        # template and the result in the success text are never rendered as
+        # template syntax.
         if format_type == "list":
             item_template = query_data.get("item_template", "{result}")
             join_str = query_data.get("join", ", ")
             items = []
             for record in records:
-                item_text = item_template
-                for key, value in record.items():
-                    item_text = item_text.replace(f"{{{key}}}", str(value))
-                items.append(item_text)
+                bindings = {str(key): str(value) for key, value in record.items()}
+                items.append(self.substitute_variables(item_template, context, bindings))
             result_str = join_str.join(items)
         else:
             record = graph_single(records) or {}
@@ -509,10 +553,10 @@ class TemplateProcessor:
         success_template = query_data.get("on_success", {"text": "{result}"})
         if isinstance(success_template, dict):
             context.get("predicates", {})["_graph_result"] = result_str
-            template_copy = success_template.copy()
-            if "text" in template_copy:
-                template_copy["text"] = template_copy["text"].replace("{result}", result_str)
-            output = self.process(template_copy, context)
+            if "text" in success_template:
+                output = self.substitute_variables(str(success_template.get("text", "")), context, {"result": result_str})
+                return output
+            output = self.process(success_template, context)
             return output
         return result_str
 
@@ -523,19 +567,20 @@ class TemplateProcessor:
             result = ""
             return result
 
-        subject = self.substitute_variables(triple_data.get("subject", ""), context)
-        predicate = triple_data.get("predicate", "")
-        obj = triple_data.get("object", "")
+        authored_subject = triple_data.get("subject", "")
+        authored_object = triple_data.get("object", "")
+        predicate = self.substitute_variables(triple_data.get("predicate", ""), context)
 
-        # Determine query direction based on which slot is "?". The predicate
-        # resolves to a canonical Predicate node; the known slot resolves to a
-        # canonical Entity; the unknown slot is read from the edge surface form.
-        if obj == "?":
+        # The authored "?" marks the unknown slot and fixes the query direction;
+        # a rendered capture cannot change it. The predicate resolves to a
+        # canonical Predicate node, the known slot to a canonical Entity, and
+        # the unknown slot is read from the edge surface form.
+        if authored_object == "?":
             query = TRIPLE_QUERY_OBJECT
-            params = {"subject": subject, "predicate": predicate}
-        elif subject == "?":
+            params = {"subject": self.substitute_variables(authored_subject, context), "predicate": predicate}
+        elif authored_subject == "?":
             query = TRIPLE_QUERY_SUBJECT
-            params = {"object": obj, "predicate": predicate}
+            params = {"object": self.substitute_variables(authored_object, context), "predicate": predicate}
         else:
             result = ""
             return result
@@ -550,149 +595,164 @@ class TemplateProcessor:
         result = ""
         return result
 
-    def substitute_variables(self, text: str, context: dict) -> str:
-        """Substitute all variables in text."""
-        result = text
+    def substitute_variables(self, text: str, context: dict, bindings=()) -> str:
+        """Render authored template text in one pass.
 
-        # Star captures: {star1}, {star2}, etc.
-        result = star_pattern.sub(lambda m: get_star(context, int(m.group(1))), result)
-
-        # Thatstar captures: {thatstar1}, etc.
-        result = thatstar_pattern.sub(lambda m: get_thatstar(context, int(m.group(1))), result)
-
-        # Topicstar captures: {topicstar1}, etc.
-        result = topicstar_pattern.sub(lambda m: get_topicstar(context, int(m.group(1))), result)
-
-        # Get predicates: {get:name} or {get:name:default}
-        result = get_pattern.sub(lambda m: context.get("predicates", {}).get(m.group(1), m.group(2) or ""), result)
-
-        # Bot properties: {bot:name}
-        result = bot_pattern.sub(lambda m: context.get("bot", {}).get(m.group(1), ""), result)
-
-        # Map lookups: {map:name:key} or {map:name:key:default}
-        result = map_pattern.sub(lambda m: get_map(context, m.group(1), m.group(2), m.group(3) or ""), result)
-
-        # Input history: {input:N} (bare {input} is the current input, below)
-        result = input_pattern.sub(lambda m: get_input(context, int(m.group(1))), result)
-
-        # Response history: {response} or {response:N}
-        result = response_pattern.sub(lambda m: get_response(context, int(m.group(1)) if m.group(1) else 1), result)
-
-        # That history: {that} or {that:M} or {that:M:N}
-        def that_sub(m):
-            if not m.group(1):
-                if context.get("that_history", []) and context.get("that_history", [])[0]:
-                    result = context.get("that_history", [])[0][0]
-                    return result
-                result = ""
-                return result
-            resp_idx = int(m.group(1))
-            sent_idx = int(m.group(2)) if m.group(2) else 1
-            that_value = get_that(context, resp_idx, sent_idx)
-            return that_value
-
-        result = that_pattern.sub(that_sub, result)
-
-        for pattern, value in simple_variable_values(context).items():
-            if pattern in result:
-                result = result.replace(pattern, value)
-
-        def date_format_sub(m):
-            fmt = m.group(1)
-            try:
-                formatted = datetime.now().strftime(fmt)
-                return formatted
-            except ValueError:
-                original = m.group(0)
-                return original
-
-        result = date_format_pattern.sub(date_format_sub, result)
-
-        # Text transforms: {upper:...}, {lower:...}, etc.
-        result = self.apply_transforms(result, context)
-
+        Tokens are recognized only in the authored text. A value a token
+        inserts (a capture, predicate, history entry, graph result or other
+        context value) is emitted as literal data and never scanned for further
+        tokens, so captured text cannot act as template syntax. A token's
+        argument is itself authored text and is rendered first, which keeps
+        intentional nesting such as ``{upper:{star1}}``. ``bindings`` maps token
+        names such as ``result`` to literal values for this rendering. A
+        backslash before ``{``, ``}`` or another backslash emits that character.
+        """
+        values = bindings or {}
+        output = []
+        position = 0
+        while position < len(text):
+            character = text[position]
+            following = text[position + 1 : position + 2]
+            if character == TEMPLATE_ESCAPE_CHARACTER and following and following in TEMPLATE_ESCAPABLE_CHARACTERS:
+                output.append(following)
+                position += 2
+                continue
+            end = template_token_end(text, position) if character == "{" else -1
+            if end < 0:
+                output.append(character)
+                position += 1
+                continue
+            output.append(self.render_token(text[position + 1 : end], context, values))
+            position = end + 1
+        result = "".join(output)
         return result
 
-    def apply_transforms(self, text: str, context: dict) -> str:
-        """Apply text transformation functions."""
+    def render_token(self, inner: str, context: dict, bindings: dict) -> str:
+        """Return the value of one authored token whose text between braces is ``inner``."""
+        if inner in bindings:
+            bound = bindings.get(inner, "")
+            return bound
+        name, separator, argument = inner.partition(":")
+        # The transform expression accepts an empty argument, so it identifies transform names.
+        if separator and transform_pattern.fullmatch(f"{{{name}:}}"):
+            transformed = self.apply_transform(name, self.substitute_variables(argument, context, bindings), context)
+            return transformed
+        token = "{" + self.substitute_variables(inner, context, bindings) + "}"
+        match = star_pattern.fullmatch(token)
+        if match:
+            value = get_star(context, int(match.group(1)))
+            return value
+        match = thatstar_pattern.fullmatch(token)
+        if match:
+            value = get_thatstar(context, int(match.group(1)))
+            return value
+        match = topicstar_pattern.fullmatch(token)
+        if match:
+            value = get_topicstar(context, int(match.group(1)))
+            return value
+        match = get_pattern.fullmatch(token)
+        if match:
+            value = context.get("predicates", {}).get(match.group(1), match.group(2) or "")
+            return value
+        match = bot_pattern.fullmatch(token)
+        if match:
+            value = context.get("bot", {}).get(match.group(1), "")
+            return value
+        match = map_pattern.fullmatch(token)
+        if match:
+            value = get_map(context, match.group(1), match.group(2), match.group(3) or "")
+            return value
+        match = input_pattern.fullmatch(token)
+        if match:
+            value = get_input(context, int(match.group(1)))
+            return value
+        match = response_pattern.fullmatch(token)
+        if match:
+            value = get_response(context, int(match.group(1)) if match.group(1) else 1)
+            return value
+        match = that_pattern.fullmatch(token)
+        if match and match.group(1):
+            value = get_that(context, int(match.group(1)), int(match.group(2)) if match.group(2) else 1)
+            return value
+        if match:
+            history = context.get("that_history", [])
+            value = history[0][0] if history and history[0] else ""
+            return value
+        if token in TEMPLATE_SIMPLE_VARIABLE_TOKENS.values():
+            value = simple_variable_values(context).get(token, "")
+            return value
+        match = date_format_pattern.fullmatch(token)
+        if match:
+            value = format_template_date(match.group(1), token)
+            return value
+        # Unknown braces stay literal text.
+        return token
 
-        def transform(m):
-            fn_name = m.group(1)
-            content = m.group(2)
-
-            resolved = self.substitute_variables(content, context)
-
-            if fn_name == "upper":
-                transformed = resolved.upper()
-                return transformed
-            elif fn_name == "lower":
-                transformed = resolved.lower()
-                return transformed
-            elif fn_name == "capitalize":
-                transformed = resolved.capitalize()
-                return transformed
-            elif fn_name == "formal":
-                transformed = resolved.title()
-                return transformed
-            elif fn_name == "sentence":
-                transformed = resolved.capitalize()
-                return transformed
-            elif fn_name == "person":
-                transformed = apply_word_substitution(resolved, context.get("person_subs", {}))
-                return transformed
-            elif fn_name == "person2":
-                transformed = apply_word_substitution(resolved, context.get("person2_subs", {}))
-                return transformed
-            elif fn_name == "gender":
-                transformed = apply_word_substitution(resolved, context.get("gender_subs", {}))
-                return transformed
-            elif fn_name == "normalize":
-                transformed = resolved.upper()
-                return transformed
-            elif fn_name == "denormalize":
-                return resolved
-            elif fn_name == "explode":
-                transformed = " ".join(resolved)
-                return transformed
-            elif fn_name == "first":
-                words = resolved.split()
-                transformed = words[0] if words else ""
-                return transformed
-            elif fn_name == "rest":
-                words = resolved.split()
-                transformed = " ".join(words[1:]) if len(words) > 1 else ""
-                return transformed
-            elif fn_name == "uniq":
-                words = resolved.split()
-                seen = set()
-                unique = []
-                for word in words:
-                    if word not in seen:
-                        seen.add(word)
-                        unique.append(word)
-                transformed = " ".join(unique)
-                return transformed
-            elif fn_name == "wordcount":
-                transformed = str(len(resolved.split()))
-                return transformed
-            elif fn_name == "sentiment":
-                transformed = sentiment_label(resolved)
-                return transformed
-            elif fn_name == "clause":
-                transformed = first_clause(resolved)
-                return transformed
-            elif fn_name == "qtype":
-                transformed = input_kind(resolved)
-                return transformed
-            elif fn_name == "name":
-                transformed = extract_name(resolved)
-                return transformed
+    def apply_transform(self, fn_name: str, resolved: str, context: dict) -> str:
+        """Apply one named text transform to an already rendered value."""
+        if fn_name == "upper":
+            transformed = resolved.upper()
+            return transformed
+        elif fn_name == "lower":
+            transformed = resolved.lower()
+            return transformed
+        elif fn_name == "capitalize":
+            transformed = resolved.capitalize()
+            return transformed
+        elif fn_name == "formal":
+            transformed = resolved.title()
+            return transformed
+        elif fn_name == "sentence":
+            transformed = resolved.capitalize()
+            return transformed
+        elif fn_name == "person":
+            transformed = apply_word_substitution(resolved, context.get("person_subs", {}))
+            return transformed
+        elif fn_name == "person2":
+            transformed = apply_word_substitution(resolved, context.get("person2_subs", {}))
+            return transformed
+        elif fn_name == "gender":
+            transformed = apply_word_substitution(resolved, context.get("gender_subs", {}))
+            return transformed
+        elif fn_name == "normalize":
+            transformed = resolved.upper()
+            return transformed
+        elif fn_name == "denormalize":
             return resolved
-
-        while True:
-            transformed_text = transform_pattern.sub(transform, text)
-            if transformed_text == text:
-                break
-            text = transformed_text
-
-        return text
+        elif fn_name == "explode":
+            transformed = " ".join(resolved)
+            return transformed
+        elif fn_name == "first":
+            words = resolved.split()
+            transformed = words[0] if words else ""
+            return transformed
+        elif fn_name == "rest":
+            words = resolved.split()
+            transformed = " ".join(words[1:]) if len(words) > 1 else ""
+            return transformed
+        elif fn_name == "uniq":
+            words = resolved.split()
+            seen = set()
+            unique = []
+            for word in words:
+                if word not in seen:
+                    seen.add(word)
+                    unique.append(word)
+            transformed = " ".join(unique)
+            return transformed
+        elif fn_name == "wordcount":
+            transformed = str(len(resolved.split()))
+            return transformed
+        elif fn_name == "sentiment":
+            transformed = sentiment_label(resolved)
+            return transformed
+        elif fn_name == "clause":
+            transformed = first_clause(resolved)
+            return transformed
+        elif fn_name == "qtype":
+            transformed = input_kind(resolved)
+            return transformed
+        elif fn_name == "name":
+            transformed = extract_name(resolved)
+            return transformed
+        return resolved

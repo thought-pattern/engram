@@ -7,7 +7,7 @@ budget is exceeded. See R1 in REMEDIATION.md.
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
-from gc import collect as gc_collect, freeze as gc_freeze
+from gc import collect as gc_collect, freeze as gc_freeze, unfreeze as gc_unfreeze
 from json import dumps as json_dumps
 from pathlib import Path
 from sys import argv as sys_argv, path as sys_path, stderr as sys_stderr
@@ -19,7 +19,7 @@ if str(REPOSITORY) not in sys_path:
 
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import PropositionProjectionQuery, Tier
+from engram.constants import UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery, Tier
 from engram.core import Engram
 from engram.graph import proposition_projection, proposition_projection_from_graph_row
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
@@ -153,15 +153,23 @@ def warmed_measure(operation: object, iterations: int) -> dict:
     """Run ``operation`` once untimed, so first-use loading is not counted, then time it.
 
     Like the gRPC server after startup, long-lived setup objects are frozen out
-    of garbage collection first unless ``--no-gc-freeze`` is given.
+    of garbage collection for the timed iterations unless ``--no-gc-freeze`` is
+    given. The benchmark owns the process's collector state, so the freeze is
+    released after timing: a scenario's setup stays collectable once a later
+    scenario replaces it, and every measurement starts from the same state.
     """
     if not callable(operation):
         raise ValueError("benchmark operation must be callable")
     operation()
-    if FREEZE_GC[0]:
-        gc_collect()
-        gc_freeze()
-    result = internal_measure(operation, iterations)
+    if not FREEZE_GC[0]:
+        result = internal_measure(operation, iterations)
+        return result
+    gc_collect()
+    gc_freeze()
+    try:
+        result = internal_measure(operation, iterations)
+    finally:
+        gc_unfreeze()
     return result
 
 
@@ -317,12 +325,16 @@ class TrimEngram(Engram):
         row_limit: int = 10,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
+        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
-        del text, cooperative_check, max_working_memory_bytes
+        del text, cooperative_check, max_working_memory_bytes, basis_window
         result = self.scale_projections[:row_limit]
         return result
 
-    def current_proposition_projection(self, proposition_id: str) -> tuple[dict, ...]:
+    def current_proposition_projection(
+        self, proposition_id: str, basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS
+    ) -> tuple[dict, ...]:
+        del basis_window
         result = (self.scale_current[proposition_id],)
         return result
 

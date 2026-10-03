@@ -259,13 +259,13 @@ def test_historical_evidence_reports_request_match_without_marking_the_propositi
 
     valid_frame = internal_frame(request="What was the status in 2024?")
     valid_decision = evaluator.revalidate(
-        valid_history, valid_frame, lambda internal_proposition_id: (internal_current(valid_history),)
+        valid_history, valid_frame, lambda internal_proposition_id, internal_basis_window: (internal_current(valid_history),)
     )
     valid_inputs = proposition_validity_inputs_from_eligibility(valid_decision, valid_frame)
 
     system_frame = internal_frame(request="What was the status as known on 2024-06-01?")
     system_decision = evaluator.revalidate(
-        system_history, system_frame, lambda internal_proposition_id: (internal_current(system_history),)
+        system_history, system_frame, lambda internal_proposition_id, internal_basis_window: (internal_current(system_history),)
     )
     system_inputs = proposition_validity_inputs_from_eligibility(system_decision, system_frame)
 
@@ -393,8 +393,8 @@ def test_revalidation_rejects_missing_changed_and_newly_ineligible_propositions(
         def __init__(self, values: tuple[dict, ...]) -> None:
             self.values = values
 
-        def current_proposition_projection(self, proposition_id: str) -> tuple[dict, ...]:
-            del proposition_id
+        def current_proposition_projection(self, proposition_id: str, basis_window: dict) -> tuple[dict, ...]:
+            del proposition_id, basis_window
             result = self.values
             return result
 
@@ -436,8 +436,8 @@ def test_eligible_revalidation_uses_current_trust_and_builds_validity_inputs() -
         supplied_trust_available=True,
     )
 
-    def current_proposition_projection(proposition_id: str) -> tuple[dict, ...]:
-        del proposition_id
+    def current_proposition_projection(proposition_id: str, basis_window: dict) -> tuple[dict, ...]:
+        del proposition_id, basis_window
         result = (current,)
         return result
 
@@ -462,8 +462,8 @@ def test_proposition_record_construction_requires_allowed_matching_discovery_pro
     discovered = internal_projection()
     frame = internal_frame()
 
-    def current_proposition_projection(proposition_id: str) -> tuple[dict, ...]:
-        del proposition_id
+    def current_proposition_projection(proposition_id: str, basis_window: dict) -> tuple[dict, ...]:
+        del proposition_id, basis_window
         result = (internal_current(discovered),)
         return result
 

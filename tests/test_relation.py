@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 
 from pytest import fail as pytest_fail, raises as pytest_raises
 
-from engram.constants import PROPOSITION_PROJECTION_FIELDS, CanonicalResolutionStatus, ExpectedObjectType, RelationPlanTemplate
+from engram.constants import (
+    PROPOSITION_PROJECTION_FIELDS,
+    UNCONSTRAINED_ASSERTION_BASIS,
+    CanonicalResolutionStatus,
+    ExpectedObjectType,
+    RelationPlanTemplate,
+)
 from engram.contextual import enrich_query_frame
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -16,6 +22,7 @@ from engram.graph import (
 )
 from engram.identity import entity_reference, query_identity, scope_key
 from engram.relation import (
+    RelationQuestion,
     canonical_resolution,
     one_hop_query_plan,
     resolve_canonical_predicate,
@@ -168,12 +175,16 @@ class RelationGraph:
         result = [predicate_match()][:limit] if surface.casefold() in {"born", "bear", "born in"} else []
         return result
 
-    def relation_one_hop_proposition_projections(self, subject_entity_id, predicate_id, *, limit, include_historical=False):
+    def relation_one_hop_proposition_projections(
+        self, subject_entity_id, predicate_id, *, limit, include_historical=False, basis_window=UNCONSTRAINED_ASSERTION_BASIS
+    ):
+        del basis_window
         self.one_hop_calls.append((subject_entity_id, predicate_id, limit, include_historical))
         result = self.results[:limit]
         return result
 
-    def proposition_projection_by_id(self, proposition_id):
+    def proposition_projection_by_id(self, proposition_id, basis_window=UNCONSTRAINED_ASSERTION_BASIS):
+        del basis_window
         result = [internal_current(result) for result in self.results if result["projection"]["proposition_id"] == proposition_id]
         return result
 
@@ -183,9 +194,9 @@ class ChangingRelationGraph(RelationGraph):
         super().__init__()
         self.current_reads = 0
 
-    def proposition_projection_by_id(self, proposition_id):
+    def proposition_projection_by_id(self, proposition_id, basis_window=UNCONSTRAINED_ASSERTION_BASIS):
         self.current_reads += 1
-        rows = super().proposition_projection_by_id(proposition_id)
+        rows = super().proposition_projection_by_id(proposition_id, basis_window)
         if self.current_reads < 2 or not rows:
             return rows
         values = dict(rows[0])
@@ -204,6 +215,7 @@ def test_subject_resolution_reports_tied_canonical_entities_as_ambiguous() -> No
             internal_entity_match("entity:ada-lovelace"),
             internal_entity_match("entity:ada-byron", "Ada Lovelace"),
         ],
+        question=RelationQuestion(frame["resolved_text"]),
     )
 
     assert result["status"] == CanonicalResolutionStatus.AMBIGUOUS
@@ -216,7 +228,11 @@ def test_subject_resolution_uses_named_entity_and_alias_evidence(monkeypatch) ->
     frame = internal_frame(engine, "Where was she born?")
     monkeypatch.setattr("engram.relation.named_entity_surfaces", lambda internal_text: ("Ada",))
 
-    result = resolve_canonical_subject(frame, lambda internal_surface, **internal_kwargs: [internal_entity_match()])
+    result = resolve_canonical_subject(
+        frame,
+        lambda internal_surface, **internal_kwargs: [internal_entity_match()],
+        question=RelationQuestion(frame["resolved_text"]),
+    )
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "entity:ada-lovelace"
@@ -227,7 +243,11 @@ def test_subject_resolution_accepts_proposition_edge_surface_evidence() -> None:
     engine = Engram()
     frame = internal_frame(engine, "Where was Lovelace born?")
 
-    result = resolve_canonical_subject(frame, lambda internal_surface, **internal_kwargs: [internal_entity_match()])
+    result = resolve_canonical_subject(
+        frame,
+        lambda internal_surface, **internal_kwargs: [internal_entity_match()],
+        question=RelationQuestion(frame["resolved_text"]),
+    )
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert "edge_surface" in result["evidence"]
@@ -248,7 +268,11 @@ def test_explicit_subject_identity_bypasses_surface_lookup() -> None:
     )
     frame = query_frame_with_changes(base, {"identity": explicit})
 
-    result = resolve_canonical_subject(frame, lambda *internal_args, **internal_kwargs: pytest_fail("lookup must not run"))
+    result = resolve_canonical_subject(
+        frame,
+        lambda *internal_args, **internal_kwargs: pytest_fail("lookup must not run"),
+        question=RelationQuestion(frame["resolved_text"]),
+    )
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["score"] == 1.0
@@ -261,7 +285,11 @@ def test_predicate_synonyms_and_expected_type_disambiguate_same_surface() -> Non
     date = predicate_match("predicate:birth-date", "birth date", ExpectedObjectType.DATE)
     place = predicate_match()
 
-    result = resolve_canonical_predicate(frame, lambda internal_surface, **internal_kwargs: [date, place])
+    result = resolve_canonical_predicate(
+        frame,
+        lambda internal_surface, **internal_kwargs: [date, place],
+        question=RelationQuestion(frame["resolved_text"]),
+    )
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "predicate:birth-place"
@@ -278,7 +306,11 @@ def test_dependency_preposition_paraphrase_resolves_predicate() -> None:
         "object_type": ExpectedObjectType.ENTITY,
     }
 
-    result = resolve_canonical_predicate(frame, lambda surface, **internal_kwargs: [match] if surface == "work at" else [])
+    result = resolve_canonical_predicate(
+        frame,
+        lambda surface, **internal_kwargs: [match] if surface == "work at" else [],
+        question=RelationQuestion(frame["resolved_text"]),
+    )
 
     assert result["status"] == CanonicalResolutionStatus.SELECTED
     assert result["canonical_id"] == "predicate:employer"
@@ -357,6 +389,7 @@ def test_graph_one_hop_uses_fixed_query_and_parameter_values_only() -> None:
         "predicate_id": "predicate:birth-place",
         "include_historical": False,
         "limit": 10,
+        **UNCONSTRAINED_ASSERTION_BASIS,
     }
     assert "entity:ada-lovelace" not in captured.get("query", "")
     assert "predicate:birth-place" not in captured.get("query", "")

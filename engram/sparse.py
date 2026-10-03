@@ -1,6 +1,7 @@
 """Request-local fielded sparse retrieval over accepted-response artifacts."""
 
 from collections import Counter
+from itertools import islice
 from math import log as math_log
 from re import IGNORECASE as IGNORECASE, UNICODE as UNICODE, compile as re_compile
 from threading import Lock as threading_Lock
@@ -140,12 +141,22 @@ def technical_identifiers(value: str) -> tuple[str, ...]:
 
 
 def sparse_tokens(value: str) -> tuple[str, ...]:
-    """Tokenize natural language while retaining components of technical tokens."""
+    """Tokenize natural language while retaining components of technical tokens.
+
+    Matching stops once the per-field token limit is admitted, so a long field
+    is scanned and tokenized only as far as its retained tokens reach.
+    """
     if not isinstance(value, str):
         raise InvalidRequestError("sparse token input must be a string")
-    normalized = normalized_text(value)
-    tokens = [bounded_token(match.group(0)) for match in GENERAL_TOKEN.finditer(normalized)]
-    result = tuple(token for token in tokens if token and token not in DEFAULT_STOPWORDS)[:MAX_SPARSE_TOKENS_PER_FIELD]
+    retained = []
+    for match in GENERAL_TOKEN.finditer(normalized_text(value)):
+        token = bounded_token(match.group(0))
+        if not token or token in DEFAULT_STOPWORDS:
+            continue
+        retained.append(token)
+        if len(retained) == MAX_SPARSE_TOKENS_PER_FIELD:
+            break
+    result = tuple(retained)
     return result
 
 
@@ -188,8 +199,10 @@ def sparse_document_from_validated_artifact(
     include_response_text: bool,
 ) -> dict:
     fields = field_texts(artifact, include_response_text)
+    # Lazy concatenation stops tokenizing a field's later texts once the field
+    # limit is reached.
     tokens = {
-        name: tuple(token for text in fields[name] for token in sparse_tokens(text))[:MAX_SPARSE_TOKENS_PER_FIELD]
+        name: tuple(islice((token for text in fields.get(name, ()) for token in sparse_tokens(text)), MAX_SPARSE_TOKENS_PER_FIELD))
         for name in SPARSE_FIELD_NAMES
     }
     result = {
@@ -254,6 +267,8 @@ def document_term_frequencies(document: dict) -> dict[str, Counter[str]]:
 SPARSE_DOCUMENT_REFERENCE_BYTES = 128
 SPARSE_POSTING_REFERENCE_BYTES = 64
 SPARSE_TERM_WORKING_BYTES = 128
+# One entry of the request's statement_id -> artifact map used to sync the index.
+SPARSE_POPULATION_REFERENCE_BYTES = 64
 
 
 def sparse_document_parts(artifact: dict, include_response_text: bool) -> dict:
@@ -381,30 +396,27 @@ class SparseIndex:
                 self.remove(statement_id)
             self.add(statement_id, artifact, content, include_response_text)
 
-    def query_state(self, scope: dict, terms: set[str]) -> tuple[dict, int]:
-        """Return a scorer state holding only ``terms``, and the bytes this request builds for it.
+    def query_state(self, scope: dict, terms: set[str]) -> dict:
+        """Return a scorer state for ``terms`` that refers to the partition's live postings.
 
-        The caller holds ``internal_lock`` until scoring is done, because the
-        state refers to the partition's live documents.
+        Nothing is copied per posting: the state holds one reference per
+        nominated term, which the caller reserves before this is built, and the
+        scorer counts every posting it examines. The caller holds
+        ``internal_lock`` until scoring is done, because the state refers to the
+        partition's live documents and posting maps.
         """
-        partition = self.internal_partitions.get(sparse_scope_key(scope))
-        documents = partition["documents"] if partition else {}
-        stored = partition["postings"] if partition else {}
-        postings = {term: tuple(sorted(stored[term].values())) for term in sorted(terms) if term in stored}
+        partition = self.internal_partitions.get(sparse_scope_key(scope), {})
+        documents = partition.get("documents", {})
+        stored = partition.get("postings", {})
+        postings = {term: stored.get(term, {}) for term in terms if term in stored}
         count = len(documents)
-        totals = partition["field_totals"] if partition else dict.fromkeys(SPARSE_FIELD_NAMES, 0)
-        state = {
+        totals = partition.get("field_totals", dict.fromkeys(SPARSE_FIELD_NAMES, 0))
+        result = {
             "documents": documents,
             "postings": postings,
             "document_frequencies": {term: len(values) for term, values in postings.items()},
-            "average_field_lengths": {name: (totals[name] / count if count else 0.0) for name in SPARSE_FIELD_NAMES},
+            "average_field_lengths": {name: (totals.get(name, 0) / count if count else 0.0) for name in SPARSE_FIELD_NAMES},
         }
-        working_memory_bytes = (
-            512
-            + len(postings) * SPARSE_TERM_WORKING_BYTES
-            + sum(len(values) for values in postings.values()) * SPARSE_POSTING_REFERENCE_BYTES
-        )
-        result = (state, working_memory_bytes)
         return result
 
 
@@ -430,7 +442,8 @@ def build_sparse_working_set(
         raise InvalidRequestError("sparse trusted_artifacts must be a boolean")
     include_response_text = validated_settings.get("include_response_text", False)
     documents: dict[str, dict] = {}
-    term_postings: dict[str, list[tuple]] = {}
+    # term -> {statement_id: posting}, the same shape as an index partition.
+    term_postings: dict[str, dict[str, tuple]] = {}
     field_totals = dict.fromkeys(SPARSE_FIELD_NAMES, 0)
     working_memory_bytes = estimate_working_bytes((documents, term_postings, field_totals))
 
@@ -466,7 +479,7 @@ def build_sparse_working_set(
         for field_name in SPARSE_FIELD_NAMES:
             field_totals[field_name] = field_totals.get(field_name, 0) + parts["token_lengths"][field_name]
         for term, posting in parts["postings"].items():
-            term_postings.setdefault(term, []).append(posting)
+            term_postings.setdefault(term, {})[statement_id] = posting
 
     count = len(documents)
     final_increment = 512 + count * 64 + len(term_postings) * SPARSE_TERM_WORKING_BYTES
@@ -474,12 +487,11 @@ def build_sparse_working_set(
         result = exhausted()
         return result
     working_memory_bytes += final_increment
-    postings = {term: tuple(sorted(term_postings[term])) for term in sorted(term_postings)}
     averages = {name: (field_totals.get(name, 0) / count if count else 0.0) for name in SPARSE_FIELD_NAMES}
     state = {
         "documents": dict(sorted(documents.items())),
-        "postings": postings,
-        "document_frequencies": {term: len(values) for term, values in postings.items()},
+        "postings": term_postings,
+        "document_frequencies": {term: len(values) for term, values in term_postings.items()},
         "average_field_lengths": averages,
     }
     result = {
@@ -585,7 +597,7 @@ def search_sparse_working_set(
     exact_identifier_item_count = 0
     for identifier in query_identifiers:
         statement_ids = set()
-        for posting in state.get("postings", {}).get(f"x:{identifier}", ()):
+        for posting in state.get("postings", {}).get(f"x:{identifier}", {}).values():
             posting_visits += 1
             if posting_visits > max_posting_visits:
                 result = {
@@ -703,7 +715,7 @@ def search_sparse_working_set(
             if 0 < state.get("document_frequencies", {}).get(term, 0) <= rare_limit
         )[:4]
         for _, term in anchor_terms:
-            for posting in state.get("postings", {}).get(term, ()):
+            for posting in state.get("postings", {}).get(term, {}).values():
                 posting_visits += 1
                 if posting_visits > max_posting_visits:
                     result = {
@@ -752,12 +764,20 @@ def search_sparse_working_set(
             "working_memory_bytes": 0,
         }
         return result
+    candidates = tuple(sorted(candidate_pool))
     for term, multiplier in descriptors.items():
-        postings = state.get("postings", {}).get(term, ())
-        selected_postings = (posting for posting in postings if posting[0] in candidate_pool) if candidate_pool else postings
+        postings = state.get("postings", {}).get(term, {})
+        # With a candidate pool, each candidate's posting is looked up directly
+        # when that examines fewer slots than the term's posting map. Every
+        # examined slot, matching or not, is one visit, so the allowance bounds
+        # the work actually done.
+        if candidates and len(candidates) < len(postings):
+            examined = (postings.get(statement_id, ()) for statement_id in candidates)
+        else:
+            examined = postings.values()
         document_frequency = state.get("document_frequencies", {}).get(term, 0)
         inverse_frequency = math_log(1.0 + (document_count - document_frequency + 0.5) / (document_frequency + 0.5))
-        for posting in selected_postings:
+        for posting in examined:
             posting_visits += 1
             if posting_visits > max_posting_visits:
                 result = {
@@ -769,6 +789,8 @@ def search_sparse_working_set(
                     "working_memory_bytes": working_memory,
                 }
                 return result
+            if not posting or (candidates and posting[0] not in candidate_pool):
+                continue
             statement_id = posting[0]
             document = state.get("documents", ())[statement_id]
             if document["scope"] != validated_scope:
@@ -889,6 +911,25 @@ def search_sparse_index(
     trusted_artifacts: bool,
 ) -> dict:
     """Sync the index to ``artifacts`` and score the query's postings."""
+    # Every term the scorer can look up: the query descriptors, and the
+    # trigrams it adds for an identifier with no exact posting.
+    terms = set(descriptors)
+    for identifier in query_identifiers:
+        terms.update(f"g:{ngram}" for ngram in character_ngrams(identifier))
+    # Reserve the request's population map and per-term query state before
+    # building either, so an exhausted budget refuses without that work.
+    state_memory = len(artifacts) * SPARSE_POPULATION_REFERENCE_BYTES + 512 + len(terms) * SPARSE_TERM_WORKING_BYTES
+    remaining_memory = max_working_memory_bytes - state_memory
+    if remaining_memory < 1:
+        result = {
+            "matches": (),
+            "complete": False,
+            "reason": "working_memory_budget",
+            "query_term_count": 0,
+            "posting_visits": 0,
+            "working_memory_bytes": min(state_memory, max_working_memory_bytes),
+        }
+        return result
     current = {}
     for artifact_value in artifacts:
         artifact = artifact_value if trusted_artifacts else validate_cached_response_artifact(artifact_value)
@@ -896,25 +937,9 @@ def search_sparse_index(
         if statement_id in current:
             raise InvalidRequestError(f"duplicate sparse statement_id: {statement_id}")
         current[statement_id] = artifact
-    # Every term the scorer can look up: the query descriptors, and the
-    # trigrams it adds for an identifier with no exact posting.
-    terms = set(descriptors)
-    for identifier in query_identifiers:
-        terms.update(f"g:{ngram}" for ngram in character_ngrams(identifier))
     with index.internal_lock:
         index.sync(current, settings.get("include_response_text", False))
-        state, state_memory = index.query_state(scope, terms)
-        remaining_memory = max_working_memory_bytes - state_memory
-        if remaining_memory < 1:
-            result = {
-                "matches": (),
-                "complete": False,
-                "reason": "working_memory_budget",
-                "query_term_count": 0,
-                "posting_visits": 0,
-                "working_memory_bytes": min(state_memory, max_working_memory_bytes),
-            }
-            return result
+        state = index.query_state(scope, terms)
         result = search_sparse_working_set(
             state,
             text,

@@ -391,35 +391,76 @@ def apply_rewrites_to_frame(
     return result
 
 
+def rewrite_rule_population(rule: dict) -> tuple[int, int, set, set]:
+    """Return the token range, operators, and (inherited, subject present) states ``eligible`` admits."""
+    constraint = rule["input_constraints"]
+    operators = set(constraint["required_operators"]) or set(QueryOperator)
+    inherited_states = (True,) if rule["scope"] == RewriteScope.CONTEXTUAL else (False, True)
+    subject_states = (True,) if constraint["requires_inherited_subject"] else (False, True)
+    contexts = {(inherited, subject) for inherited in inherited_states for subject in subject_states}
+    result = (constraint["min_tokens"], constraint["max_tokens"], operators, contexts)
+    return result
+
+
+def rewrite_populations_overlap(first: dict, second: dict) -> bool:
+    """Return whether two rules with one match mode and pattern admit a common input."""
+    first_min, first_max, first_operators, first_contexts = rewrite_rule_population(first)
+    second_min, second_max, second_operators, second_contexts = rewrite_rule_population(second)
+    result = (
+        max(first_min, second_min) <= min(first_max, second_max)
+        and bool(first_operators & second_operators)
+        and bool(first_contexts & second_contexts)
+    )
+    return result
+
+
+def rewrite_population_covers(outer: dict, inner: dict) -> bool:
+    """Return whether ``outer`` admits every input ``inner`` admits under one match mode and pattern."""
+    outer_min, outer_max, outer_operators, outer_contexts = rewrite_rule_population(outer)
+    inner_min, inner_max, inner_operators, inner_contexts = rewrite_rule_population(inner)
+    result = outer_min <= inner_min and inner_max <= outer_max and inner_operators <= outer_operators and inner_contexts <= outer_contexts
+    return result
+
+
 def lint_rewrite_corpus(rules: tuple[dict, ...]) -> tuple[dict, ...]:
-    """Detect structural collisions, shadows, cycles, broad rules, and shared outputs."""
+    """Detect structural collisions, shadows, cycles, broad rules, and shared outputs.
+
+    Rules with one match mode and pattern are compared by the inputs ``eligible`` admits:
+    token count, required operators, scope, and inherited-subject requirement. Different
+    outputs over a common input are a collision. A rule whose every input a higher-precedence
+    rule with the same output admits is unreachable. Disjoint populations are both reachable.
+    """
     validated = tuple(rewrite_rule(rule) for rule in rules)
     findings: list[dict] = []
-    signatures: dict[tuple[object, ...], dict] = {}
+    patterns: dict[tuple[object, ...], list[dict]] = {}
     outputs: dict[str, list[str]] = {}
     for rule in validated:
         constraint = rule["input_constraints"]
-        signature = (
-            rule["scope"],
-            constraint["match_mode"],
-            constraint["pattern"].casefold(),
-            constraint["required_operators"],
-            constraint["requires_inherited_subject"],
-        )
-        prior = signatures.get(signature, {})
-        if prior:
-            code = "unreachable_rule" if prior["output_template"] == rule["output_template"] else "rule_collision"
-            severity = "error"
-            findings.append(
-                {
-                    "severity": severity,
-                    "code": code,
-                    "rule_ids": (prior["rule_id"], rule["rule_id"]),
-                    "detail": "rules share the same effective input constraints",
-                }
-            )
-        else:
-            signatures[signature] = rule
+        same_pattern = patterns.setdefault((constraint["match_mode"], constraint["pattern"].casefold()), [])
+        for prior in same_pattern:
+            if not rewrite_populations_overlap(prior, rule):
+                continue
+            if prior["output_template"] != rule["output_template"]:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "rule_collision",
+                        "rule_ids": (prior["rule_id"], rule["rule_id"]),
+                        "detail": "rules admit a common input under one pattern with different outputs",
+                    }
+                )
+                continue
+            higher, lower = sorted((prior, rule), key=lambda value: (-value["priority"], value["rule_id"]))
+            if rewrite_population_covers(higher, lower):
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "unreachable_rule",
+                        "rule_ids": (prior["rule_id"], rule["rule_id"]),
+                        "detail": f"{higher['rule_id']} has the same output and admits every input of {lower['rule_id']} first",
+                    }
+                )
+        same_pattern.append(rule)
         pattern_tokens = internal_tokens(constraint["pattern"])
         overbroad = (
             rule["category"] != "contractions"

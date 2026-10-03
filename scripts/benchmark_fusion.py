@@ -34,6 +34,7 @@ DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark.json")
 START_NS = 1_000_000_000
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 SCOPE = scope_key(namespace="fusion-benchmark")
+BENCHMARK_RESPONSE = "Bounded benchmark response"
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -61,49 +62,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def candidate(
-    statement_id: str,
-    source: CandidateSource,
-    features: dict[str, float],
-    *,
-    response: str = "Bounded benchmark response",
-    evidence: tuple[dict, ...] = (),
-) -> dict:
-    """Build one content-neutral benchmark candidate."""
-    result = resolution_candidate(
-        candidate_id=f"candidate:{source.value}:{statement_id}",
-        statement_id=statement_id,
-        response=response,
-        source=source,
-        features=feature_set(values=features),
-        evidence=evidence,
-        scope=SCOPE,
-        lifecycle=LifecycleState.ACTIVE,
-    )
-    return result
-
-
-def supported_pair(statement_id: str, semantic: float = 0.92, lexical: float = 0.95) -> tuple[dict, dict]:
-    """Build independent sparse and support-semantic contributions."""
-    support = evidence_reference(
-        f"proposition:{statement_id}",
-        "support_semantic",
-        EvidenceKind.SUPPORT,
-        SCOPE,
-    )
-    result = (
-        candidate(statement_id, CandidateSource.SPARSE, {"sparse_score": lexical}),
-        candidate(
-            statement_id,
-            CandidateSource.SUPPORT_SEMANTIC,
-            {"semantic_score": semantic, "support_coverage": 1.0},
-            evidence=(support,),
-        ),
-    )
-    return result
-
-
-def measure_fusion(samples: int) -> dict[str, object]:
+def measure_fusion(samples: int) -> dict:
     """Run warmed benchmarks and return the evidence artifact."""
     engine = Engram()
     budget = capture_resolution_budget(lambda: START_NS)
@@ -114,22 +73,46 @@ def measure_fusion(samples: int) -> dict[str, object]:
         budget=budget,
     )
     fusion = CandidateFusionEngine(authority=permissive_candidate_authority)
-    exact = (candidate("exact", CandidateSource.EXACT, {"exact_match": 1.0}),)
-    reinforced = supported_pair("reinforced")
-    ambiguous = (*supported_pair("ambiguous-a"), *supported_pair("ambiguous-b", semantic=0.91, lexical=0.94))
-    unsupported = (
-        candidate("unsupported", CandidateSource.SPARSE, {"sparse_score": 0.98}),
-        candidate("unsupported", CandidateSource.STANDALONE_SEMANTIC, {"semantic_score": 0.98}),
-    )
-    noise = (candidate("noise", CandidateSource.SPARSE, {"sparse_score": 0.2}),)
-    scenarios = {
-        "exact": (exact, "ANSWER"),
-        "reinforced": (reinforced, "ANSWER"),
-        "ambiguous": (ambiguous, "EVIDENCE"),
-        "unsupported": (unsupported, "EVIDENCE"),
-        "noise": (noise, "MISS"),
+    # Content-neutral candidate specifications: (statement_id, source, feature values, evidence).
+    # A supported pair is an independent sparse and support-semantic contribution for one statement.
+    supported_pairs = {}
+    for statement_id, semantic, lexical in (("reinforced", 0.92, 0.95), ("ambiguous-a", 0.92, 0.95), ("ambiguous-b", 0.91, 0.94)):
+        support = evidence_reference(f"proposition:{statement_id}", "support_semantic", EvidenceKind.SUPPORT, SCOPE)
+        supported_pairs[statement_id] = (
+            (statement_id, CandidateSource.SPARSE, {"sparse_score": lexical}, ()),
+            (statement_id, CandidateSource.SUPPORT_SEMANTIC, {"semantic_score": semantic, "support_coverage": 1.0}, (support,)),
+        )
+    scenario_specifications = {
+        "exact": ((("exact", CandidateSource.EXACT, {"exact_match": 1.0}, ()),), "ANSWER"),
+        "reinforced": (supported_pairs.get("reinforced", ()), "ANSWER"),
+        "ambiguous": ((*supported_pairs.get("ambiguous-a", ()), *supported_pairs.get("ambiguous-b", ())), "EVIDENCE"),
+        "unsupported": (
+            (
+                ("unsupported", CandidateSource.SPARSE, {"sparse_score": 0.98}, ()),
+                ("unsupported", CandidateSource.STANDALONE_SEMANTIC, {"semantic_score": 0.98}, ()),
+            ),
+            "EVIDENCE",
+        ),
+        "noise": ((("noise", CandidateSource.SPARSE, {"sparse_score": 0.2}, ()),), "MISS"),
         "empty": ((), "MISS"),
     }
+    scenarios = {}
+    for name, (specifications, expected) in scenario_specifications.items():
+        values = tuple(
+            resolution_candidate(
+                candidate_id=f"candidate:{source.value}:{statement_id}",
+                statement_id=statement_id,
+                response=BENCHMARK_RESPONSE,
+                source=source,
+                features=feature_set(values=features),
+                evidence=evidence,
+                scope=SCOPE,
+                lifecycle=LifecycleState.ACTIVE,
+            )
+            for statement_id, source, features, evidence in specifications
+        )
+        scenarios[name] = (values, expected)
+    reinforced = scenarios.get("reinforced", ((), ""))[0]
     acceptance = []
     for name, (values, expected) in scenarios.items():
         acceptance.append(
@@ -142,7 +125,16 @@ def measure_fusion(samples: int) -> dict[str, object]:
     scaling = {}
     for count, selected_samples in ((1, samples), (10, samples), (100, max(20, samples // 2)), (1_000, max(10, samples // 10))):
         values = tuple(
-            candidate(f"noise-{index:04d}", CandidateSource.SPARSE, {"sparse_score": 0.1 + index % 20 / 100})
+            resolution_candidate(
+                candidate_id=f"candidate:{CandidateSource.SPARSE.value}:noise-{index:04d}",
+                statement_id=f"noise-{index:04d}",
+                response=BENCHMARK_RESPONSE,
+                source=CandidateSource.SPARSE,
+                features=feature_set(values={"sparse_score": 0.1 + index % 20 / 100}),
+                evidence=(),
+                scope=SCOPE,
+                lifecycle=LifecycleState.ACTIVE,
+            )
             for index in range(count)
         )
         scaling[str(count)] = {
@@ -150,7 +142,19 @@ def measure_fusion(samples: int) -> dict[str, object]:
             **measure(lambda values=values: fusion.decide(frame, values), selected_samples),
         }
     tracemalloc_start()
-    peak_values = tuple(candidate(f"memory-{index:04d}", CandidateSource.SPARSE, {"sparse_score": 0.2}) for index in range(1_000))
+    peak_values = tuple(
+        resolution_candidate(
+            candidate_id=f"candidate:{CandidateSource.SPARSE.value}:memory-{index:04d}",
+            statement_id=f"memory-{index:04d}",
+            response=BENCHMARK_RESPONSE,
+            source=CandidateSource.SPARSE,
+            features=feature_set(values={"sparse_score": 0.2}),
+            evidence=(),
+            scope=SCOPE,
+            lifecycle=LifecycleState.ACTIVE,
+        )
+        for index in range(1_000)
+    )
     peak_decision = fusion.decide(frame, peak_values)
     _, peak_bytes = tracemalloc_get_traced_memory()
     tracemalloc_stop()

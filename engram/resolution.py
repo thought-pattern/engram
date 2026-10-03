@@ -103,11 +103,11 @@ from engram.eligibility import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
-    build_retrieval_representation,
-    build_standalone_identity,
+    extract_standalone_identity,
     query_identity_from_dict,
     query_identity_to_dict,
     query_identity_to_json,
+    retrieval_representation,
     scope_key_from_dict,
     scope_key_to_dict,
     validate_authoritative_identity,
@@ -142,15 +142,20 @@ def require_int(value: object, name: str, minimum: int, maximum: int) -> int:
 def require_float(value: object, name: str, minimum: float, maximum: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError(f"{name} must be numeric")
-    result = float(value)
-    if not math_isfinite(result) or not minimum <= result <= maximum:
+    # Compare before converting: an integer too large for a float is a range
+    # refusal, not an OverflowError. NaN fails the comparison.
+    if (isinstance(value, float) and not math_isfinite(value)) or not minimum <= value <= maximum:
         raise InvalidRequestError(f"{name} must be finite and from {minimum} through {maximum}")
+    result = float(value)
     return result
 
 
 def exact_mapping(value: object, name: str, keys: set[str]) -> dict[str, object]:
     if not isinstance(value, dict):
         raise InvalidRequestError(f"{name} must be an object")
+    # Check key types before the field report sorts them: mixed key types cannot be ordered.
+    if not all(isinstance(key, str) for key in value):
+        raise InvalidRequestError(f"{name} field names must be strings")
     observed = set(value)
     if observed != keys:
         raise InvalidRequestError(f"{name} has invalid fields: missing={sorted(keys - observed)}, extra={sorted(observed - keys)}")
@@ -780,6 +785,9 @@ def feature_set(
     """Build a generic feature value/availability dictionary; Section 5 owns semantics."""
     if not isinstance(values, dict):
         raise InvalidRequestError("feature values must be an object")
+    # Check name types before sorting: mixed key types cannot be ordered.
+    if not all(isinstance(name, str) for name in values):
+        raise InvalidRequestError("feature names must be strings")
     validated_values = {}
     for name in sorted(values):
         key = require_any_text(name, "feature name", 96, allow_empty=False)
@@ -1603,12 +1611,13 @@ def evidence_package(
     """Build one canonical, count- and byte-bounded full-Proposition package."""
     if not isinstance(records, tuple):
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values")
+    # Counts are refused before any record is validated or copied.
+    if len(records) > MAX_EVIDENCE_PACKAGE_RECORDS:
+        raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
     try:
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
-    if len(validated_records) > MAX_EVIDENCE_PACKAGE_RECORDS:
-        raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
     identifiers = tuple(record["proposition_id"] for record in validated_records)
     if identifiers != tuple(sorted(identifiers)):
         raise InvalidRequestError("evidence package records must use canonical Proposition-ID order")
@@ -2152,6 +2161,9 @@ def resolver_result(
         or not isinstance(accounting, tuple)
     ):
         raise InvalidRequestError("resolver outputs and accounting must be tuples")
+    # Counts are refused before any item is validated or copied.
+    if max(len(candidates), len(evidence), len(proposition_evidence), len(accounting)) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     try:
         validated_candidates = tuple(validate_candidate(value) for value in candidates)
     except InvalidRequestError as error:
@@ -2177,16 +2189,6 @@ def resolver_result(
         for value in validated_proposition_evidence
     ):
         raise InvalidRequestError("resolver proposition_evidence source must match its producing resolver")
-    if (
-        max(
-            len(validated_candidates),
-            len(validated_evidence),
-            len(validated_proposition_evidence),
-            len(validated_accounting),
-        )
-        > MAX_RESOLUTION_VALUES
-    ):
-        raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     frozen_diagnostics = freeze_mapping(diagnostics, "resolver diagnostics")
     if not isinstance(consumption, dict):
         raise InvalidRequestError("resolver consumption must be a BudgetConsumption")
@@ -2275,6 +2277,8 @@ def resolver_result_from_dict(value: object) -> dict:
     evidence = require_list(data["evidence"], "resolver evidence")
     proposition_evidence = require_list(data["proposition_evidence"], "resolver Proposition evidence")
     accounting = require_list(data["accounting"], "resolver accounting")
+    if max(len(candidates), len(evidence), len(proposition_evidence), len(accounting)) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     result = resolver_result(
         resolver=require_any_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
         state=state,
@@ -2328,12 +2332,19 @@ def resolution_result(
         raise InvalidRequestError("resolution availability fields must be booleans")
     if not isinstance(response_candidates, tuple):
         raise InvalidRequestError("response_candidates must be a tuple of Candidate values")
+    if not isinstance(evidence, tuple):
+        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values")
+    if not isinstance(resolver_results, tuple):
+        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values")
+    # Counts are refused before any candidate, reference or resolver result is validated or copied.
+    if len(response_candidates) > MAX_RESOLUTION_VALUES or len(evidence) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
+    if len(resolver_results) > MAX_RESOLUTION_REASON_CODES:
+        raise InvalidRequestError(f"resolver_results exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
     try:
         validated_response_candidates = tuple(validate_candidate(value) for value in response_candidates)
     except InvalidRequestError as error:
         raise InvalidRequestError("response_candidates must be a tuple of Candidate values") from error
-    if not isinstance(evidence, tuple):
-        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values")
     try:
         validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
     except InvalidRequestError as error:
@@ -2349,16 +2360,10 @@ def resolution_result(
     if validated_reason_codes != tuple(dict.fromkeys(validated_reason_codes)):
         raise InvalidRequestError("reason_codes must be unique and ordered")
     frozen_diagnostics = freeze_mapping(frame_diagnostics, "frame diagnostics")
-    if not isinstance(resolver_results, tuple):
-        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values")
     try:
         validated_resolver_results = tuple(validate_resolver_result(value) for value in resolver_results)
     except InvalidRequestError as error:
         raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values") from error
-    if len(validated_response_candidates) > MAX_RESOLUTION_VALUES or len(validated_evidence) > MAX_RESOLUTION_VALUES:
-        raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
-    if len(validated_resolver_results) > MAX_RESOLUTION_REASON_CODES:
-        raise InvalidRequestError(f"resolver_results exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
     if any(value["proposition_evidence"] for value in validated_resolver_results):
         raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Proposition evidence")
     try:
@@ -2544,6 +2549,10 @@ def resolution_result_from_dict(value: object) -> dict:
     evidence = require_list(data["evidence"], "resolution evidence")
     reasons = require_list(data["reason_codes"], "reason_codes")
     resolver_results = require_list(data["resolver_results"], "resolver_results")
+    if len(response_candidates) > MAX_RESOLUTION_VALUES or len(evidence) > MAX_RESOLUTION_VALUES:
+        raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
+    if len(reasons) > MAX_RESOLUTION_REASON_CODES or len(resolver_results) > MAX_RESOLUTION_REASON_CODES:
+        raise InvalidRequestError(f"reason_codes and resolver_results are limited to {MAX_RESOLUTION_REASON_CODES} values")
     if not isinstance(data["evidence_package_available"], bool):
         raise InvalidRequestError("evidence_package_available must be a boolean")
     result = resolution_result(
@@ -2598,9 +2607,9 @@ class QueryFrameBuilder:
                 selected_identity = validate_query_identity(identity)
             except IdentityValidationError as error:
                 raise InvalidRequestError("identity must be a QueryIdentity") from error
-            validate_authoritative_identity(selected_identity, build_retrieval_representation(original))
+            validate_authoritative_identity(selected_identity, retrieval_representation(original))
         else:
-            selected_identity = build_standalone_identity(original, scope)
+            selected_identity = extract_standalone_identity(original, scope)
         if selected_identity["scope"] != scope:
             raise InvalidRequestError("identity scope must match frame scope")
         if budget:

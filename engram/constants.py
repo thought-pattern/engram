@@ -25,6 +25,9 @@ VERSION = "1.2.0"
 DEFAULT_USER_ID = "0"
 # An abandoned anonymous conversation (for example a crashed client) stops blocking new ones after this idle lease.
 ANONYMOUS_CONVERSATION_LEASE_SECONDS = 300.0
+# A request queued behind another turn's slot re-checks its caller's cancellation at this interval,
+# because a transport cancellation cannot notify the slot condition itself.
+RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS = 0.05
 EMPTY_MAPPING = {}
 EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
@@ -49,6 +52,8 @@ REGULATOR_OUTCOMES = set(
 )
 DEFAULT_BIND_ADDRESS = "127.0.0.1:50051"
 DEFAULT_GRACE_SECONDS = 10.0
+# Shutdown waits this long past the grace period for gRPC's own drain to finish.
+SHUTDOWN_DRAIN_MARGIN_SECONDS = 5.0
 DEFAULT_MAX_WORKERS = 10
 CONVERSATION_REPORT_VERSION = 2
 DIALOGUE_ACKNOWLEDGMENT = "acknowledgment"
@@ -222,12 +227,21 @@ MAX_RESPONSE_BYTES = 1_048_576
 MAX_SOURCE_LABEL_BYTES = 256
 MAX_CALLER_ID_BYTES = 256
 MAX_SUPPORT_REFERENCES = 256
+# Support revisions cross gRPC as protobuf Struct numbers (IEEE-754 doubles),
+# which carry every integer exactly only through 2**53 - 1.
+MAX_SUPPORT_REVISION = 2**53 - 1
 MAX_TIMESTAMP_BYTES = 40
 MAX_METADATA_BYTES = 65_536
 MAX_METADATA_DEPTH = 8
 MAX_METADATA_ITEMS = 1_024
 MAX_METADATA_KEY_BYTES = 256
 MAX_METADATA_STRING_BYTES = 16_384
+# Terminal transitions write this reserved metadata entry themselves. It has its own
+# field bounds, outside the caller metadata limits, so an admitted artifact always has
+# room for the audit its retirement, invalidation, or supersession must record.
+LIFECYCLE_AUDIT_KEY = "lifecycle_audit"
+LIFECYCLE_AUDIT_FIELDS = set({"operation", "reason", "caller_id", "request_id", "occurred_at", "detail"})
+MAX_LIFECYCLE_AUDIT_DETAIL_BYTES = 1_024
 MAX_ARTIFACT_ENUM_BYTES = 16
 ARTIFACT_PROVENANCE_FIELDS = set({"source_label", "caller_id", "accepted_at"})
 ARTIFACT_STATISTICS_FIELDS = set(
@@ -238,6 +252,9 @@ ARTIFACT_STATISTICS_FIELDS = set(
         "last_hit_available",
     }
 )
+# Statistics of an artifact that has not been served. Read-only: artifact
+# validation copies statistics, so no artifact aliases this mapping.
+INITIAL_ARTIFACT_STATISTICS = {"hit_count": 0, "query_count": 0, "last_hit": "", "last_hit_available": False}
 CACHED_RESPONSE_ARTIFACT_FIELDS = set(
     {
         "statement_id",
@@ -380,6 +397,9 @@ MAX_RESOLUTION_RESOLVERS = 64
 MIN_RESOLUTION_CANDIDATES = 1
 MAX_RESOLUTION_CANDIDATES = 1_000
 MAX_RESOLUTION_GRAPH_ROWS = 100_000
+# One graph read may materialize no more rows than the largest per-request
+# graph-row budget; generic template and recall reads have no narrower owner.
+MAX_GRAPH_READ_ROWS = MAX_RESOLUTION_GRAPH_ROWS
 MAX_RESOLUTION_VECTOR_RESULTS = 100_000
 MAX_RESOLUTION_EVIDENCE = 1_000
 MAX_RESOLUTION_EVIDENCE_BYTES = 1_048_576
@@ -510,6 +530,11 @@ MAX_COMPOSITION_CANDIDATES_PER_STEP = 8
 MAX_COMPOSITION_PATH_PROPOSITIONS = 2
 MAX_COMPOSITION_BINDING_BYTES = 64
 MAX_COMPOSITION_TEXT_BYTES = 256
+# Seconds fraction of a composition DATE label's time component. datetime keeps
+# six fractional digits, so ordering compares any further digits separately; the
+# lookbehind skips the fractional seconds of a UTC offset.
+COMPOSITION_DATE_SECONDS_FRACTION = re_compile(r"(?<![+\-0-9])[0-9]{2}:?[0-9]{2}:?[0-9]{2}[.,]([0-9]+)")
+DATETIME_FRACTION_DIGITS = 6
 FEATURE_SET_FIELDS = set({"values", "unavailable"})
 CANONICAL_PROPOSITION_REFERENCES_FIELDS = set({"subject_entity_id", "predicate_id", "object_entity_id"})
 PROPOSITION_VALIDITY_INPUTS_FIELDS = set(
@@ -875,7 +900,7 @@ MAX_FEEDBACK_BUCKETS = 64
 MAX_INSPECTION_RECORDS = 64
 MAX_NEGATIVE_RECORDS = 10_000
 MAX_NEGATIVE_TTL_SECONDS = 86_400
-MAX_CONSTRAINT_JSON_BYTES = 65_536
+MAX_CONSTRAINT_ENCODED_BYTES = 65_536
 MAX_PLAN_RESOLVERS = 64
 RESOLUTION_PLAN_ENTRY_FIELDS = set({"resolver", "order", "configured", "available", "reason_code"})
 RESOLUTION_PLAN_FIELDS = set({"entries"})
@@ -1026,9 +1051,35 @@ PROPOSITION_PROJECTION_RETURN = (
     "assertion.trust_score AS supplied_trust, "
     "assertion.trust_score IS NOT NULL AS supplied_trust_available, "
 )
+# A request's Assertion basis window (engram.evidence.assertion_basis_window):
+# the basis valid time must end after basis_start and begin before basis_end
+# (or at it, when inclusive). An unavailable bound leaves that side open.
+ASSERTION_BASIS_WINDOW_FIELDS = set(
+    {"basis_start", "basis_start_available", "basis_end", "basis_end_available", "basis_end_inclusive"}
+)
+UNCONSTRAINED_ASSERTION_BASIS = {
+    "basis_start": "",
+    "basis_start_available": False,
+    "basis_end": "",
+    "basis_end_available": False,
+    "basis_end_inclusive": False,
+}
+ASSERTION_BASIS_ELIGIBLE = (
+    "(CASE WHEN $basis_start_available "
+    "THEN assertion.valid_time_end IS NULL OR assertion.valid_time_end > datetime($basis_start) ELSE true END) "
+    "AND (CASE WHEN $basis_end_available "
+    "THEN assertion.valid_time_start IS NULL OR assertion.valid_time_start < datetime($basis_end) "
+    "OR ($basis_end_inclusive AND assertion.valid_time_start = datetime($basis_end)) ELSE true END)"
+)
+# Each Proposition projects the lowest-ID active Assertion eligible for the
+# request's window, so discovery and by-ID revalidation agree on one basis. With
+# no eligible basis it projects the lowest-ID active one, which native
+# eligibility then excludes with its temporal reason.
 PROPOSITION_PROJECTION_ASSERTION_SELECTION = (
-    "WITH c, subject, predicate, object, min(assertion.id) AS selected_assertion_id "
-    "MATCH (assertion:Assertion) WHERE assertion.id = selected_assertion_id "
+    "WITH c, subject, predicate, object, "
+    "min(CASE WHEN " + ASSERTION_BASIS_ELIGIBLE + " THEN assertion.id END) AS eligible_assertion_id, "
+    "min(assertion.id) AS first_assertion_id "
+    "MATCH (assertion:Assertion) WHERE assertion.id = coalesce(eligible_assertion_id, first_assertion_id) "
 )
 VECTOR_PROPOSITION_ASSERTION_SELECTION = (
     "WITH c, subject, predicate, object, similarity, min(assertion.id) AS selected_assertion_id "
@@ -1092,8 +1143,7 @@ VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL "
-    "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
-    "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
+    "AND " + ASSERTION_BASIS_ELIGIBLE + " "
     "AND predicate.canonical_id <> 'generic_relation' "
     "AND (c.visibility_kind = 'global' "
     "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
@@ -1739,6 +1789,9 @@ TEMPLATE_TRANSFORM_EXPRESSION = (
     r"clause|qtype|name):([^{}]*)\}"
 )
 TEMPLATE_DATE_FORMAT_EXPRESSION = r"\{date:([^}]+)\}"
+# A backslash before one of these characters renders that character literally.
+TEMPLATE_ESCAPE_CHARACTER = "\\"
+TEMPLATE_ESCAPABLE_CHARACTERS = "\\{}"
 TEMPLATE_SIMPLE_VARIABLE_TOKENS = {
     "topic": "{topic}",
     "input": "{input}",
@@ -2022,7 +2075,8 @@ NOUN_POS_TAGS = {"NN", "NNS", "NNP", "NNPS"}
 # vocabulary nor real English words are candidates, and only a unique nearest
 # neighbor within the allowed Damerau-Levenshtein distance replaces them.
 MIN_SPELL_TOKEN_LENGTH = 4
-SPELL_LONG_TOKEN_LENGTH = 6  # Tokens this long or longer allow distance 2 (else 1)
+SPELL_LONG_TOKEN_LENGTH = 6  # Tokens this long or longer allow MAX_SPELL_EDIT_DISTANCE (else 1)
+MAX_SPELL_EDIT_DISTANCE = 2
 
 # Conjunctions stripped from the end of a clause cut ("tired and" -> "tired")
 CLAUSE_BOUNDARY_TRAILERS = {"and", "but", "or", "because", "so", "then"}

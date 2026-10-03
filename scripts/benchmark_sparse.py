@@ -19,10 +19,9 @@ from engram.artifacts import LifecycleState, artifact_provenance, artifact_stati
 from engram.config import sparse_config
 from engram.constants import Tier
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
-from engram.sparse import search_sparse_artifacts, sparse_document_from_artifact, sparse_tokens
+from engram.sparse import SparseIndex, search_sparse_artifacts, sparse_document_from_artifact, sparse_tokens
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = Path("eval/section12-sparse.json")
 DEFAULT_OUTPUT = Path("eval/results/sparse/benchmark.json")
 SCALE_DOCUMENTS = 10_000
 SCALE_QUERY_SAMPLES = 200
@@ -36,15 +35,25 @@ def internal_percentile(values: list[float], fraction: float) -> float:
 
 
 def internal_measure(operation: object, samples: int) -> dict:
+    """Time ``operation``, a native sparse search, counting refused searches instead of timing them."""
     if not callable(operation):
         raise ValueError("benchmark operation must be callable")
     durations = []
+    incomplete: Counter[str] = Counter()
     for _ in range(samples):
         started = time_perf_counter_ns()
-        operation()
-        durations.append((time_perf_counter_ns() - started) / 1_000_000)
+        outcome = operation()
+        elapsed = (time_perf_counter_ns() - started) / 1_000_000
+        if outcome.get("complete", False):
+            durations.append(elapsed)
+        else:
+            incomplete[outcome.get("reason", "")] += 1
+    if not durations:
+        raise ValueError(f"no sparse benchmark sample completed: {dict(incomplete)}")
     result = {
-        "samples": samples,
+        "samples": len(durations),
+        "incomplete_samples": sum(incomplete.values()),
+        "incomplete_reasons": dict(sorted(incomplete.items())),
         "minimum_ms": min(durations),
         "p50_ms": statistics_median(durations),
         "p95_ms": internal_percentile(durations, 0.95),
@@ -108,7 +117,7 @@ def internal_unfielded_bm25(artifacts: tuple[dict, ...]) -> object:
         document_frequencies.update(set(tokens))
     average_length = sum(len(tokens) for tokens in documents.values()) / max(1, len(documents))
 
-    def search(text: str, limit: int) -> list[tuple[str, float]]:
+    def search(text: str, limit: int) -> dict:
         query = tuple(dict.fromkeys(sparse_tokens(text)))
         scored = []
         for statement_id, term_frequencies in frequencies.items():
@@ -124,7 +133,7 @@ def internal_unfielded_bm25(artifacts: tuple[dict, ...]) -> object:
             if score:
                 scored.append((statement_id, score))
         scored.sort(key=lambda value: (-value[1], value[0]))
-        result = scored[:limit]
+        result = {"complete": True, "reason": "", "ranking": scored[:limit]}
         return result
 
     return search
@@ -141,17 +150,18 @@ def sqlite_fts(artifacts: tuple[dict, ...]) -> tuple[object, int]:
     page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
     page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
 
-    def search(text: str, limit: int) -> list[tuple[str, float]]:
+    def search(text: str, limit: int) -> dict:
         tokens = tuple(dict.fromkeys(sparse_tokens(text)))
         if not tokens:
-            return []
+            result = {"complete": True, "reason": "", "ranking": []}
+            return result
         expression = " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
         rows = connection.execute(
             "SELECT statement_id, bm25(sparse_documents) FROM sparse_documents "
             "WHERE sparse_documents MATCH ? ORDER BY bm25(sparse_documents), statement_id LIMIT ?",
             (expression, limit),
         ).fetchall()
-        result = [(str(statement_id), -float(score)) for statement_id, score in rows]
+        result = {"complete": True, "reason": "", "ranking": [(str(statement_id), -float(score)) for statement_id, score in rows]}
         return result
 
     result = (search, page_size * page_count)
@@ -161,22 +171,36 @@ def sqlite_fts(artifacts: tuple[dict, ...]) -> tuple[object, int]:
 def selected_sparse(
     artifacts: tuple[dict, ...],
     namespace: str,
+    index: object,
 ) -> object:
+    """Search through the selected sparse owner.
+
+    A ``SparseIndex`` measures the retained index that production requests use;
+    an empty ``index`` selects the full per-request rebuild, the independent
+    reference the index must agree with. The native completion state and
+    refusal reason are kept, so a refused search is never scored as a miss.
+    Artifacts were validated when constructed, as the repository validates
+    them before production searches, so both routes search them as trusted.
+    """
     settings = sparse_config(enabled=True)
     selected_scope = scope_key(namespace=namespace)
 
-    def search(text: str, limit: int) -> list[tuple[str, float]]:
-        result = search_sparse_artifacts(
+    def search(text: str, limit: int) -> dict:
+        native = search_sparse_artifacts(
             artifacts,
             text,
             selected_scope,
             settings,
             limit=limit,
             max_working_memory_bytes=64 * 1024 * 1024,
+            trusted_artifacts=True,
+            index=index,
         )
-        if not result["complete"]:
-            return []
-        result = [(match["statement_id"], match["score"]) for match in result["matches"]]
+        result = {
+            "complete": native.get("complete", False),
+            "reason": native.get("reason", ""),
+            "ranking": [(match.get("statement_id", ""), match.get("score", 0.0)) for match in native.get("matches", ())],
+        }
         return result
 
     return search
@@ -194,20 +218,28 @@ def internal_relevance(
     top_five = 0
     reciprocal_rank = 0.0
     negatives = 0
+    completed_negatives = 0
     negative_candidates = 0
+    incomplete: Counter[str] = Counter()
     family: dict[str, Counter[str]] = defaultdict(Counter)
     cases = []
     for raw in queries:
         if not isinstance(raw, dict):
             raise ValueError("sparse query cases must be objects")
         expected = str(raw["expected_statement_id"])
-        ranking = search(str(raw["query"]), 5)
-        if not isinstance(ranking, list):
-            raise ValueError("sparse benchmark search must return a list")
-        ids = [statement_id for statement_id, internal_score in ranking]
+        outcome = search(str(raw["query"]), 5)
+        if not isinstance(outcome, dict) or not isinstance(outcome.get("ranking", ()), list):
+            raise ValueError("sparse benchmark search must return a result object with a ranking list")
+        complete = outcome.get("complete", False)
+        reason = outcome.get("reason", "")
+        ids = [statement_id for statement_id, internal_score in outcome.get("ranking", [])]
         rank = ids.index(expected) + 1 if expected in ids else 0
         group = str(raw["family"])
+        if not complete:
+            incomplete[reason] += 1
+            family[group]["incomplete"] += 1
         if expected:
+            # A refused positive has no ranking and counts as a miss.
             positive += 1
             top_one += rank == 1
             top_five += rank > 0
@@ -217,14 +249,20 @@ def internal_relevance(
             family[group]["top_five"] += rank > 0
         else:
             negatives += 1
-            negative_candidates += bool(ids)
             family[group]["negative"] += 1
-            family[group]["negative_candidate"] += bool(ids)
+            # Only a completed search can show a clean negative; a refusal is
+            # counted as incomplete rather than as a case without candidates.
+            if complete:
+                completed_negatives += 1
+                negative_candidates += bool(ids)
+                family[group]["negative_candidate"] += bool(ids)
         cases.append(
             {
                 "case_id": raw["case_id"],
                 "family": group,
                 "expected_statement_id": expected,
+                "complete": complete,
+                "reason": reason,
                 "rank": rank,
                 "top_statement_ids": ids,
             }
@@ -236,7 +274,11 @@ def internal_relevance(
         "recall_at_5": top_five / positive,
         "mean_reciprocal_rank": reciprocal_rank / positive,
         "negative_cases": negatives,
-        "negative_candidate_rate": negative_candidates / negatives,
+        "completed_negative_cases": completed_negatives,
+        # With no completed negative case the rate takes its failing maximum.
+        "negative_candidate_rate": negative_candidates / completed_negatives if completed_negatives else 1.0,
+        "incomplete_cases": sum(incomplete.values()),
+        "incomplete_reasons": dict(sorted(incomplete.items())),
         "families": {key: dict(value) for key, value in sorted(family.items())},
         "cases": cases,
     }
@@ -251,15 +293,24 @@ def internal_latency(
     if not callable(search):
         raise ValueError("sparse benchmark search must be callable")
     samples = []
+    incomplete: Counter[str] = Counter()
     for _ in range(repeats):
         for raw in queries:
             if not isinstance(raw, dict):
                 continue
             started = time_perf_counter_ns()
-            search(str(raw["query"]), 5)
-            samples.append((time_perf_counter_ns() - started) / 1_000_000)
+            outcome = search(str(raw["query"]), 5)
+            elapsed = (time_perf_counter_ns() - started) / 1_000_000
+            if outcome.get("complete", False):
+                samples.append(elapsed)
+            else:
+                incomplete[outcome.get("reason", "")] += 1
+    if not samples:
+        raise ValueError(f"no sparse benchmark sample completed: {dict(incomplete)}")
     result = {
         "samples": len(samples),
+        "incomplete_samples": sum(incomplete.values()),
+        "incomplete_reasons": dict(sorted(incomplete.items())),
         "p50_ms": statistics_median(samples),
         "p95_ms": internal_percentile(samples, 0.95),
         "p99_ms": internal_percentile(samples, 0.99),
@@ -287,38 +338,61 @@ def scale_artifacts(count: int) -> tuple[dict, ...]:
 
 
 def scale_profile() -> dict:
+    """Measure the retained sparse index at scale in two phases.
+
+    The cold build is the first search on an empty index, which indexes every
+    artifact; steady queries then read only their own postings. Timing and
+    traced memory use separate indexes so tracing does not distort latency.
+    """
     artifacts = scale_artifacts(SCALE_DOCUMENTS)
     settings = sparse_config(enabled=True)
     selected_scope = scope_key(namespace="section12-scale")
     sequence = [0]
 
-    def query() -> object:
-        index = sequence[0] % SCALE_DOCUMENTS
+    def query(index: SparseIndex) -> dict:
+        position = sequence[0] % SCALE_DOCUMENTS
         sequence[0] += 1
         result = search_sparse_artifacts(
             artifacts,
-            f"service_{index:05d} ERR_SCALE_{index:05d}",
+            f"service_{position:05d} ERR_SCALE_{position:05d}",
             selected_scope,
             settings,
             limit=10,
             max_working_memory_bytes=64 * 1024 * 1024,
+            trusted_artifacts=True,
+            index=index,
         )
         return result
 
-    query_latency = internal_measure(query, SCALE_QUERY_SAMPLES)
+    timed_index = SparseIndex()
+    cold_build = internal_measure(lambda: query(timed_index), 1)
+    steady_query = internal_measure(lambda: query(timed_index), SCALE_QUERY_SAMPLES)
+    traced_index = SparseIndex()
     tracemalloc_start()
-    query()
-    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
+    cold_outcome = query(traced_index)
+    cold_current_bytes, cold_peak_bytes = tracemalloc_get_traced_memory()
     tracemalloc_stop()
-    return {
+    tracemalloc_start()
+    steady_outcome = query(traced_index)
+    query_current_bytes, query_peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
+    memory_complete = cold_outcome.get("complete", False) and steady_outcome.get("complete", False)
+    result = {
         "documents": SCALE_DOCUMENTS,
-        "request_local_query": query_latency,
-        "memory": {"current_bytes": current_bytes, "peak_bytes": peak_bytes},
+        "indexed_cold_build": cold_build,
+        "indexed_query": steady_query,
+        "memory": {
+            "complete": memory_complete,
+            "cold_build": {"current_bytes": cold_current_bytes, "peak_bytes": cold_peak_bytes},
+            "query": {"current_bytes": query_current_bytes, "peak_bytes": query_peak_bytes},
+            "peak_bytes": max(cold_peak_bytes, query_peak_bytes),
+        },
         "repository_storage_bytes": 0,
     }
+    return result
 
 
-def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_scale: bool = True) -> dict:
+def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) -> dict:
     if repeats < 20:
         raise ValueError("sparse benchmark requires at least 20 relevance repeats")
     corpus = internal_load(corpus_path)
@@ -337,19 +411,28 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
     started = time_perf_counter_ns()
     fts5, fts5_disk_bytes = sqlite_fts(artifacts)
     build_latencies["sqlite_fts5"] = (time_perf_counter_ns() - started) / 1_000_000
-    selected = selected_sparse(artifacts, namespace)
-    build_latencies["fielded_bm25_v1"] = 0.0
+    selected = selected_sparse(artifacts, namespace, SparseIndex())
+    # The selected engine's build is the cold first search on its empty index;
+    # the rebuild reference builds every structure inside each search.
+    cold_case = queries[0] if queries and isinstance(queries[0], dict) else {}
+    cold_text = str(cold_case.get("query", ""))
+    build_latencies["fielded_bm25_v1"] = internal_measure(lambda: selected(cold_text, 5), 1)["p50_ms"]
+    build_latencies["fielded_bm25_v1_rebuild"] = 0.0
 
     searches = {
         "unfielded_bm25": bm25,
         "sqlite_fts5": fts5,
         "fielded_bm25_v1": selected,
+        "fielded_bm25_v1_rebuild": selected_sparse(artifacts, namespace, ()),
     }
     relevance = {name: internal_relevance(name, search, queries) for name, search in searches.items()}
     latency = {name: internal_latency(search, queries, repeats) for name, search in searches.items()}
     scale = scale_profile() if include_scale else {}
     selected_relevance = relevance["fielded_bm25_v1"]
+    reference_cases = relevance["fielded_bm25_v1_rebuild"]["cases"]
     verdicts = {
+        "selected_cases_complete": selected_relevance["incomplete_cases"] == 0,
+        "indexed_matches_rebuild": selected_relevance["cases"] == reference_cases,
         "positive_top1_recall": selected_relevance["top1_recall"] >= float(gates["minimum_positive_top1_recall"]),
         "positive_recall_at_5": selected_relevance["recall_at_5"] >= float(gates["minimum_positive_recall_at_5"]),
         "negative_candidate_rate": selected_relevance["negative_candidate_rate"] <= float(gates["maximum_negative_candidate_rate"]),
@@ -357,7 +440,10 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
     if include_scale:
         verdicts.update(
             {
-                "scale_request_local_query_p95": scale["request_local_query"]["p95_ms"]
+                "scale_queries_complete": not scale["indexed_cold_build"]["incomplete_samples"]
+                and not scale["indexed_query"]["incomplete_samples"]
+                and scale["memory"]["complete"],
+                "scale_request_local_query_p95": scale["indexed_query"]["p95_ms"]
                 <= float(gates["maximum_scale_request_local_query_p95_ms"]),
                 "scale_peak_memory": scale["memory"]["peak_bytes"] <= int(gates["maximum_scale_peak_memory_bytes"]),
             }
@@ -386,6 +472,12 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
             "fielded_bm25_v1": {
                 "license": "Engram project code",
                 "portability": "Python runtime; no service or extension dependency",
+                "measured_owner": "retained SparseIndex",
+            },
+            "fielded_bm25_v1_rebuild": {
+                "license": "Engram project code",
+                "portability": "Python runtime; no service or extension dependency",
+                "measured_owner": "full per-request rebuild; independent reference for the retained index",
             },
         },
         "build_latency_ms": build_latencies,
@@ -402,7 +494,8 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 50, include_sca
 
 def main() -> int:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+    # The tree carries no Section 12 corpus, so the input is always named explicitly.
+    parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--repeats", type=int, default=50)
     parser.add_argument("--skip-scale", action="store_true")

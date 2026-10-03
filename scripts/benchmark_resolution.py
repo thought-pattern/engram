@@ -14,6 +14,7 @@ if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
 from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.config import engram_config, sparse_config
 from engram.constants import Tier
 from engram.core import Engram
 from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
@@ -140,7 +141,9 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     )
     exact_resolver = ExactResolver(exact_engine, lambda: START_NS)
 
-    lexical_engine = Engram()
+    # Sparse retrieval is disabled by default; the adapter is measured with the
+    # owned sparse profile enabled, or it would time an unavailable resolver.
+    lexical_engine = Engram(config=engram_config(sparse=sparse_config(enabled=True)))
     lexical_artifacts = []
     for index in range(corpus_size):
         request = f"section four benchmark topic {index} shared retrieval token"
@@ -168,6 +171,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     lexical_engine.response_repository = ArtifactRepository(tuple(lexical_artifacts))
     lexical_frame = QueryFrameBuilder(lexical_engine, lambda: START_NS, lambda: NOW).build(
         "benchmark topic shared retrieval",
+        scope,
         diagnostic_seed="lexical-benchmark",
     )
     lexical_resolver = SparseResolver(lexical_engine, lambda: START_NS)
@@ -186,10 +190,19 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     executor = ResolverExecutor(lambda: START_NS)
     exact_result = exact_resolver.resolve(exact_frame, exact_budget)
 
+    def sparse_resolution() -> dict:
+        # Only a completed sparse retrieval with candidates is a sparse
+        # measurement; any other state is refused rather than timed.
+        outcome = lexical_resolver.resolve(lexical_frame, lexical_budget)
+        if outcome.get("state", ResolverState.FAILED) != ResolverState.COMPLETED or not outcome.get("candidates", ()):
+            state = outcome.get("state", ResolverState.FAILED)
+            raise ValueError(f"sparse adapter did not complete with candidates: {state.value} {outcome.get('reason_code', '')}")
+        return outcome
+
     measurements = {
         "frame_build": measure(build_frame, samples),
         "exact_adapter": measure(lambda: exact_resolver.resolve(exact_frame, exact_budget), samples),
-        "sparse_adapter": measure(lambda: lexical_resolver.resolve(lexical_frame, lexical_budget), samples),
+        "sparse_adapter": measure(sparse_resolution, samples),
         "executor_completed": measure(lambda: executor.execute(lexical_frame, completed_plan), samples),
         "executor_failed": measure(lambda: executor.execute(lexical_frame, failed_plan), samples),
         "result_codec": measure(lambda: resolver_result_from_json(resolver_result_to_json(exact_result)), samples),
@@ -197,7 +210,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
 
     tracemalloc_start()
     for _ in range(min(samples, 100)):
-        lexical_resolver.resolve(lexical_frame, lexical_budget)
+        sparse_resolution()
     _, peak_bytes = tracemalloc_get_traced_memory()
     tracemalloc_stop()
 

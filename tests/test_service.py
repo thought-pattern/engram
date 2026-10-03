@@ -63,8 +63,8 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     class BlockingGraph:
         available = True
 
-        def structured_proposition_projections(self, internal_value, *, projection_id, limit):
-            del internal_value
+        def structured_proposition_projections(self, internal_value, *, projection_id, limit, basis_window):
+            del internal_value, basis_window
             entered.set()
             assert release.wait(timeout=5)
             return []

@@ -87,25 +87,16 @@ def internal_relation(raw: list[object]):
     return result
 
 
-def internal_current(item):
-    values = dict(item["projection"])
-    values.update(
-        {
-            "projection_id": PropositionProjectionQuery.BY_ID,
-            "structured_match": 0.0,
-            "structured_match_available": False,
-            "semantic_similarity": 0.0,
-            "semantic_similarity_available": False,
-            "vector_index_id": "",
-            "vector_index_id_available": False,
-        }
-    )
-    result = proposition_projection(**values)
-    return result
-
-
 def internal_branches(case: dict[str, object]) -> list[list[list[str]]]:
-    raw = case.get("branches", []) or ([case.get("predicates", [])] if "predicates" in case else [])
+    # Field presence selects the declaration: an absent "branches" field selects
+    # the one declared "predicates" branch, and a supplied "branches" value,
+    # including null or an empty list, is validated as supplied.
+    if "branches" in case:
+        raw = case.get("branches", [])
+    elif "predicates" in case:
+        raw = [case.get("predicates", [])]
+    else:
+        raw = []
     if not isinstance(raw, list) or not raw:
         raise ValueError("composition corpus case must declare branches or predicates")
     result = []
@@ -161,8 +152,8 @@ def internal_plan(case: dict[str, object]):
 def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEvaluator) -> dict[str, object]:
     started = time_perf_counter_ns()
     plan = internal_plan(case)
-    raw_propositions = case["propositions"]
-    if not isinstance(raw_propositions, list):
+    raw_propositions = case.get("propositions", [])
+    if "propositions" not in case or not isinstance(raw_propositions, list):
         raise ValueError("composition corpus propositions must be a list")
     propositions = tuple(internal_relation(value) for value in raw_propositions if isinstance(value, list))
     if len(propositions) != len(raw_propositions):
@@ -170,9 +161,22 @@ def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEv
     rows = {}
     current = {}
     for item in propositions:
-        projection = item["projection"]
-        rows.setdefault((projection["subject_entity_id"], projection["predicate_id"]), []).append(item)
-        current[projection["proposition_id"]] = internal_current(item)
+        projection = item.get("projection", {})
+        rows.setdefault((projection.get("subject_entity_id", ""), projection.get("predicate_id", "")), []).append(item)
+        # Revalidation reads the same Proposition back as its current by-id projection.
+        current_values = dict(projection)
+        current_values.update(
+            {
+                "projection_id": PropositionProjectionQuery.BY_ID,
+                "structured_match": 0.0,
+                "structured_match_available": False,
+                "semantic_similarity": 0.0,
+                "semantic_similarity_available": False,
+                "vector_index_id": "",
+                "vector_index_id_available": False,
+            }
+        )
+        current[projection.get("proposition_id", "")] = proposition_projection(**current_values)
     raw_failures = case.get("fail_queries", [])
     if not isinstance(raw_failures, list) or not all(isinstance(value, str) for value in raw_failures):
         raise ValueError("composition corpus fail_queries must be a string list")
@@ -191,47 +195,57 @@ def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEv
         lambda projection: evaluator.revalidate(
             projection,
             frame,
-            lambda proposition_id: (current.get(proposition_id, {}),),
+            lambda proposition_id, basis_window: (current.get(proposition_id, {}),),
         ),
     )
     elapsed_ms = (time_perf_counter_ns() - started) / 1_000_000
+    complete_paths = execution.get("complete_paths", ())
+    partial_paths = execution.get("partial_paths", ())
+    graph_rows = execution.get("graph_rows", 0)
     observed = {
-        "direct": execution["direct_result"],
-        "truth_available": execution["truth_available"],
-        "truth": execution["truth_value"],
-        "aggregate": execution["aggregate_value"],
-        "terminal_ids": list(execution["terminal_entity_ids"]),
-        "complete_paths": len(execution["complete_paths"]),
-        "partial_paths": len(execution["partial_paths"]),
-        "truncated": execution["truncated"],
-        "reasons": [reason.value for reason in execution["reasons"]],
-        "graph_rows": execution["graph_rows"],
+        "direct": execution.get("direct_result", False),
+        "truth_available": execution.get("truth_available", False),
+        "truth": execution.get("truth_value", False),
+        "aggregate": execution.get("aggregate_value", ""),
+        "terminal_ids": list(execution.get("terminal_entity_ids", ())),
+        "complete_paths": len(complete_paths),
+        "partial_paths": len(partial_paths),
+        "truncated": execution.get("truncated", False),
+        "reasons": [reason.value for reason in execution.get("reasons", ())],
+        "graph_rows": graph_rows,
         "complete_proposition_paths": [
-            [entry["proposition"]["projection"]["proposition_id"] for entry in path] for path in execution["complete_paths"]
+            [entry.get("proposition", {}).get("projection", {}).get("proposition_id", "") for entry in path]
+            for path in complete_paths
         ],
         "partial_proposition_paths": [
-            [entry["proposition"]["projection"]["proposition_id"] for entry in path] for path in execution["partial_paths"]
+            [entry.get("proposition", {}).get("projection", {}).get("proposition_id", "") for entry in path]
+            for path in partial_paths
         ],
     }
     raw_expected = case.get("expected", {})
     if not isinstance(raw_expected, dict) or not all(isinstance(name, str) for name in raw_expected):
         raise ValueError("composition corpus expected value must be a string-keyed object")
     expected = raw_expected
-    expected_reasons = expected.get("reasons")
-    if not isinstance(expected_reasons, list) or not all(isinstance(reason, str) for reason in expected_reasons):
+    expected_reasons = expected.get("reasons", [])
+    if (
+        "reasons" not in expected
+        or not isinstance(expected_reasons, list)
+        or not all(isinstance(reason, str) for reason in expected_reasons)
+    ):
         raise ValueError("composition corpus expected reasons must be a string list")
     comparable = {name: observed.get(name, False) for name in expected if name != "reasons"}
     reasons_match = set(expected_reasons).issubset(observed.get("reasons", []))
     passed = comparable == {name: value for name, value in expected.items() if name != "reasons"} and reasons_match
+    max_rows = plan.get("max_rows", 0)
     bounded = (
-        1 <= plan["max_hops"] <= 2
-        and 1 <= plan["max_rows"] <= 64
-        and 1 <= plan["max_branches"] <= 4
-        and 1 <= plan["max_candidates_per_step"] <= 8
-        and 1 <= plan["max_path_propositions"] <= 2
-        and execution["graph_rows"] <= plan["max_rows"]
+        1 <= plan.get("max_hops", 0) <= 2
+        and 1 <= max_rows <= 64
+        and 1 <= plan.get("max_branches", 0) <= 4
+        and 1 <= plan.get("max_candidates_per_step", 0) <= 8
+        and 1 <= plan.get("max_path_propositions", 0) <= 2
+        and graph_rows <= max_rows
     )
-    useful_evidence = execution["direct_result"] or bool(execution["complete_paths"] or execution["partial_paths"])
+    useful_evidence = execution.get("direct_result", False) or bool(complete_paths or partial_paths)
     result = {
         "id": case.get("id", ""),
         "passed": passed,
@@ -246,6 +260,8 @@ def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEv
 
 def run(corpus_path: Path) -> dict[str, object]:
     corpus = json_loads(corpus_path.read_text(encoding="utf-8"))
+    if not isinstance(corpus, dict) or "name" not in corpus:
+        raise ValueError("composition corpus must be an object with a name")
     frame = QueryFrameBuilder(Engram(), lambda: 1, lambda: NOW).build(
         "What is connected to the root?",
         scope_key(namespace="public"),
@@ -253,8 +269,8 @@ def run(corpus_path: Path) -> dict[str, object]:
     evaluator = PropositionEligibilityEvaluator()
     results = []
     for split in ("development", "held_out"):
-        raw_cases = corpus[split]
-        if not isinstance(raw_cases, list):
+        raw_cases = corpus.get(split, [])
+        if split not in corpus or not isinstance(raw_cases, list):
             raise ValueError("composition corpus splits must be lists")
         for raw_case in raw_cases:
             if not isinstance(raw_case, dict):
@@ -262,19 +278,19 @@ def run(corpus_path: Path) -> dict[str, object]:
             case = run_case(raw_case, frame, evaluator)
             case["split"] = split
             results.append(case)
-    durations = [float(case["elapsed_ms"]) for case in results]
-    held_out = [case for case in results if case["split"] == "held_out"]
-    abstentions = [case for case in results if not case["observed"]["direct"]]
+    durations = [float(case.get("elapsed_ms", 0.0)) for case in results]
+    held_out = [case for case in results if case.get("split", "") == "held_out"]
+    abstentions = [case for case in results if not case.get("observed", {}).get("direct", False)]
     result = {
-        "corpus": corpus["name"],
+        "corpus": corpus.get("name", ""),
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": benchmark_source_state(),
-        "passed": all(case["passed"] and case["bounded"] for case in results),
+        "passed": all(case.get("passed", False) and case.get("bounded", False) for case in results),
         "case_count": len(results),
-        "passed_count": sum(case["passed"] for case in results),
-        "held_out_accuracy": sum(case["passed"] for case in held_out) / len(held_out),
-        "zero_unbounded_execution": all(case["bounded"] for case in results),
-        "useful_evidence_on_abstention": all(case["useful_evidence"] for case in abstentions),
+        "passed_count": sum(case.get("passed", False) for case in results),
+        "held_out_accuracy": sum(case.get("passed", False) for case in held_out) / len(held_out),
+        "zero_unbounded_execution": all(case.get("bounded", False) for case in results),
+        "useful_evidence_on_abstention": all(case.get("useful_evidence", False) for case in abstentions),
         "duration_ms": {
             "median": statistics_median(durations),
             "p95": internal_percentile(durations, 0.95),
@@ -288,7 +304,7 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition.json"))
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition-v1.json"))
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     report = run(arguments.corpus)
@@ -296,7 +312,7 @@ def main() -> None:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json_dumps(report, sort_keys=True))
-    if not report["passed"]:
+    if not report.get("passed", False):
         raise SystemExit(1)
 
 

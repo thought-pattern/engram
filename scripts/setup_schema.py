@@ -52,9 +52,11 @@ def connected_operation(mode: str, settings: dict) -> dict:
     """Run one schema operation and always disconnect."""
 
     connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
-    if not connection.connect():
-        raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
     try:
+        # connect starts the driver loop thread even when the database is
+        # unreachable, so a failed connection is disconnected as well.
+        if not connection.connect():
+            raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")
         if mode == "apply":
             result = install_schema(connection, SCHEMA_FILE)
             return result

@@ -22,9 +22,9 @@ logger = logging_getLogger(__name__)
 def guarded_tool(operation):
     """Log a failed tool call in full and give the client only a stable message.
 
-    The MCP SDK passes a ``ToolError``'s message to the client and keeps any
-    other exception's text on the server. Engram's own errors, whose messages
-    are written for callers, become ``ToolError``s; everything else becomes
+    The MCP SDK sends only the text of the raised ``ToolError`` to the client;
+    its cause stays on the server. Engram's own errors, whose messages are
+    written for callers, become ``ToolError``s; everything else becomes
     "internal Engram failure".
     """
 
@@ -35,10 +35,10 @@ def guarded_tool(operation):
             return result
         except EngramCoreError as error:
             logger.warning("Engram MCP tool %s was refused", operation.__name__, exc_info=error)
-            raise ToolError(str(error)) from None
+            raise ToolError(str(error)) from error
         except Exception as error:
             logger.error("Engram MCP tool %s failed", operation.__name__, exc_info=error)
-            raise ToolError("internal Engram failure") from None
+            raise ToolError("internal Engram failure") from error
 
     return guarded
 
@@ -89,7 +89,8 @@ class MCPConversationService:
             try:
                 # Seed files named by the configuration load when the core
                 # starts; the adapter's static data applies only without them.
-                if not (config.get("conversation") or {}).get("seed_files"):
+                conversation_settings = config.get("conversation", {})
+                if not conversation_settings.get("seed_files", []):
                     core.engram.load_static_data(deepcopy(self.static_pairs))
                 started = core.start_conversation(
                     user_id=conversation_user_id,
@@ -432,8 +433,8 @@ class EngramMCPServer(MCPServer):
         return result
 
 
-def argument_parser() -> argparse_ArgumentParser:
-    """Build the host-owned stdio launch contract."""
+def run(argv: tuple[str, ...] = ()) -> None:
+    """Run one configured MCP adapter over the host-owned stdio transport."""
     parser = argparse_ArgumentParser(description="Run the Engram MCP stdio server")
     static_group = parser.add_mutually_exclusive_group()
     static_group.add_argument(
@@ -447,12 +448,6 @@ def argument_parser() -> argparse_ArgumentParser:
         action="store_true",
         help="start in cache-only mode without scripted conversational statements",
     )
-    return parser
-
-
-def run(argv: tuple[str, ...] = ()) -> None:
-    """Run one configured MCP adapter over the host-owned stdio transport."""
-    parser = argument_parser()
     args = parser.parse_args(argv)
     try:
         static_pairs = [] if args.no_static_data else load_conversation_pairs(args.static_data)

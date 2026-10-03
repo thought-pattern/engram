@@ -14,7 +14,6 @@ from engram.constants import QueryOperator
 from engram.rewrite import RewriteEngine, lint_rewrite_corpus, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CASES = Path("eval/section11-rewrite.json")
 DEFAULT_OUTPUT = Path("eval/results/rewrite/lint.json")
 
 
@@ -28,7 +27,7 @@ def internal_cases(path: Path) -> list[dict[str, object]]:
     return cases
 
 
-def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
+def lint(cases_path: Path) -> dict[str, object]:
     rules = load_default_rewrite_corpus()
     structural = list(lint_rewrite_corpus(rules))
     engine = RewriteEngine(rules)
@@ -96,7 +95,8 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    # The tree carries no Section 11 corpus, so the input is always named explicitly.
+    parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     report = lint(args.cases)

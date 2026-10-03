@@ -24,6 +24,17 @@ Starting `"0"` returns a `conversation_token`; `chat`, `inspect_conversation`,
 `finish_conversation`, and `stop_conversation` for `"0"` must pass it as
 `conversation_token` or raise `ConversationOwnershipError`. An unknown-user
 conversation idle for 300 seconds no longer blocks a new start.
+Active conversations are bounded by `max_sessions`, since each owns one session.
+A start first releases conversations whose session was evicted or expired. At
+capacity, `session_overflow` applies to conversations as it does to sessions:
+`reject` raises `SessionLimitExceededError`, `expire_oldest` releases the earliest
+started conversation, and `lru` the least recently active. A conversation with a
+turn in flight is never released.
+
+`close` drains in-flight work, then releases conversations as stop does and
+discards tokens, activity, cached resolutions, retry accounting, negative results,
+and proposal state. A core that built its own `Engram` also clears its sessions;
+the named sessions of a supplied `Engram` remain its caller's.
 
 ## Process lifetime and static startup data
 
@@ -74,14 +85,15 @@ lists retain their supplied order. Phrasing does not establish source entailment
 | `required_source_label` | string, default `""` | Empty accepts every source label |
 | `budget` | mapping, default `{}` | Empty captures the default bounded budget; nonempty must be a validated `ResolutionBudget` |
 | `configured_resolvers` | tuple of nonempty strings, default `()` | Empty selects the configured plan |
-| `accept_exact` | boolean, default `false` | Explicit direct-answer permission for one eligible exact result |
+| `accept_exact` | boolean, default `false` | Explicit direct-answer permission for one eligible exact result; without it that result is returned as `EVIDENCE` with reason `exact_answer_not_permitted` and earns no success credit |
 | `cancellation_check` | zero-argument callable, default `()` | Transient cooperative check; raises `ResolutionCancelledError` when the caller cancels |
 
 Falsey non-mapping identity or budget values such as `()`, `[]`, `""`, `0`,
 and `false` are malformed. This preserves
 one concrete absence type at the public boundary.
 
-The cancellation callback is invoked before expensive resolver work and at
+The cancellation callback is invoked while a request waits behind another
+request with its request ID or user, before expensive resolver work, and at
 cooperative structured, semantic, and composition boundaries. It remains transient
 and outside the `request_id` signature. Cancellation discards partial resolution and
 permits retry with the same request ID. An executing external driver call continues

@@ -12,9 +12,18 @@ the next handshake or query is answered:
 Received queries and their parameters are kept in ``queries``.
 """
 
-from socket import create_server as socket_create_server, socket as socket_socket
+from socket import (
+    SHUT_RDWR,
+    create_connection as socket_create_connection,
+    create_server as socket_create_server,
+    socket as socket_socket,
+)
 from struct import calcsize as struct_calcsize, pack as struct_pack, unpack as struct_unpack
 from threading import Lock as threading_Lock, Thread as threading_Thread
+
+# How long close waits for a worker after shutting down the socket it blocks on.
+# Shutdown wakes the blocking call at once, so reaching this bound means a worker is stranded.
+WORKER_STOP_SECONDS = 5.0
 
 BOLT_5_2 = b"\x00\x00\x02\x05"
 HELLO = 0x01
@@ -166,10 +175,13 @@ class BoltStub:
         self.failure_message = "stub failure"
         self.queries: list[tuple[str, dict]] = []
         self.connections: list[socket_socket] = []
+        self.workers: list[threading_Thread] = []
+        self.stopping = False
         self.lock = threading_Lock()
         self.listener = socket_create_server(("127.0.0.1", 0))
         self.port = self.listener.getsockname()[1]
-        threading_Thread(target=self.accept, daemon=True).start()
+        self.acceptor = threading_Thread(target=self.accept, daemon=True)
+        self.acceptor.start()
 
     def accept(self) -> None:
         while True:
@@ -178,8 +190,13 @@ class BoltStub:
             except OSError:
                 return
             with self.lock:
+                if self.stopping:
+                    connection.close()
+                    return
+                worker = threading_Thread(target=self.serve, args=(connection,), daemon=True)
                 self.connections.append(connection)
-            threading_Thread(target=self.serve, args=(connection,), daemon=True).start()
+                self.workers.append(worker)
+                worker.start()
 
     def serve(self, connection: socket_socket) -> None:
         try:
@@ -229,7 +246,25 @@ class BoltStub:
             connection.close()
 
     def close(self) -> None:
+        """Stop accepting, wake every blocked worker and confirm that all of them finished."""
+        with self.lock:
+            self.stopping = True
+        # Closing a listener does not wake a blocked accept on every platform. A loopback
+        # connection does, and the acceptor then sees the stop flag and exits.
+        socket_create_connection(("127.0.0.1", self.port)).close()
+        self.acceptor.join(WORKER_STOP_SECONDS)
         self.listener.close()
         with self.lock:
-            for connection in self.connections:
-                connection.close()
+            connections = list(self.connections)
+            workers = list(self.workers)
+        for connection in connections:
+            try:
+                connection.shutdown(SHUT_RDWR)
+            except OSError:
+                # The worker already finished and closed this connection.
+                continue
+        for worker in workers:
+            worker.join(WORKER_STOP_SECONDS)
+        stranded = [thread.name for thread in (self.acceptor, *workers) if thread.is_alive()]
+        if stranded:
+            raise RuntimeError(f"Bolt stub workers did not stop: {', '.join(stranded)}")

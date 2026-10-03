@@ -94,7 +94,7 @@ def compact_query_frame(
         validated_relation = validate_relation_reference(relation)
     except IdentityValidationError as error:
         raise InvalidRequestError("compact query frame identity fields are malformed") from error
-    subject_keys = tuple((value["surface"].casefold(), value["canonical_id"]) for value in validated_subjects)
+    subject_keys = tuple((value.get("surface", "").casefold(), value.get("canonical_id", "")) for value in validated_subjects)
     if len(subject_keys) != len(set(subject_keys)):
         raise InvalidRequestError("compact query frame subjects must be unique")
     if not isinstance(qualifiers, tuple):
@@ -103,7 +103,7 @@ def compact_query_frame(
         validated_qualifiers = tuple(validate_identity_qualifier(value) for value in qualifiers)
     except IdentityValidationError as error:
         raise InvalidRequestError("compact query frame qualifiers are malformed") from error
-    qualifier_keys = tuple((value["kind"], value["value"]) for value in validated_qualifiers)
+    qualifier_keys = tuple((value.get("kind", ""), value.get("value", "")) for value in validated_qualifiers)
     if len(qualifier_keys) != len(set(qualifier_keys)):
         raise InvalidRequestError("compact query frame qualifiers must be unique")
     result: dict = {
@@ -129,16 +129,17 @@ def validate_compact_query_frame(value: object) -> dict:
             f"missing={sorted(COMPACT_QUERY_FRAME_FIELDS - observed)}, "
             f"extra={sorted(observed - COMPACT_QUERY_FRAME_FIELDS)}"
         )
+    # The exact field set is checked above, so every typed default below is unreachable.
     result = compact_query_frame(
-        operator=data["operator"],
-        subjects=data["subjects"],
-        relation=data["relation"],
-        expected_object_type=data["expected_object_type"],
-        temporal_query_value=data["temporal_query"],
-        qualifiers=data["qualifiers"],
-        source_turn=data["source_turn"],
-        confidence=data["confidence"],
-        topic=data["topic"],
+        operator=data.get("operator", QueryOperator.UNKNOWN),
+        subjects=data.get("subjects", ()),
+        relation=data.get("relation", {}),
+        expected_object_type=data.get("expected_object_type", ExpectedObjectType.UNKNOWN),
+        temporal_query_value=data.get("temporal_query", {}),
+        qualifiers=data.get("qualifiers", ()),
+        source_turn=data.get("source_turn", 0),
+        confidence=data.get("confidence", 0.0),
+        topic=data.get("topic", ""),
     )
     return result
 
@@ -146,15 +147,15 @@ def validate_compact_query_frame(value: object) -> dict:
 def compact_query_frame_to_dict(value: object) -> dict:
     frame = validate_compact_query_frame(value)
     result = {
-        "operator": frame["operator"].value,
-        "subjects": [entity_reference_to_dict(subject) for subject in frame["subjects"]],
-        "relation": relation_reference_to_dict(frame["relation"]),
-        "expected_object_type": frame["expected_object_type"].value,
-        "temporal_query": temporal_query_to_dict(frame["temporal_query"]),
-        "qualifiers": [identity_qualifier_to_dict(qualifier) for qualifier in frame["qualifiers"]],
-        "source_turn": frame["source_turn"],
-        "confidence": frame["confidence"],
-        "topic": frame["topic"],
+        "operator": frame.get("operator", QueryOperator.UNKNOWN).value,
+        "subjects": [entity_reference_to_dict(subject) for subject in frame.get("subjects", ())],
+        "relation": relation_reference_to_dict(frame.get("relation", {})),
+        "expected_object_type": frame.get("expected_object_type", ExpectedObjectType.UNKNOWN).value,
+        "temporal_query": temporal_query_to_dict(frame.get("temporal_query", {})),
+        "qualifiers": [identity_qualifier_to_dict(qualifier) for qualifier in frame.get("qualifiers", ())],
+        "source_turn": frame.get("source_turn", 0),
+        "confidence": frame.get("confidence", 0.0),
+        "topic": frame.get("topic", ""),
     }
     return result
 
@@ -168,27 +169,28 @@ def compact_query_frame_from_dict(value: object) -> dict:
             f"missing={sorted(COMPACT_QUERY_FRAME_FIELDS - observed)}, "
             f"extra={sorted(observed - COMPACT_QUERY_FRAME_FIELDS)}"
         )
-    raw_subjects = data["subjects"]
-    raw_qualifiers = data["qualifiers"]
+    # The exact field set is checked above, so every typed default below is unreachable.
+    raw_subjects = data.get("subjects", [])
+    raw_qualifiers = data.get("qualifiers", [])
     if not isinstance(raw_subjects, list) or not isinstance(raw_qualifiers, list):
         raise InvalidRequestError("serialized compact query frame collections must be lists")
     try:
-        operator = QueryOperator(require_text(data["operator"], "compact operator", 32, allow_empty=False))
+        operator = QueryOperator(require_text(data.get("operator", ""), "compact operator", 32, allow_empty=False))
         expected = ExpectedObjectType(
-            require_text(data["expected_object_type"], "compact expected_object_type", 32, allow_empty=False)
+            require_text(data.get("expected_object_type", ""), "compact expected_object_type", 32, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("serialized compact query frame enum is unsupported") from error
     result = compact_query_frame(
         operator=operator,
         subjects=tuple(entity_reference_from_dict(internal_mapping(item, "compact subject")) for item in raw_subjects),
-        relation=relation_reference_from_dict(internal_mapping(data["relation"], "compact relation")),
+        relation=relation_reference_from_dict(internal_mapping(data.get("relation", {}), "compact relation")),
         expected_object_type=expected,
-        temporal_query_value=temporal_query_from_dict(internal_mapping(data["temporal_query"], "compact temporal query")),
+        temporal_query_value=temporal_query_from_dict(internal_mapping(data.get("temporal_query", {}), "compact temporal query")),
         qualifiers=tuple(identity_qualifier_from_dict(internal_mapping(item, "compact qualifier")) for item in raw_qualifiers),
-        source_turn=data["source_turn"],
-        confidence=data["confidence"],
-        topic=data["topic"],
+        source_turn=data.get("source_turn", 0),
+        confidence=data.get("confidence", 0.0),
+        topic=data.get("topic", ""),
     )
     return result
 
@@ -256,12 +258,13 @@ def classify_query_frame_operator(request: object, previous: object = {}) -> dic
         return result
     if previous and is_elliptical_follow_up(text):
         prior = validate_compact_query_frame(previous)
-        if prior["confidence"] >= MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE:
+        prior_confidence = prior.get("confidence", 0.0)
+        if prior_confidence >= MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE:
             result = {
-                "operator": prior["operator"],
-                "confidence": max(0.0, prior["confidence"] - 0.1),
+                "operator": prior.get("operator", QueryOperator.UNKNOWN),
+                "confidence": max(0.0, prior_confidence - 0.1),
                 "inherited": True,
-                "source_turn": prior["source_turn"],
+                "source_turn": prior.get("source_turn", 0),
             }
             return result
     result = {
@@ -285,14 +288,17 @@ def topic_continues(previous: dict, topic: str, follow_up: bool) -> bool:
 
 
 def frame_confidence(frame: dict, inherited_confidence: float = 0.0) -> float:
+    # Callers pass a frame already accepted by validate_query_frame, so identity and relation are exact mappings.
     identity = frame.get("identity", {})
+    entities = identity.get("entities", ())
+    relation = identity.get("relation", {})
     observations = []
-    if identity["operator"] != QueryOperator.UNKNOWN:
+    if identity.get("operator", QueryOperator.UNKNOWN) != QueryOperator.UNKNOWN:
         observations.append(0.98)
-    if identity["entities"]:
-        observations.append(0.95 if all(value["canonical_id"] for value in identity["entities"]) else 0.75)
-    if identity["relation"]["surface"]:
-        observations.append(0.95 if identity["relation"]["canonical_id"] else 0.7)
+    if entities:
+        observations.append(0.95 if all(value.get("canonical_id", "") for value in entities) else 0.75)
+    if relation.get("surface", ""):
+        observations.append(0.95 if relation.get("canonical_id", "") else 0.7)
     if frame.get("expected_object_type", ExpectedObjectType.UNKNOWN) != ExpectedObjectType.UNKNOWN:
         observations.append(0.9)
     if inherited_confidence:
@@ -312,80 +318,91 @@ def enrich_query_frame(
     frame = validate_query_frame(value)
     turn = internal_turn(current_turn, "current query frame turn")
     current_topic = require_text(topic, "current query frame topic", MAX_CONTEXTUAL_TOPIC_BYTES, allow_empty=True)
-    identity = frame["identity"]
-    operator = identity["operator"]
+    # validate_query_frame enforces the exact frame and identity field sets, so the typed defaults are unreachable.
+    identity = frame.get("identity", {})
+    operator = identity.get("operator", QueryOperator.UNKNOWN)
     # The live request keeps every entity it named. Only the compact frame
     # carried to the next turn is limited to MAX_CONTEXTUAL_SUBJECTS.
-    subjects = identity["entities"]
-    relation = identity["relation"]
-    qualifiers = identity["qualifiers"]
-    expected = frame["expected_object_type"]
-    temporal = frame["temporal_query"]
+    subjects = identity.get("entities", ())
+    relation = identity.get("relation", {})
+    qualifiers = identity.get("qualifiers", ())
+    expected = frame.get("expected_object_type", ExpectedObjectType.UNKNOWN)
+    temporal = frame.get("temporal_query", {})
+    original_text = frame.get("original_text", "")
     if expected == ExpectedObjectType.UNKNOWN:
         expected = infer_expected_object_type(operator)
-    provenance = list(frame["inheritance"])
-    normalized_request = normalize_retrieval_key(frame["original_text"])
+    provenance = list(frame.get("inheritance", ()))
+    normalized_request = normalize_retrieval_key(original_text)
     explicit_follow_up = normalized_request.startswith(FOLLOW_UP_LEADS) or any(
         token in FOLLOW_UP_REFERENTS for token in normalized_request.split()
     )
-    temporal_follow_up = not subjects and temporal["operator"] != TemporalQueryOperator.UNSPECIFIED
-    follow_up = explicit_follow_up or temporal_follow_up or (not subjects and is_elliptical_follow_up(frame["original_text"]))
+    temporal_operator = temporal.get("operator", TemporalQueryOperator.UNSPECIFIED)
+    temporal_follow_up = not subjects and temporal_operator != TemporalQueryOperator.UNSPECIFIED
+    follow_up = explicit_follow_up or temporal_follow_up or (not subjects and is_elliptical_follow_up(original_text))
     self_contained = bool(subjects) and not follow_up
     eligible_previous: object = {}
     if previous:
         prior = validate_compact_query_frame(previous)
-        distance = turn - prior["source_turn"]
+        distance = turn - prior.get("source_turn", 0)
         if (
             not self_contained
             and 1 <= distance <= MAX_CONTEXTUAL_TURN_DISTANCE
-            and prior["confidence"] >= MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE
+            and prior.get("confidence", 0.0) >= MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE
             and topic_continues(prior, current_topic, follow_up)
         ):
             eligible_previous = prior
-    classification = classify_query_frame_operator(frame["original_text"], eligible_previous)
-    if operator == QueryOperator.UNKNOWN and classification["operator"] != QueryOperator.UNKNOWN:
-        operator = classification["operator"]
-        if classification["inherited"]:
-            provenance.append(inheritance_provenance("operator", classification["source_turn"]))
+    classification = classify_query_frame_operator(original_text, eligible_previous)
+    classified_operator = classification.get("operator", QueryOperator.UNKNOWN)
+    if operator == QueryOperator.UNKNOWN and classified_operator != QueryOperator.UNKNOWN:
+        operator = classified_operator
+        if classification.get("inherited", False):
+            provenance.append(inheritance_provenance("operator", classification.get("source_turn", 0)))
         expected = infer_expected_object_type(operator)
 
     if eligible_previous:
         prior = validate_compact_query_frame(eligible_previous)
+        prior_turn = prior.get("source_turn", 0)
         if not self_contained:
-            if operator == QueryOperator.UNKNOWN and prior["operator"] != QueryOperator.UNKNOWN:
-                operator = prior["operator"]
-                provenance.append(inheritance_provenance("operator", prior["source_turn"]))
-            if not subjects and prior["subjects"]:
-                subjects = prior["subjects"]
-                provenance.append(inheritance_provenance("subjects", prior["source_turn"]))
-            if not relation["surface"] and prior["relation"]["surface"]:
-                relation = prior["relation"]
-                provenance.append(inheritance_provenance("relation", prior["source_turn"]))
-            if expected == ExpectedObjectType.UNKNOWN and prior["expected_object_type"] != ExpectedObjectType.UNKNOWN:
-                expected = prior["expected_object_type"]
-                provenance.append(inheritance_provenance("expected_object_type", prior["source_turn"]))
-            present_kinds = {qualifier["kind"] for qualifier in qualifiers}
-            if temporal["operator"] != TemporalQueryOperator.UNSPECIFIED:
+            prior_operator = prior.get("operator", QueryOperator.UNKNOWN)
+            if operator == QueryOperator.UNKNOWN and prior_operator != QueryOperator.UNKNOWN:
+                operator = prior_operator
+                provenance.append(inheritance_provenance("operator", prior_turn))
+            prior_subjects = prior.get("subjects", ())
+            if not subjects and prior_subjects:
+                subjects = prior_subjects
+                provenance.append(inheritance_provenance("subjects", prior_turn))
+            prior_relation = prior.get("relation", {})
+            if not relation.get("surface", "") and prior_relation.get("surface", ""):
+                relation = prior_relation
+                provenance.append(inheritance_provenance("relation", prior_turn))
+            prior_expected = prior.get("expected_object_type", ExpectedObjectType.UNKNOWN)
+            if expected == ExpectedObjectType.UNKNOWN and prior_expected != ExpectedObjectType.UNKNOWN:
+                expected = prior_expected
+                provenance.append(inheritance_provenance("expected_object_type", prior_turn))
+            present_kinds = {qualifier.get("kind", "") for qualifier in qualifiers}
+            if temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) != TemporalQueryOperator.UNSPECIFIED:
                 present_kinds.update({QualifierKind.CURRENT, QualifierKind.HISTORICAL, QualifierKind.TEMPORAL})
-            inherited_qualifiers = tuple(qualifier for qualifier in prior["qualifiers"] if qualifier["kind"] not in present_kinds)
+            inherited_qualifiers = tuple(
+                qualifier for qualifier in prior.get("qualifiers", ()) if qualifier.get("kind", "") not in present_kinds
+            )
             if inherited_qualifiers:
                 qualifiers = (*qualifiers, *inherited_qualifiers)
-                provenance.append(inheritance_provenance("qualifiers", prior["source_turn"]))
-            if temporal["operator"] == TemporalQueryOperator.UNSPECIFIED:
-                temporal = prior["temporal_query"]
-                if temporal["operator"] != TemporalQueryOperator.UNSPECIFIED:
-                    provenance.append(inheritance_provenance("temporal_query", prior["source_turn"]))
+                provenance.append(inheritance_provenance("qualifiers", prior_turn))
+            if temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) == TemporalQueryOperator.UNSPECIFIED:
+                temporal = prior.get("temporal_query", {})
+                if temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) != TemporalQueryOperator.UNSPECIFIED:
+                    provenance.append(inheritance_provenance("temporal_query", prior_turn))
 
     if expected == ExpectedObjectType.UNKNOWN:
         expected = infer_expected_object_type(operator)
     updated_identity: dict = query_identity(
-        canonical_form=identity["canonical_form"],
+        canonical_form=identity.get("canonical_form", ""),
         operator=operator,
         entities=subjects,
         relation=relation,
         qualifiers=qualifiers,
-        lexical_terms=identity["lexical_terms"],
-        scope=identity["scope"],
+        lexical_terms=identity.get("lexical_terms", ()),
+        scope=identity.get("scope", {}),
     )
     result = query_frame_with_changes(
         frame,
@@ -402,13 +419,14 @@ def enrich_query_frame(
 def compact_query_frame_from_frame(value: object, *, source_turn: object, topic: object = "") -> dict:
     """Project one enriched runtime frame into bounded user-owned context."""
     frame = validate_query_frame(value)
+    identity = frame.get("identity", {})
     result = compact_query_frame(
-        operator=frame["identity"]["operator"],
-        subjects=frame["identity"]["entities"][:MAX_CONTEXTUAL_SUBJECTS],
-        relation=frame["identity"]["relation"],
-        expected_object_type=frame["expected_object_type"],
-        temporal_query_value=frame["temporal_query"],
-        qualifiers=frame["identity"]["qualifiers"],
+        operator=identity.get("operator", QueryOperator.UNKNOWN),
+        subjects=identity.get("entities", ())[:MAX_CONTEXTUAL_SUBJECTS],
+        relation=identity.get("relation", {}),
+        expected_object_type=frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
+        temporal_query_value=frame.get("temporal_query", {}),
+        qualifiers=identity.get("qualifiers", ()),
         source_turn=source_turn,
         confidence=frame_confidence(frame),
         topic=topic,

@@ -14,24 +14,30 @@ from engram.constants import (
     CACHED_RESPONSE_ARTIFACT_FIELDS,
     EMPTY_MAPPING,
     LEGAL_LIFECYCLE_TRANSITIONS,
+    LIFECYCLE_AUDIT_FIELDS,
+    LIFECYCLE_AUDIT_KEY,
     LIFECYCLE_BASE_DECISION_FIELDS,
     LIFECYCLE_INELIGIBLE_REASONS,
     LIFECYCLE_TRANSITION_DECISION_FIELDS,
     MAX_ARTIFACT_ENUM_BYTES,
     MAX_ARTIFACT_ID_BYTES,
     MAX_CALLER_ID_BYTES,
+    MAX_LIFECYCLE_AUDIT_DETAIL_BYTES,
     MAX_METADATA_BYTES,
     MAX_METADATA_DEPTH,
     MAX_METADATA_ITEMS,
     MAX_METADATA_KEY_BYTES,
     MAX_METADATA_STRING_BYTES,
+    MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_SOURCE_LABEL_BYTES,
     MAX_SUPPORT_REFERENCES,
     TERMINAL_LIFECYCLE_STATES as TERMINAL_LIFECYCLE_STATES,
     LifecycleDecisionReason,
+    LifecycleMutationReason,
     LifecycleOperation,
     LifecycleState,
+    MutationOperation,
     Tier,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError, LifecycleError
@@ -124,6 +130,37 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
 
+def freeze_lifecycle_audit(value: object) -> dict:
+    """Validate the reserved lifecycle audit a terminal transition writes into metadata."""
+    fields = set(value) if isinstance(value, dict) else set()
+    supersession = fields == LIFECYCLE_AUDIT_FIELDS | {"replacement_statement_id"}
+    if fields != LIFECYCLE_AUDIT_FIELDS and not supersession:
+        raise InvalidRequestError("artifact lifecycle_audit has invalid fields")
+    try:
+        operation = MutationOperation(value.get("operation", ""))
+        reason = LifecycleMutationReason(value.get("reason", ""))
+    except ValueError as err:
+        raise InvalidRequestError("artifact lifecycle_audit operation or reason is unsupported") from err
+    if supersession != (operation == MutationOperation.SUPERSEDE_RESPONSE):
+        raise InvalidRequestError("artifact lifecycle_audit replacement_statement_id must match a supersession")
+    result = {
+        "operation": operation.value,
+        "reason": reason.value,
+        "caller_id": require_text(value.get("caller_id", ""), "lifecycle audit caller_id", MAX_CALLER_ID_BYTES),
+        "request_id": require_text(value.get("request_id", ""), "lifecycle audit request_id", MAX_REQUEST_ID_BYTES),
+        "occurred_at": require_utc_timestamp(value.get("occurred_at", ""), "lifecycle audit occurred_at"),
+        "detail": require_text(
+            value.get("detail", ""), "lifecycle audit detail", MAX_LIFECYCLE_AUDIT_DETAIL_BYTES, allow_empty=True
+        ),
+    }
+    if supersession:
+        result["replacement_statement_id"] = require_text(
+            value.get("replacement_statement_id", ""), "lifecycle audit replacement_statement_id", MAX_ARTIFACT_ID_BYTES
+        )
+    result = dict(sorted(result.items()))
+    return result
+
+
 def freeze_metadata(value: object) -> dict:
     if not isinstance(value, dict):
         raise InvalidRequestError("artifact metadata must be an object")
@@ -132,12 +169,18 @@ def freeze_metadata(value: object) -> dict:
             validate_support_visibility(value.get("visibility_scope"))
         except ValueError as error:
             raise InvalidRequestError(str(error)) from error
-    frozen = freeze_json_value(value, "artifact metadata", 0, [0])
+    # Caller metadata carries the item and byte limits; the reserved lifecycle audit is
+    # bounded by its own fields, so writing it never pushes an admitted artifact over.
+    caller_metadata = {key: item for key, item in value.items() if key != LIFECYCLE_AUDIT_KEY}
+    frozen = freeze_json_value(caller_metadata, "artifact metadata", 0, [0])
     if not isinstance(frozen, dict):
         raise InvalidRequestError("artifact metadata must be an object")
     encoded = json_dumps(thaw_json_value(frozen), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     if len(encoded.encode("utf-8")) > MAX_METADATA_BYTES:
         raise InvalidRequestError(f"artifact metadata exceeds the UTF-8 limit of {MAX_METADATA_BYTES} bytes")
+    if LIFECYCLE_AUDIT_KEY in value:
+        frozen[LIFECYCLE_AUDIT_KEY] = freeze_lifecycle_audit(value.get(LIFECYCLE_AUDIT_KEY, {}))
+        frozen = dict(sorted(frozen.items()))
     return frozen
 
 
@@ -162,39 +205,23 @@ def validate_artifact_provenance(value: object) -> dict:
     data = require_exact_mapping(value, "ArtifactProvenance", ARTIFACT_PROVENANCE_FIELDS)
     result: dict = {
         "source_label": require_text(
-            data["source_label"],
+            data.get("source_label", ""),
             "artifact provenance source_label",
             MAX_SOURCE_LABEL_BYTES,
             allow_empty=True,
         ),
         "caller_id": require_text(
-            data["caller_id"],
+            data.get("caller_id", ""),
             "artifact provenance caller_id",
             MAX_CALLER_ID_BYTES,
             allow_empty=True,
         ),
         "accepted_at": require_utc_timestamp(
-            data["accepted_at"],
+            data.get("accepted_at", ""),
             "artifact provenance accepted_at",
             allow_empty=False,
         ),
     }
-    return result
-
-
-def artifact_provenance(
-    source_label: str,
-    caller_id: str,
-    accepted_at: str,
-) -> dict:
-    """Construct bounded accepted-response provenance."""
-
-    raw_provenance = {
-        "source_label": source_label,
-        "caller_id": caller_id,
-        "accepted_at": accepted_at,
-    }
-    result = validate_artifact_provenance(raw_provenance)
     return result
 
 
@@ -218,34 +245,16 @@ def validate_artifact_statistics(value: object) -> dict:
 
     data = require_exact_mapping(value, "ArtifactStatistics", ARTIFACT_STATISTICS_FIELDS)
     last_hit, last_hit_available = require_available_utc_timestamp(
-        data["last_hit"],
-        data["last_hit_available"],
+        data.get("last_hit", ""),
+        data.get("last_hit_available", False),
         "artifact statistics last_hit",
     )
     result: dict = {
-        "hit_count": require_nonnegative_int(data["hit_count"], "artifact statistics hit_count"),
-        "query_count": require_nonnegative_int(data["query_count"], "artifact statistics query_count"),
+        "hit_count": require_nonnegative_int(data.get("hit_count", 0), "artifact statistics hit_count"),
+        "query_count": require_nonnegative_int(data.get("query_count", 0), "artifact statistics query_count"),
         "last_hit": last_hit,
         "last_hit_available": last_hit_available,
     }
-    return result
-
-
-def artifact_statistics(
-    hit_count: int = 0,
-    query_count: int = 0,
-    last_hit: str = "",
-    last_hit_available: bool = False,
-) -> dict:
-    """Construct authoritative response statistics."""
-
-    raw_statistics = {
-        "hit_count": hit_count,
-        "query_count": query_count,
-        "last_hit": last_hit,
-        "last_hit_available": last_hit_available,
-    }
-    result = validate_artifact_statistics(raw_statistics)
     return result
 
 
@@ -268,29 +277,29 @@ def validate_cached_response_artifact(value: object) -> dict:
     """Validate and defensively copy one accepted-response artifact."""
 
     data = require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
-    statement_id = require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
-    generation = require_positive_int(data["generation"], "artifact generation")
-    response = require_response(data["response"])
+    statement_id = require_text(data.get("statement_id", ""), "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
+    generation = require_positive_int(data.get("generation", 0), "artifact generation")
+    response = require_response(data.get("response", ""))
     try:
-        query_identity = validate_query_identity(data["query_identity"])
+        query_identity = validate_query_identity(data.get("query_identity", {}))
     except IdentityValidationError as error:
         raise InvalidRequestError("artifact query_identity must be a QueryIdentity") from error
     try:
-        retrieval = validate_retrieval_representation(data["retrieval"])
+        retrieval = validate_retrieval_representation(data.get("retrieval", {}))
     except IdentityValidationError as error:
         raise InvalidRequestError("artifact retrieval must be a RetrievalRepresentation") from error
     validate_authoritative_identity(query_identity, retrieval)
-    tier = data["tier"]
+    tier = data.get("tier", Tier.DYNAMIC)
     if not isinstance(tier, Tier):
         raise InvalidRequestError("artifact tier must be a Tier")
-    lifecycle = require_lifecycle(data["lifecycle"], "artifact lifecycle")
+    lifecycle = require_lifecycle(data.get("lifecycle", LifecycleState.RETIRED), "artifact lifecycle")
     try:
-        scope = validate_scope_key(data["scope"])
+        scope = validate_scope_key(data.get("scope", {}))
     except IdentityValidationError as error:
         raise InvalidRequestError("artifact scope must be a ScopeKey") from error
-    if scope != query_identity["scope"]:
+    if scope != query_identity.get("scope", {}):
         raise InvalidRequestError("artifact scope must match query_identity scope")
-    raw_support = data["support_references"]
+    raw_support = data.get("support_references", ())
     if not isinstance(raw_support, tuple):
         raise InvalidRequestError("artifact support_references must be a tuple")
     if len(raw_support) > MAX_SUPPORT_REFERENCES:
@@ -300,25 +309,25 @@ def validate_cached_response_artifact(value: object) -> dict:
     except ValueError as error:
         raise InvalidRequestError(str(error)) from error
     valid_from, valid_from_available = require_available_utc_timestamp(
-        data["valid_from"],
-        data["valid_from_available"],
+        data.get("valid_from", ""),
+        data.get("valid_from_available", False),
         "artifact valid_from",
     )
     valid_until, valid_until_available = require_available_utc_timestamp(
-        data["valid_until"],
-        data["valid_until_available"],
+        data.get("valid_until", ""),
+        data.get("valid_until_available", False),
         "artifact valid_until",
     )
-    superseded_by = require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
+    superseded_by = require_text(data.get("superseded_by", ""), "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True)
     if lifecycle == LifecycleState.ACTIVE and superseded_by:
         raise InvalidRequestError("an ACTIVE artifact must not name superseded_by")
     if lifecycle == LifecycleState.SUPERSEDED and not superseded_by:
         raise InvalidRequestError("a SUPERSEDED artifact must name superseded_by")
     if superseded_by == statement_id:
         raise InvalidRequestError("artifact superseded_by must not reference itself")
-    provenance = validate_artifact_provenance(data["provenance"])
-    statistics = validate_artifact_statistics(data["statistics"])
-    metadata = freeze_metadata(data["metadata"])
+    provenance = validate_artifact_provenance(data.get("provenance", {}))
+    statistics = validate_artifact_statistics(data.get("statistics", {}))
+    metadata = freeze_metadata(data.get("metadata", {}))
     result: dict = {
         "statement_id": statement_id,
         "generation": generation,
@@ -341,75 +350,30 @@ def validate_cached_response_artifact(value: object) -> dict:
     return result
 
 
-def cached_response_artifact(
-    statement_id: str,
-    generation: int,
-    response: str,
-    query_identity: dict,
-    retrieval: dict,
-    tier: Tier,
-    lifecycle: LifecycleState,
-    scope: dict,
-    support_references: tuple[dict, ...],
-    valid_from: str,
-    valid_from_available: bool,
-    valid_until: str,
-    valid_until_available: bool,
-    superseded_by: str,
-    provenance: dict,
-    statistics: dict = EMPTY_MAPPING,
-    metadata: dict = EMPTY_MAPPING,
-) -> dict:
-    """Construct one authoritative accepted-response artifact."""
-
-    if not isinstance(statistics, dict):
-        raise InvalidRequestError("artifact statistics must be ArtifactStatistics")
-    selected_statistics = validate_artifact_statistics(statistics) if statistics else artifact_statistics()
-    raw_artifact = {
-        "statement_id": statement_id,
-        "generation": generation,
-        "response": response,
-        "query_identity": query_identity,
-        "retrieval": retrieval,
-        "tier": tier,
-        "lifecycle": lifecycle,
-        "scope": scope,
-        "support_references": support_references,
-        "valid_from": valid_from,
-        "valid_from_available": valid_from_available,
-        "valid_until": valid_until,
-        "valid_until_available": valid_until_available,
-        "superseded_by": superseded_by,
-        "provenance": provenance,
-        "statistics": selected_statistics,
-        "metadata": metadata,
-    }
-    result = validate_cached_response_artifact(raw_artifact)
-    return result
-
-
 def cached_response_artifact_to_dict(value: object) -> dict:
     """Serialize one authoritative accepted-response artifact."""
 
     artifact = validate_cached_response_artifact(value)
+    tier = artifact.get("tier", Tier.DYNAMIC)
+    lifecycle = artifact.get("lifecycle", LifecycleState.RETIRED)
     result: dict = {
-        "statement_id": artifact["statement_id"],
-        "generation": artifact["generation"],
-        "response": artifact["response"],
-        "query_identity": query_identity_to_dict(artifact["query_identity"]),
-        "retrieval": retrieval_representation_to_dict(artifact["retrieval"]),
-        "tier": artifact["tier"].value,
-        "lifecycle": artifact["lifecycle"].value,
-        "scope": scope_key_to_dict(artifact["scope"]),
-        "support_references": [dict(reference) for reference in artifact["support_references"]],
-        "valid_from": artifact["valid_from"],
-        "valid_from_available": artifact["valid_from_available"],
-        "valid_until": artifact["valid_until"],
-        "valid_until_available": artifact["valid_until_available"],
-        "superseded_by": artifact["superseded_by"],
-        "provenance": artifact_provenance_to_dict(artifact["provenance"]),
-        "statistics": artifact_statistics_to_dict(artifact["statistics"]),
-        "metadata": thaw_json_value(artifact["metadata"]),
+        "statement_id": artifact.get("statement_id", ""),
+        "generation": artifact.get("generation", 0),
+        "response": artifact.get("response", ""),
+        "query_identity": query_identity_to_dict(artifact.get("query_identity", {})),
+        "retrieval": retrieval_representation_to_dict(artifact.get("retrieval", {})),
+        "tier": tier.value,
+        "lifecycle": lifecycle.value,
+        "scope": scope_key_to_dict(artifact.get("scope", {})),
+        "support_references": [dict(reference) for reference in artifact.get("support_references", ())],
+        "valid_from": artifact.get("valid_from", ""),
+        "valid_from_available": artifact.get("valid_from_available", False),
+        "valid_until": artifact.get("valid_until", ""),
+        "valid_until_available": artifact.get("valid_until_available", False),
+        "superseded_by": artifact.get("superseded_by", ""),
+        "provenance": artifact_provenance_to_dict(artifact.get("provenance", {})),
+        "statistics": artifact_statistics_to_dict(artifact.get("statistics", {})),
+        "metadata": thaw_json_value(artifact.get("metadata", {})),
     }
     return result
 
@@ -418,8 +382,8 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     """Decode one accepted-response artifact from its wire dictionary."""
 
     data = require_exact_mapping(value, "CachedResponseArtifact", CACHED_RESPONSE_ARTIFACT_FIELDS)
-    tier_value = require_text(data["tier"], "artifact tier", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
-    lifecycle_value = require_text(data["lifecycle"], "artifact lifecycle", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
+    tier_value = require_text(data.get("tier", ""), "artifact tier", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
+    lifecycle_value = require_text(data.get("lifecycle", ""), "artifact lifecycle", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
     try:
         tier = Tier(tier_value)
     except ValueError as error:
@@ -428,34 +392,37 @@ def cached_response_artifact_from_dict(value: object) -> dict:
         lifecycle = LifecycleState(lifecycle_value)
     except ValueError as error:
         raise InvalidRequestError(f"unsupported artifact lifecycle: {lifecycle_value}") from error
-    raw_support = data["support_references"]
+    raw_support = data.get("support_references", [])
     if not isinstance(raw_support, list):
         raise InvalidRequestError("artifact support_references must be an array")
-    metadata = require_mapping(data["metadata"], "artifact metadata")
-    query_identity = require_mapping(data["query_identity"], "artifact query_identity")
-    retrieval = require_mapping(data["retrieval"], "artifact retrieval")
-    scope = require_mapping(data["scope"], "artifact scope")
-    provenance = require_mapping(data["provenance"], "artifact provenance")
-    statistics = require_mapping(data["statistics"], "artifact statistics")
-    result = cached_response_artifact(
-        statement_id=require_text(data["statement_id"], "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
-        generation=require_positive_int(data["generation"], "artifact generation"),
-        response=require_response(data["response"]),
-        query_identity=query_identity_from_dict(query_identity),
-        retrieval=retrieval_representation_from_dict(retrieval),
-        tier=tier,
-        lifecycle=lifecycle,
-        scope=scope_key_from_dict(scope),
-        support_references=tuple(raw_support),
-        valid_from=require_utc_timestamp(data["valid_from"], "artifact valid_from", allow_empty=True),
-        valid_from_available=require_bool(data["valid_from_available"], "artifact valid_from_available"),
-        valid_until=require_utc_timestamp(data["valid_until"], "artifact valid_until", allow_empty=True),
-        valid_until_available=require_bool(data["valid_until_available"], "artifact valid_until_available"),
-        superseded_by=require_text(data["superseded_by"], "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True),
-        provenance=artifact_provenance_from_dict(provenance),
-        statistics=artifact_statistics_from_dict(statistics),
-        metadata=metadata,
-    )
+    metadata = require_mapping(data.get("metadata", {}), "artifact metadata")
+    query_identity = require_mapping(data.get("query_identity", {}), "artifact query_identity")
+    retrieval = require_mapping(data.get("retrieval", {}), "artifact retrieval")
+    scope = require_mapping(data.get("scope", {}), "artifact scope")
+    provenance = require_mapping(data.get("provenance", {}), "artifact provenance")
+    statistics = require_mapping(data.get("statistics", {}), "artifact statistics")
+    raw_artifact = {
+        "statement_id": require_text(data.get("statement_id", ""), "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
+        "generation": require_positive_int(data.get("generation", 0), "artifact generation"),
+        "response": require_response(data.get("response", "")),
+        "query_identity": query_identity_from_dict(query_identity),
+        "retrieval": retrieval_representation_from_dict(retrieval),
+        "tier": tier,
+        "lifecycle": lifecycle,
+        "scope": scope_key_from_dict(scope),
+        "support_references": tuple(raw_support),
+        "valid_from": require_utc_timestamp(data.get("valid_from", ""), "artifact valid_from", allow_empty=True),
+        "valid_from_available": require_bool(data.get("valid_from_available", False), "artifact valid_from_available"),
+        "valid_until": require_utc_timestamp(data.get("valid_until", ""), "artifact valid_until", allow_empty=True),
+        "valid_until_available": require_bool(data.get("valid_until_available", False), "artifact valid_until_available"),
+        "superseded_by": require_text(
+            data.get("superseded_by", ""), "artifact superseded_by", MAX_ARTIFACT_ID_BYTES, allow_empty=True
+        ),
+        "provenance": artifact_provenance_from_dict(provenance),
+        "statistics": artifact_statistics_from_dict(statistics),
+        "metadata": metadata,
+    }
+    result = validate_cached_response_artifact(raw_artifact)
     return result
 
 

@@ -6,6 +6,7 @@ generation without writing conversation state to disk.
 
 from bisect import bisect_left
 from collections import Counter, deque
+from copy import deepcopy
 from datetime import UTC, datetime
 from random import Random
 from threading import RLock as threading_RLock
@@ -257,14 +258,16 @@ class ConversationRuntime:
                     for statement in self.engram.statements[first_new:]
                     if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
                 ]
+            source = result.get("source", "")
+            pattern = result.get("pattern", "")
             event = {
                 "turn": turn_number,
                 "input": text,
                 "response": result.get("response", ""),
                 "user_id": self.user_id,
-                "source": result.get("source", ""),
+                "source": source,
                 "score": round(result.get("score", 0.0), 3),
-                "pattern": result.get("pattern", ""),
+                "pattern": pattern,
                 "captured": result.get("captured", []),
                 "dialogue_act": result.get("dialogue_act", ""),
                 "active_topic": result.get("active_topic", ""),
@@ -281,9 +284,10 @@ class ConversationRuntime:
                 "learned_statements": learned,
             }
             self.turn_count = turn_number
-            self.latest_turn = event
-            self.source_counts[event["source"]] += 1
-            if event["pattern"] == "*":
+            # The caller owns the returned event; diagnostics retain their own copy.
+            self.latest_turn = deepcopy(event)
+            self.source_counts[source] = self.source_counts.get(source, 0) + 1
+            if pattern == "*":
                 self.catch_all_turns += 1
             return event
 
@@ -303,7 +307,7 @@ class ConversationRuntime:
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
                 "learned_unique_texts": sorted({statement.get("text", "") for statement in learned}),
-                "latest_turn": self.latest_turn,
+                "latest_turn": deepcopy(self.latest_turn),
             }
             return result
 

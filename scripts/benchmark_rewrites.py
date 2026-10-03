@@ -17,7 +17,6 @@ from engram.identity import build_scoped_retrieval_key, scope_key, scoped_retrie
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CORPUS = Path("eval/section11-rewrite.json")
 DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark.json")
 
 
@@ -36,7 +35,7 @@ def internal_load(path: Path) -> dict[str, object]:
     return decoded
 
 
-def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[str, object]:
+def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
     if repeats < 30:
         raise ValueError("rewrite benchmark requires at least 30 repeats")
     corpus = internal_load(corpus_path)
@@ -162,7 +161,8 @@ def benchmark(corpus_path: Path = DEFAULT_CORPUS, repeats: int = 100) -> dict[st
 
 def main() -> int:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+    # The tree carries no Section 11 corpus, so the input is always named explicitly.
+    parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()

@@ -138,11 +138,45 @@ def explicit_resolution(values: tuple[tuple[str, str, ExpectedObjectType], ...],
     return result
 
 
-def named_entity_surfaces(text: str) -> tuple[str, ...]:
-    nlp = get_nlp()
-    if not nlp:
+class RelationQuestion:
+    """Parse one request's question at most once for subject and Predicate discovery.
+
+    Subject discovery reads the named entities and Predicate discovery reads the
+    dependency tree of the same parse. The parse runs on first use, so a request
+    whose subject and Predicate are both caller-identified is never parsed.
+    """
+
+    def __init__(self, resolved_text: object) -> None:
+        if not isinstance(resolved_text, str):
+            raise InvalidRequestError("relation question must be text")
+        # The request is a whole question, not a label, so it takes the request
+        # limit. Tabs and line breaks are whitespace here as in the frame text.
+        self.resolved_text = resolved_text
+        self.text = require_text(" ".join(resolved_text.split()), "relation question", maximum_bytes=MAX_REQUEST_BYTES)
+        self.internal_document: object = ()
+        self.internal_parsed = False
+
+    def document(self):
+        """Return the parsed question, or () when no parser is loaded."""
+        if not self.internal_parsed:
+            nlp = get_nlp()
+            self.internal_document = nlp(self.text) if nlp else ()
+            self.internal_parsed = True
+        result = self.internal_document
+        return result
+
+
+def bound_question(question: object, frame: dict) -> RelationQuestion:
+    """Require the shared parse to belong to this frame's exact question."""
+    if not isinstance(question, RelationQuestion) or question.resolved_text != frame["resolved_text"]:
+        raise InvalidRequestError("relation question must be the parse of this frame's resolved text")
+    return question
+
+
+def named_entity_surfaces(question: RelationQuestion) -> tuple[str, ...]:
+    document = question.document()
+    if not document:
         return ()
-    document = nlp(text)
     result = tuple(dict.fromkeys(entity.text.strip() for entity in document.ents if entity.text.strip()))
     result = result[:MAX_RELATION_SURFACES]
     return result
@@ -180,12 +214,14 @@ def resolve_canonical_subject(
     frame: object,
     lookup: object,
     *,
+    question: object,
     cooperative_check: object = lambda: False,
 ) -> dict:
     """Resolve subjects from caller IDs, labels, aliases, edge surfaces, and NER."""
     current = validate_query_frame(frame)
     if not callable(lookup) or not callable(cooperative_check):
         raise InvalidRequestError("canonical subject resolver dependencies must be callable")
+    shared_question = bound_question(question, current)
     explicit = tuple(
         (entity["canonical_id"], entity["surface"], ExpectedObjectType.UNKNOWN)
         for entity in current["identity"]["entities"]
@@ -198,7 +234,7 @@ def resolve_canonical_subject(
         (entity["surface"], "identity_surface", 0.0) for entity in current["identity"]["entities"]
     ]
     known = {normalize_retrieval_key(surface) for surface, _, _ in surfaces}
-    for surface in named_entity_surfaces(current["resolved_text"]):
+    for surface in named_entity_surfaces(shared_question):
         normalized = normalize_retrieval_key(surface)
         if normalized not in known:
             known.add(normalized)
@@ -229,19 +265,11 @@ def resolve_canonical_subject(
     return result
 
 
-def dependency_predicate_surfaces(text: object) -> tuple[tuple[str, str, float], ...]:
-    """Extract bounded verb-lemma and preposition candidates from the loaded parser.
-
-    The request is a whole question, not a label, so it takes the request
-    limit. Tabs and line breaks are whitespace here as in the frame text.
-    """
-    if isinstance(text, str):
-        text = " ".join(text.split())
-    request = require_text(text, "predicate request", maximum_bytes=MAX_REQUEST_BYTES)
-    nlp = get_nlp()
-    if not nlp:
+def dependency_predicate_surfaces(question: RelationQuestion) -> tuple[tuple[str, str, float], ...]:
+    """Extract bounded verb-lemma and preposition candidates from the shared question parse."""
+    document = question.document()
+    if not document:
         return ()
-    document = nlp(request)
     values: list[tuple[str, str, float]] = []
     auxiliaries = {"be", "do", "have", "can", "could", "will", "would", "should", "may", "might", "must"}
     for token in document:
@@ -288,12 +316,14 @@ def resolve_canonical_predicate(
     frame: object,
     lookup: object,
     *,
+    question: object,
     cooperative_check: object = lambda: False,
 ) -> dict:
     """Resolve Predicate identity from explicit IDs, syntax, labels, and synonyms."""
     current = validate_query_frame(frame)
     if not callable(lookup) or not callable(cooperative_check):
         raise InvalidRequestError("canonical Predicate resolver dependencies must be callable")
+    shared_question = bound_question(question, current)
     relation = current["identity"]["relation"]
     if relation["canonical_id"]:
         result = explicit_resolution(
@@ -304,7 +334,7 @@ def resolve_canonical_predicate(
     surfaces: list[tuple[str, str, float]] = []
     if relation["surface"]:
         surfaces.append((relation["surface"], "relation_surface", 0.0))
-    surfaces.extend(dependency_predicate_surfaces(current["resolved_text"]))
+    surfaces.extend(dependency_predicate_surfaces(shared_question))
     known = {normalize_retrieval_key(surface) for surface, _, _ in surfaces}
     for term in current["identity"]["lexical_terms"]:
         if term not in known:
@@ -536,6 +566,24 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
             conflict_proposition_ids=normalized_conflict_ids,
             ranking_proposition_ids=ranking_proposition_ids,
             reason=reason,
+            cardinality=cardinality,
+        )
+        return result
+    if cardinality != PredicateCardinality.SINGLE:
+        # One observed value does not make a Predicate single-valued: a MULTI
+        # Predicate may hold values outside this bound and an UNKNOWN one
+        # declares no policy, so the observation stays typed evidence.
+        result = relation_selection(
+            direct_answer=False,
+            selected_proposition_id="",
+            evidence_proposition_ids=evidence_proposition_ids,
+            conflict_proposition_ids=(),
+            ranking_proposition_ids=ranking_proposition_ids,
+            reason=(
+                RelationSelectionReason.VALID_MULTI_VALUE
+                if cardinality == PredicateCardinality.MULTI
+                else RelationSelectionReason.CARDINALITY_UNKNOWN
+            ),
             cardinality=cardinality,
         )
         return result

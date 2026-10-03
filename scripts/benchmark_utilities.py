@@ -21,7 +21,7 @@ from engram.constants import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts
 from scripts.benchmark_metadata import benchmark_source_state
 
-DEFAULT_CORPUS = Path("eval/section14-utilities.json")
+DEFAULT_CORPUS = Path("eval/section14-utilities-v1.json")
 DEFAULT_OUTPUT_DIRECTORY = Path("eval/results/utilities")
 THREAT_INPUTS = {
     "arithmetic": "calculate __import__('os').system('echo bad')",

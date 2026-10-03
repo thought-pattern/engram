@@ -1,5 +1,6 @@
 """Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
+from copy import deepcopy
 from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
@@ -673,7 +674,9 @@ class MutationReceiptLedger:
                     raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {request_id}")
                 self.internal_receipts[request_id] = validated_receipt
                 self.internal_revision += 1
-                return validated_receipt
+                # The retained receipt is completed replay authority; callers get an isolated copy.
+                result = deepcopy(validated_receipt)
+                return result
             if validated_receipt["sequence"] != self.internal_next_sequence:
                 received_sequence = validated_receipt["sequence"]
                 raise ConflictError(
@@ -683,7 +686,8 @@ class MutationReceiptLedger:
             self.internal_next_sequence += 1
             self.internal_revision += 1
             self.prune()
-            return validated_receipt
+            result = deepcopy(validated_receipt)
+            return result
 
     def prune(self) -> None:
         while len(self.internal_receipts) > self.max_receipts:

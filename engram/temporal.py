@@ -247,6 +247,7 @@ def parse_temporal_query(request: object) -> dict:
     text = require_text(request, "temporal request", 4_096, allow_empty=False)
     axis = TemporalAxis.SYSTEM_TIME if SYSTEM_AXIS_RE.search(text) else TemporalAxis.VALID_TIME
     candidates: list[tuple[TemporalQueryOperator, re_Match[str]]] = []
+    interpretations: set[tuple] = set()
     quantity_starts: set[int] = set()
     for operator, pattern in (
         (TemporalQueryOperator.BETWEEN, BETWEEN_RE),
@@ -258,10 +259,16 @@ def parse_temporal_query(request: object) -> dict:
         (TemporalQueryOperator.CURRENT, CURRENT_RE),
         (TemporalQueryOperator.NOW, NOW_RE),
     ):
-        match = pattern.search(text)
-        if match and is_quantity(text, match):
-            quantity_starts.add(match.start())
-        elif match:
+        # Every occurrence counts: a repeated qualifier with a different bound
+        # is a compound request, while an exact repeat adds nothing.
+        for match in pattern.finditer(text):
+            if is_quantity(text, match):
+                quantity_starts.add(match.start())
+                continue
+            interpretation = (operator, match.groups())
+            if interpretation in interpretations:
+                continue
+            interpretations.add(interpretation)
             candidates.append((operator, match))
     bare_year = BARE_YEAR_RE.fullmatch(text)
     if bare_year and not is_quantity(text, bare_year):

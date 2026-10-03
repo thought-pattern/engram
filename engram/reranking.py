@@ -118,6 +118,21 @@ class TransparentLogisticReranker:
             raise InvalidRequestError("reranker shortlist must be a tuple")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("reranker cooperative_check must be callable")
+        if self.enabled and len(shortlist) > self.settings["shortlist_size"]:
+            # The cap is known from the tuple length, so an oversized shortlist is
+            # refused before any candidate is copied, validated, or sorted.
+            started = self.clock_ns()
+            self.internal_record("shortlist_budget", fallback=True)
+            result = {
+                "applied": False,
+                "reason": "shortlist_budget",
+                "model_version": self.settings["model_version"],
+                "elapsed_ns": max(0, self.clock_ns() - started),
+                "model_time_target_exceeded": False,
+                "input_bytes": 0,
+                "scores": [],
+            }
+            return result
         baseline = tuple(
             sorted(
                 (
@@ -146,18 +161,6 @@ class TransparentLogisticReranker:
                 "reason": "disabled",
                 "model_version": self.settings["model_version"],
                 "elapsed_ns": 0,
-                "model_time_target_exceeded": False,
-                "input_bytes": 0,
-                "scores": [],
-            }
-            return result
-        if len(baseline) > self.settings["shortlist_size"]:
-            self.internal_record("shortlist_budget", fallback=True)
-            result = {
-                "applied": False,
-                "reason": "shortlist_budget",
-                "model_version": self.settings["model_version"],
-                "elapsed_ns": max(0, self.clock_ns() - started),
                 "model_time_target_exceeded": False,
                 "input_bytes": 0,
                 "scores": [],

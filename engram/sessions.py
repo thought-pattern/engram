@@ -135,12 +135,14 @@ def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:
     if not inactive_threshold:
         inactive_threshold = timedelta(seconds=engram.config.get("session_ttl_seconds", 0))
 
-    cutoff = datetime.now(UTC) - inactive_threshold
+    # Comparing elapsed inactivity, rather than subtracting the threshold from
+    # now, keeps every representable threshold free of datetime underflow.
+    now = datetime.now(UTC)
     expired_ids: list[str] = []
 
     with engram.session_lock:
         for sid, session in engram.sessions.items():
-            if session.get("last_active", EARLIEST_UTC) < cutoff:
+            if now - session.get("last_active", EARLIEST_UTC) > inactive_threshold:
                 expired_ids.append(sid)
         for sid in expired_ids:
             del engram.sessions[sid]

@@ -37,11 +37,16 @@ RELATIONSHIP_PATTERN = re_compile(
     r"^//\s+(?P<origin>[A-Za-z][A-Za-z0-9_]*)\s+-\[:" r"(?P<relationship>[A-Z][A-Z0-9_]*)\]->\s+(?P<target>.+?)\s*$",
     MULTILINE,
 )
-CONFIG_VALUE_PATTERN = re_compile(
-    r'"(?P<name>dimension|capacity|metric|scalar_kind|resize_coefficient)"' r"\s*:\s*(?P<value>\"[^\"]*\"|[0-9]+)"
+# One "field": value entry of a closed vector configuration map, followed by a comma or
+# the end of the map. Values are a quoted string without escapes or an unsigned decimal
+# integer without leading zeros; fractions, exponents, signs, and other syntax do not match.
+VECTOR_CONFIG_ENTRY_PATTERN = re_compile(
+    r'\s*"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(?P<value>"[^"\\]*"|0|[1-9][0-9]*)\s*(?P<separator>,|\Z)'
 )
+VECTOR_CONFIG_INTEGER_FIELDS = {"dimension", "capacity", "resize_coefficient"}
+VECTOR_CONFIG_TEXT_FIELDS = {"metric", "scalar_kind"}
 TEXT_INDEX_NAME_PATTERN = re_compile(r"name:\s*([A-Za-z][A-Za-z0-9_]*)", IGNORECASE)
-REQUIRED_VECTOR_CONFIG_FIELDS = {"dimension", "capacity", "metric", "scalar_kind", "resize_coefficient"}
+REQUIRED_VECTOR_CONFIG_FIELDS = VECTOR_CONFIG_INTEGER_FIELDS | VECTOR_CONFIG_TEXT_FIELDS
 
 REQUIRED_IDENTITY_PROPERTIES = {
     ("SchemaRevision", "component"),
@@ -191,14 +196,31 @@ def cypher_statements(text: str) -> list[str]:
 
 
 def vector_config(config_text: str) -> dict:
-    """Parse one closed vector-index configuration mapping."""
+    """Parse one closed vector-index configuration map.
+
+    The whole text must be comma-separated entries, each declared field once: an integer
+    for dimension, capacity, and resize coefficient, a quoted string for metric and scalar kind.
+    """
     values = {}
-    for match in CONFIG_VALUE_PATTERN.finditer(config_text):
+    position = 0
+    separator = ","
+    while separator == ",":
+        match = VECTOR_CONFIG_ENTRY_PATTERN.match(config_text, position)
+        if not match:
+            raise ValueError("vector configuration must be a closed map of quoted fields and literal values")
         name = match.group("name")
         if name in values:
             raise ValueError(f"vector configuration duplicates {name}")
         value = match.group("value")
-        values[name] = value[1:-1] if value.startswith('"') else int(value)
+        quoted = value.startswith('"')
+        if name in VECTOR_CONFIG_TEXT_FIELDS and quoted:
+            values[name] = value[1:-1]
+        elif name in VECTOR_CONFIG_INTEGER_FIELDS and not quoted:
+            values[name] = int(value)
+        else:
+            raise ValueError(f"vector configuration field {name} is undeclared or has the wrong kind")
+        position = match.end()
+        separator = match.group("separator")
     if set(values) != REQUIRED_VECTOR_CONFIG_FIELDS:
         raise ValueError("vector configuration fields do not match the contract")
     return values

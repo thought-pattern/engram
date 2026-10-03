@@ -144,13 +144,15 @@ def infer_active_topic(
     # the durable topic with ``If`` or the larger descriptive subject.
     if previous_topic and topic_is_named(text, previous_topic):
         return previous_topic
-    if fact and fact.get("subject") and not DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text):
-        subject = clean_topic(str(fact["subject"]))
+    # ``fact`` is the extracted fact dictionary, or the empty tuple when the turn has none.
+    fact_subject = fact.get("subject", "") if fact else ""
+    if fact_subject and not DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text):
+        subject = clean_topic(str(fact_subject))
         subject_words = {word.lower() for word in re_findall(r"[\w'-]+", subject)}
         if subject and not subject_words & DIALOGUE_INVALID_TOPIC_WORDS:
             return subject
     for entity in reversed(entities or []):
-        if entity.get("label") in {
+        if entity.get("label", "") in {
             "FACILITY",
             "GPE",
             "GSP",
@@ -186,17 +188,19 @@ def extract_dialogue_entities(text: str, fact=(), topic: str = "") -> list[dict]
         if not value:
             return False
         for existing in entities:
-            if existing["text"].casefold() != value.casefold():
+            if existing.get("text", "").casefold() != value.casefold():
                 continue
-            if DIALOGUE_ENTITY_LABEL_PRIORITY.get(label, 0) > DIALOGUE_ENTITY_LABEL_PRIORITY.get(existing["label"], 0):
+            existing_priority = DIALOGUE_ENTITY_LABEL_PRIORITY.get(existing.get("label", ""), 0)
+            if DIALOGUE_ENTITY_LABEL_PRIORITY.get(label, 0) > existing_priority:
                 existing["label"] = label
                 existing["text"] = value
             return False
         entities.append({"text": value, "label": label})
         return True
 
-    if fact and fact.get("subject"):
-        add(str(fact["subject"]), "SUBJECT")
+    fact_subject = fact.get("subject", "") if fact else ""
+    if fact_subject:
+        add(str(fact_subject), "SUBJECT")
     if topic:
         add(topic, "TOPIC")
     discourse_prefix = DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE.match(text)
@@ -244,6 +248,10 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
         return result
 
     subject_tokens = [word.lower() for word in re_findall(r"[\w'-]+", subject)]
+    # A punctuation-only subject names nothing a later question could ask about.
+    if not subject_tokens:
+        result = {"admitted": False, "reason": "nonlexical_subject"}
+        return result
     subject_words = set(subject_tokens)
     object_words = {word.lower() for word in re_findall(r"[\w'-]+", obj)}
     if subject_tokens[0] in DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS:
@@ -346,21 +354,23 @@ def select_turn_candidate(candidates: list[dict]) -> dict:
         return result
 
     # An explicit farewell remains the turn intent when followed by a
-    # compliment or well-wish. A later request genuinely reopens the turn and
-    # takes precedence over the closing.
+    # compliment, well-wish or further farewell. A later request genuinely
+    # reopens the turn and takes precedence, until a closing after that
+    # request ends the turn again.
     for index, candidate in enumerate(candidates):
-        if candidate["dialogue_act"] != DIALOGUE_CLOSING:
+        if candidate.get("dialogue_act", "") != DIALOGUE_CLOSING:
             continue
-        later_requests = [
-            later
-            for later in candidates[index + 1 :]
-            if later["dialogue_act"] in {DIALOGUE_COMMAND, DIALOGUE_QUESTION, DIALOGUE_TOPIC_SHIFT}
-        ]
-        result = later_requests[-1] if later_requests else candidate
-        return result
+        selected = candidate
+        for later in candidates[index + 1 :]:
+            later_act = later.get("dialogue_act", "")
+            reopens = later_act in {DIALOGUE_COMMAND, DIALOGUE_QUESTION, DIALOGUE_TOPIC_SHIFT}
+            closes_again = later_act == DIALOGUE_CLOSING and selected.get("dialogue_act", "") != DIALOGUE_CLOSING
+            if reopens or closes_again:
+                selected = later
+        return selected
 
     final = candidates[-1]
-    if final["dialogue_act"] not in {DIALOGUE_ACKNOWLEDGMENT, DIALOGUE_GRATITUDE, DIALOGUE_GREETING}:
+    if final.get("dialogue_act", "") not in {DIALOGUE_ACKNOWLEDGMENT, DIALOGUE_GRATITUDE, DIALOGUE_GREETING}:
         return final
     substantive = {
         DIALOGUE_CLOSING,
@@ -371,6 +381,6 @@ def select_turn_candidate(candidates: list[dict]) -> dict:
         DIALOGUE_TOPIC_SHIFT,
     }
     for candidate in reversed(candidates[:-1]):
-        if candidate["dialogue_act"] in substantive:
+        if candidate.get("dialogue_act", "") in substantive:
             return candidate
     return final

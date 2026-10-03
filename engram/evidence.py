@@ -1,5 +1,6 @@
 """Current-time disclosure eligibility for response-less Proposition evidence."""
 
+from concurrent.futures import CancelledError
 from datetime import datetime
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
@@ -16,6 +17,7 @@ from engram.constants import (
     SEMANTIC_SIMILARITY_FLOOR,
     SOURCE_AGREEMENT_FLOOR,
     STRUCTURED_MATCH_FLOOR,
+    UNCONSTRAINED_ASSERTION_BASIS,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
     EvidenceUsefulnessReason,
@@ -23,7 +25,7 @@ from engram.constants import (
     TemporalAxis,
     TemporalQueryOperator,
 )
-from engram.errors import IdentityValidationError, InvalidRequestError
+from engram.errors import IdentityValidationError, InvalidRequestError, ResolutionCancelledError
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.identity import scope_key_signature, validate_scope_key
 from engram.resolution import (
@@ -537,6 +539,56 @@ def interval_overlaps(
     return result
 
 
+def assertion_basis_window(frame: dict) -> dict:
+    """Return the Assertion valid-time window this request's temporal view admits.
+
+    Graph projections take each Proposition's trust and validity from its
+    lowest-ID active Assertion inside this window, so discovery and by-ID
+    revalidation choose the same basis and ``evaluate`` can accept it. The
+    window mirrors ``evaluate``: a current request contains the evaluation
+    time, ``latest`` needs a basis begun by then, ``as of`` contains the
+    requested point, other valid-time requests overlap the requested interval,
+    and the system-time axis leaves the basis valid time open.
+    """
+    context = frame.get("eligibility_context", {})
+    temporal = frame.get("temporal_query", {})
+    window = dict(UNCONSTRAINED_ASSERTION_BASIS)
+    if not context.get("evaluation_time_available", False) or not temporal.get("resolved", False):
+        return window
+    evaluation_time = context.get("evaluation_time", "")
+    operator = temporal.get("operator", TemporalQueryOperator.UNSPECIFIED)
+    if operator in {TemporalQueryOperator.UNSPECIFIED, TemporalQueryOperator.CURRENT, TemporalQueryOperator.NOW}:
+        point, point_available = evaluation_time, True
+    elif temporal.get("axis", TemporalAxis.VALID_TIME) != TemporalAxis.VALID_TIME:
+        return window
+    elif operator == TemporalQueryOperator.LATEST:
+        window.update({"basis_end": evaluation_time, "basis_end_available": True, "basis_end_inclusive": True})
+        return window
+    elif operator == TemporalQueryOperator.AS_OF:
+        point, point_available = temporal.get("start", ""), temporal.get("start_available", False)
+    else:
+        window.update(
+            {
+                "basis_start": temporal.get("start", ""),
+                "basis_start_available": temporal.get("start_available", False),
+                "basis_end": temporal.get("end", ""),
+                "basis_end_available": temporal.get("end_available", False),
+            }
+        )
+        return window
+    if point_available:
+        window.update(
+            {
+                "basis_start": point,
+                "basis_start_available": True,
+                "basis_end": point,
+                "basis_end_available": True,
+                "basis_end_inclusive": True,
+            }
+        )
+    return window
+
+
 def requested_interval_match(
     operator: TemporalQueryOperator,
     requested_start: str,
@@ -776,6 +828,9 @@ class PropositionEligibilityEvaluator:
             return result
         try:
             authorization = authority_method(frame.get("scope", {}), ownership)
+        except (ResolutionCancelledError, CancelledError):
+            # Cancellation interrupts the request; only an authority failure excludes.
+            raise
         except Exception as error:
             logger.warning("Visibility authority failed", exc_info=error)
             result = proposition_exclusion_decision(projection, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
@@ -824,7 +879,10 @@ class PropositionEligibilityEvaluator:
             return result
         discovered = validate_proposition_projection(discovered)
         try:
-            current = current_proposition_projection(discovered.get("proposition_id", ""))
+            current = current_proposition_projection(discovered.get("proposition_id", ""), assertion_basis_window(frame))
+        except (ResolutionCancelledError, CancelledError):
+            # Cancellation interrupts the request; only a read failure is unavailable evidence.
+            raise
         except Exception as error:
             logger.warning("Proposition revalidation read failed", exc_info=error)
             result = proposition_exclusion_decision(discovered, PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
@@ -979,11 +1037,16 @@ def merge_proposition_evidence_group(records: tuple[dict, ...]) -> dict:
         raise InvalidRequestError("cannot merge an empty Proposition evidence group")
     ordered = tuple(sorted(records, key=lambda record: (record["source_resolver"], proposition_evidence_record_to_json(record))))
     base = ordered[0]
+    # The path records how one producer reached the Proposition: a direct
+    # discovery's singleton ID or a composition's typed steps. Alternative
+    # paths are provenance, not current state, so the merged record keeps the
+    # first record's path in this deterministic order and every contributing
+    # source; only identity, validity, trust and disclosure must agree.
     for record in ordered[1:]:
         if record["canonical_references"] != base["canonical_references"]:
             raise InvalidRequestError(f"conflicting canonical references for Proposition evidence ID: {base['proposition_id']}")
-        current_state = (record["validity"], record["trust"], record["disclosure"], record["path"])
-        base_state = (base["validity"], base["trust"], base["disclosure"], base["path"])
+        current_state = (record["validity"], record["trust"], record["disclosure"])
+        base_state = (base["validity"], base["trust"], base["disclosure"])
         if current_state != base_state:
             raise InvalidRequestError(f"conflicting current evidence state for Proposition evidence ID: {base['proposition_id']}")
 

@@ -228,7 +228,9 @@ def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[Eng
         config["graph"] = graph_config(enabled=False, vector_enabled=False)
         engram = Engram(config=config)
         selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
+        # The current eight-field opaque support contract, as the Tapestry producer emits it.
         support_reference = {
+            "schema_version": "tapestry-engram-support",
             "record_kind": "proposition",
             "id": proposition_id,
             "state_revision": 0,

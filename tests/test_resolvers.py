@@ -406,9 +406,11 @@ def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -440,12 +442,14 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(m
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [eligible, inactive, changed][
-            :row_limit
-        ],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [
+            eligible,
+            inactive,
+            changed,
+        ][:row_limit],
     )
 
-    def current(proposition_id):
+    def current(proposition_id, internal_basis_window):
         if proposition_id == eligible["proposition_id"]:
             result = (internal_current_proposition_projection(eligible),)
             return result
@@ -478,9 +482,11 @@ def test_structured_graph_adapter_honors_evidence_bytes_and_never_mutates(monkey
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget_with_changes(
         resolver_budget(query_frame),
@@ -502,9 +508,11 @@ def test_executor_defensively_bounds_full_proposition_evidence_in_current_schema
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     lease = resolver_budget(query_frame)
     raw = StructuredGraphResolver(engine, lambda: START_NS).resolve(query_frame, lease)
@@ -537,10 +545,12 @@ def test_support_semantic_adapter_only_returns_support_linked_artifacts(monkeypa
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": projections[:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: projections[:limit],
     )
     by_id = {projection["proposition_id"]: internal_current_proposition_projection(projection) for projection in projections}
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (by_id[proposition_id],))
+    monkeypatch.setattr(
+        engine, "current_proposition_projection", lambda proposition_id, internal_basis_window: (by_id[proposition_id],)
+    )
     query_frame = frame(engine)
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -596,11 +606,11 @@ def test_support_semantic_emits_unlinked_full_proposition_without_response_candi
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [discovered][
             :limit
         ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
 
     result = SupportSemanticResolver(engine, lambda: START_NS).resolve(query_frame, resolver_budget(query_frame))
@@ -664,14 +674,22 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
         "min_similarity": 0.45,
         "evaluation_time": query_frame["eligibility_context"]["evaluation_time"],
     }
+    evaluation_time = query_frame["eligibility_context"]["evaluation_time"]
+    current_basis = {
+        "basis_start": evaluation_time,
+        "basis_start_available": True,
+        "basis_end": evaluation_time,
+        "basis_end_available": True,
+        "basis_end_inclusive": True,
+    }
     assert calls[1][1] == {
         "index_name": "proposition_premise_embeddings",
         "limit": query_frame["budget"]["max_vector_results"] - 1,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
-        "evaluation_time": query_frame["eligibility_context"]["evaluation_time"],
+        **current_basis,
     }
-    assert calls[2][1] == {"proposition_id": "proposition-vertical"}
+    assert calls[2][1] == {"proposition_id": "proposition-vertical", **current_basis}
     assert "Ada" not in calls[0][0]
     assert "Ada" not in calls[1][0]
     assert "Ada" not in calls[2][0]
@@ -737,12 +755,12 @@ def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_boun
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [discovered][
             :limit
         ],
     )
 
-    def current_projection(internal_proposition_id):
+    def current_projection(internal_proposition_id, internal_basis_window):
         nonlocal current_calls
         current_calls += 1
         result = (current,)
@@ -784,11 +802,11 @@ def test_executor_runs_semantic_proposition_evidence_after_candidate_capacity_is
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [discovered][
             :limit
         ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(
         engine,
         "Ada",
@@ -833,15 +851,17 @@ def test_orchestrator_canonicalizes_cross_producer_proposition_without_candidacy
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [structured][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [structured][
+            :row_limit
+        ],
     )
     monkeypatch.setattr(engine, "graph_vector_propositions", lambda internal_text, *, limit=0, evaluation_time="": [])
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [semantic][:limit],
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [semantic][:limit],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry(
         (
@@ -882,9 +902,11 @@ def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(m
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
@@ -943,11 +965,11 @@ def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkey
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [discovered][
             :limit
         ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((SupportSemanticResolver(engine, lambda: START_NS),)),
@@ -991,11 +1013,11 @@ def test_orchestrator_retains_response_candidate_evidence_when_proposition_is_ex
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",
-        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, evaluation_time="": [discovered][
+        lambda internal_text, *, limit=0, cooperative_check=(), max_working_memory_bytes=0, basis_window: [discovered][
             :limit
         ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     sparse_candidate = candidate(statement_id)
     sparse = FakeResolver(
         "sparse",
@@ -1032,9 +1054,13 @@ def test_orchestrator_canonically_truncates_proposition_package_to_ten_records(m
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: list(
+            discovered[:row_limit]
+        ),
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
+    monkeypatch.setattr(
+        engine, "current_proposition_projection", lambda proposition_id, internal_basis_window: (current[proposition_id],)
+    )
     query_frame = frame(engine, "Ada", namespace="")
     orchestrator = ResolutionOrchestrator(
         ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),)),
@@ -1066,9 +1092,13 @@ def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkey
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: list(
+            discovered[:row_limit]
+        ),
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
+    monkeypatch.setattr(
+        engine, "current_proposition_projection", lambda proposition_id, internal_basis_window: (current[proposition_id],)
+    )
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_output_bytes=4_096,
@@ -1100,12 +1130,14 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [probe_projection][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [probe_projection][
+            :row_limit
+        ],
     )
     monkeypatch.setattr(
         engine,
         "current_proposition_projection",
-        lambda internal_proposition_id: (internal_current_proposition_projection(probe_projection),),
+        lambda internal_proposition_id, internal_basis_window: (internal_current_proposition_projection(probe_projection),),
     )
     probe_frame = frame(engine, "Ada", namespace="")
     probe_result = StructuredGraphResolver(engine, lambda: START_NS).resolve(
@@ -1120,9 +1152,13 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: list(discovered[:row_limit]),
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: list(
+            discovered[:row_limit]
+        ),
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda proposition_id: (current[proposition_id],))
+    monkeypatch.setattr(
+        engine, "current_proposition_projection", lambda proposition_id, internal_basis_window: (current[proposition_id],)
+    )
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_evidence_bytes=single_package_bytes,
@@ -1153,9 +1189,11 @@ def test_orchestrator_omits_diagnostics_without_losing_proposition_package(monke
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     selected_budget = capture_resolution_budget(
         lambda: START_NS,
         max_diagnostic_bytes=0,
@@ -1186,9 +1224,11 @@ def test_orchestrator_refuses_proposition_package_when_post_fusion_memory_is_exh
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     base_frame = frame(engine, "Ada", namespace="")
     registry = ResolverRegistry((StructuredGraphResolver(engine, lambda: START_NS),))
     executor = ResolverExecutor(lambda: START_NS)
@@ -1234,9 +1274,11 @@ def test_orchestrator_rejects_cross_producer_proposition_conflict_without_leakin
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -1285,9 +1327,11 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,
@@ -1331,9 +1375,11 @@ def test_orchestrator_ignores_proposition_from_untrusted_producer(monkeypatch) -
     monkeypatch.setattr(
         engine,
         "structured_proposition_projections",
-        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0: [discovered][:row_limit],
+        lambda internal_text, row_limit, cooperative_check=(), max_working_memory_bytes=0, *, basis_window: [discovered][
+            :row_limit
+        ],
     )
-    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id: (current,))
+    monkeypatch.setattr(engine, "current_proposition_projection", lambda internal_proposition_id, internal_basis_window: (current,))
     query_frame = frame(engine, "Ada", namespace="")
     resolver_output = StructuredGraphResolver(engine, lambda: START_NS).resolve(
         query_frame,

@@ -57,34 +57,18 @@ def statement(
 
 def record_statement_hit(stmt: dict) -> None:
     """Record a hit on this statement."""
-    stmt["hit_count"] += 1
+    stmt["hit_count"] = stmt.get("hit_count", 0) + 1
     stmt["last_hit"] = datetime.now(UTC)
 
 
 def record_statement_query(stmt: dict) -> None:
     """Record that this statement was a candidate in a query."""
-    stmt["query_count"] += 1
+    stmt["query_count"] = stmt.get("query_count", 0) + 1
 
 
 # =============================================================================
 # KeywordEntry
 # =============================================================================
-
-
-def keyword_entry(
-    keyword: str,
-    statement_ids=(),
-    query_count: int = 0,
-    hit_count: int = 0,
-) -> dict:
-    """Build a keyword index entry dict with retrieval statistics."""
-    entry = {
-        "keyword": keyword,
-        "statement_ids": set(statement_ids or ()),
-        "query_count": query_count,
-        "hit_count": hit_count,
-    }
-    return entry
 
 
 def keyword_entry_hit_rate(entry: dict) -> float:
@@ -224,22 +208,3 @@ def session_update_dialogue(
 def session_touch(session: dict) -> None:
     """Update last_active timestamp."""
     session["last_active"] = datetime.now(UTC)
-
-
-# =============================================================================
-# QueryResult
-# =============================================================================
-
-
-def query_result(matches, keywords, resolved_query: str = "") -> dict:
-    """Build a query result dict.
-
-    matches: list of (statement, score) pairs. keywords: extracted query
-    keywords. resolved_query: context-expanded text used for retrieval.
-    """
-    result = {
-        "matches": matches,
-        "keywords": keywords,
-        "resolved_query": resolved_query,
-    }
-    return result

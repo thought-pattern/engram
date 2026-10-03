@@ -42,6 +42,7 @@ from engram.constants import (
     MAX_TRANSIENT_RECORDS,
     PROPOSAL_TTL_SECONDS,
     REGULATOR_OUTCOMES,
+    RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS,
     RETIREMENT_ERROR_MESSAGES,
     RETIREMENT_FIELD_BYTE_LIMITS,
     CoreState,
@@ -49,6 +50,7 @@ from engram.constants import (
     ExpectedObjectType,
     LifecycleState,
     RolloutMode,
+    SessionOverflow,
     Tier,
 )
 from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
@@ -82,10 +84,10 @@ from engram.feedback import (
 )
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority, fusion_policy, policy_fingerprint
 from engram.identity import (
-    build_scoped_retrieval_key,
     normalize_retrieval_key,
     query_identity_to_dict,
     scope_key,
+    scoped_retrieval_key_from_text,
     validate_query_identity,
 )
 from engram.mutations import mutation_receipt_to_dict
@@ -443,6 +445,9 @@ class EngramCore:
         else:
             raise InvalidRequestError("engram must be an Engram")
         self.engram = selected_engram
+        # A core that built its Engram owns its session memory and releases it on close;
+        # a supplied Engram's named sessions remain its caller's.
+        self.internal_owns_engram = engram == ()
         self.conversations: dict[str, ConversationRuntime] = {}
         # Anonymous ("0") conversations are exclusive: each is owned by the token its start returned.
         self.conversation_tokens: dict[str, str] = {}
@@ -514,16 +519,20 @@ class EngramCore:
         )
 
     @contextlib_contextmanager
-    def resolution_slot(self, request_id: str, user_id: str):
+    def resolution_slot(self, request_id: str, user_id: str, cancellation_check: object = no_cancellation_check):
         """Serialize retry identity and per-user context while permitting unrelated work.
 
         A slot spans one turn: a chat exchange or a resolution request. When
         it ends, a graph connection lost during the turn starts reconnecting.
+        A request queued behind another holder of its request ID or user checks
+        its caller's cancellation between bounded waits, so a cancelled caller
+        leaves the queue without waiting for that holder to finish.
         """
         with self.resolution_condition:
             while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
                 self.require_running()
-                self.resolution_condition.wait()
+                cancellation_check()
+                self.resolution_condition.wait(RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS)
             self.require_running()
             self.active_resolution_request_ids.add(request_id)
             self.active_resolution_user_ids.add(user_id)
@@ -885,7 +894,14 @@ class EngramCore:
         require_cache_request(request)
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         normalized_user_id = normalize_service_user_id(user_id)
-        with self.resolution_slot(request_id, normalized_user_id), self.lock:
+        if cancellation_check != () and not callable(cancellation_check):
+            raise InvalidRequestError("cancellation_check must be callable")
+        selected_cancellation_check = cancellation_check if callable(cancellation_check) else no_cancellation_check
+
+        def check_cancellation() -> None:
+            selected_cancellation_check()
+
+        with self.resolution_slot(request_id, normalized_user_id, check_cancellation), self.lock:
             self.require_running()
             require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
             require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
@@ -914,13 +930,6 @@ class EngramCore:
                 raise InvalidRequestError("configured_resolvers must be a tuple of non-empty strings")
             if not isinstance(accept_exact, bool):
                 raise InvalidRequestError("accept_exact must be a boolean")
-            if cancellation_check != () and not callable(cancellation_check):
-                raise InvalidRequestError("cancellation_check must be callable")
-            selected_cancellation_check = cancellation_check if callable(cancellation_check) else no_cancellation_check
-
-            def check_cancellation() -> None:
-                selected_cancellation_check()
-
             check_cancellation()
             rollout = select_rollout(self.engram.config, namespace)
             rollout_mode = rollout["mode"]
@@ -1198,6 +1207,7 @@ class EngramCore:
                     self.release_conversation(self.conversations.get(conversation_id))
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
+            self.make_conversation_room()
             # Request validation raises InvalidRequestError with its own message;
             # anything else is an internal failure, logged at the transport.
             runtime = ConversationRuntime(
@@ -1244,6 +1254,36 @@ class EngramCore:
         self.conversation_activity.pop(runtime.user_id, 0.0)
         if runtime.user_id == DEFAULT_USER_ID:
             sessions.delete_session(self.engram, runtime.session_id)
+
+    def make_conversation_room(self) -> None:
+        """Bound the runtime registry by the session capacity before one more runtime starts.
+
+        Each runtime owns one session, so a runtime whose session the session policy has
+        already evicted or expired is released first. At capacity the configured overflow
+        policy applies to runtimes as it does to sessions: reject refuses the start,
+        expire-oldest releases the earliest started runtime, and LRU the least recently
+        active one. A runtime with a turn in flight is never released, and explicit stop is
+        unchanged. Call with the core lock held.
+        """
+        with self.engram.session_lock:
+            stale = [
+                runtime
+                for user_id, runtime in self.conversations.items()
+                if runtime.session_id not in self.engram.sessions and user_id not in self.active_resolution_user_ids
+            ]
+        for runtime in stale:
+            self.release_conversation(runtime)
+        if len(self.conversations) < self.engram.config.get("max_sessions", 1):
+            return
+        overflow = self.engram.config.get("session_overflow", SessionOverflow.REJECT)
+        idle = [runtime for user_id, runtime in self.conversations.items() if user_id not in self.active_resolution_user_ids]
+        if overflow == SessionOverflow.REJECT or not idle:
+            raise sessions.SessionLimitExceededError("maximum active conversations reached")
+        if overflow == SessionOverflow.EXPIRE_OLDEST:
+            selected = min(idle, key=lambda runtime: runtime.started_at)
+        else:
+            selected = min(idle, key=lambda runtime: self.conversation_activity.get(runtime.user_id, 0.0))
+        self.release_conversation(selected)
 
     def get_conversation(self, user_id: str) -> ConversationRuntime:
         """Return an active user runtime or raise a lifecycle error."""
@@ -1395,6 +1435,8 @@ class EngramCore:
                 # accepted-response owner. Drop it after the drained purge.
                 for records in (
                     self.conversations,
+                    self.conversation_tokens,
+                    self.conversation_activity,
                     self.resolution_requests,
                     self.proposals,
                     self.proposal_requests,
@@ -1402,6 +1444,7 @@ class EngramCore:
                     self.retire_requests,
                 ):
                     records.clear()
+                self.resolution_accounting.clear()
                 self.negative_resolutions.clear()
                 with self.engram.session_lock:
                     self.engram.sessions.clear()
@@ -1427,8 +1470,18 @@ class EngramCore:
             self.resolution_condition.notify_all()
             while self.active_resolution_request_ids or self.active_graph_operations:
                 self.resolution_condition.wait()
-            self.conversations.clear()
+            # Release Core-owned request, token, activity, and negative state at the drained
+            # boundary. Each runtime is released as stop would, so an anonymous session goes too.
+            for runtime in tuple(self.conversations.values()):
+                self.release_conversation(runtime)
+            for records in (self.conversations, self.conversation_tokens, self.conversation_activity, self.resolution_requests):
+                records.clear()
+            self.resolution_accounting.clear()
+            self.negative_resolutions.clear()
             self.reset_regulated_state()
+            if self.internal_owns_engram:
+                with self.engram.session_lock:
+                    self.engram.sessions.clear()
             disconnect = getattr(self.engram.graph_client, "disconnect", ())
             if callable(disconnect):
                 try:
@@ -1526,7 +1579,7 @@ class EngramCore:
             try:
                 eligibility_context = EligibilityContextCapture(self.internal_clock).capture_standalone(scope, True)
                 exact = self.engram.response_repository.exact_lookup(
-                    build_scoped_retrieval_key(scope, request),
+                    scoped_retrieval_key_from_text(scope, request),
                     eligibility_context,
                 )
                 if exact["lookup"]["outcome"] == ExactLookupOutcome.FOUND:
@@ -1621,6 +1674,8 @@ class EngramCore:
                 "proposal": proposal,
                 "candidate_responses": {candidate["statement_id"]: candidate["response"] for candidate in candidates},
                 "resolution": {},
+                "resolution_signature": "",
+                "pending_resolution": {},
                 "feedback_frame": feedback_frame,
                 "candidacy_observations": (),
                 "candidacy_applied": not candidates,
@@ -1664,9 +1719,15 @@ class EngramCore:
                 raise ResourceNotFoundError("unknown or expired proposal_id")
             self.ensure_proposal_candidacy(proposal_id, record)
             resolution_signature = service_request_signature(outcome=outcome, statement_id=statement_id, reason=reason)
-            if record["resolution"]:
-                if record["resolution_signature"] != resolution_signature:
+            prior_signature = record.get("resolution_signature", "")
+            if prior_signature:
+                if prior_signature != resolution_signature:
                     raise ConflictError("proposal has already been resolved with a different verdict")
+                if not record.get("resolution", {}):
+                    # The verdict was applied but its completion failed; finish it through the
+                    # same idempotent hit request before reporting it resolved.
+                    result = self.complete_proposal_resolution(proposal_id, record)
+                    return result
                 self.regulated_metrics["idempotent_retries"] += 1
                 result = deepcopy(record["resolution"])
                 result["idempotent"] = True
@@ -1677,17 +1738,8 @@ class EngramCore:
                 raise InvalidRequestError("Regulator outcomes require statement_id")
             if statement_id not in candidate_responses:
                 raise InvalidRequestError("statement_id is not a candidate in this proposal")
-            current_artifact: dict = {}
             if outcome == "accepted":
-                current_artifact = self.engram.response_repository.get_artifact(statement_id)
-                # The same text survives a retire, supersede, or invalidation,
-                # so an accepted verdict also requires the artifact to be ACTIVE.
-                # Generation is not compared: proposal accounting advances it.
-                if (
-                    current_artifact.get("response", "") != candidate_responses.get(statement_id, "")
-                    or getattr(current_artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
-                ):
-                    raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
+                self.current_proposal_candidate(record, statement_id)
             observations = record["candidacy_observations"]
             if not isinstance(observations, tuple):
                 raise LifecycleError("proposal candidacy observations are malformed")
@@ -1715,21 +1767,10 @@ class EngramCore:
                 (verdict_observation,),
                 lifecycle_status,
             )
-            if outcome == "accepted":
-                proposal = record["proposal"]
-                if proposal.get("user_id", "") != DEFAULT_USER_ID:
-                    sessions.get_session(self.engram, proposal["user_id"], create_if_missing=True)
-                    sessions.update_session_context(
-                        self.engram,
-                        proposal["user_id"],
-                        current_artifact.get("response", ""),
-                    )
-                self.regulated_metrics["accepted"] += 1
-            else:
-                self.regulated_metrics["rejections"][outcome] += 1
-            self.record_regulator_telemetry(outcome)
-
-            resolution = {
+            # The verdict is applied but stays pending until its accepted hit commits. A retry
+            # with this verdict finishes it; a different verdict still conflicts.
+            record["resolution_signature"] = resolution_signature
+            record["pending_resolution"] = {
                 "proposal_id": proposal_id,
                 "outcome": outcome,
                 "statement_id": statement_id,
@@ -1738,15 +1779,49 @@ class EngramCore:
                 "resolved": True,
                 "idempotent": False,
             }
-            record["resolution_signature"] = resolution_signature
-            record["resolution"] = resolution
-            if outcome == "accepted":
-                self.response_mutations.record_response_hit(
-                    statement_id,
-                    accounting_request_id("response-hit", proposal_id),
-                )
-            result = deepcopy(resolution)
+            result = self.complete_proposal_resolution(proposal_id, record)
             return result
+
+    def current_proposal_candidate(self, record: dict, statement_id: str) -> dict:
+        """Return the proposed artifact while it is still the accepted candidate, or raise a conflict.
+
+        The same text survives a retire, supersede, or invalidation, so an accepted verdict
+        also requires the artifact to be ACTIVE. Generation is not compared: proposal
+        accounting advances it.
+        """
+        current_artifact = self.engram.response_repository.get_artifact(statement_id)
+        if (
+            current_artifact.get("response", "") != record.get("candidate_responses", {}).get(statement_id, "")
+            or getattr(current_artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
+        ):
+            raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
+        return current_artifact
+
+    def complete_proposal_resolution(self, proposal_id: str, record: dict) -> dict:
+        """Commit a pending verdict's accepted hit, then publish and count the verdict once.
+
+        The hit uses one idempotent accounting request, so a retry after a failure here
+        replays a hit that did commit instead of crediting it again. The session context,
+        metrics, and published resolution follow the hit, so they occur once.
+        """
+        resolution = record.get("pending_resolution", {})
+        outcome = resolution.get("outcome", "")
+        if outcome == "accepted":
+            statement_id = resolution.get("statement_id", "")
+            current_artifact = self.current_proposal_candidate(record, statement_id)
+            self.response_mutations.record_response_hit(statement_id, accounting_request_id("response-hit", proposal_id))
+            proposal = record.get("proposal", {})
+            if proposal.get("user_id", "") != DEFAULT_USER_ID:
+                sessions.get_session(self.engram, proposal.get("user_id", ""), create_if_missing=True)
+                sessions.update_session_context(self.engram, proposal.get("user_id", ""), current_artifact.get("response", ""))
+            self.regulated_metrics["accepted"] += 1
+        else:
+            self.regulated_metrics["rejections"][outcome] += 1
+        self.record_regulator_telemetry(outcome)
+        record["resolution"] = resolution
+        record["pending_resolution"] = {}
+        result = deepcopy(resolution)
+        return result
 
     def learn_response(
         self,

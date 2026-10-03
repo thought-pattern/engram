@@ -33,7 +33,7 @@ from engram.constants import (
 )
 from engram.eligibility import evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, ResolutionCancelledError
-from engram.evidence import PropositionEligibilityEvaluator
+from engram.evidence import PropositionEligibilityEvaluator, assertion_basis_window
 from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.relation import phrase_relation_result
@@ -117,22 +117,11 @@ def internal_number(value: object, name: str) -> float:
     return result
 
 
-def trusted_normalized_feature_set(
-    values: dict[FusionFeature, float],
-    available: tuple[FusionFeature, ...],
-) -> dict:
-    """Build a normalized feature set from engine-owned, already bounded values."""
-    result: dict = {
-        "values": {feature: values.get(feature, 0.0) for feature in FusionFeature},
-        "available": available,
-    }
-    return result
-
-
 def trusted_normalized_feature_set_to_dict(current: dict) -> dict:
     """Serialize an engine-owned normalized feature set."""
+    values = current.get("values", {})
     result = {
-        "values": {feature.value: current.get("values", {})[feature] for feature in FusionFeature},
+        "values": {feature.value: values.get(feature, 0.0) for feature in FusionFeature},
         "available": [feature.value for feature in current.get("available", ())],
     }
     return result
@@ -147,12 +136,12 @@ def fusion_policy(
     require_support_for_non_exact: object = FUSION_REQUIRE_SUPPORT_FOR_NON_EXACT,
     max_report_candidates: object = MAX_FUSION_REPORT_CANDIDATES,
 ) -> dict:
-    """Build the configurable first-generation linear fusion policy."""
+    """Validate and normalize the configurable first-generation linear fusion policy."""
     if not isinstance(weights, dict) or set(weights) != set(FusionFeature):
         raise InvalidRequestError("fusion weights must contain every canonical feature")
     normalized_weights = {}
     for feature in FusionFeature:
-        value = weights[feature]
+        value = weights.get(feature, 0.0)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math_isfinite(float(value)) or value < 0:
             raise InvalidRequestError("fusion weights must be finite nonnegative numbers")
         normalized_weights[feature] = float(value)
@@ -189,51 +178,53 @@ def fusion_policy(
 def validate_fusion_policy(value: object) -> dict:
     data = exact_mapping(value, "FusionPolicy", FUSION_POLICY_FIELDS)
     result = fusion_policy(
-        data["weights"],
-        data["answer_threshold"],
-        data["evidence_threshold"],
-        data["ambiguity_margin"],
-        data["minimum_independent_sources"],
-        data["require_support_for_non_exact"],
-        data["max_report_candidates"],
+        data.get("weights", {}),
+        data.get("answer_threshold", 0.0),
+        data.get("evidence_threshold", 0.0),
+        data.get("ambiguity_margin", 0.0),
+        data.get("minimum_independent_sources", 0),
+        data.get("require_support_for_non_exact", False),
+        data.get("max_report_candidates", 0),
     )
     return result
 
 
 def fusion_policy_to_dict(value: object) -> dict:
     current = validate_fusion_policy(value)
+    weights = current.get("weights", {})
     result = {
-        "weights": {feature.value: current["weights"][feature] for feature in FusionFeature},
-        "answer_threshold": current["answer_threshold"],
-        "evidence_threshold": current["evidence_threshold"],
-        "ambiguity_margin": current["ambiguity_margin"],
-        "minimum_independent_sources": current["minimum_independent_sources"],
-        "require_support_for_non_exact": current["require_support_for_non_exact"],
-        "max_report_candidates": current["max_report_candidates"],
+        "weights": {feature.value: weights.get(feature, 0.0) for feature in FusionFeature},
+        "answer_threshold": current.get("answer_threshold", 0.0),
+        "evidence_threshold": current.get("evidence_threshold", 0.0),
+        "ambiguity_margin": current.get("ambiguity_margin", 0.0),
+        "minimum_independent_sources": current.get("minimum_independent_sources", 0),
+        "require_support_for_non_exact": current.get("require_support_for_non_exact", False),
+        "max_report_candidates": current.get("max_report_candidates", 0),
     }
     return result
 
 
 def fusion_policy_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FusionPolicy", FUSION_POLICY_FIELDS)
-    raw_weights = data["weights"]
+    raw_weights = data.get("weights", {})
     if not isinstance(raw_weights, dict) or set(raw_weights) != {feature.value for feature in FusionFeature}:
         raise InvalidRequestError("FusionPolicy weights have invalid fields")
     weights = {
-        feature: internal_number(raw_weights[feature.value], f"FusionPolicy {feature.value} weight") for feature in FusionFeature
+        feature: internal_number(raw_weights.get(feature.value, 0.0), f"FusionPolicy {feature.value} weight")
+        for feature in FusionFeature
     }
     result = fusion_policy(
         weights=weights,
-        answer_threshold=internal_number(data["answer_threshold"], "FusionPolicy answer_threshold"),
-        evidence_threshold=internal_number(data["evidence_threshold"], "FusionPolicy evidence_threshold"),
-        ambiguity_margin=internal_number(data["ambiguity_margin"], "FusionPolicy ambiguity_margin"),
+        answer_threshold=internal_number(data.get("answer_threshold", 0.0), "FusionPolicy answer_threshold"),
+        evidence_threshold=internal_number(data.get("evidence_threshold", 0.0), "FusionPolicy evidence_threshold"),
+        ambiguity_margin=internal_number(data.get("ambiguity_margin", 0.0), "FusionPolicy ambiguity_margin"),
         minimum_independent_sources=internal_integer(
-            data["minimum_independent_sources"], "FusionPolicy minimum_independent_sources"
+            data.get("minimum_independent_sources", 0), "FusionPolicy minimum_independent_sources"
         ),
         require_support_for_non_exact=require_bool(
-            data["require_support_for_non_exact"], "FusionPolicy require_support_for_non_exact"
+            data.get("require_support_for_non_exact", False), "FusionPolicy require_support_for_non_exact"
         ),
-        max_report_candidates=internal_integer(data["max_report_candidates"], "FusionPolicy max_report_candidates"),
+        max_report_candidates=internal_integer(data.get("max_report_candidates", 0), "FusionPolicy max_report_candidates"),
     )
     return result
 
@@ -246,7 +237,7 @@ def candidate_eligibility(
     feature_values: object = {},
     feature_available: object = (),
 ) -> dict:
-    """Build separate score, evidence, and direct-answer eligibility."""
+    """Validate separate score, evidence, and direct-answer eligibility."""
     if not isinstance(score_eligible, bool) or not isinstance(evidence_eligible, bool) or not isinstance(answer_eligible, bool):
         raise InvalidRequestError("candidate eligibility flags must be booleans")
     if answer_eligible and not score_eligible:
@@ -295,33 +286,13 @@ def candidate_eligibility(
 def validate_candidate_eligibility(value: object) -> dict:
     data = exact_mapping(value, "CandidateEligibility", CANDIDATE_ELIGIBILITY_FIELDS)
     result = candidate_eligibility(
-        data["score_eligible"],
-        data["evidence_eligible"],
-        data["answer_eligible"],
-        data["reason_codes"],
-        data["feature_values"],
-        data["feature_available"],
+        data.get("score_eligible", False),
+        data.get("evidence_eligible", False),
+        data.get("answer_eligible", False),
+        data.get("reason_codes", ()),
+        data.get("feature_values", {}),
+        data.get("feature_available", ()),
     )
-    return result
-
-
-def trusted_candidate_eligibility(
-    score_eligible: bool = True,
-    evidence_eligible: bool = True,
-    answer_eligible: bool = True,
-    reason_codes: tuple[FusionPolicyReason, ...] = (),
-    feature_values: dict[FusionFeature, float] = EMPTY_FEATURE_VALUES,
-    feature_available: tuple[FusionFeature, ...] = (),
-) -> dict:
-    """Build eligibility from values established by the fusion engine."""
-    result: dict = {
-        "score_eligible": score_eligible,
-        "evidence_eligible": evidence_eligible,
-        "answer_eligible": answer_eligible,
-        "reason_codes": reason_codes,
-        "feature_values": dict(dict(feature_values)),
-        "feature_available": feature_available,
-    }
     return result
 
 
@@ -332,9 +303,7 @@ def trusted_candidate_eligibility_to_dict(current: dict) -> dict:
         "evidence_eligible": current.get("evidence_eligible", False),
         "answer_eligible": current.get("answer_eligible", False),
         "reason_codes": [reason.value for reason in current.get("reason_codes", ())],
-        "feature_values": {
-            feature.value: current.get("feature_values", {})[feature] for feature in current.get("feature_values", {})
-        },
+        "feature_values": {feature.value: value for feature, value in current.get("feature_values", {}).items()},
         "feature_available": [feature.value for feature in current.get("feature_available", ())],
     }
     return result
@@ -407,7 +376,7 @@ class EngramCandidateAuthority:
             "selection_reason",
             "supplied_trust",
         }
-        if set(provenance) != required or provenance.get("producer") != "relation_one_hop":
+        if set(provenance) != required or provenance.get("producer", "") != "relation_one_hop":
             result = candidate_eligibility(
                 False,
                 False,
@@ -418,10 +387,12 @@ class EngramCandidateAuthority:
         if candidate.get("scope", {}) != frame.get("scope", {}):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
             return result
+        candidate_evidence = candidate.get("evidence", ())
+        only_reference = candidate_evidence[0] if len(candidate_evidence) == 1 else {}
         if (
-            len(candidate.get("evidence", ())) != 1
-            or candidate.get("evidence", ())[0]["kind"] != EvidenceKind.PROPOSITION
-            or candidate.get("evidence", ())[0]["evidence_id"] != candidate.get("statement_id", "")
+            len(candidate_evidence) != 1
+            or only_reference.get("kind", "") != EvidenceKind.PROPOSITION
+            or only_reference.get("evidence_id", "") != candidate.get("statement_id", "")
         ):
             result = candidate_eligibility(
                 False,
@@ -431,34 +402,38 @@ class EngramCandidateAuthority:
             )
             return result
         try:
-            current_values = self.internal_engram.current_proposition_projection(candidate.get("statement_id", ""))
+            current_values = self.internal_engram.current_proposition_projection(
+                candidate.get("statement_id", ""), assertion_basis_window(frame)
+            )
             if not isinstance(current_values, tuple) or len(current_values) != 1:
                 raise InvalidRequestError("current relation Proposition is unavailable")
             current = validate_proposition_projection(current_values[0])
-            if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
+            if current.get("projection_id", "") != PropositionProjectionQuery.BY_ID:
                 raise InvalidRequestError("current relation Proposition was not read by ID")
             identity = (
-                current["subject_entity_id"],
-                current["predicate_id"],
-                current["object_entity_id"],
+                current.get("subject_entity_id", ""),
+                current.get("predicate_id", ""),
+                current.get("object_entity_id", ""),
             )
             expected_identity = (
-                provenance["subject_entity_id"],
-                provenance["predicate_id"],
-                provenance["object_entity_id"],
+                provenance.get("subject_entity_id", ""),
+                provenance.get("predicate_id", ""),
+                provenance.get("object_entity_id", ""),
             )
             if identity != expected_identity:
                 raise InvalidRequestError("current relation Proposition identity changed")
-            if not current["supplied_trust_available"] or current["supplied_trust"] != provenance["supplied_trust"]:
+            if not current.get("supplied_trust_available", False) or current.get("supplied_trust", 0.0) != provenance.get(
+                "supplied_trust", 0.0
+            ):
                 raise InvalidRequestError("current relation Proposition trust changed")
             response = phrase_relation_result(
-                provenance["subject_label"],
-                provenance["predicate_label"],
-                provenance["object_label"],
+                provenance.get("subject_label", ""),
+                provenance.get("predicate_label", ""),
+                provenance.get("object_label", ""),
             )
-            object_type = ExpectedObjectType(str(provenance["object_type"]))
-            PredicateCardinality(str(provenance["predicate_cardinality"]))
-            selection_reason = RelationSelectionReason(str(provenance["selection_reason"]))
+            object_type = ExpectedObjectType(str(provenance.get("object_type", "")))
+            PredicateCardinality(str(provenance.get("predicate_cardinality", "")))
+            selection_reason = RelationSelectionReason(str(provenance.get("selection_reason", "")))
             if selection_reason not in {
                 RelationSelectionReason.SELECTED_UNIQUE,
                 RelationSelectionReason.SELECTED_LATEST,
@@ -495,7 +470,7 @@ class EngramCandidateAuthority:
         decision = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ())).evaluate(
             current, frame
         )
-        if not decision["eligible"]:
+        if not decision.get("eligible", False):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.ARTIFACT_INELIGIBLE,))
             return result
         result = candidate_eligibility(True, True, True)
@@ -560,7 +535,7 @@ class EngramCandidateAuthority:
             for index, proposition_id in enumerate(proposition_ids):
                 if not isinstance(proposition_id, str) or not proposition_id:
                     raise InvalidRequestError("composition Proposition ID is malformed")
-                current_values = self.internal_engram.current_proposition_projection(proposition_id)
+                current_values = self.internal_engram.current_proposition_projection(proposition_id, assertion_basis_window(frame))
                 if not isinstance(current_values, tuple) or len(current_values) != 1:
                     raise InvalidRequestError("composition Proposition is unavailable")
                 current = validate_proposition_projection(current_values[0])
@@ -1308,14 +1283,14 @@ class CandidateFusionEngine:
         cooperative_check: object = (),
     ) -> dict:
         frame = validate_query_frame(frame)
+        # Counts, scalar limits and the control callback are checked before any
+        # per-item validation, copy or serialization work begins.
         if not isinstance(candidates, tuple):
             raise InvalidRequestError("fusion candidates must be a tuple of Candidate values")
-        candidates = tuple(validate_candidate(value) for value in candidates)
         if len(candidates) > MAX_FUSION_CONTRIBUTIONS:
             raise InvalidRequestError(f"fusion candidates exceed the limit of {MAX_FUSION_CONTRIBUTIONS}")
         if not isinstance(evidence, tuple):
             raise InvalidRequestError("fusion evidence must be a tuple of EvidenceReference values")
-        evidence = tuple(validate_evidence_reference(value) for value in evidence)
         if len(evidence) > MAX_FUSION_CONTRIBUTIONS:
             raise InvalidRequestError(f"fusion evidence exceeds the limit of {MAX_FUSION_CONTRIBUTIONS}")
         if not isinstance(working_memory_limit_available, bool):
@@ -1328,13 +1303,31 @@ class CandidateFusionEngine:
             raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("fusion cooperative_check must be callable")
+        control_check = cooperative_check if cooperative_check != () else (lambda: False)
         memory_limit = (
             working_memory_limit if working_memory_limit_available else frame.get("budget", {})["max_working_memory_bytes"]
         )
-        serialized_candidates = tuple((candidate, trusted_candidate_to_json(candidate)) for candidate in candidates)
-        working_bytes = sum(len(value.encode("utf-8")) for _, value in serialized_candidates) + sum(
-            len(evidence_reference_to_json(reference).encode("utf-8")) for reference in evidence
-        )
+        control_check()
+        # Evidence is retained even by an exhausted decision, so all of it is
+        # validated (the count is already bounded); candidates are copied and
+        # serialized one at a time against the working-memory allowance.
+        validated_evidence = []
+        working_bytes = 0
+        for value in evidence:
+            control_check()
+            reference = validate_evidence_reference(value)
+            validated_evidence.append(reference)
+            working_bytes += len(evidence_reference_to_json(reference).encode("utf-8"))
+        evidence = tuple(validated_evidence)
+        serialized_values = []
+        for value in candidates:
+            control_check()
+            if working_bytes > memory_limit:
+                break
+            candidate = validate_candidate(value)
+            serialized = trusted_candidate_to_json(candidate)
+            serialized_values.append((candidate, serialized))
+            working_bytes += len(serialized.encode("utf-8"))
         if working_bytes > memory_limit:
             result = self.exhausted_decision(
                 frame,
@@ -1344,6 +1337,8 @@ class CandidateFusionEngine:
                 memory_limit,
             )
             return result
+        serialized_candidates = tuple(serialized_values)
+        candidates = tuple(candidate for candidate, _ in serialized_candidates)
         candidate_variants: dict[str, set[str]] = {}
         for candidate_value, serialized in serialized_candidates:
             candidate_variants.setdefault(candidate_value["candidate_id"], set()).add(serialized)
@@ -1351,6 +1346,7 @@ class CandidateFusionEngine:
         ordered = tuple(sorted(candidates, key=trusted_canonical_candidate_key))
         contribution_groups: dict[str, list[dict]] = {}
         for candidate in ordered:
+            control_check()
             normalized = normalize_validated_candidate_features(candidate)
             eligibility = self.individual_eligibility(
                 candidate,
@@ -1374,6 +1370,7 @@ class CandidateFusionEngine:
                 return result
         fused_values = []
         for statement_id in sorted(contribution_groups):
+            control_check()
             fused_value = self.fuse_group(statement_id, tuple(contribution_groups.get(statement_id, [])), frame)
             fused_values.append(fused_value)
             fused_json = trusted_fused_candidate_to_json(fused_value)
@@ -1586,6 +1583,7 @@ class CandidateFusionEngine:
                 if not ranked
                 else FusionPolicyReason.EVIDENCE_THRESHOLD_NOT_MET.value
             )
+        control_check()
         ranked_ids = {candidate["candidate"]["statement_id"] for candidate in ranked}
         report_values = (
             *ranked,
