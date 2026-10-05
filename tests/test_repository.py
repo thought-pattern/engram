@@ -585,9 +585,7 @@ def test_preloaded_over_capacity_state_evicts_enough_unprotected_victims() -> No
     plan = repository.plan_admission(incoming, tier_admission_policy(2))
     candidate_artifacts = plan.get("candidate", {}).get("artifacts", {})
     dynamic_ids = [
-        statement_id
-        for statement_id, artifact in candidate_artifacts.items()
-        if artifact.get("tier", Tier.STATIC) == Tier.DYNAMIC
+        statement_id for statement_id, artifact in candidate_artifacts.items() if artifact.get("tier", Tier.STATIC) == Tier.DYNAMIC
     ]
 
     assert plan.get("evicted_statement_ids", ()) == ("stmt-0", "stmt-1", "stmt-2")

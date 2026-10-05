@@ -63,7 +63,7 @@ def none_paths(value, path: str = "root") -> list[str]:
     if isinstance(value, dict):
         result = [nested for key, item in value.items() for nested in none_paths(item, f"{path}.{key}")]
         return result
-    if isinstance(value, list | tuple | set):
+    if isinstance(value, (list, tuple, set)):
         result = [nested for index, item in enumerate(value) for nested in none_paths(item, f"{path}[{index}]")]
         return result
     result = []

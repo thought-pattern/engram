@@ -45,9 +45,7 @@ def unit(value: object, name: str) -> float:
 
 def internal_score(features: dict) -> tuple[float, dict[str, float]]:
     normalized = {name: unit(features.get(name, 0.0), name) for name in RERANKER_FEATURES}
-    logit = RERANKER_INTERCEPT + sum(
-        RERANKER_COEFFICIENTS.get(name, 0.0) * normalized.get(name, 0.0) for name in RERANKER_FEATURES
-    )
+    logit = RERANKER_INTERCEPT + sum(RERANKER_COEFFICIENTS.get(name, 0.0) * normalized.get(name, 0.0) for name in RERANKER_FEATURES)
     if logit >= 0:
         exponent = math_exp(-logit)
         score = 1.0 / (1.0 + exponent)

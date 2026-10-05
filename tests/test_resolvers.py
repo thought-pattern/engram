@@ -1567,11 +1567,7 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
     if mismatch == "scope":
         record = proposition_evidence_record_with_changes(
             record,
-            {
-                "disclosure": validate_disclosure_decision(
-                    {**record.get("disclosure", {}), "scope": scope_key(namespace="other")}
-                )
-            },
+            {"disclosure": validate_disclosure_decision({**record.get("disclosure", {}), "scope": scope_key(namespace="other")})},
         )
     else:
         record = proposition_evidence_record_with_changes(
@@ -1927,9 +1923,7 @@ def test_executor_short_circuits_only_on_one_exact_candidate() -> None:
 def test_executor_enforces_nested_evidence_output_diagnostics_and_resource_bounds() -> None:
     engine = Engram()
     reference = evidence_reference("proposition-1", "oversized", EvidenceKind.SUPPORT, EMPTY_SCOPE_KEY)
-    oversized_candidate = validate_candidate(
-        {**SPARSE_CANDIDATE, "response": "x" * 10_000, "evidence": (reference, reference)}
-    )
+    oversized_candidate = validate_candidate({**SPARSE_CANDIDATE, "response": "x" * 10_000, "evidence": (reference, reference)})
     raw = resolver_result(
         "oversized",
         ResolverState.COMPLETED,

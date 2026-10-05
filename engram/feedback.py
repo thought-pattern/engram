@@ -1507,9 +1507,7 @@ class FeedbackStore:
             relationship_feedback_key_fingerprint(record.get("key", {})): record for record in relationship_records
         }
         self.internal_statement_partitions = record_partitions(self.internal_statement_records, statement_record_partition)
-        self.internal_relationship_partitions = record_partitions(
-            self.internal_relationship_records, relationship_record_partition
-        )
+        self.internal_relationship_partitions = record_partitions(self.internal_relationship_records, relationship_record_partition)
         self.internal_policy_suppressions = {
             (value.get("statement_id", ""), value.get("namespace", ""), value.get("policy_fingerprint", "")): value
             for value in policy_suppressions

@@ -450,9 +450,7 @@ def validate_lifecycle_base_decision(value: object) -> dict:
 
     data = require_exact_mapping(value, "LifecycleBaseDecision", LIFECYCLE_BASE_DECISION_FIELDS)
     lifecycle = require_lifecycle(data.get("lifecycle", LifecycleState.RETIRED), "lifecycle decision lifecycle")
-    direct_answer_eligible = require_bool(
-        data.get("direct_answer_eligible", False), "lifecycle decision direct_answer_eligible"
-    )
+    direct_answer_eligible = require_bool(data.get("direct_answer_eligible", False), "lifecycle decision direct_answer_eligible")
     reason = require_lifecycle_decision_reason(data.get("reason", LifecycleDecisionReason.RETIRED), "lifecycle decision reason")
     expected_eligible = lifecycle == LifecycleState.ACTIVE
     # Every non-ACTIVE state has a registered reason, so the default is unreachable.

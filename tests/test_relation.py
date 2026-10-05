@@ -438,9 +438,7 @@ def test_relation_resolver_phrases_one_revalidated_type_match_and_enriches_evide
     record_values = evidence[0].get("features", {}).get("values", {})
     assert record_values.get("entity_match", 0.0) == 1.0
     assert record_values.get("relation_match", 0.0) == 0.92
-    assert {"relation_plan_match", "relation_result_unique", "object_type_match"}.issubset(
-        evidence[0].get("selection_reasons", ())
-    )
+    assert {"relation_plan_match", "relation_result_unique", "object_type_match"}.issubset(evidence[0].get("selection_reasons", ()))
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
@@ -463,9 +461,7 @@ def test_relation_resolver_answers_a_one_hop_question_that_contains_of() -> None
         ),
         current_turn=1,
     )
-    plain_lease = validate_resolver_budget(
-        {name: plain_frame.get("budget", {}).get(name, 0) for name in RESOLVER_BUDGET_FIELDS}
-    )
+    plain_lease = validate_resolver_budget({name: plain_frame.get("budget", {}).get(name, 0) for name in RESOLVER_BUDGET_FIELDS})
     plain = StructuredGraphResolver(engine, lambda: START_NS).resolve(plain_frame, plain_lease)
     plain_rows = plain.get("consumption", {}).get("graph_rows", 0)
     result_rows = result.get("consumption", {}).get("graph_rows", 0)
